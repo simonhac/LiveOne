@@ -27,7 +27,7 @@ const MAX_DAYS_JUDGED = 3;
 /** A judged day needs at least this many SoC-covered intervals (of 288) to trust its ΔSoC. */
 const MIN_DAY_SOC_SAMPLES = 200;
 
-export interface SocMeterDay {
+interface SocMeterDay {
   /** Local calendar day (YYYY-MM-DD). */
   day: string;
   socKwh: number;

@@ -49,6 +49,8 @@ export type Subject = "area" | "dashboard" | "automation" | "derivation";
 /**
  * What happens to a dependent if the delete goes ahead anyway. This is the field that decides
  * whether `--force` is reasonable, so it describes the CONSEQUENCE, not the mechanism.
+ *
+ * @knipignore The type of Dependent.effect, which is exported — a consumer cannot name the field's type without it.
  */
 export type Effect =
   /** The reference stays in place and resolves to nothing; the renderer skips it, silently. */
@@ -78,6 +80,7 @@ export interface Dependent {
   fix: string;
 }
 
+/** @knipignore Thrown only by assertNotReliedUpon, so it lives or dies with it. */
 export class ReliedUponError extends Error {
   constructor(
     message: string,
@@ -329,7 +332,11 @@ export async function findDependents(
   }
 }
 
-/** `findDependents`, then throw. The writer-side half. */
+/**
+ * `findDependents`, then throw. The writer-side half.
+ *
+ * @knipignore No caller. Every route goes through refuseIfReliedUpon (integrity/http.ts) instead, yet eight comments and docs/cli.md name THIS as the interlock — resolve which one is the protection before deleting either.
+ */
 export async function assertNotReliedUpon(
   subject: Subject,
   uuid: string,

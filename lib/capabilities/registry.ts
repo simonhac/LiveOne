@@ -53,7 +53,7 @@ export type CapabilityId =
  * Whether a capability is ATOMIC (derivable from a single `(stem, metric)` point) as opposed to
  * COMPOUND (a server-side predicate over area config). Only atomic capabilities have a `match` rule.
  */
-export type CapabilityTier = "atomic" | "compound";
+type CapabilityTier = "atomic" | "compound";
 
 export interface CapabilityDef {
   id: CapabilityId;

@@ -46,10 +46,10 @@ import type { SyncProdToDevOptions } from "./prod-dev-sync";
 type PgDb = ReturnType<typeof requirePlanetscaleDb>;
 type PgTx = Parameters<Parameters<PgDb["transaction"]>[0]>[0];
 /** A pool or a caller's transaction handle — writes run standalone or inside the receiver's tx. */
-export type ReadingsExec = PgDb | PgTx;
+type ReadingsExec = PgDb | PgTx;
 
 // ── Boundary shapes ────────────────────────────────────────────────────────────────────────────────
-export interface ReadWindow {
+interface ReadWindow {
   fromMs: number;
   toMs: number;
   /** Upper bound: inclusive (`<= toMs`) by default; set `false` for a half-open window (`< toMs`).
@@ -57,7 +57,7 @@ export interface ReadWindow {
    *  `interval_end < hi` (e.g. flow-series' cache lead-in) byte-identically. */
   toInclusive?: boolean;
 } // epoch-ms UTC
-export interface DayRange {
+interface DayRange {
   startDay: string;
   endDay: string;
 } // inclusive, 'YYYY-MM-DD'
@@ -1692,7 +1692,7 @@ export type AdminPivotValueColumn =
   | "last"
   | "delta";
 
-export interface AdminPivotParams {
+interface AdminPivotParams {
   device: DeviceId;
   source: "raw" | "5m" | "daily";
   cursor: number | string | null;

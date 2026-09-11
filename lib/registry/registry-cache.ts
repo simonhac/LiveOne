@@ -39,7 +39,7 @@ import { Point, type PointId } from "@/lib/ids";
 // compile time (modelled on lib/ids/types.ts TypeId<P>). Passing a DeviceRid where a PointRid is
 // expected is a type error.
 declare const __ridBrand: unique symbol;
-export type Rid<Tag extends string> = number & { readonly [__ridBrand]: Tag };
+type Rid<Tag extends string> = number & { readonly [__ridBrand]: Tag };
 export type PointRid = Rid<"pt">;
 /** == systems.id pre-cutover (there is no device uuid column yet); becomes the minted device rid at cutover. */
 export type DeviceRid = Rid<"dv">;

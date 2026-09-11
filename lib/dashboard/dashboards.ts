@@ -251,7 +251,7 @@ export async function getDashboardByOwnerAlias(
 }
 
 /** A user's composition dashboards (those with a display_name), newest first. */
-export async function listDashboardsForOwner(
+async function listDashboardsForOwner(
   ownerClerkUserId: string,
 ): Promise<DashboardSummary[]> {
   const rows = await requirePlanetscaleDb()

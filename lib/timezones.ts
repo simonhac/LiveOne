@@ -3,7 +3,7 @@
  * Contains all 139 canonical IANA timezones grouped by region
  */
 
-export interface TimezoneOption {
+interface TimezoneOption {
   value: string; // IANA timezone string (e.g., "Australia/Melbourne")
   label: string; // Display name (e.g., "Melbourne")
   region: string; // Region grouping
@@ -18,7 +18,7 @@ export interface TimezoneGroup {
  * All 139 canonical IANA timezones
  * Source: IANA Time Zone Database
  */
-export const CANONICAL_TIMEZONES: TimezoneOption[] = [
+const CANONICAL_TIMEZONES: TimezoneOption[] = [
   // Africa
   { value: "Africa/Abidjan", label: "Abidjan", region: "Africa" },
   { value: "Africa/Accra", label: "Accra", region: "Africa" },

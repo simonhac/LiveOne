@@ -56,7 +56,7 @@ import { isNemRegion } from "@/lib/vendors/openelectricity/types";
  * `sessions.response`, which is an absurd cost for "did the vendor have anything?" and exactly the
  * class of unreadable number this route exists to abolish.
  */
-export type ChunkOutcome =
+type ChunkOutcome =
   /** Records were fetched and published. */
   | "published"
   /** Local already holds complete data for the window. THE VENDOR WAS NOT CALLED. */
@@ -80,7 +80,7 @@ export interface ChunkAudit {
 }
 
 /** One window of one device, as a leg is asked to fetch it. */
-export interface SyncChunkArgs {
+interface SyncChunkArgs {
   device: DeviceConfigView;
   /** Inclusive local days. `days` is `end - start + 1`, precomputed by the route. */
   start: CalendarDate;
@@ -92,7 +92,7 @@ export interface SyncChunkArgs {
   collector: PollCollector;
 }
 
-export interface SyncChunkResult {
+interface SyncChunkResult {
   ok: boolean;
   error?: string;
   /** Never empty on a window that ran: a zero must always be able to explain itself. */
@@ -102,12 +102,12 @@ export interface SyncChunkResult {
 }
 
 /** A refusal a leg can raise before the walk starts — surfaced as this status, not as a failed chunk. */
-export interface LegRefusal {
+interface LegRefusal {
   error: string;
   status: number;
 }
 
-export type LegRunner = (args: SyncChunkArgs) => Promise<SyncChunkResult>;
+type LegRunner = (args: SyncChunkArgs) => Promise<SyncChunkResult>;
 
 export interface SyncLeg {
   vendor: string;

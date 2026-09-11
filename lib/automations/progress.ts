@@ -72,7 +72,7 @@ export interface ChargeSessionTriggerJson {
  * reading `afterKwh` off one is then a compile error rather than an `undefined` that renders as a
  * blank target.
  */
-export interface OtherTriggerJson {
+interface OtherTriggerJson {
   kind: "exercise";
 }
 

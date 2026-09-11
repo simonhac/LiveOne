@@ -90,7 +90,7 @@ export type ControlScenarioName =
  * template — so the gallery shows that the dialog prefers the template and that the fallback still
  * localizes the flat one.
  */
-export function preflightFor(scenario: ControlScenarioName): PreflightBody {
+function preflightFor(scenario: ControlScenarioName): PreflightBody {
   switch (scenario) {
     case "ready to start":
       return {

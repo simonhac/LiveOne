@@ -91,7 +91,7 @@ export function landingScopeFor(
 }
 
 /** One publisher's claim: `key` published `expected` distinct rows that should become visible. */
-export interface LandingTarget {
+interface LandingTarget {
   key: string;
   expected: number;
 }

@@ -185,7 +185,7 @@ export const SIGEN_DERIVED_TAILS = [
   "battery_soc",
 ] as const;
 
-export type SigenDerivedTail = (typeof SIGEN_DERIVED_TAILS)[number];
+type SigenDerivedTail = (typeof SIGEN_DERIVED_TAILS)[number];
 
 function meta(tail: SigenDerivedTail): PointMetadata {
   const m = metadataByTail.get(tail);
@@ -529,7 +529,7 @@ const emptyInterval = (): IntervalEnergyWh => ({
  * Typed structurally, not against `statistics.ts`'s `Agg5mReading`, so the energy collector can
  * import this module without the two importing each other.
  */
-export function energyReadingsToIntervals(
+function energyReadingsToIntervals(
   readings: readonly {
     pointMetadata: { physicalPathTail: string };
     rawValue: number;
@@ -563,7 +563,7 @@ export function energyReadingsToIntervals(
  * closes it without costing anything: the backfill runs at 00:20 station-local over whole past
  * days, so nothing it targets is anywhere near this boundary in normal operation.
  */
-export const DERIVE_SETTLE_MS = 30 * 60 * 1000;
+const DERIVE_SETTLE_MS = 30 * 60 * 1000;
 
 /**
  * Build the day's fill readings, reading current coverage from the serving store.

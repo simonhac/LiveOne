@@ -51,7 +51,7 @@ import {
 import { Derivation, Device, type DeviceId } from "@/lib/ids";
 
 /** One device a derivation touches, with the facts an authorization decision needs. */
-export interface ScopeDevice {
+interface ScopeDevice {
   /** Raw `devices.id`. Data-layer only. */
   uuid: string;
   deviceId: DeviceId;
@@ -61,7 +61,7 @@ export interface ScopeDevice {
 }
 
 /** One `derivation_sources` row, as the wire projection and the resolver both want it. */
-export interface ScopeSource {
+interface ScopeSource {
   slot: string;
   pointId: string;
   deviceUuid: string;

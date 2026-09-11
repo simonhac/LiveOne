@@ -8,8 +8,6 @@ import {
   type DevicePollingState,
 } from "@/lib/polling-state-manager";
 
-export type { PollingSessionState, DevicePollingState };
-
 interface UsePollingStateOptions {
   /** Use a shared singleton instance (default: true) */
   shared?: boolean;

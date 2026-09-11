@@ -25,7 +25,7 @@ type WireSource =
   | { kind: "derivation"; derivationId: string } // dx_…
   | { kind: "point"; pointId: string }; // pt_…
 
-export type WireTrigger =
+type WireTrigger =
   | {
       kind: "charge-session";
       source: WireSource;
@@ -45,7 +45,7 @@ export type WireTrigger =
       };
     };
 
-export type WireAction = {
+type WireAction = {
   kind: "point-action";
   pointId: string; // pt_…
 } & ({ action: "turn_off" } | { action: "set_value"; value: number });

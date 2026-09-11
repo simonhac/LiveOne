@@ -1,49 +1,10 @@
 /**
- * Enums for known identifier values
+ * The closed vocabularies a series address is built from: the metric a point measures, and the
+ * aggregation a stored interval carries.
  *
- * These enums provide type safety for common point types, metric types,
- * and aggregation fields used throughout the system.
+ * The stem half of an address (`source.solar`, `bidi.battery`, `load`, …) is NOT here — it is owned
+ * by the role registry, `lib/roles/registry.ts`, which is what every current caller consults.
  */
-
-/**
- * Known point types
- */
-export enum PointType {
-  SOURCE = "source",
-  BIDI = "bidi",
-  LOAD = "load",
-  GRID = "grid",
-}
-
-/**
- * Known point subtypes
- */
-export enum PointSubtype {
-  // Source subtypes
-  SOLAR = "solar",
-  WIND = "wind",
-  HYDRO = "hydro",
-
-  // Bidi subtypes
-  BATTERY = "battery",
-
-  // Load subtypes
-  HVAC = "hvac",
-  HOT_WATER = "hot_water",
-  EV = "ev",
-  POOL = "pool",
-  MANAGED = "managed",
-  UNMANAGED = "unmanaged",
-}
-
-/**
- * Known point extensions
- */
-export enum PointExtension {
-  CHARGE = "charge",
-  DISCHARGE = "discharge",
-  LOCAL = "local",
-}
 
 /**
  * Metric types — the closed vocabulary a logical path's metric segment may take.

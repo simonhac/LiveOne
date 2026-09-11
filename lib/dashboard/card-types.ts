@@ -69,15 +69,13 @@ export const V4_CARD_TYPES = [
 export type KnownCardType = (typeof V4_CARD_TYPES)[number];
 
 /** The 10 promoted tile views — v4 card types that render via a tile plugin, not a card plugin. */
-export const TILE_VIEW_TYPES: ReadonlySet<string> = new Set<TileView>(
-  V4_TILE_TYPES,
-);
+const TILE_VIEW_TYPES: ReadonlySet<string> = new Set<TileView>(V4_TILE_TYPES);
 
 export function isTileViewType(type: string): type is TileView {
   return TILE_VIEW_TYPES.has(type);
 }
 
-export const KNOWN_CARD_TYPES: ReadonlySet<string> = new Set(V4_CARD_TYPES);
+const KNOWN_CARD_TYPES: ReadonlySet<string> = new Set(V4_CARD_TYPES);
 
 export function isKnownCardType(t: string): t is KnownCardType {
   return KNOWN_CARD_TYPES.has(t);
@@ -90,8 +88,9 @@ export function isKnownCardType(t: string): t is KnownCardType {
  */
 export type NonTileCardType = (typeof V4_NON_TILE_CARD_TYPES)[number];
 
-export const NON_TILE_CARD_TYPES: ReadonlySet<string> =
-  new Set<NonTileCardType>(V4_NON_TILE_CARD_TYPES);
+const NON_TILE_CARD_TYPES: ReadonlySet<string> = new Set<NonTileCardType>(
+  V4_NON_TILE_CARD_TYPES,
+);
 
 export function isNonTileCardType(t: string): t is NonTileCardType {
   return NON_TILE_CARD_TYPES.has(t);
@@ -117,7 +116,7 @@ export type CardType = KnownCardType | (string & {});
 // ---------------------------------------------------------------------------
 
 /** The `chart` card config. */
-export const chartConfigSchema = z
+const chartConfigSchema = z
   .strictObject({
     variant: z.enum(["lines", "stacked-areas"]),
     split: z.enum(["load", "generation"]).optional(),
@@ -127,7 +126,7 @@ export const chartConfigSchema = z
 export type ChartConfig = z.infer<typeof chartConfigSchema>;
 
 /** The `device-metrics` card config. */
-export const deviceMetricsConfigSchema = z
+const deviceMetricsConfigSchema = z
   .strictObject({
     variant: z.enum(["grid", "table"]).optional(),
   })
@@ -135,7 +134,7 @@ export const deviceMetricsConfigSchema = z
 export type DeviceMetricsConfig = z.infer<typeof deviceMetricsConfigSchema>;
 
 /** The `TileFeature` forward-seam union (inert today), preserved on promoted tile cards. */
-export const tileFeatureSchema = z.discriminatedUnion("kind", [
+const tileFeatureSchema = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("sparkline"), series: z.string() }),
   z.strictObject({ kind: z.literal("breakdown") }),
   z.strictObject({ kind: z.literal("flow-direction") }),
@@ -145,7 +144,7 @@ export const tileFeatureSchema = z.discriminatedUnion("kind", [
 export type TileFeature = z.infer<typeof tileFeatureSchema>;
 
 /** Config a promoted tile card may carry — just the inert features list. */
-export const tileCardConfigSchema = z.strictObject({
+const tileCardConfigSchema = z.strictObject({
   features: z.array(tileFeatureSchema).optional(),
 });
 /** @knipignore See TileFeature — same open decision. */
@@ -168,7 +167,7 @@ export const DAILY_STRIPE_DEFAULT_PALETTE: readonly [string, string] = [
 ];
 
 /** The aggregation suffix a stripe series is served with; omitted ⇒ the metric's preferred one. */
-export const STRIPE_AGGS = ["avg", "last", "delta", "min", "max"] as const;
+const STRIPE_AGGS = ["avg", "last", "delta", "min", "max"] as const;
 
 /** One series a `daily-stripe` paints: a logical path, optionally pinned to a given aggregation. */
 const stripeSeriesShape = {

@@ -22,7 +22,7 @@ export interface CommandLogResponse {
  */
 export const INLINE_LOG_LIMIT = 1;
 /** One page of the "Show more" modal. The route caps `limit` at 50, so this is its ceiling too. */
-export const LOG_PAGE_SIZE = 50;
+const LOG_PAGE_SIZE = 50;
 
 function logUrl(pointId: string, limit: number, offset: number): string {
   return `/api/v4/points/${encodeURIComponent(pointId)}/commands?limit=${limit}&offset=${offset}`;

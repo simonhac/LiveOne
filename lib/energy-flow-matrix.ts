@@ -103,7 +103,7 @@ export function sumDailyFlowMatrices(
 
 /** One nullable metric leg folded over the window: per-cell sums plus the per-cell known-energy
  *  denominators behind any average built on top. */
-export interface MetricMatrixFold {
+interface MetricMatrixFold {
   /** [sourceIdx][loadIdx] = Σ of that cell across the days where it was non-null; null when NO day
    *  contributed (unknown intensity all window, or every day lacked the leg). */
   matrix: (number | null)[][];
@@ -115,7 +115,7 @@ export interface MetricMatrixFold {
 
 /** The metric legs of a window fold — one {@link MetricMatrixFold} per nullable leg, sharing the
  *  payload's [sourceIdx][loadIdx] axes, plus the plain-additive `estimatedKwh` confidence grid. */
-export interface FlowMatrixMetrics {
+interface FlowMatrixMetrics {
   emissionsG: MetricMatrixFold; // attributed gCO2
   renewableKwh: MetricMatrixFold; // attributed renewable energy (kWh)
   selfRenewableKwh: MetricMatrixFold; // attributed self-renewable energy (kWh)
@@ -218,7 +218,7 @@ export function pickDailyFlowMatrix(
 }
 
 /** One source's contribution to a load over the window (for the solar/battery/grid split). */
-export interface LoadSourceSplit {
+interface LoadSourceSplit {
   path: string;
   label: string;
   energyKwh: number;

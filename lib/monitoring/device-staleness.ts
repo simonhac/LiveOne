@@ -19,10 +19,7 @@ const num = (env: string | undefined, fallback: number): number => {
  * A device is stale once it has missed this many of its OWN slots in a row. 3 tolerates a vendor
  * blip plus the ~3% of Vercel cron ticks that never fire, without tolerating a real outage.
  */
-export const DEVICE_STALE_SLOTS = num(
-  process.env.MONITOR_DEVICE_STALE_SLOTS,
-  3,
-);
+const DEVICE_STALE_SLOTS = num(process.env.MONITOR_DEVICE_STALE_SLOTS, 3);
 
 /**
  * Consecutive failed polls before a device is called failing.
@@ -38,7 +35,7 @@ export const DEVICE_FAILING_ERRORS = num(
   5,
 );
 
-export type DeviceHealthCode =
+type DeviceHealthCode =
   | "ok"
   | "device_poll_stale"
   | "device_failing"

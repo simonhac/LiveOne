@@ -39,7 +39,7 @@ import { hubProbe, hubRun, type HubProbeResult } from "./hub-client";
  * The point this capability commands, by LOGICAL address (`logicalPath/metricType`) so it stays
  * stable across physical field renames — same convention as Tesla's `resolveDispatch`.
  */
-export const RUN_REQUEST_ADDRESS = "source.generator.control.request/duration";
+const RUN_REQUEST_ADDRESS = "source.generator.control.request/duration";
 
 /**
  * Resolve (site, owner passkey) for a point this capability answers for — shared by `invoke` and

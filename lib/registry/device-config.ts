@@ -61,7 +61,7 @@ import type { DeviceRid } from "./registry-cache";
  * read joins it directly: the subquery does not move here, it CEASES TO EXIST. (Deleted with the class
  * in K3, not here — K1 changes no call sites.)
  */
-export type DevicePollingState = typeof pgDeviceState.$inferSelect;
+type DevicePollingState = typeof pgDeviceState.$inferSelect;
 
 /**
  * One device's full config, as the serving layer needs it.
@@ -186,6 +186,8 @@ function toRecord(row: JoinRow): DeviceRecord {
 /**
  * The device's rid, as a branded seam key. `DeviceRecord.id` is a plain number so it stays a drop-in
  * for `DeviceWithPolling.id`; this is the typed accessor for anything crossing into the readings seam.
+ *
+ * @knipignore No caller, though the doc-comment calls it the typed accessor for anything crossing into the readings seam. Everything crosses without it: wire it or drop the claim.
  */
 export function ridOf(record: DeviceRecord): DeviceRid {
   return record.id as DeviceRid;

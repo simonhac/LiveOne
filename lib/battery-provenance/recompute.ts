@@ -31,7 +31,7 @@ import type { ProvenanceConfig } from "./types";
 
 /** Minutely trailing window. 12h (> HWS/run-tracking's 6h) because Amber revises hours later and devices
  * can go stale; the recompute extends this back by its own WARMUP_MS to anchor the fold at a reset. */
-export const DEFAULT_TRAILING_MS = 12 * 60 * 60 * 1000;
+const DEFAULT_TRAILING_MS = 12 * 60 * 60 * 1000;
 const CHUNK_MS = 14 * 24 * 60 * 60 * 1000; // 14 days
 const LIVEONE_BIRTHDATE_MS = Date.parse("2025-08-16T00:00:00Z");
 

@@ -27,14 +27,14 @@ import { loadTiers, type TierManifest } from "./tiers";
  * once the conversion is done"). Widening this is the next step, and it will surface that backlog
  * as findings rather than silence.
  */
-export const CENSUS_ROOTS = ["scripts/ops"];
+const CENSUS_ROOTS = ["scripts/ops"];
 
 const IGNORE = /(\.test\.ts|\.itest\.ts|\.d\.ts)$/;
 
 /** A file that looks like a CLI: it has an entrypoint guard, or it reads argv itself. */
 const CLI_SHAPED = ["import.meta.url", "process.argv"];
 
-export type FindingCode =
+type FindingCode =
   | "MISSING"
   | "NOT_CONVERTED"
   | "NO_ENTRYPOINT_GUARD"
@@ -54,7 +54,7 @@ export interface CensusFs {
   list(dir: string): string[];
 }
 
-export function nodeFs(repo: string = process.cwd()): CensusFs {
+function nodeFs(repo: string = process.cwd()): CensusFs {
   const walk = (dir: string, out: string[] = []): string[] => {
     let entries: fs.Dirent[];
     try {

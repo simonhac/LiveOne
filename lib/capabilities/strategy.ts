@@ -58,7 +58,7 @@ const POWER_ROLE_CAPS: readonly CapabilityId[] = [
 ];
 
 /** A pricing-only feed (Amber): has a grid rate but no actual power/energy role → the amber layout. */
-export function isPricingOnly(caps: CapabilitySet): boolean {
+function isPricingOnly(caps: CapabilitySet): boolean {
   return caps.has("grid/rate") && !POWER_ROLE_CAPS.some((c) => caps.has(c));
 }
 

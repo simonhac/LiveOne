@@ -33,7 +33,7 @@ import type {
   AutomationMode,
 } from "@/lib/db/planetscale/schema";
 
-export type SourceStatus = "active" | "inactive" | "unknown";
+type SourceStatus = "active" | "inactive" | "unknown";
 
 export interface SourceState {
   status: SourceStatus;

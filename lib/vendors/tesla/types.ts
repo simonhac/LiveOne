@@ -44,7 +44,7 @@ export interface TeslaChargeState {
 }
 
 // Drive state from vehicle_data
-export interface TeslaDriveState {
+interface TeslaDriveState {
   latitude: number;
   longitude: number;
   speed: number | null; // mph, null when parked
@@ -53,7 +53,7 @@ export interface TeslaDriveState {
 }
 
 // Vehicle state from vehicle_data
-export interface TeslaVehicleState {
+interface TeslaVehicleState {
   odometer: number;
   locked: boolean;
   car_version: string;

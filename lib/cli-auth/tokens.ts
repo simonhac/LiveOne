@@ -41,7 +41,7 @@ export { TOKEN_PREFIX };
 export const METADATA_KEY = "cliTokens";
 
 /** Default lifetime, and the ceiling an operator may ask for. */
-export const DEFAULT_TTL_DAYS = 90;
+const DEFAULT_TTL_DAYS = 90;
 export const MAX_TTL_DAYS = 365;
 
 /** How many live tokens one user may hold. Refusing the 11th beats an unbounded list. */
@@ -163,7 +163,7 @@ export function parseToken(raw: string): ParsedToken | null {
   return { userId, secret };
 }
 
-export type VerifyFailure =
+type VerifyFailure =
   | "malformed"
   | "wrong-user"
   | "unknown-secret"

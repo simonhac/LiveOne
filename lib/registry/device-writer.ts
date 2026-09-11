@@ -45,7 +45,7 @@ import { DeviceRegistry, type DeviceRegistryExec } from "./device-registry";
  * It is also a CLOSED shape rather than the old `Partial<Device>`, which accepted any `systems` column —
  * including ones with no `devices` counterpart, which it would have silently dropped.
  */
-export type DevicePatch = {
+type DevicePatch = {
   ownerClerkUserId?: string | null;
   displayName?: string;
   alias?: string | null;
@@ -68,7 +68,7 @@ export type DevicePatch = {
 };
 
 /** Input shape for creating a device (shared by createDevice and createHelperDevice). */
-export type CreateDeviceData = {
+type CreateDeviceData = {
   ownerClerkUserId: string | null;
   vendorType: string;
   vendorSiteId: string;
@@ -98,7 +98,7 @@ export type CreateDeviceData = {
  *
  * Pinned by `lib/registry/__tests__/device-writer-contract.test.ts`.
  */
-export type CreatedDevice = {
+type CreatedDevice = {
   /** 🛑 `devices.rid` — the integer handle. Read the type docstring before changing this. */
   id: number;
   /** `devices.id` — the v4 uuid identity. */

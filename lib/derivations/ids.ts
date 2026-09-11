@@ -35,7 +35,7 @@
  */
 import { uuidv5 } from "@/lib/identifiers/point-uid";
 
-export const DERIVATION_ID_NAMESPACE = "7c1f5b62-0a4e-4d3f-9b8a-2e6d41c07f95";
+const DERIVATION_ID_NAMESPACE = "7c1f5b62-0a4e-4d3f-9b8a-2e6d41c07f95";
 
 /**
  * The deterministic id for a derivation. `anchor` is its source point's uuid (see the note above);

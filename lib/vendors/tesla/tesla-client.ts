@@ -20,7 +20,7 @@ const AUTH_BASE_URL = "https://auth.tesla.com";
 // Default regional Fleet host. AU accounts are served by the Asia-Pacific region,
 // which is the `na` host; we still confirm per-user via GET /api/1/users/region and
 // persist the result, so this is only the bootstrap/fallback value.
-export const DEFAULT_FLEET_API_BASE_URL =
+const DEFAULT_FLEET_API_BASE_URL =
   "https://fleet-api.prd.na.vn.cloud.tesla.com";
 
 // OAuth scopes needed for vehicle data
@@ -51,7 +51,7 @@ export function generatePKCE(): {
   return { codeVerifier, codeChallenge };
 }
 
-export interface ITeslaClient {
+interface ITeslaClient {
   getAuthorizationUrl(state: string, codeChallenge: string): string;
   exchangeCodeForTokens(
     code: string,

@@ -81,7 +81,7 @@ export function formatCarbonTotal(grams: number): string {
  * `cents` is nullable because "nothing was priced" and "genuinely cost $0" are different facts and
  * the sums cannot tell them apart: pass null when `knownKwh` is 0.
  */
-export const PRICE_COVERAGE_MIN = 0.995;
+const PRICE_COVERAGE_MIN = 0.995;
 
 export function pricedTotal(
   cents: number | null,

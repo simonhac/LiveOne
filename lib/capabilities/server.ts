@@ -71,7 +71,7 @@ export async function memberDevices(
   return own ? [{ deviceId: own.deviceId, rid: handle }] : [];
 }
 
-export async function memberSystemIds(handle: number): Promise<number[]> {
+async function memberSystemIds(handle: number): Promise<number[]> {
   const members = await memberDevices(handle);
   // A handle that resolves to neither an area nor a device still has to answer with ITSELF: the
   // caller is about to ask `point_info`-shaped questions of it, and returning [] would silently turn

@@ -13,7 +13,7 @@ import type { PointMetadata } from "@/lib/point/point-manager";
 /**
  * Enphase interval data structure from production_micro endpoint
  */
-export interface EnphaseInterval {
+interface EnphaseInterval {
   end_at: number; // Unix timestamp marking END of interval
   devices_reporting: number; // Number of devices reporting
   powr: number; // Power in watts
@@ -73,6 +73,8 @@ export const ENPHASE_POINTS: EnphasePointConfig[] = [
 
 /**
  * Helper to get metadata for a specific field
+ *
+ * @knipignore Per-vendor lookup convention with no production caller in ANY vendor — only tesla's is referenced, and only by its own test. Decide the seam once, for all four.
  */
 export function getPointMetadata(
   field: keyof EnphaseInterval,

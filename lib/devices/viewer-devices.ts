@@ -6,7 +6,7 @@ import {
 } from "@/lib/registry/device-config";
 
 /** A visible device with the viewer's Clerk username attached to the ones they own (for pretty URLs). */
-export type ViewerDevice = VisibleDevice & { ownerUsername: string | null };
+type ViewerDevice = VisibleDevice & { ownerUsername: string | null };
 
 export interface ViewerDevices {
   /** The viewer's Clerk username (null if unset / lookup failed) — used for `/device/{user}/{alias}`. */

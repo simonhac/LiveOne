@@ -81,7 +81,7 @@ import {
 import { scanDocRefs } from "@/lib/dashboard/doc-refs";
 import type { Subject } from "./relied-upon";
 
-export type Verdict =
+type Verdict =
   | { protectedBy: "fk"; onDelete: "cascade" | "set null" | "no action" }
   | { protectedBy: "assertNotReliedUpon"; subject: Subject; reason: string }
   | { protectedBy: "deliberately-unprotected"; reason: string };

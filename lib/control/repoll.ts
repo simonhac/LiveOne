@@ -19,7 +19,7 @@ import { VendorRegistry } from "@/lib/vendors/registry";
  * Poll one device now. Best-effort: catches and logs everything, never throws — a failed
  * confirmation read must never turn a successful command into an error.
  */
-export async function repollDevice(device: DeviceConfigView): Promise<void> {
+async function repollDevice(device: DeviceConfigView): Promise<void> {
   try {
     const adapter = VendorRegistry.getAdapter(device.vendorType);
     if (!adapter || adapter.dataSource === "push") return;

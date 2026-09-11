@@ -6,8 +6,6 @@ import type {
   RunSignalMeta,
 } from "@/lib/run-tracking/run-period-view";
 
-export type { RunPeriodColumns, RunSignalMeta };
-
 /**
  * One persisted device run period, as shaped by `/api/device/{id}/run-periods`. Covers BOTH the
  * legacy generator-events fields and the richer enrichment (ISO times, duration, power). Consumers

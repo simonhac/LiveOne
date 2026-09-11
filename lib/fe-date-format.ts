@@ -11,7 +11,7 @@
  * differently across local / CI / Vercel. This is the single source of truth for every short-month
  * label in this module.
  */
-export const SHORT_MONTHS = [
+const SHORT_MONTHS = [
   "Jan",
   "Feb",
   "Mar",

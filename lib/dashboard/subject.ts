@@ -40,7 +40,7 @@ import { DeviceRegistry } from "@/lib/registry/device-registry";
 import { areas as pgAreas } from "@/lib/db/planetscale/schema";
 import { Area, Device, type AreaId, type DeviceId } from "@/lib/ids";
 
-export type AreaRow = typeof pgAreas.$inferSelect;
+type AreaRow = typeof pgAreas.$inferSelect;
 
 /** Which leg to take when a handle names both an area and a device. */
 export type SubjectPreference = "device" | "area";

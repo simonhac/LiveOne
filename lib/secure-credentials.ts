@@ -39,7 +39,7 @@ export interface VendorCredentials {
 }
 
 // v1.1 metadata structure
-export interface CredentialsMetadataV11 {
+interface CredentialsMetadataV11 {
   version: string; // "1.1"
   credentials: Array<VendorCredentials>;
 }

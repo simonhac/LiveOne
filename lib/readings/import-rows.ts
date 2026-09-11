@@ -156,7 +156,7 @@ function placeValue(
   };
 }
 
-export function isCounter(shape: PointShape): boolean {
+function isCounter(shape: PointShape): boolean {
   return shape.metricType === "energy" && shape.transform === "d";
 }
 

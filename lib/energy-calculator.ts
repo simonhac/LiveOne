@@ -13,7 +13,7 @@
  * calculated from 5-minute data before averaging occurs. This will provide accurate energy
  * totals for all time periods.
  */
-export function calculateEnergyKwh(
+function calculateEnergyKwh(
   powerValues: (number | null)[],
   timestamps: Date[],
 ): number | null {

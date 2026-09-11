@@ -1,9 +1,5 @@
 import type { EnphaseCredentials } from "@/lib/types/enphase";
-import type {
-  EnphaseTokens,
-  EnphaseTelemetryResponse,
-  EnphaseDevice,
-} from "./types";
+import type { EnphaseTokens, EnphaseDevice } from "./types";
 
 /**
  * ENPHASE API IMPLEMENTATION NOTES
@@ -60,7 +56,7 @@ export interface IEnphaseClient {
 }
 
 // Real Enphase Client
-export class EnphaseClient implements IEnphaseClient {
+class EnphaseClient implements IEnphaseClient {
   private apiKey: string;
   private clientId: string;
   private clientSecret: string;

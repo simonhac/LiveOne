@@ -12,42 +12,16 @@
  * 1,017 lines of interaction is exactly the consumer that would end up fighting one. Numbers are
  * unit-testable; a wrong number is a bug, a wrong component is a refactor.
  */
-export {
-  buildGeometry,
-  niceDomain,
-  DEFAULT_MARGIN,
-  type ChartGeometry,
-  type ChartMargin,
-  type GeometryInput,
-  type PlotBox,
-} from "./geometry";
+export { buildGeometry, niceDomain } from "./geometry";
 
-export { buildTimeTicks, buildShadingBands, type TimeTick } from "./time-ticks";
+export { buildTimeTicks, buildShadingBands } from "./time-ticks";
 
-export {
-  bandPath,
-  definedSegments,
-  linePath,
-  stackedBands,
-  type StackedBand,
-  type StackedSeries,
-} from "./paths";
+export { bandPath, linePath, stackedBands } from "./paths";
 
 export {
   nearestIndexForTime,
   useContainerSize,
   usePointerIndex,
-  type Size,
-  type PointerIndexOptions,
 } from "./hooks";
 
-export {
-  FocusLine,
-  ShadingBands,
-  TimeAxis,
-  ValueAxis,
-  type FocusLineProps,
-  type ShadingBandsProps,
-  type TimeAxisProps,
-  type ValueAxisProps,
-} from "./axes";
+export { FocusLine, ShadingBands, TimeAxis, ValueAxis } from "./axes";

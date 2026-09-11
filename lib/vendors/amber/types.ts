@@ -20,7 +20,7 @@ export interface AmberSite {
   intervalLength: number; // Minutes (typically 30)
 }
 
-export interface AmberChannel {
+interface AmberChannel {
   identifier: string; // e.g., "E1", "B1", "CL1"
   type: "general" | "feedIn" | "controlledLoad";
   tariff: string; // e.g., "CRTOU", "GENR13"
@@ -50,13 +50,13 @@ export interface AmberUsageRecord {
 }
 
 /** Amber's own forecast confidence band (c/kWh, incl. network/market fees). */
-export interface AmberAdvancedPrice {
+interface AmberAdvancedPrice {
   low: number;
   predicted: number;
   high: number;
 }
 
-export interface AmberPriceRange {
+interface AmberPriceRange {
   min: number;
   max: number;
 }
@@ -109,7 +109,7 @@ export interface SimplifiedSampleRecord {
 }
 
 // Sample records for a single point
-export interface SampleRecordsForPoint {
+interface SampleRecordsForPoint {
   records: SimplifiedSampleRecord[]; // Up to 2 sample records
   numSkipped?: number; // Number of records not included (if total > 2)
 }

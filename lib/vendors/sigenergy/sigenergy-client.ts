@@ -74,7 +74,7 @@ export interface SigenergyClientOptions {
 }
 
 /** Encrypt a plaintext password the way the mySigen client does before the legacy login. */
-export function encryptPassword(plain: string): string {
+function encryptPassword(plain: string): string {
   const cipher = createCipheriv("aes-128-cbc", SIGEN_AES_KEY, SIGEN_AES_IV);
   cipher.setAutoPadding(true); // PKCS7
   return Buffer.concat([cipher.update(plain, "utf8"), cipher.final()]).toString(

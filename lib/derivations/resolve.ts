@@ -84,7 +84,7 @@ export interface RunDetectorParams {
  * shape survives only because it is still the WIRE shape and still the stored column. It goes with
  * the column in 0064.
  */
-export interface RunDetectorSourcePoints {
+interface RunDetectorSourcePoints {
   signal: string;
   energy?: string | null;
   /**
@@ -95,7 +95,7 @@ export interface RunDetectorSourcePoints {
 }
 
 /** `derivations.params` for kind='hws-model'. Sparse overrides on the model constants. */
-export type HwsModelParams = Partial<HwsModelOptions>;
+type HwsModelParams = Partial<HwsModelOptions>;
 
 // ---------------------------------------------------------------------------
 // Resolved shapes
@@ -541,7 +541,7 @@ export interface EnsureRunDetectorInput {
   apply: boolean;
 }
 
-export type EnsureRunDetectorStatus =
+type EnsureRunDetectorStatus =
   | "created"
   | "exists"
   | "not-trackable"

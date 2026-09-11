@@ -80,7 +80,7 @@ export function resolveFrameOffsetMin(
   return actual ?? fallbackOffsetMin;
 }
 
-export interface HeatmapCell {
+interface HeatmapCell {
   /** Time of day, `HH:mm`. */
   x: string;
   /** Date, `YYYY-MM-DD`. */

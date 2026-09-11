@@ -96,10 +96,7 @@ export function readStore(filePath = DEFAULT_STORE_PATH): TokenStore {
   }
 }
 
-export function writeStore(
-  store: TokenStore,
-  filePath = DEFAULT_STORE_PATH,
-): void {
+function writeStore(store: TokenStore, filePath = DEFAULT_STORE_PATH): void {
   const dir = path.dirname(filePath);
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   const tmp = `${filePath}.${process.pid}.tmp`;

@@ -11,7 +11,7 @@ import { randomInt } from "crypto";
 // Tokens are revocable + expirable so this is acceptable; brute-force at
 // rate-limited request rates is uneconomic vs revoking on misuse.
 
-export const ADJECTIVES_1: readonly string[] = [
+const ADJECTIVES_1: readonly string[] = [
   "amber",
   "azure",
   "brave",
@@ -144,7 +144,7 @@ export const ADJECTIVES_1: readonly string[] = [
   "calm",
 ];
 
-export const ADJECTIVES_2: readonly string[] = [
+const ADJECTIVES_2: readonly string[] = [
   "amber",
   "baked",
   "baggy",
@@ -277,7 +277,7 @@ export const ADJECTIVES_2: readonly string[] = [
   "kooky",
 ];
 
-export const NOUNS: readonly string[] = [
+const NOUNS: readonly string[] = [
   "ant",
   "ape",
   "badger",

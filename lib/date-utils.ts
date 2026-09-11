@@ -108,24 +108,6 @@ export function parseDateYYYYMMDD(dateStr: string): CalendarDate {
 }
 
 /**
- * Convert a ZonedDateTime to Unix timestamp (seconds since epoch)
- * @param zonedDateTime - The ZonedDateTime to convert
- * @returns Unix timestamp in seconds
- */
-export function toUnixTimestamp(zonedDateTime: ZonedDateTime): number {
-  // Validate input
-  if (!zonedDateTime || typeof zonedDateTime.toDate !== "function") {
-    throw new Error(
-      `toUnixTimestamp expects a ZonedDateTime object, got ${typeof zonedDateTime}: ${zonedDateTime}`,
-    );
-  }
-
-  // Convert to milliseconds since epoch, then to seconds
-  const epochMillis = zonedDateTime.toDate().getTime();
-  return Math.floor(epochMillis / 1000);
-}
-
-/**
  * Convert Unix timestamp to ZonedDateTime
  * @param unixSeconds - Unix timestamp in seconds
  * @param timezoneOffsetMin - Timezone offset in minutes

@@ -161,11 +161,4 @@ export function maxPowerHintFromDeviceInfo(deviceInfo?: {
  * components/ui/skeleton.tsx (and documented there) because the leaf components use them too, and
  * those must not pull this module's react-query plumbing in just to draw a grey rectangle.
  */
-export {
-  SKELETON_CLASS,
-  SHIMMER_CLASS,
-  ShimmerBar,
-  TileSkeleton,
-  CardSkeleton,
-  StatGridSkeleton,
-} from "@/components/ui/skeleton";
+export { TileSkeleton, CardSkeleton } from "@/components/ui/skeleton";

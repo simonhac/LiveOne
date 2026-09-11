@@ -8,8 +8,6 @@
  */
 
 // Re-export backend types for convenience
-export type { LatestValue, LatestValuesMap } from "@/lib/latest-values-store";
-
 /**
  * Point value as returned by /api/data endpoint and deserialized on client
  *

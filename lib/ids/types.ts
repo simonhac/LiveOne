@@ -13,11 +13,20 @@ declare const __idBrand: unique symbol;
 /** A public config-row id tagged with its 2-letter prefix `P`. Runtime value is a plain string. */
 export type TypeId<P extends string> = string & { readonly [__idBrand]: P };
 
+/**
+ * One branded id per entity in {@link ID_PREFIX}, in the same order. The three with no named
+ * importer today are the codecs' return types all the same — `Dashboard.parse()` hands back a
+ * `DashboardId` whether or not the caller writes the name — so the set is complete by construction
+ * and a partial one would be a trap for the next person to annotate a signature.
+ */
 export type DeviceId = TypeId<"dv">;
 export type PointId = TypeId<"pt">;
 export type AreaId = TypeId<"ar">;
+/** @knipignore Complete-by-construction id family — see {@link DeviceId}. */
 export type DashboardId = TypeId<"db">;
+/** @knipignore Complete-by-construction id family — see {@link DeviceId}. */
 export type DerivationId = TypeId<"dx">;
+/** @knipignore Complete-by-construction id family — see {@link DeviceId}. */
 export type BindingId = TypeId<"bn">;
 export type AutomationId = TypeId<"au">;
 
@@ -32,7 +41,7 @@ export const ID_PREFIX = {
   automation: "au",
 } as const satisfies Record<string, string>;
 
-export type ParseErrorCode =
+type ParseErrorCode =
   | "wrong-prefix"
   | "empty-prefix"
   | "malformed-format"
@@ -44,7 +53,7 @@ export interface ParseError {
   message: string;
 }
 
-export interface ParseOk<T> {
+interface ParseOk<T> {
   ok: true;
   id: T;
 }

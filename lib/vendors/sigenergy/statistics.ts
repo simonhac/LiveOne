@@ -158,7 +158,7 @@ export function computeDayEnergyReadings(
  * `now` defaults to the wall clock; injectable for tests. Requires a `session` (5m-native publish is
  * gated on it) and should be given the poll `collector` so the observations flush on session close.
  */
-export async function pullEnergyDay(params: {
+async function pullEnergyDay(params: {
   client: SigenergyClient;
   systemId: number;
   stationId: string;

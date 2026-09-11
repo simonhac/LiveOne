@@ -15,30 +15,16 @@ import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import {
   chainFallbackField,
   getLatestValues,
-  getLatestValuesForSubject,
-  LatestValue,
-  LatestValuesMap,
+  type LatestValue,
 } from "./latest-values-store";
 import { getAreaBindings, type AreaBindingRow } from "@/lib/areas/bindings";
 import { rankBindingChains } from "@/lib/areas/binding-chain";
 import { getAreaMemberPointsForServing } from "@/lib/areas/members";
 import { isDisplayDerivedHere } from "@/lib/areas/derived-display-paths";
 
-// Re-export canonical types for backwards compatibility
-export type { LatestValue, LatestValuesMap };
 // The single reader of the latest-values hash lives in `latest-values-store`; re-exported here so the
 // propagation writer and its reader can still be imported from one place.
-export { getLatestValues, getLatestValuesForSubject };
-
-/**
- * @deprecated Use LatestValue instead
- */
-export type LatestPointValue = LatestValue;
-
-/**
- * @deprecated Use LatestValuesMap instead
- */
-export type LatestPointValues = LatestValuesMap;
+export { getLatestValues };
 
 /**
  * Subscription registry entry - maps source point to subscriber points that subscribe to it
@@ -264,7 +250,7 @@ function addSubscription(
  * display layer computes that value, so serving a raw one would retire the computation silently.
  * Reported, never merely dropped: a deliberately excluded point is fine, an invisible one is not.
  */
-export interface SuppressedServingPath {
+interface SuppressedServingPath {
   areaId: AreaId;
   /** The latest-hash field name the display layer derives: `stem/metricType`. */
   path: string;
@@ -272,7 +258,7 @@ export interface SuppressedServingPath {
   pointRid: number;
 }
 
-export interface ContestedServingPath {
+interface ContestedServingPath {
   areaId: AreaId;
   /** The latest-hash field name the contenders would have fought over: `stem/metricType`. */
   path: string;
@@ -281,7 +267,7 @@ export interface ContestedServingPath {
 }
 
 /** A serving path several BINDINGS claim, resolved into a fallback chain by `priority`. */
-export interface ChainedServingPath {
+interface ChainedServingPath {
   areaId: AreaId;
   /** The path the chain serves: `stem/metricType`. */
   path: string;
@@ -290,7 +276,7 @@ export interface ChainedServingPath {
 }
 
 /** What one registry rebuild derived, for logging, the admin route, and the area-hash GC. */
-export interface SubscriptionRegistryBuild {
+interface SubscriptionRegistryBuild {
   subscriptions: Map<DeviceId, Map<string, Set<AreaId>>>;
   contested: ContestedServingPath[];
   /** Bound paths with more than one claimant, resolved by `priority` rather than contested. */

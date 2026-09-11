@@ -68,7 +68,7 @@ export type ExportTariffRate =
  * days/months. RESERVED for the TOU extension (not evaluated yet) — documents the target shape so it drops
  * in without touching the fold. e.g. weekday 17:00–20:00 peak, weekends off-peak, seasonal via `months`.
  */
-export interface TouBand {
+interface TouBand {
   cPerKwh: number;
   /** "HH:MM" local (24h). Window is [start, end); wraps past midnight when end ≤ start. */
   start: string;

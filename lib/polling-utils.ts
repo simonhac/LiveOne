@@ -198,7 +198,7 @@ async function writeDeviceStateErrorPg(
 /**
  * Common polling result interface
  */
-export interface PollingResult {
+interface PollingResult {
   systemId: number;
   displayName?: string;
   vendorType?: string;

@@ -43,7 +43,7 @@ export interface CatalogueTool {
   };
 }
 
-export interface Hit {
+interface Hit {
   name: string;
   summary: string;
   signature: string;

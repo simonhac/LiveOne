@@ -3,7 +3,7 @@ import { fetchJson } from "./fetcher";
 import { queryKeys, type SystemIdLike } from "./keys";
 import { LIVE_STALE } from "./freshness";
 
-export interface LatestReadingValue {
+interface LatestReadingValue {
   value?: number | string | boolean;
   physicalPath: string;
   logicalPath: string | null;
