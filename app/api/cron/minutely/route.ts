@@ -18,6 +18,10 @@ import {
   withDeadline,
 } from "@/lib/cron/concurrency";
 import { acquireCronLease, readCronLeaseHolder } from "@/lib/cron/run-lock";
+import {
+  pingHeartbeat,
+  collectorHeartbeatUrl,
+} from "@/lib/monitoring/heartbeat";
 
 /**
  * The device's slot width, used only to order dispatch. Read off the adapter rather than plumbed
@@ -617,6 +621,25 @@ export async function GET(request: NextRequest) {
     const successCount = results.filter((r) => r.action === "POLLED").length;
     const skippedCount = results.filter((r) => r.action === "SKIPPED").length;
     const failureCount = results.filter((r) => r.action === "ERROR").length;
+
+    // ── external dead-man's-switch ──────────────────────────────────────────────
+    //
+    // Ping only when a SCHEDULED run actually polled something. Three deliberate conditions:
+    //
+    //  - `authResult.isCron` — an admin or manual run must never keep the heartbeat green, or
+    //    debugging a dead cron would be what hides it.
+    //  - `successCount > 0` — "the route ran" is too weak. On 2026-09-11 the poll loop ran fine and
+    //    every store failed; a run-completed ping would have stayed green through the whole outage.
+    //    Requiring a real POLLED result means a dead Postgres stops the pings, which is the point.
+    //  - awaited — the function is frozen on return, so an un-awaited ping is silently dropped.
+    //
+    // This is the only signal about the poll loop that does not depend on the poll loop's own
+    // database, webhook, or cron scheduler being healthy enough to report. Unset env = no-op.
+    if (authResult.isCron && successCount > 0) {
+      await pingHeartbeat(collectorHeartbeatUrl(), {
+        log: (m) => console.warn(`[Cron] ${m}`),
+      });
+    }
 
     // Create sanitized results for logging
     const resultsForLogging = results.map((r) => {

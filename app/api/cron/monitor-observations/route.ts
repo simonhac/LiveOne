@@ -49,6 +49,10 @@ import { DeviceRegistry } from "@/lib/registry";
 import { checkSocMeterDivergence } from "@/lib/battery-provenance/soc-meter-check";
 import { qstash } from "@/lib/qstash";
 import { readIngestState } from "@/lib/observations/flow-control";
+import {
+  evaluateDeviceHealth,
+  unhealthy,
+} from "@/lib/monitoring/device-staleness";
 
 export const maxDuration = 30;
 
@@ -145,6 +149,37 @@ export async function GET(request: NextRequest) {
   const db = planetscaleDb;
 
   const issues: Issue[] = [];
+
+  // ── 0: can we see Postgres at all? ──
+  //
+  // Every check below queries the same database it is judging, and each one catches its own errors
+  // so that a single failure can't suppress the rest. The emergent behaviour was that a TOTAL
+  // outage produced a full set of caught errors, `status` collapsed to "warn", and the webhook —
+  // which only fires on "alert" — was never called. On 2026-09-11 that is why nothing spoke for
+  // 8 h 49 m.
+  //
+  // So: probe connectivity FIRST and treat "cannot reach PG" as a single, unambiguous alert, then
+  // short-circuit. One loud message beats five caught errors that add up to silence, and it avoids
+  // promoting every individual catch (an unmigrated table must not page anyone).
+  try {
+    await db.execute(sql`SELECT 1`);
+  } catch (err) {
+    console.error("[MonitorObservations] PG unreachable:", err);
+    const message = `Postgres is unreachable from the monitor — no health check could run: ${String(err)}`;
+    const sent = await sendAlert(`🚨 LiveOne observations mirror: ${message}`);
+    return NextResponse.json({
+      configured: true,
+      status: "alert" as Severity,
+      now: new Date().toISOString(),
+      issues: [{ severity: "alert", code: "pg_unreachable", message }],
+      checks: {},
+      alertWebhookConfigured: Boolean(
+        process.env.OBSERVATIONS_ALERT_WEBHOOK_URL,
+      ),
+      sentAlert: sent,
+    });
+  }
+
   const checks: Record<string, unknown> = {};
 
   // ── 1 + 2: response-presence and raw-landing, from PG ──
@@ -220,75 +255,39 @@ export async function GET(request: NextRequest) {
   } catch (err) {
     console.error("[MonitorObservations] PG checks failed:", err);
     issues.push({
-      severity: "warn",
+      // ALERT: see device_staleness_check_failed below. "Cannot determine health" must page.
+      severity: "alert",
       code: "pg_check_failed",
       message: `Could not query PG health: ${String(err)}`,
     });
   }
 
-  // ── 3b: PER-DEVICE poll staleness ──
+  // ── 3b: PER-DEVICE poll staleness + failure run ──
   //
   // `raw_landing_stale` above is a fleet-wide `max(created_at)`, so ONE healthy device masks every
   // other device going dark — a vendor could fail silently for weeks and never trip an alert. This
   // check is per device, against its own declared slot, so "Enphase is hourly" and "Selectronic is
   // minutely" are held to their own standards rather than a single global threshold.
   //
+  // The evaluation itself lives in lib/monitoring/device-staleness.ts because /api/health/devices
+  // serves the same verdict to an external monitor, and the two must not drift.
+  //
   // Separate try: a failure here must not suppress the checks above.
   try {
-    const { VendorRegistry } = await import("@/lib/vendors/registry");
-    const rows =
-      (
-        (await db.execute(sql`
-        SELECT d.rid, d.name, d.vendor,
-               (extract(epoch FROM (now() - ds.last_success_time)) / 60) AS stale_min
-        FROM devices d
-        LEFT JOIN device_state ds ON ds.device_id = d.id
-        WHERE d.status = 'active'
-        ORDER BY d.rid`)) as unknown as {
-          rows?: {
-            rid: number;
-            name: string;
-            vendor: string;
-            stale_min: string | null;
-          }[];
-        }
-      ).rows ?? [];
-
-    for (const row of rows) {
-      const adapter = VendorRegistry.getAdapter(row.vendor) as unknown as {
-        dataSource?: string;
-        pollIntervalMinutes?: number;
-        staleBudgetMinutes?: number;
-      } | null;
-      // Push vendors have no schedule to be late against; their freshness is the pusher's problem.
-      if (!adapter || adapter.dataSource === "push") continue;
-
-      // A vendor may declare its own budget where the generic multiple can't express its reality —
-      // Amber's scheduled nightly outage is 6 slots long and paged every night. Per-vendor, because
-      // raising DEVICE_STALE_SLOTS to cover it would blunt the check for the whole fleet.
-      const slot = adapter.pollIntervalMinutes ?? 5;
-      const declared = adapter.staleBudgetMinutes;
-      const budget = declared ?? slot * DEVICE_STALE_SLOTS;
-      const staleMin =
-        row.stale_min === null ? null : Math.round(Number(row.stale_min));
-
-      if (staleMin === null) {
-        issues.push({
-          severity: "warn",
-          code: "device_never_polled",
-          message: `${row.vendor} device ${row.rid} (${row.name}) has never recorded a successful poll.`,
-        });
-      } else if (staleMin > budget) {
-        issues.push({
-          severity: "alert",
-          code: "device_poll_stale",
-          message:
-            `${row.vendor} device ${row.rid} (${row.name}) last succeeded ${staleMin} min ago — over ` +
-            (declared !== undefined
-              ? `its declared ${declared} min staleness budget.`
-              : `${DEVICE_STALE_SLOTS}× its ${slot} min slot (${budget} min).`),
-        });
-      }
+    const devices = unhealthy(await evaluateDeviceHealth(db));
+    checks.devices = {
+      unhealthy: devices.length,
+      codes: devices.map((d) => `${d.vendor}/${d.rid}:${d.code}`),
+    };
+    for (const d of devices) {
+      issues.push({
+        // `device_failing` is the leading indicator — a device inside its budget but failing every
+        // poll. It alerts rather than warns because a warn goes to console.warn and nowhere else,
+        // and "we saw it coming and said nothing" is the exact failure this exists to prevent.
+        severity: d.code === "device_never_polled" ? "warn" : "alert",
+        code: d.code,
+        message: d.message,
+      });
     }
   } catch (err) {
     console.error(
@@ -296,7 +295,10 @@ export async function GET(request: NextRequest) {
       err,
     );
     issues.push({
-      severity: "warn",
+      // ALERT, not warn. Being unable to evaluate device health is not a lesser state than finding
+      // a stale device — it is the state in which we cannot tell, which on 2026-09-11 is precisely
+      // what happened for 8 h 49 m while this route reported "warn" and stayed silent.
+      severity: "alert",
       code: "device_staleness_check_failed",
       message: `Could not evaluate per-device poll staleness: ${String(err)}`,
     });

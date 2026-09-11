@@ -488,8 +488,9 @@ describe("runWithRestart", () => {
 
 /**
  * The finding this closes: through the 2026-09-11 receiver outage, sheephouse recorded 895 reads
- * where its 15 s cadence should have produced 958. Each failing push cost ~29 s, and the loop
- * sleeps `max(0, period - elapsed)` — so a push that overran the period silently ate the next poll.
+ * where its 15 s cadence should have produced 958. Each failing push cost ~16 s — almost all of it
+ * Pusher's retry backoff (2 + 4 + 8 s), not the requests — which overran the 15 s poll period, so
+ * the boundary-aligned loop skipped a poll every time. 45 stalls, ~45 readings never taken.
  * With a courier the tick hands off, and the poll cadence stops depending on the receiver.
  */
 describe("tickOnce hands delivery to a courier", () => {

@@ -26,6 +26,11 @@ KV_REST_API_TOKEN="op://liveone-dev/env/KV_REST_API_TOKEN"
 # QStash (publish + signature verification) is PROD-ONLY — dev runs no polling
 # infrastructure. Those fields live solely in the liveone-prod vault.
 OBSERVATIONS_ALERT_WEBHOOK_URL="op://liveone-dev/env/OBSERVATIONS_ALERT_WEBHOOK_URL"
+
+# External monitoring — intentionally unset locally: dev must not ping production's BetterStack
+# heartbeat, and an unset HEALTH_CHECK_KEY makes /api/health/devices fail closed.
+# COLLECTOR_HEARTBEAT_URL=
+# HEALTH_CHECK_KEY=
 OPEN_ELECTRICITY_API_KEY="op://liveone-dev/env/OPEN_ELECTRICITY_API_KEY"
 
 # ── non-secret config (literals; public or identifiers) ──────────────────────
