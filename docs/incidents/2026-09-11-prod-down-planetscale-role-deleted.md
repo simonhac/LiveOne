@@ -147,19 +147,86 @@ is the guardrail.
 
 ## Data loss
 
-Measured per device against the same window 24 h earlier (`point_readings_agg_5m` row counts):
+Measured per device against the same window 24 h earlier, counting **non-null 5-minute values per
+series** — `before` immediately after the outage, `after` once the catch-up had run (2026-09-11
+12:30 AEST). The catch-up itself is [outage-catchup.md](../outage-catchup.md).
 
-| device | vendor | recovered | note |
-| --- | --- | --- | --- |
-| Kinkora Fronius | `fusher` | **100%** | spool drained itself — the machinery working as designed |
-| OE NEM NSW / VIC | `openelectricity` | **100%** | public API, backfilled by the normal poll |
-| Amber ×2 | `amber` | **95%** | remainder settles on its own |
-| Daylesford Generator | `deepsea` | **46%** | spool recovered 13:42–17:58; **17:58–22:50 never collected (fault B)** |
-| Kutis | `sigenergy` | ~1% | **energy** self-heals on the daily backfill; power/SoC are live-poll — lost |
-| Daylesford Selectronic | `selectronic` | ~1% | live-poll only, no history endpoint — **lost** |
-| Kinkora Mondo | `mondo` | ~1% | live-poll only — **lost** |
-| Tez | `tesla` | 0% | live-poll only — **lost** |
-| 4 × `· derived` | `helper` | ~1% | recomputable from sources once those are final |
+| device | vendor | before | after | note |
+| --- | --- | --- | --- | --- |
+| Kinkora Fronius | `fusher` | **100%** | **100%** | spool drained itself — the machinery working as designed |
+| OE NEM NSW / VIC | `openelectricity` | **100%** | **100%** | public API, backfilled by the normal poll before anyone looked |
+| Kutis | `sigenergy` | 4% | **88%** | `liveone sync` — interval energy **100%**, power/SoC 82% (recovered wherever the vendor's `itemList` carried them) |
+| Kutis · derived | `helper` | 5% | **100%** | rebuilt by `liveone device recompute` once Kutis landed |
+| High Street Kew · derived | `helper` | 5% | **100%** | same |
+| Amber ×2 | `amber` | price **100%**, usage 6% | unchanged | **not yet settled** — see below |
+| Daylesford Generator | `deepsea` | 45% | 45% | spool recovered 13:42–17:58; **17:58–22:50 never collected (fault B)** |
+| Daylesford Selectronic | `selectronic` | ~7% | ~7% | live-poll only, no history endpoint — **lost** |
+| Kinkora Mondo | `mondo` | ~7% | ~7% | live-poll only — **lost** |
+| Tez | `tesla` | ~13% | ~13% | live-poll only — **lost** |
+| Kinkora Unified · derived | `helper` | 7% | 7% | blend needs Mondo — **bounded by a lost source** |
+| Daylesford · derived | `helper` | 7% | 7% | blend needs Selectronic — **bounded by a lost source** |
+
+🛑 **The original "Amber ×2 — 95%" was an artefact of blending all 34 series.** Every *pricing*
+series (`grid.spot/rate`, `grid.import|export/rate`, `grid.renewables/proportion`) was 18/18 from the
+start — `/prices` refilled itself. Every *usage* series (`grid.import|export/value`, `…/energy.delta`)
+was and remains **1/18**. A single percentage over series of different cadence and different
+provenance says nothing; measure per series, and group by what produced them.
+
+### The daily aggregates were missing for BOTH days, fleet-wide
+
+Not in the original assessment, and bigger than any single vendor's hole: `/api/cron/daily` runs at
+14:05 UTC, which is **inside** the outage, so it 500'd — and the following night's run covers
+*yesterday* only. Every device had **zero** `point_readings_agg_1d` rows for `2026-09-10`, and the
+5-minute readings they roll up from were fine. `liveone device recompute <device> --start --end`
+rebuilt all 14 devices; every one is now at parity with `2026-09-09`.
+
+The lesson generalises past this incident: **an outage spanning a scheduled aggregation loses the
+aggregate as well as the input, and the aggregate does not self-heal** — the nightly job's window is
+relative to now, not to what is missing.
+
+### Accepted holes — do not retry these
+
+Recorded so a coverage sweep's "unrepaired" line is read as a known fact rather than a new fault:
+
+| device | window (UTC) | why it is unrecoverable |
+| --- | --- | --- |
+| Daylesford Selectronic (1) | `2026-09-10 13:42 → 22:50` | live-poll vendor, no history endpoint |
+| Kinkora Mondo (6) | `2026-09-10 13:42 → 22:50` | live-poll vendor, no history endpoint |
+| Tez (10) | `2026-09-10 13:42 → 22:50` | live-poll vendor, no history endpoint |
+| Daylesford Generator (14) | `2026-09-10 17:58 → 22:50` | `musher` was dead (fault B); the readings were never taken |
+
+Measured uniformly across every series of each device, consistent to the interval — the generator's
+50/110 is exactly the 13:42→17:58 the spool did recover. `liveone sync` **refuses** these vendors
+rather than no-op'ing, so a retry is not merely useless, it is not expressible.
+
+⚠️ **"Unrecoverable by LiveOne" turned out not to mean "unrecorded".** Both Selectronic and Mondo DO
+have historical APIs behind their web portals; we had simply never looked. Neither is wired into
+LiveOne yet, so the table above still describes what LiveOne holds — but the data exists:
+
+- **Daylesford Selectronic** — [`2026-09-11-daylesford-selectronic-hourly.csv`](2026-09-11-daylesford-selectronic-hourly.csv)
+  is the 24 hours around this outage, pulled from `select.live`. It covers the whole window at
+  **hourly** resolution, and the battery tells the story plainly: SoC fell 100% → 31.5% overnight
+  and did not begin recovering until solar returned at 08:00. Hourly is the vendor's floor.
+- **Kinkora Mondo** — the outage window is recoverable **in full at 5-minute resolution**, including
+  battery SoC, which LiveOne does not record at all today.
+
+The plan for wiring both up is `.context/plans/vendor-history-legs-and-per-vendor-folders.md`. Until
+a backfill has actually landed rows, this table stays as it is: it is currently wrong in the safe
+direction, and editing it early would make it wrong in the unsafe one.
+
+Two consequences that look like holes and are not: the **HWS modelled temperature** tracks its source
+`load.hws/power` exactly (8/110 in the window), because a model cannot outrun its input — Mondo's
+loss is its loss. And **Kinkora Unified · derived** / **Daylesford · derived** stay at 7% for the same
+reason: their battery-provenance blend reads a device that has no data for the window.
+
+### Still outstanding
+
+**Amber usage, both devices.** `liveone sync 9|10002 --action=usage` reaches stage 3 and reports
+`local usage is already equal or superior to remote` — Amber answered, and returned nothing for the
+outage window that we do not already hold. A control run against `2026-09-08`, a day held completely,
+exits at stage 1 (`already-held`), which is what proves the comparison is working rather than
+mis-reading. Amber settles `/usage` over days: **re-run at T+3 (2026-09-14) and T+7 (2026-09-18)**,
+and treat the current answer as "come back later", not "the data does not exist".
 
 ## Lessons Learned
 
@@ -196,8 +263,17 @@ Measured per device against the same window 24 h earlier (`point_readings_agg_5m
 - [ ] **Audit every PlanetScale role for a misleading name**, in every org — this is a class, not an
       instance. A durable credential must be named for its consumer, never for a date.
 - [ ] **`liveone catchup <since>`** — one verb for the ordered recovery in
-      [outage-catchup.md](../outage-catchup.md) (spool → vendor → derived). Every step is manual and
-      the ordering matters.
+      [outage-catchup.md](../outage-catchup.md) (spool → vendor → derived). The PRIMITIVES now exist
+      (#455): `liveone sync` covers all three backfillable vendors and `liveone device recompute`
+      does the scoped rebuild, so what is left is the orchestration and the measurement, not the
+      levers.
+- [ ] **A scoped lever for the fleet-wide daily pass.** `POST /api/cron/daily?action=regenerate`
+      **504s** on a single past day (it re-runs HWS, battery learning, run periods and two reheal
+      passes, most of them out to *now*, inside a 300 s budget) — so the one thing `device recompute`
+      does not cover is currently unreachable by hand. It cost nothing here, because the only HWS
+      pair's input was lost anyway, but it will matter the day it is not.
+- [ ] **Alert when a scheduled aggregation does not run.** The missing `agg_1d` for both days was
+      found by looking, not by being told.
 - [ ] **Record accepted holes**, so a permanently-unrecoverable window stops being re-attempted and
       re-reported as a fault (the open gap already named in the coverage-repair framework).
 - [ ] **Recompute derived rows** for 2026-09-10 once the sources are final (daily agg, run
@@ -214,6 +290,10 @@ Measured per device against the same window 24 h earlier (`point_readings_agg_5m
 - [x] Recovery verified with a write, not just a read
 - [x] `musher` revived; 46 spooled batches recovered
 - [x] Runbook written ([outage-catchup.md](../outage-catchup.md)); CLAUDE.md corrected
+- [x] Vendor catch-up run — Kutis 4% → 88%; OE and Fronius were already whole (2026-09-11)
+- [x] Derived rows recomputed for the affected days (agg_1d fleet-wide, area flow/provenance, run
+      detectors) — 2026-09-11
+- [x] Permanently-lost windows recorded as accepted, so they stop being re-reported
+- [ ] Amber usage — awaiting settlement; re-run at T+3 (2026-09-14) and T+7 (2026-09-18)
 - [ ] Fault B's cause understood
 - [ ] Alerting closed for both faults
-- [ ] Derived rows recomputed for the affected days
