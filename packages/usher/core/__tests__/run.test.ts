@@ -1,4 +1,11 @@
-import { describe, it, expect } from "@jest/globals";
+import {
+  describe,
+  it,
+  expect,
+  beforeEach,
+  afterEach,
+  jest,
+} from "@jest/globals";
 import {
   msUntilNextBoundary,
   shouldDeliverTick,
@@ -136,6 +143,74 @@ describe("tickOnce", () => {
     expect(stampedMs).toBeLessThanOrEqual(after);
     // sessionLabel carries the same real instant, not a rounded boundary
     expect(captured.meta!.sessionLabel).toMatch(/^test\/\d+$/);
+  });
+});
+
+/**
+ * The tick's non-device awaits are all on collaborators that "never throw" — reset() swallows its
+ * own errors, append()/enqueue() degrade quietly. But not throwing is not the same as settling: a
+ * wedged device mutex or a wedged volume makes them pend forever, and an unbounded await then
+ * hangs the entry's run loop for the life of the process. That is the 2026-09-11 failure.
+ *
+ * Fake timers here (the rest of this file runs on real ones) so the 10 s bounds are testable.
+ */
+describe("tickOnce bounds its recovery and store awaits", () => {
+  beforeEach(() => {
+    jest.useFakeTimers();
+  });
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  /** Run tickOnce to completion, driving fake time forward. */
+  async function settle<T>(p: Promise<T>, ms: number): Promise<T> {
+    const done = p.then((v) => ({ v }));
+    await jest.advanceTimersByTimeAsync(ms);
+    return (await done).v;
+  }
+
+  it("a reset() that never settles does not hang the tick", async () => {
+    const { entry } = makeEntry(async () => {
+      throw new Error("boom");
+    });
+    // musher's reset() goes through its device mutex and ends in its own .catch(() => {}), so it
+    // can only ever hang — never throw. This is that source, reduced.
+    Object.assign(entry.source, { reset: () => new Promise<void>(() => {}) });
+
+    const r = await settle(
+      tickOnce(entry, () => {}, 60),
+      30_000,
+    );
+    expect(r).toMatchObject({ name: "test", count: null, error: "boom" });
+  });
+
+  it("a blackbox append that never settles does not hang the tick", async () => {
+    const { entry, captured } = makeEntry(async () => ({ x: 5 }));
+    Object.assign(entry, { blackbox: { append: () => new Promise(() => {}) } });
+
+    const r = await settle(
+      tickOnce(entry, () => {}),
+      30_000,
+    );
+    // The journal line is lost, but the reading is still collected AND pushed — losing a journal
+    // line beats losing the collector.
+    expect(r).toMatchObject({ count: 1, delivered: true, pushOk: true });
+    expect(captured.readings).toHaveLength(1);
+  });
+
+  it("a spool enqueue that never settles does not hang the tick", async () => {
+    const { entry } = makeEntry(async () => ({ x: 5 }));
+    Object.assign(entry, {
+      pusher: { store: async () => "transient" as const },
+      spool: { enqueue: () => new Promise(() => {}) },
+    });
+
+    const r = await settle(
+      tickOnce(entry, () => {}),
+      30_000,
+    );
+    expect(r).toMatchObject({ count: 1, delivered: true, pushOk: false });
+    expect(r.spooled).toBe(false); // reported honestly as not durably spooled
   });
 });
 

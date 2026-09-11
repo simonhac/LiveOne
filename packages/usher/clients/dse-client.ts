@@ -29,11 +29,19 @@
  */
 
 import ModbusRTU from "modbus-serial";
+import { settledWithin, withTimeout } from "../lib/async";
 
 export const DEFAULT_HOST = "10.0.1.244";
 export const DEFAULT_PORT = 502;
 export const DEFAULT_UNIT_ID = 10; // DeepSea default (not 1)
 export const DEFAULT_TIMEOUT_MS = 5000; // generous for ~300ms RTT over Teleport
+
+/**
+ * close() escalation budgets. Deliberately short: by the time we're closing we no longer want
+ * anything from this socket, and the next poll is 15 s away.
+ */
+const CLOSE_MS = 2000;
+const DESTROY_MS = 1000;
 
 /** Absolute address of the battery-voltage register — the connection sanity anchor. */
 export const BATTERY_V_ADDR = 1029;
@@ -1357,7 +1365,7 @@ export class DseClient {
   unitId: number;
   readonly timeoutMs: number;
   private readonly log: (msg: string) => void;
-  private readonly client = new ModbusRTU();
+  private client = new ModbusRTU();
   private connected = false;
 
   constructor(opts: DseClientOptions = {}) {
@@ -1373,13 +1381,37 @@ export class DseClient {
     this.log(`TCP connect ${this.host}:${this.port} …`);
     // modbus-serial's setTimeout only bounds Modbus request time, not the initial
     // TCP handshake — race a manual timeout so a down VPN fails fast with a hint.
-    await withTimeout(
-      this.client.connectTCP(this.host, { port: this.port }),
-      this.timeoutMs,
-      `TCP connect to ${this.host}:${this.port} timed out after ${this.timeoutMs}ms — is the Teleport VPN up?`,
-    );
+    try {
+      await withTimeout(
+        this.client.connectTCP(this.host, { port: this.port }),
+        this.timeoutMs,
+        `TCP connect to ${this.host}:${this.port} timed out after ${this.timeoutMs}ms — is the Teleport VPN up?`,
+      );
+    } catch (e) {
+      // The race abandoned connectTCP, but its socket is still attached and may yet come up —
+      // and `connected` is false, so close() would no-op and nothing would ever reap it. Discard
+      // the whole client so the next connect() starts from a clean one.
+      this.discardClient();
+      throw e;
+    }
     this.client.setTimeout(this.timeoutMs);
     this.connected = true;
+  }
+
+  /**
+   * Abandon the current ModbusRTU instance and start a fresh one. Best-effort destroy first (it
+   * cannot hang — see close()); if even that misbehaves we simply drop the reference and let the
+   * socket be GC'd, which is strictly better than reusing a client we no longer understand.
+   */
+  private discardClient(): void {
+    const dead = this.client;
+    this.client = new ModbusRTU();
+    this.connected = false;
+    try {
+      dead.destroy(() => {});
+    } catch {
+      /* best-effort */
+    }
   }
 
   /** Point the client at a different Modbus slave/unit id (e.g. fallback 10 → 1). */
@@ -1581,24 +1613,53 @@ export class DseClient {
     await this.client.writeRegisters(CONTROL_KEY_ADDR, [key, complement]);
   }
 
+  /**
+   * Close the socket. ALWAYS settles, and always leaves the client reconnectable.
+   *
+   * This used to be `await new Promise(r => client.close(r))` with no bound, and it is what wedged
+   * the Daylesford collector for 4 h 49 m on 2026-09-11 (04:01:20 -> 08:50:27 AEST).
+   *
+   * modbus-serial's tcpport.close() only calls `socket.end()` and leans on its 'close' handler to
+   * invoke the callback — but that handler is guarded by `if (openFlag)`, and the 'error' handler
+   * clears `openFlag` FIRST. So once the socket has errored, the callback is never invoked.
+   * (`handleCallback` is also one-shot, so an error arriving before close() stores its callback
+   * strands it the same way. A stalled tunnel is a second route in: FIN never acked and no socket
+   * timeout is ever set, so neither event arrives at all.)
+   *
+   * The first of those is the confirmed mechanism, not a hypothesis: the last diag record on the
+   * volume has all 115 fields null with no sentinel reason — i.e. every register read errored, so
+   * readAll (which catches per-field errors) returned normally and the hang was in readInner's
+   * finally-close, against a socket whose 'error' had already cleared openFlag.
+   *
+   * Either way the promise pends for the life of the process — and because `connected` was cleared
+   * only AFTER the await, reconnect was blocked too.
+   *
+   * So: clear `connected` first (a half-closed socket must never block the next connect), then
+   * escalate. destroy() is a safe fallback precisely because it cannot hang — modbus-serial's
+   * destroy() calls `_port.destroy()` and then invokes the callback SYNCHRONOUSLY on both
+   * branches, bypassing the openFlag trap, and cancels pending transactions on the way out.
+   */
   async close(): Promise<void> {
     if (!this.connected) return;
-    await new Promise<void>((resolve) => this.client.close(() => resolve()));
     this.connected = false;
-  }
-}
 
-/** Reject with `message` if `promise` hasn't settled within `ms`. */
-function withTimeout<T>(
-  promise: Promise<T>,
-  ms: number,
-  message: string,
-): Promise<T> {
-  let timer: NodeJS.Timeout;
-  const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new Error(message)), ms);
-  });
-  return Promise.race([promise, timeout]).finally(() =>
-    clearTimeout(timer),
-  ) as Promise<T>;
+    if (await settledWithin(this.closeGraceful(), CLOSE_MS)) return;
+
+    this.log(`close() did not settle in ${CLOSE_MS}ms — destroying socket`);
+    if (await settledWithin(this.destroyClient(), DESTROY_MS)) return;
+
+    // Neither path came back. Don't wait on it a third time — walk away from the instance.
+    this.log(
+      `destroy() did not settle in ${DESTROY_MS}ms — abandoning the client`,
+    );
+    this.discardClient();
+  }
+
+  private closeGraceful(): Promise<void> {
+    return new Promise<void>((resolve) => this.client.close(() => resolve()));
+  }
+
+  private destroyClient(): Promise<void> {
+    return new Promise<void>((resolve) => this.client.destroy(() => resolve()));
+  }
 }
