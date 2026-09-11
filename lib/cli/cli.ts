@@ -90,16 +90,21 @@ const EXIT_HELP: Record<number, string> = {
  *   db     — connects directly to Postgres (a `MIGRATE_DATABASE_URL`-style connection string)
  *   api    — calls the deployed LiveOne API as the signed-in user (needs a CLI token)
  *   clerk  — calls the Clerk backend API
+ *   selectlive — connects directly to the Select.live inverter tunnel
  *
  * 🛑 Declarative only for now. nanti pairs this with a RUNTIME gate that throws at the call site
  * before a credential is read, plus a static import-graph check — both directions, because a false
  * statement in `--help` is worse than no statement. Neither is wired up here yet; until they are,
  * `uses` documents intent and drives exit codes but cannot be trusted to be exhaustive.
  */
-export type Capability = "db" | "api" | "clerk";
+export type Capability = "db" | "api" | "clerk" | "selectlive";
 
 /** Capabilities that involve a credential, and so can fail with EXIT.AUTH. */
-const AUTHED: ReadonlySet<Capability> = new Set<Capability>(["api", "clerk"]);
+const AUTHED: ReadonlySet<Capability> = new Set<Capability>([
+  "api",
+  "clerk",
+  "selectlive",
+]);
 
 /**
  * LiveOne: `human | json` everywhere, plus `csv` on the commands that declare it (`spec.formats`)
@@ -240,6 +245,8 @@ export interface CommandSpec {
    * only the confirmation prompt, so a dry run listed what it would do and then did it.
    */
   mutates?: boolean;
+  /** Explicit local file effects (credentials/downloads), without the remote-write approval gate. */
+  localEffects?: string;
   /**
    * Named subcommands, each a full command in its own right — each carries its own flags, examples
    * and exit codes rather than being a bare string the parent switches on.
@@ -247,6 +254,8 @@ export interface CommandSpec {
    * A subcommand inherits the parent's `uses` unless it declares its own.
    */
   subcommands?: Record<string, CommandSpec>;
+  /** The entrypoint owns SIGINT so it can close connections and persist partial downloads. */
+  handlesInterrupt?: boolean;
 }
 
 export interface CliError {
@@ -779,7 +788,9 @@ export function renderHelp(
   out.push(
     spec.mutates
       ? "  This command WRITES. It is dry by default: nothing changes without --apply."
-      : "  Read-only. This command changes nothing.",
+      : spec.localEffects
+        ? `  ${spec.localEffects}`
+        : "  Read-only. This command changes nothing.",
   );
   out.push("");
 
@@ -865,6 +876,11 @@ export function renderHelp(
   if (uses.has("clerk"))
     out.push(
       "  Clerk     Calls the Clerk backend API. An auth failure is exit 3.",
+    );
+  if (uses.has("selectlive"))
+    out.push(
+      "  Select.live  Uses local credentials and verified TLS to select.live:7528.",
+      "               Portal/inverter authentication failure is exit 3; connection failure is exit 5.",
     );
   if (uses.size === 0)
     out.push(
@@ -1091,7 +1107,8 @@ export async function run(
   activeFormat = r.format;
   activeQuiet = r.quiet;
 
-  process.on("SIGINT", () => process.exit(EXIT.INTERRUPTED));
+  if (!spec.handlesInterrupt)
+    process.on("SIGINT", () => process.exit(EXIT.INTERRUPTED));
 
   try {
     const code = await main({
@@ -1142,9 +1159,11 @@ export function classify(e: unknown, spec: CommandSpec): CliError {
       code: EXIT.AUTH,
       what: msg,
       why: "the stored credential is missing, expired or revoked",
-      next: uses.has("api")
-        ? "re-authenticate the CLI, then retry"
-        : "refresh the Clerk credential, then retry",
+      next: uses.has("selectlive")
+        ? "run selectlive auth, then retry"
+        : uses.has("api")
+          ? "re-authenticate the CLI, then retry"
+          : "refresh the Clerk credential, then retry",
     };
 
   if (

@@ -25,6 +25,17 @@ Data goes to stdout; all diagnostics go to stderr. Mutating commands are **dry b
 | 5 | upstream failure |
 | 130 | interrupted |
 
+## `scripts`
+
+- [selectlive](../scripts/CLI_README.md#selectlive) — Explore an SP PRO inverter through Select.live.
+  - [selectlive auth](../scripts/CLI_README.md#selectlive-auth) — Verify and save the portal login, inspect authentication, or forget credentials.
+  - [selectlive devices](../scripts/CLI_README.md#selectlive-devices) — List inverter serials accessible to the portal account.
+  - [selectlive info](../scripts/CLI_README.md#selectlive-info) — Read inverter identity, firmware, interface versions, and logging metadata.
+  - [selectlive read](../scripts/CLI_README.md#selectlive-read) — Read a bounded range of inverter memory without writing settings.
+  - [selectlive history](../scripts/CLI_README.md#selectlive-history) — Inspect or preserve the inverter's retained detailed log.
+    - [selectlive history info](../scripts/CLI_README.md#selectlive-history-info) — Read detailed log metadata and the oldest/newest record timestamps.
+    - [selectlive history download](../scripts/CLI_README.md#selectlive-history-download) — Preserve the full detailed buffer and optionally decode it as CSV.
+
 ## `scripts/ops`
 
 - [liveone](../scripts/ops/CLI_README.md#liveone) — The LiveOne operator CLI.

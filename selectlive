@@ -1,0 +1,4 @@
+#!/bin/sh
+# Resolve the CLI beside this launcher while preserving the caller's output-directory context.
+SELECTLIVE_ROOT=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+exec "$SELECTLIVE_ROOT/node_modules/.bin/tsx" --tsconfig "$SELECTLIVE_ROOT/tsconfig.json" "$SELECTLIVE_ROOT/scripts/selectlive.ts" "$@"
