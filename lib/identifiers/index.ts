@@ -3,32 +3,13 @@
  *
  * This module provides type-safe identifiers for the LiveOne system,
  * replacing string-based parsing with structured objects.
+ *
+ * Only the names actually consumed through this barrel are re-exported. The
+ * logical- and physical-path helpers are imported from their own modules
+ * (`@/lib/identifiers/logical-path`, `.../point-uid`) — re-exporting them here
+ * as well just gave knip a second, unused surface to report.
  */
 
 export { SystemIdentifier, PointReference, SeriesPath } from "./types";
 
-export {
-  PointType,
-  PointSubtype,
-  PointExtension,
-  MetricType,
-  AggregationField,
-  isPointType,
-  isMetricType,
-  isAggregationField,
-} from "./enums";
-
-// Logical path utilities
-export {
-  isValidLogicalPathStem,
-  isValidMetricType,
-  isValidLogicalPath,
-  getLogicalPathStem,
-  getMetricType,
-  stemSplit,
-  buildLogicalPath,
-  matchesLogicalPath,
-} from "./logical-path";
-
-// Physical path utilities
-export { isValidPhysicalPath, splitPhysicalPath } from "./physical-path";
+export { MetricType, AggregationField } from "./enums";

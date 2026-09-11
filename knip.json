@@ -1,18 +1,20 @@
 {
   "$schema": "https://unpkg.com/knip@6/schema.json",
   "ignoreWorkspaces": ["packages/*"],
+  "tags": ["-knipignore"],
   "workspaces": {
     ".": {
       "entry": [
         "config.ts",
         "drizzle-planetscale.config.ts",
         "lib/db/planetscale/schema.ts",
+        "env/*.mts",
         "scripts/**/*.{ts,mjs,js}",
         "tools/**/*.ts",
         "e2e/**/*.spec.ts",
         "**/__tests__/**/*.ts"
       ],
-      "project": ["**/*.{ts,tsx,mjs,js}"],
+      "project": ["**/*.{ts,tsx,mts,mjs,js}"],
       "ignore": ["scripts/perf/sydney-lambda/**"],
       "ignoreDependencies": [
         "eslint",
