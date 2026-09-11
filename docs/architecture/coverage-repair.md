@@ -216,11 +216,72 @@ full invocation and reporting nothing. It looked healthy only because the queue 
 Both callers now use the scoped recompute, and the fleet backlog stays `cron/daily`'s job.
 
 One consequence worth knowing: the old pass was slow enough to incidentally mask the
-publish→recompute race (the 5m rows land asynchronously via the queue). A fast recompute exposes it,
-so the route now waits for the landing watermark — `MAX(updated_at)` over the device's 5m rows,
-compared against a baseline taken *before* the flush, so app/DB clock skew cannot make a stale read
-look fresh. The coverage-repair cron is the **automated, self-detecting** counterpart,
-wrapping the same underlying re-fetch primitives.
+publish→recompute race (the 5m rows land asynchronously via the queue). A fast recompute exposes it.
+
+🛑 **The first fix for that race was itself wrong, and it corrupted a day.** Both waits stopped on a
+*sign of life* — `MAX(updated_at)` advancing past a pre-flush baseline in the Sigenergy backfill,
+`present >= expected || present > pre` in this runner. A 7-day Sigenergy window is ~12k observations,
+chunked at 500 per message and delivered at lane parallelism 2: the first row lands within a second
+and the last tens of seconds later, so "something arrived" is true almost immediately and stays true
+for the whole delivery. It was not a race occasionally lost; it was a check almost always wrong. It
+left Kutis' 2026-09-09 daily totals at solar 0 Wh and load 1,860 Wh against 5-minute rows summing to
+35,330 and 20,210 — per-POINT partial (export 100 %, import 86 %, load 9 %, solar 0 %), which is the
+signature of a message-truncated publish rather than a truncated day. (`present` made it worse still:
+`countMaxPresent` was the MAX count across a device's points, so even `>= expected` needed only ONE
+point complete.)
+
+Both now wait on a **count of OUR OWN rows**. The publisher knows how many DISTINCT rows it sent
+(the poll collector de-duplicates by address), and the receiver stamps `session_id` from the
+observation onto every row it writes — so counting rows bearing this run's sessions counts its
+landings and nothing else. One primitive, `waitForLanding` (`lib/observations/landing.ts`), shared by
+both callers; `landingScopeFor` reads the points, interval range, sessions and row count off the
+collector itself.
+
+⚠️ The obvious cheaper version — "rows updated since a pre-flush baseline" — looks equivalent and is
+not, in two ways that both matter. It cannot tell our landings from another writer's, and the slack
+is not small just because the batch is large: what counts is the number of rows still OUTSTANDING, so
+a handful of unrelated writes can stand in for the last handful of queued rows, and those can carry
+most of a day's energy. It is also wrong at the boundary, because Postgres keeps `updated_at` to
+microseconds while a baseline read back through JavaScript's `Date` truncates to milliseconds — and
+batch writes share one `now()`, so a literal `>` can count a whole previous batch. Both were live in
+the first cut of this fix.
+
+A device that does not reach its count is **skipped, not recomputed anyway** — rebuilding from a
+store known to be incomplete writes a wrong day on purpose.
+
+Skipping needs a backstop, which is `healStaleAgg1dForDevice`
+(`lib/aggregation/heal-stale-agg1d.ts`), keyed on "`agg_5m` newer than `agg_1d`" exactly as proposed
+above — compared per (point, day), since a device-wide maximum lets one freshly-rebuilt point mask
+another that has 5-minute data and no daily row. It runs at the START of both runs (race-free: only
+committed state, long after any delivery) and is self-terminating, since a rebuild sets
+`agg_1d.updated_at` to now. It excludes the current local day, which would otherwise match forever
+against the live poll. This is the only thing in the system that can notice a wrong past day at all.
+
+Three bounds on it, each answering a way it would otherwise fail: it looks back the deepest provider
+window **plus a margin** (a day repaired at the exact edge of the repair window would otherwise have
+one night to be healed before ageing out of the sweep too, with its coverage complete so nothing
+re-detects it); it has a fleet-wide time budget, checked *between batches of days* rather than only
+between devices, because one device can rebuild 14 days of Areas and provenance; and its device order
+**rotates daily**, because `activeDevices()` is RID-ordered and a prefix that reliably exhausts the
+budget would otherwise starve everything behind it forever.
+
+⚠️ **Still open, and written up in [plans/recompute-debt.md](../plans/recompute-debt.md):** all three
+bounds above are ways a day can still be lost. The margin is slack, not a proof — a day repaired near
+the edge that survives it unhealed is gone permanently; the budget means a degraded fleet gets fewer
+attempts than the margin suggests; and **Enphase is covered by neither sweep** (it repairs yesterday
+during 01:00–05:59 local, after the daily rollup, and publishes 5-minute data without rebuilding
+daily aggregates — latent only because no Enphase device is active). The plan argues the real cost is
+not the durability but the missing observable: nothing in the system can answer "is any daily
+aggregate owed a rebuild?", which is what made 2026-09-09 expensive.
+
+🛑 **`/api/cron/sigenergy-backfill` now runs BEFORE `/api/cron/daily`** (00:05 vs 00:35 local;
+`vercel.json` lists the crons in execution order). It was the other way round, so the fleet sweep
+rolled up "yesterday" for a Sigenergy device 15 minutes before yesterday's energy existed — making
+the backfill's own scoped recompute the *only* thing that ever produced a correct Sigenergy daily
+total, and therefore a single point of failure with no redundancy behind it.
+
+The coverage-repair cron is the **automated, self-detecting** counterpart, wrapping the same
+underlying re-fetch primitives.
 
 ## Adding a vendor
 

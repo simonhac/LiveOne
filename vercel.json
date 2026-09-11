@@ -6,22 +6,6 @@
       "schedule": "* * * * *"
     },
     {
-      "path": "/api/cron/daily",
-      "schedule": "5 14 * * *"
-    },
-    {
-      "path": "/api/cron/sigenergy-backfill",
-      "schedule": "20 14 * * *"
-    },
-    {
-      "path": "/api/cron/db-stats",
-      "schedule": "0 2,14 * * *"
-    },
-    {
-      "path": "/api/cron/monitor-observations",
-      "schedule": "*/15 * * * *"
-    },
-    {
       "path": "/api/cron/relay-outbox",
       "schedule": "* * * * *"
     },
@@ -30,8 +14,24 @@
       "schedule": "* * * * *"
     },
     {
+      "path": "/api/cron/monitor-observations",
+      "schedule": "*/15 * * * *"
+    },
+    {
+      "path": "/api/cron/sigenergy-backfill",
+      "schedule": "5 14 * * *"
+    },
+    {
+      "path": "/api/cron/daily",
+      "schedule": "35 14 * * *"
+    },
+    {
       "path": "/api/cron/repair-coverage",
       "schedule": "45 14 * * *"
+    },
+    {
+      "path": "/api/cron/db-stats",
+      "schedule": "0 2,14 * * *"
     }
   ],
   "functions": {

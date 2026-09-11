@@ -7,6 +7,17 @@ import { getNowFormattedAEST, getYesterdayInTimezone } from "@/lib/date-utils";
 import { DeviceConfigRegistry } from "@/lib/registry/device-config";
 import { refreshServingForMintedPoints } from "@/lib/kv-cache-manager";
 
+/**
+ * 🛑 **This runs AFTER `/api/cron/sigenergy-backfill`, and the order is load-bearing.** This route
+ * rolls "yesterday" up from `agg_5m`, so every writer of yesterday's 5-minute data has to be
+ * finished first. Sigenergy is the one vendor whose interval energy never arrives on the live poll
+ * at all — the backfill route IS its primary writer — and until 2026-09-11 this route was scheduled
+ * 15 minutes AHEAD of it, so it aggregated a Sigenergy day before that day's energy existed, nightly.
+ * The backfill's own scoped recompute then became the only thing that ever made a Sigenergy daily
+ * total correct, which is how one bad landing left 2026-09-09 reading solar 0 Wh against 5-minute
+ * rows summing to 35,330. Schedules are in `vercel.json`, listed in execution order.
+ */
+
 // Headroom for the daily heal: the flow_attr settlement-window recompute + the bounded scattered-backlog
 // reheal run here (matches repair-coverage). Without this the route falls back to the platform default.
 export const maxDuration = 300;

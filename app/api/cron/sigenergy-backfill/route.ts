@@ -11,7 +11,13 @@ import { createPollCollector } from "@/lib/observations/poll-collector";
 import { getDeviceCredentials } from "@/lib/secure-credentials";
 import { planetscaleDb } from "@/lib/db/planetscale";
 import { recomputeDerivedForDeviceDays } from "@/lib/aggregation/scoped-recompute";
+import { healStaleAgg1dForDevice } from "@/lib/aggregation/heal-stale-agg1d";
 import { ReadingsDao } from "@/lib/readings";
+import {
+  waitForLanding,
+  landingScopeFor,
+  type LandingScope,
+} from "@/lib/observations/landing";
 import { Point } from "@/lib/ids";
 import { SigenergyClient } from "@/lib/vendors/sigenergy/sigenergy-client";
 import { backfillEnergyRange } from "@/lib/vendors/sigenergy/statistics";
@@ -30,9 +36,18 @@ const MAX_RANGE_DAYS = 31;
  *
  * THIS IS THE PRIMARY PATH, not a repair tool. `SigenergyAdapter` emits power + SoC only, so Sigenergy
  * is the one vendor whose interval energy never arrives on the live poll — it exists only because this
- * route runs. It is scheduled daily in `vercel.json` just after `/api/cron/daily`; the weekly
- * `/api/cron/repair-coverage` is only the backstop. (Before it was scheduled, that backstop's
- * `graceDays: 7` was the sole writer, which left the Kutis energy series structurally 7–14 days stale.)
+ * route runs. `/api/cron/repair-coverage` is only the backstop. (Before this was scheduled, that
+ * backstop's `graceDays: 7` was the sole writer, which left the Kutis energy series structurally
+ * 7–14 days stale.)
+ *
+ * 🛑 **This route must run BEFORE `/api/cron/daily`, and the schedules in `vercel.json` are load-
+ * bearing for that reason** (00:05 vs 00:35 local; they are listed there in execution order). It used
+ * to be the other way round — daily at 00:05, this at 00:20 — which meant `cron/daily` rolled up
+ * "yesterday" for a Sigenergy device 15 minutes before yesterday's energy existed, every single
+ * night. The consequence was not a slow correction but a SINGLE POINT OF FAILURE: this route's own
+ * scoped recompute was the only thing that ever made a Sigenergy daily total right, so one bad
+ * landing left the day wrong permanently, and nothing downstream disagreed. Running first restores
+ * the redundancy the fleet sweep is supposed to provide.
  *
  * Lives under /api/cron/* (a Clerk-public prefix) so it is reachable by an
  * `Authorization: Bearer $CRON_SECRET` curl (or `x-claude: true` in dev); `requireCronOrAdmin` also
@@ -81,6 +96,15 @@ type DeviceOutcome = {
   error?: string;
   sessionId?: string;
   range?: { start: string; end: string };
+  /**
+   * Exactly what this run put on the wire: the points, the interval range, and the DISTINCT row
+   * count the landing wait counts up to. Read off the collector, which has already de-duplicated by
+   * address, so no separate tally can drift from it — and scoped to the published points/range, so
+   * an unrelated write has far less chance of satisfying the target on our behalf.
+   */
+  landingScope?: LandingScope;
+  /** False when the landing wait gave up. The recompute is then SKIPPED — see the wait. */
+  landed?: boolean;
 } & Partial<Awaited<ReturnType<typeof backfillEnergyRange>>>;
 
 const ymd = (d: Date) =>
@@ -131,33 +155,21 @@ function eachIsoDay(startYmd: string, endYmd: string): string[] {
   return out;
 }
 
-/** How long to wait for the published 5m rows to land before recomputing from them. */
-const LANDING_WAIT_MS = 60_000;
+/**
+ * How long to wait for the published 5m rows to land before recomputing from them.
+ *
+ * Raising this is nearly free now that the wait has an EXACT stop condition: it returns the moment
+ * the published row count is met, so a longer deadline costs nothing on a healthy run and only buys
+ * patience on a slow one. When it was a watermark the wait ended on the first row regardless, so the
+ * number was never the thing that mattered.
+ */
+const LANDING_WAIT_MS = 120_000;
 const LANDING_POLL_MS = 3_000;
 
 /** A device's points, as reading-DAO ids. Empty when the device has none yet. */
 async function pointIdsFor(systemId: number) {
   const map = await PointManager.getInstance().loadPointInfoMap(systemId);
   return Object.values(map).map((p) => Point.encode(p.pointUid));
-}
-
-/**
- * `MAX(updated_at)` across a device's 5m rows — the landing watermark.
- *
- * Compared against a baseline taken BEFORE the queue flush, so both readings come from the database
- * clock and app/DB skew cannot make a stale read look fresh. A window this wide is still an indexed
- * `(point_rid, interval_end)` range scan.
- */
-async function landingWatermark(
-  systemId: number,
-  windowMs: { fromMs: number; toMs: number },
-): Promise<number | null> {
-  const points = await pointIdsFor(systemId);
-  if (points.length === 0) return null;
-  return ReadingsDao.latestAgg5mUpdatedAtForPoints(points, {
-    afterIntervalEndMs: windowMs.fromMs,
-    throughIntervalEndMs: windowMs.toMs,
-  });
 }
 
 /** Backfill one system. Never throws — a failure is reported as `{ ok: false, error }`. */
@@ -235,6 +247,14 @@ async function backfillOneDevice(
       includeRaw: params.raw ?? false,
     });
 
+    // Read off the collector rather than from `result`: the collector is what the publisher flushes,
+    // and a count derived from anything else could disagree with what the receiver is about to
+    // write. Taken before the flush only because the buffer is final here; it needs no baseline,
+    // because the scope carries the session ids that identify our landings.
+    const landingScope = dryRun
+      ? undefined
+      : landingScopeFor(collector.observations);
+
     // Flush the collected observations to the queue on session close (unless dry run).
     await sessionManager.updateSessionResult(
       session.id,
@@ -254,6 +274,7 @@ async function backfillOneDevice(
       error: result.errors.length ? result.errors.join("; ") : undefined,
       sessionId: session.id,
       range: { start: startYmd, end: endYmd },
+      landingScope,
       ...result,
     };
   } catch (err) {
@@ -386,23 +407,22 @@ async function handleBackfill(request: NextRequest) {
 
   const dryRun = params.dryRun ?? false;
 
-  // The landing baseline must predate the queue flush that `backfillOneDevice` performs, so it is
-  // taken here rather than after the loop.
-  const landingWindow = {
-    fromMs: Date.now() - 400 * 24 * 3600 * 1000,
-    toMs: Date.now() + 24 * 3600 * 1000,
-  };
-  const baselines = new Map<number, number | null>();
-  if (!dryRun) {
+  // Heal days a PREVIOUS run left with a stale `agg_1d` — a landing that timed out (whose recompute
+  // this route now deliberately skips), a crash between the two writes, or the old sign-of-life wait
+  // that used to recompute over a half-landed store. Nothing else in the system revisits a past day,
+  // so without this a wrong day is permanent.
+  //
+  // Deliberately BEFORE the fetch, not after: it reads only committed state, so it is race-free
+  // here, and running it first means a fetch that spends the budget cannot starve it. Best-effort —
+  // it never throws, and never blocks the backfill.
+  const healed: Record<number, string[]> = {};
+  if (!dryRun && planetscaleDb) {
     for (const device of targets) {
-      try {
-        baselines.set(
-          device.id,
-          await landingWatermark(device.id, landingWindow),
-        );
-      } catch {
-        baselines.set(device.id, null); // unknown baseline ⇒ the wait below just times out
-      }
+      const r = await healStaleAgg1dForDevice(planetscaleDb, device, {
+        lookbackDays: params.days ?? DEFAULT_DAYS,
+        label: "SigenBackfill",
+      });
+      if (r.healed.length > 0) healed[device.id] = r.healed;
     }
   }
 
@@ -438,24 +458,55 @@ async function handleBackfill(request: NextRequest) {
     // read pre-backfill data. That race existed before, but the old fleet-wide pass was slow enough
     // to hide it — making the recompute fast is exactly what exposes it, so the wait is part of this
     // change, not an extra.
-    const deadline = Date.now() + LANDING_WAIT_MS;
-    const awaiting = new Set(succeeded.map((o) => o.systemId));
-    while (awaiting.size > 0 && Date.now() < deadline) {
-      for (const sid of [...awaiting]) {
-        const base = baselines.get(sid);
-        try {
-          const now = await landingWatermark(sid, landingWindow);
-          if (now != null && (base == null || now > base)) awaiting.delete(sid);
-        } catch {
-          // Transient read failure — keep waiting; the deadline bounds it.
-        }
-      }
-      if (awaiting.size === 0) break;
-      await new Promise((r) => setTimeout(r, LANDING_POLL_MS));
+    //
+    // 🛑 **Wait for a COUNT, not for a sign of life.** This used to compare `MAX(updated_at)`
+    // against a pre-flush baseline and stop the moment it advanced — which is the first row of the
+    // first message, not the last row of the last. A 7-day window is ~12k observations, chunked at
+    // 500 per message and delivered on the `backfill` lane at parallelism 2, so "something landed"
+    // is true within a second and stays true for the whole delivery. The recompute then read a
+    // half-landed store and wrote the half into `agg_1d`. That is what left Kutis' 2026-09-09 daily
+    // totals at solar 0 Wh and load 1,860 Wh while the 5-minute rows summed to 35,330 and 20,210 —
+    // wrong for two days, self-consistent, and invisible to everything downstream.
+    //
+    // The publisher knows how many DISTINCT rows it sent, so the stop condition is that many rows
+    // updated at or after the baseline. Rows another writer touches in the same window also count,
+    // so the test is `>=` and can only end the wait early in the case where extra real writes are
+    // arriving anyway — unlike the watermark, which ended it early always.
+    const wait = await waitForLanding({
+      targets: succeeded.map((o) => ({
+        key: String(o.systemId),
+        expected: o.landingScope?.expected ?? 0,
+      })),
+      countLanded: (key) => {
+        const o = succeeded.find((x) => String(x.systemId) === key)!;
+        return ReadingsDao.countAgg5mForSessions(o.landingScope!.points, {
+          afterIntervalEndMs: o.landingScope!.fromMs,
+          throughIntervalEndMs: o.landingScope!.toMs,
+          sessionIds: o.landingScope!.sessionIds,
+        });
+      },
+      timeoutMs: LANDING_WAIT_MS,
+      pollMs: LANDING_POLL_MS,
+    });
+
+    // 🛑 A device that did not land is SKIPPED, not recomputed anyway. Recomputing over a store we
+    // know is incomplete writes a wrong day on purpose; skipping leaves whatever was there, and the
+    // stale sweep at the top of the next run rebuilds it — which is why that sweep is not optional.
+    const stranded = new Set(wait.pending);
+    for (const o of succeeded) {
+      o.landed = !stranded.has(String(o.systemId));
+      if (!o.landed)
+        console.error(
+          `[SigenBackfill] system ${o.systemId}: landing incomplete after ${wait.waitedMs}ms ` +
+            `(${wait.observed.get(String(o.systemId)) ?? 0}/${o.landingScope?.expected ?? 0} rows) — ` +
+            `SKIPPING the agg_1d recompute so a partial day is not written. The next run's stale ` +
+            `sweep rebuilds it.`,
+        );
     }
 
     recompute = { agg1dDays: 0, provenanceAreas: 0 };
     for (const o of succeeded) {
+      if (o.landed === false) continue;
       const device = targets.find((d) => d.id === o.systemId);
       if (!device) continue;
       const r = await recomputeDerivedForDeviceDays(
@@ -474,7 +525,17 @@ async function handleBackfill(request: NextRequest) {
 
   const ok = outcomes.every((o) => o.ok);
   return NextResponse.json(
-    { ok, dryRun, aggregated1d, aggregatedRange, recompute, devices: outcomes },
+    {
+      ok,
+      dryRun,
+      aggregated1d,
+      aggregatedRange,
+      recompute,
+      // Empty on a healthy fleet. A device appearing here repeatedly means its landing keeps timing
+      // out — the sweep is papering over something, and the log lines above name it.
+      healedStaleDays: Object.keys(healed).length > 0 ? healed : undefined,
+      devices: outcomes,
+    },
     // Every target failed ⇒ 500 so a scheduled run surfaces as a failure. A partial failure stays
     // 200 with `ok: false` — the successful devices really were written.
     { status: succeeded.length === 0 ? 500 : 200 },
