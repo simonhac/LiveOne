@@ -33,6 +33,7 @@ import { apiCommand, runApi } from "./api/cli";
 import { queueCommand, runQueue } from "./queue/cli";
 import { syncCommand, runSync } from "./sync/cli";
 import { importCommand, runImport } from "./import/cli";
+import { sessionCommand, runSession } from "./session/cli";
 
 export const cmd = defineCommand({
   name: "liveone",
@@ -63,6 +64,9 @@ export const cmd = defineCommand({
     // A root-level VERB beside `sync`, and its manual sibling: `sync` re-asks the vendor, `import`
     // writes what the caller supplies, for the values no vendor will ever return again.
     import: importCommand,
+    // A domain group: the provenance record an `import` is filed under. Separate from `import`
+    // because one repair job is many imports and they must all cite the SAME session.
+    session: sessionCommand,
     // A root-level VERB like `find`: one raw authenticated request, for endpoints no verb covers.
     api: apiCommand,
   },
@@ -85,6 +89,7 @@ const DOMAINS: Record<string, (ctx: Ctx) => Promise<number>> = {
   queue: runQueue,
   sync: runSync,
   import: runImport,
+  session: runSession,
   api: runApi,
 };
 

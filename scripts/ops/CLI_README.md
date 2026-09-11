@@ -111,6 +111,10 @@ Data goes to stdout; all diagnostics go to stderr. Mutating commands are **dry b
     - [liveone queue parallelism](#liveone-queue-parallelism)  _(writes)_
   - [liveone sync](#liveone-sync)  _(writes)_
   - [liveone import](#liveone-import)  _(writes)_
+  - [liveone session](#liveone-session)
+    - [liveone session create](#liveone-session-create)  _(writes)_
+    - [liveone session show](#liveone-session-show)
+    - [liveone session list](#liveone-session-list)
   - [liveone api](#liveone-api)  _(writes)_
 - [cli-reference](#cli-reference)  _(writes)_
 - [cli-conformance](#cli-conformance)
@@ -151,6 +155,7 @@ Subcommands:
   queue                  The observations ingest path — per-lane status, and the levers to unblock it.
   sync                   Re-fetch a historical window from a device's vendor, on the backfill lane.  (writes)
   import                 Write readings you supply into a device's 5-minute serving store.  (writes)
+  session                The provenance record a write is filed under — create one, and read it back.
   api                    One authenticated request to the deployed API, as you.  (writes)
 
 Run `liveone <subcommand> --help` for a subcommand's own options.
@@ -5047,17 +5052,25 @@ When to use:
 
 Admin/owner only, http-only. Prints `target: <origin> as <you>` on stderr first.
 
---file is a CSV with a header and three columns: point,interval_end,value.
-  point         a pt_… id belonging to THIS device (any other is refused, whole-request)
-  interval_end  ISO timestamp, on a 5-minute boundary, the interval's END
-  value         a number, or a string for a text point
-Use `-` to read the CSV from stdin.
+--file is a CSV with a header and three columns: point, a timestamp, and value.
+  point           a pt_… id belonging to THIS device (any other is refused, whole-request)
+  interval_end    ISO timestamp on a 5-minute boundary — the interval's END
+    OR
+  interval_start  the same instants stamped as the interval's START
+  value           a number, or a string for a text point
+Name the column for what the timestamps ARE. `liveone device history --format csv` and both
+vendor archives stamp the START; calling those interval_end shifts every row one interval and
+nothing downstream can detect it. Use `-` to read the CSV from stdin.
 
 --quality is REQUIRED and is the point of the verb: it is the only record of whether a number
 was measured or reconstructed. Grade the confidence in the VALUE, not how it reached you.
 
+--session is REQUIRED and is what makes --quality honest — it is how a later reader finds out
+where these rows came from. Create it first with `liveone session create`.
+
 Writes are an UPSERT on (point, interval_end), so re-running a corrected file is the intended
-way to repair a bad import. Rows are chunked; a file of any size is one command.
+way to repair a bad import. A row that would DOWNGRADE what is already stored refuses the whole
+request unless --overwrite-measured. Rows are chunked; a file of any size is one command.
 
 Usage:
   liveone import <device> [options]
@@ -5070,7 +5083,9 @@ Arguments:
 Options:
   --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
   --file <path>              CSV of point,interval_end,value — or `-` for stdin
-  --quality <marker>         REQUIRED — the data_quality to stamp on every row. `calculated` = exact by identity from a measured series; `interpolated` = a genuine guess of ours; `good` = a measurement.  (one of: billable, b, good, actual, a, calculated, interpolated, estimated, e, forecast, f, unknown, .)
+  --quality <marker>         REQUIRED — the data_quality to stamp on every row. `calculated` = exact by identity from a measured series; `interpolated` = a genuine guess of ours; `good` = a measurement.  (one of: good, actual, calculated, interpolated, estimated)
+  --session <id>             REQUIRED — the session these rows belong to. Create it with `liveone session create`, which takes a mandatory --label and a manifest saying where the data came from.
+  --overwrite-measured       Allow rows that would overwrite an existing reading — one graded higher, or an unmarked one with real samples behind it (which is what every raw vendor's aggregate looks like). Off by default; the import is refused outright instead.
 
 Common options:
   --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
@@ -5091,13 +5106,227 @@ External access:
             A missing, expired or revoked token is exit 3; an API failure is exit 5.
 
 Examples:
-  liveone import kutis --file=rows.csv --quality=interpolated
-  liveone import kutis --file=rows.csv --quality=interpolated --apply
-  liveone import 13 --file=- --quality=calculated --apply --yes
+  liveone session create kutis --label='sigen ev split 2026-09' --manifest=m.json --apply
+  liveone import kutis --file=rows.csv --quality=interpolated --session=01a0…
+  liveone import kutis --file=rows.csv --quality=interpolated --session=01a0… --apply
+  liveone import 13 --file=- --quality=calculated --session=01a0… --apply --yes
 
 Exit codes:
   0    success
   1    the file parsed but the server wrote fewer rows than it was sent
+  2    usage error
+  3    authentication failure
+  5    upstream failure
+  130  interrupted
+```
+
+### liveone session
+
+The provenance record a write is filed under — create one, and read it back.
+
+```
+The provenance record a write is filed under — create one, and read it back.
+
+When to use:
+  Create a session before `liveone import`, which requires one: it is the only record of where
+  operator-supplied rows came from. `show` answers the question a reader actually arrives with —
+  'this number has session_id X, what is X?'
+
+`create` writes and is dry-run by default; `show` and `list` read.
+
+Admin/owner only, http-only. Prints `target: <origin> as <you>` on stderr first.
+
+A poll opens its own session and archives the vendor's raw payload into it. An import has no
+vendor, so you supply the equivalent: --label, and a --manifest naming the source, its
+checksums, the mapping applied and the tool that built it.
+
+Usage:
+  liveone session <subcommand> [options]
+
+  Read-only. This command changes nothing.
+
+Subcommands:
+  create                 Mint a session to file an import under.  (writes)
+  show                   One session, with its manifest.
+  list                   A device's recent sessions — id, label, cause, rows.
+
+Run `liveone session <subcommand> --help` for a subcommand's own options.
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
+
+Exit codes:
+  0    success
+  1    completed, with findings or no results
+  2    usage error
+  3    authentication failure
+  5    upstream failure
+  130  interrupted
+```
+
+#### liveone session create
+
+Mint a session to file an import under.
+
+```
+Mint a session to file an import under.
+
+When to use:
+  Run this once per repair job, then pass the id to every `liveone import` it covers.
+  One job is several imports — chunked, per point, sometimes days apart — and they must all
+  resolve to the same record, which is why `import` will not mint one for itself.
+
+Usage:
+  liveone session create <device> [options]
+
+  This command WRITES. It is dry by default: nothing changes without --apply.
+
+Arguments:
+  <device>               A device: its dv_… id, integer handle, slug, or name
+
+Options:
+  --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
+  --label <text>             REQUIRED — how a human finds this again. Say what was repaired and when, not 'import'.
+  --manifest <path>          REQUIRED — a JSON file recording WHERE the data came from. `-` reads it from stdin.
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+  --apply                    Actually write. Without it nothing is changed.
+  --dry-run                  Report what would change and write nothing (the default)
+  --yes                      Skip the confirmation prompt. Required with --apply off a terminal.
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
+
+Examples:
+  liveone session create 6 --label='mondo archive soc 2025-10..2026-09' --manifest=m.json
+  liveone session create 6 --label='…' --manifest=m.json --apply
+
+Exit codes:
+  0    success
+  1    completed, with findings or no results
+  2    usage error
+  3    authentication failure
+  5    upstream failure
+  130  interrupted
+```
+
+#### liveone session show
+
+One session, with its manifest.
+
+```
+One session, with its manifest.
+
+When to use:
+  The answer to 'where did this reading come from?'. Takes the bare session id — you arrive
+  here from a row, which knows its session but not necessarily its device.
+
+Usage:
+  liveone session show <session> [options]
+
+  Read-only. This command changes nothing.
+
+Arguments:
+  <session>              A session id (uuidv7)
+
+Options:
+  --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
+
+Examples:
+  liveone session show 01a08f2e-9aa1-7917-a3bc-35663ac62736
+
+Exit codes:
+  0    success
+  1    completed, with findings or no results
+  2    usage error
+  3    authentication failure
+  5    upstream failure
+  130  interrupted
+```
+
+#### liveone session list
+
+A device's recent sessions — id, label, cause, rows.
+
+```
+A device's recent sessions — id, label, cause, rows.
+
+When to use:
+  For finding the id to `show`. The manifest is deliberately not here: it is unbounded, and
+  a list is for choosing.
+
+Usage:
+  liveone session list <device> [options]
+
+  Read-only. This command changes nothing.
+
+Arguments:
+  <device>               A device: its dv_… id, integer handle, slug, or name
+
+Options:
+  --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
+  --limit <n>                How many to return, newest first (default 20, max 200)
+  --cause <cause>            Only sessions with this cause, e.g. ADMIN for the operator-driven ones
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
+
+Examples:
+  liveone session list 6
+  liveone session list 6 --cause=ADMIN --limit=5
+
+Exit codes:
+  0    success
+  1    completed, with findings or no results
   2    usage error
   3    authentication failure
   5    upstream failure

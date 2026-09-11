@@ -29,7 +29,7 @@ import fs from "node:fs";
 import { defineCommand, EXIT, str, type Ctx } from "@/lib/cli/cli";
 import { withApiSession, type ApiSession } from "@/lib/cli-kit/api-session";
 import { apiFetch } from "@/lib/cli-kit/http";
-import { KNOWN_QUALITIES } from "@/lib/data-quality";
+import { IMPORTABLE_QUALITIES } from "@/lib/data-quality";
 import { BASE_URL_FLAG, resolveDevice, usage } from "../shared";
 
 /**
@@ -38,9 +38,14 @@ import { BASE_URL_FLAG, resolveDevice, usage } from "../shared";
  */
 const CHUNK = 5000;
 
+/**
+ * One CSV row on the wire. Exactly one of `intervalEnd` / `intervalStart` is set, chosen by which
+ * column the FILE declared — see `parseCsv`.
+ */
 interface WireRow {
   point: string;
-  intervalEnd: string;
+  intervalEnd?: string;
+  intervalStart?: string;
   value: number | string;
 }
 
@@ -50,14 +55,25 @@ interface WirePoint {
   metricType: string;
   unit: string;
   rows: number;
+  created: number;
+  replaced: number;
+  downgraded: number;
+  overMeasured: number;
 }
 
 interface WireImport {
   device: { id: string; systemId: number };
   interval: "5m";
   quality: string;
+  sessionId: string;
   points: WirePoint[];
   rows: number;
+  created: number;
+  replaced: number;
+  downgraded: number;
+  downgradesOver: string[];
+  overMeasured: number;
+  successorDeltasRepaired: number;
   firstInterval: string;
   lastInterval: string;
   dryRun: boolean;
@@ -74,15 +90,22 @@ export const importCommand = defineCommand({
     "day's aggregates or flow matrix on its own.",
   description:
     "Admin/owner only, http-only. Prints `target: <origin> as <you>` on stderr first.\n\n" +
-    "--file is a CSV with a header and three columns: point,interval_end,value.\n" +
-    "  point         a pt_… id belonging to THIS device (any other is refused, whole-request)\n" +
-    "  interval_end  ISO timestamp, on a 5-minute boundary, the interval's END\n" +
-    "  value         a number, or a string for a text point\n" +
-    "Use `-` to read the CSV from stdin.\n\n" +
+    "--file is a CSV with a header and three columns: point, a timestamp, and value.\n" +
+    "  point           a pt_… id belonging to THIS device (any other is refused, whole-request)\n" +
+    "  interval_end    ISO timestamp on a 5-minute boundary — the interval's END\n" +
+    "    OR\n" +
+    "  interval_start  the same instants stamped as the interval's START\n" +
+    "  value           a number, or a string for a text point\n" +
+    "Name the column for what the timestamps ARE. `liveone device history --format csv` and both\n" +
+    "vendor archives stamp the START; calling those interval_end shifts every row one interval and\n" +
+    "nothing downstream can detect it. Use `-` to read the CSV from stdin.\n\n" +
     "--quality is REQUIRED and is the point of the verb: it is the only record of whether a number\n" +
     "was measured or reconstructed. Grade the confidence in the VALUE, not how it reached you.\n\n" +
+    "--session is REQUIRED and is what makes --quality honest — it is how a later reader finds out\n" +
+    "where these rows came from. Create it first with `liveone session create`.\n\n" +
     "Writes are an UPSERT on (point, interval_end), so re-running a corrected file is the intended\n" +
-    "way to repair a bad import. Rows are chunked; a file of any size is one command.",
+    "way to repair a bad import. A row that would DOWNGRADE what is already stored refuses the whole\n" +
+    "request unless --overwrite-measured. Rows are chunked; a file of any size is one command.",
   uses: ["api"],
   args: [
     {
@@ -101,15 +124,25 @@ export const importCommand = defineCommand({
     quality: {
       type: "string",
       placeholder: "marker",
-      values: [...KNOWN_QUALITIES],
+      values: [...IMPORTABLE_QUALITIES],
       help: "REQUIRED — the data_quality to stamp on every row. `calculated` = exact by identity from a measured series; `interpolated` = a genuine guess of ours; `good` = a measurement.",
+    },
+    session: {
+      type: "string",
+      placeholder: "id",
+      help: "REQUIRED — the session these rows belong to. Create it with `liveone session create`, which takes a mandatory --label and a manifest saying where the data came from.",
+    },
+    "overwrite-measured": {
+      type: "boolean",
+      help: "Allow rows that would overwrite an existing reading — one graded higher, or an unmarked one with real samples behind it (which is what every raw vendor's aggregate looks like). Off by default; the import is refused outright instead.",
     },
   },
   mutates: true,
   examples: [
-    "liveone import kutis --file=rows.csv --quality=interpolated",
-    "liveone import kutis --file=rows.csv --quality=interpolated --apply",
-    "liveone import 13 --file=- --quality=calculated --apply --yes",
+    "liveone session create kutis --label='sigen ev split 2026-09' --manifest=m.json --apply",
+    "liveone import kutis --file=rows.csv --quality=interpolated --session=01a0…",
+    "liveone import kutis --file=rows.csv --quality=interpolated --session=01a0… --apply",
+    "liveone import 13 --file=- --quality=calculated --session=01a0… --apply --yes",
   ],
   exitCodes: {
     1: "the file parsed but the server wrote fewer rows than it was sent",
@@ -134,14 +167,46 @@ export function parseCsv(text: string): WireRow[] {
     );
 
   const header = lines[0].split(",").map((h) => h.trim().toLowerCase());
-  const want = ["point", "interval_end", "value"];
+
+  // 🛑 The TIMESTAMP COLUMN NAMES ITS OWN CONVENTION, and the file must pick one.
+  //
+  // A 5m row is keyed on the interval END. But every plausible way an operator builds one of these
+  // files stamps the START: `liveone device history --format csv` emits `timestamp_utc` as the
+  // interval start, and so do the vendor archives. Both are on 5-minute boundaries, so a
+  // start-stamped file read as ends validates perfectly and lands every row one interval late —
+  // the "plausible-looking import against the wrong hour" this parser exists to make impossible.
+  //
+  // Carrying it in the header rather than a `--stamp` flag is deliberate: a flag can disagree with
+  // the file it is pointed at, and the person running the command is often not the person who
+  // wrote the file. A column name travels with the data.
+  const iEnd = header.indexOf("interval_end");
+  const iStart = header.indexOf("interval_start");
+  if (iEnd === -1 && iStart === -1)
+    throw usage(
+      "the header names neither interval_end nor interval_start",
+      `found: ${header.join(", ")}`,
+      "name the column for what its timestamps ARE — archives and `device history` stamp the START",
+    );
+  if (iEnd !== -1 && iStart !== -1)
+    throw usage(
+      "the header names both interval_end and interval_start",
+      "a timestamp is one or the other, and the two differ by a whole interval",
+      "keep the column that describes the timestamps actually in the file",
+    );
+  const stampCol = iEnd !== -1 ? "intervalEnd" : "intervalStart";
+
+  const want = [
+    "point",
+    iEnd !== -1 ? "interval_end" : "interval_start",
+    "value",
+  ];
   const idx = want.map((w) => header.indexOf(w));
   const missing = want.filter((w, i) => idx[i] === -1);
   if (missing.length > 0)
     throw usage(
       `the header is missing: ${missing.join(", ")}`,
       `found: ${header.join(", ")}`,
-      "the first line must be a header naming point, interval_end and value",
+      "the first line must be a header naming point, interval_end (or interval_start) and value",
     );
 
   const rows: WireRow[] = [];
@@ -157,10 +222,10 @@ export function parseCsv(text: string): WireRow[] {
     const num = Number(raw);
     rows.push({
       point: cells[idx[0]],
-      intervalEnd: cells[idx[1]],
+      [stampCol]: cells[idx[1]],
       // A bare empty cell is almost always a hole someone forgot to strip, not a value.
       value: raw === "" ? "" : Number.isFinite(num) && raw !== "" ? num : raw,
-    });
+    } as WireRow);
   }
   if (rows.length === 0)
     throw usage(
@@ -180,6 +245,19 @@ async function post(
     method: "POST",
     body,
     token: s.token,
+    errors: {
+      // The downgrade refusal. It is a decision the operator has to make, not a fault, so it says
+      // what is at stake and what to type — and it is EXIT.FINDINGS, because nothing went wrong.
+      409: {
+        exit: EXIT.FINDINGS,
+        what: "refused — this import would overwrite existing readings",
+        why: (b) =>
+          typeof b.error === "string"
+            ? b.error
+            : "some rows would replace readings that are already stored",
+        next: "check the window is the one you meant; if it is, re-run with --overwrite-measured",
+      },
+    },
   });
   return res.body;
 }
@@ -189,10 +267,33 @@ function render(r: WireImport, applied: boolean): string {
   lines.push(
     `${applied ? "imported" : "would import"}  ${r.rows} row(s)  quality=${r.quality}  interval=${r.interval}`,
   );
+  lines.push(`session  ${r.sessionId}`);
   lines.push(`window   ${r.firstInterval} .. ${r.lastInterval}`);
+  // 🛑 The counts that matter are what would CHANGE, not what is in the file. "1,272 rows" hides
+  // the mistake that actually happens — the right row count landing on rows that already had data.
+  const sampledFrom = (r as WireImport & { effectSampledFrom?: number })
+    .effectSampledFrom;
+  lines.push(
+    `effect   ${r.created} new, ${r.replaced} replacing an equal-or-worse grade` +
+      (r.downgraded > 0
+        ? `, ${r.downgraded} DOWNGRADING ${r.downgradesOver.join("/")}`
+        : "") +
+      (r.overMeasured > 0
+        ? `, ${r.overMeasured} OVER MEASURED rows (unmarked, but with samples behind them)`
+        : "") +
+      (sampledFrom ? `  (of the first ${sampledFrom} rows only)` : ""),
+  );
+  if (r.successorDeltasRepaired > 0)
+    lines.push(
+      `deltas   ${r.successorDeltasRepaired} counter row(s) after the run re-differenced against it`,
+    );
   for (const p of r.points)
     lines.push(
-      `  ${p.id}  ${p.logicalPath ?? "(no logical path)"}  ${p.rows} row(s)  [${p.metricType}, ${p.unit}]`,
+      `  ${p.id}  ${p.logicalPath ?? "(no logical path)"}  ${p.rows} row(s)` +
+        ` (${p.created} new, ${p.replaced} replaced` +
+        `${p.downgraded > 0 ? `, ${p.downgraded} downgraded` : ""}` +
+        `${p.overMeasured > 0 ? `, ${p.overMeasured} over measured` : ""})` +
+        `  [${p.metricType}, ${p.unit}]`,
     );
   if (applied) lines.push(`written  ${r.written}`);
   else lines.push("dry run — nothing was written. Re-run with --apply.");
@@ -209,18 +310,37 @@ export async function runImport(ctx: Ctx): Promise<number> {
       "--file=rows.csv, or --file=- to read the CSV from stdin",
     );
   // 🛑 No default. See the header: the marker is the one thing the caller must decide, and the
-  // parser has already checked it against KNOWN_QUALITIES.
+  // parser has already checked it against IMPORTABLE_QUALITIES.
   const quality = str(ctx, "quality");
   if (!quality)
     throw usage(
       "--quality is required",
       "data_quality is the only record of whether these numbers were measured or reconstructed",
-      `one of: ${KNOWN_QUALITIES.join(", ")}`,
+      `one of: ${IMPORTABLE_QUALITIES.join(", ")}`,
     );
+  // 🛑 No default and no auto-minting. A repair job is several import runs — chunked, per point,
+  // sometimes days apart — and they all have to resolve to ONE provenance record. A session minted
+  // per invocation would scatter that across as many rows as the file happened to be split into.
+  const sessionId = str(ctx, "session");
+  if (!sessionId)
+    throw usage(
+      "--session is required",
+      "without one, a `good` import is indistinguishable from a live measurement forever after",
+      "liveone session create <device> --label='…' --manifest=<file> --apply",
+    );
+  const overwriteMeasured = ctx.flags["overwrite-measured"] === true;
 
   const text =
     file === "-" ? fs.readFileSync(0, "utf8") : fs.readFileSync(file, "utf8");
   const rows = parseCsv(text);
+  // Ascending by instant, so chunk boundaries fall in time order. A counter's delta is computed
+  // against the immediately preceding interval, which for the first row of chunk N is a row chunk
+  // N-1 has already written — true only if the chunks go in order.
+  rows.sort((a, b) =>
+    (a.intervalEnd ?? a.intervalStart ?? "").localeCompare(
+      b.intervalEnd ?? b.intervalStart ?? "",
+    ),
+  );
 
   return withApiSession(
     ctx,
@@ -241,15 +361,21 @@ export async function runImport(ctx: Ctx): Promise<number> {
         const first = await post(s, path, {
           interval: "5m",
           quality,
+          sessionId,
+          overwriteMeasured,
           readings: rows.slice(0, CHUNK),
           dryRun: true,
         });
         // Report the FULL file, not just the validated first chunk, so the number the operator
-        // checks is the number they are about to write.
+        // checks is the number they are about to write. The create/replace split is necessarily the
+        // first chunk's only — deciding it for the rest would mean sending the rest — so it is
+        // labelled as a sample rather than quietly scaled up.
+        const sampled = rows.length > CHUNK;
         const preview = {
           ...first,
           rows: rows.length,
           chunks: Math.ceil(rows.length / CHUNK),
+          effectSampledFrom: sampled ? CHUNK : undefined,
         };
         ctx.emit(preview, () => render(preview, false));
         return EXIT.OK;
@@ -261,6 +387,8 @@ export async function runImport(ctx: Ctx): Promise<number> {
           await post(s, path, {
             interval: "5m",
             quality,
+            sessionId,
+            overwriteMeasured,
             readings: rows.slice(i, i + CHUNK),
             dryRun: false,
           }),
@@ -268,16 +396,38 @@ export async function runImport(ctx: Ctx): Promise<number> {
       }
 
       const written = results.reduce((n, r) => n + r.written, 0);
+      const sum = (pick: (r: WireImport) => number) =>
+        results.reduce((n, r) => n + pick(r), 0);
       const byPoint = new Map<string, WirePoint>();
       for (const r of results)
         for (const p of r.points) {
           const prev = byPoint.get(p.id);
-          byPoint.set(p.id, prev ? { ...p, rows: prev.rows + p.rows } : p);
+          byPoint.set(
+            p.id,
+            prev
+              ? {
+                  ...p,
+                  rows: prev.rows + p.rows,
+                  created: prev.created + p.created,
+                  replaced: prev.replaced + p.replaced,
+                  downgraded: prev.downgraded + p.downgraded,
+                  overMeasured: prev.overMeasured + p.overMeasured,
+                }
+              : p,
+          );
         }
       const merged: WireImport = {
         ...results[0],
         points: [...byPoint.values()],
         rows: rows.length,
+        created: sum((r) => r.created),
+        replaced: sum((r) => r.replaced),
+        downgraded: sum((r) => r.downgraded),
+        downgradesOver: [
+          ...new Set(results.flatMap((r) => r.downgradesOver)),
+        ].sort(),
+        overMeasured: sum((r) => r.overMeasured),
+        successorDeltasRepaired: sum((r) => r.successorDeltasRepaired),
         written,
         firstInterval: results.reduce(
           (a, r) => (r.firstInterval < a ? r.firstInterval : a),

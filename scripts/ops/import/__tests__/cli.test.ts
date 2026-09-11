@@ -9,7 +9,7 @@
 import { describe, it, expect } from "@jest/globals";
 import { CliFailure } from "@/lib/cli/cli";
 import { parseCsv, importCommand } from "../cli";
-import { KNOWN_QUALITIES } from "@/lib/data-quality";
+import { IMPORTABLE_QUALITIES } from "@/lib/data-quality";
 
 /**
  * The `what` line of a refusal — the headline the operator reads. `CliFailure`'s Error `message` is
@@ -61,10 +61,18 @@ describe("parseCsv", () => {
     expect(rows).toHaveLength(1);
   });
 
-  it("refuses a file whose header is missing a column", () => {
+  it("refuses a file whose header names no timestamp column", () => {
     expect(refusal(() => parseCsv(`point,value\n${PT},1\n`))).toMatch(
-      /missing: interval_end/,
+      /names neither interval_end nor interval_start/,
     );
+  });
+
+  it("refuses a file whose header is missing the value column", () => {
+    expect(
+      refusal(() =>
+        parseCsv(`point,interval_end\n${PT},2026-09-11T00:05:00Z\n`),
+      ),
+    ).toMatch(/missing: value/);
   });
 
   it("refuses a short row rather than shifting the remaining cells", () => {
@@ -94,7 +102,59 @@ describe("the command spec", () => {
       values?: readonly string[];
       default?: unknown;
     };
-    expect(q.values).toEqual([...KNOWN_QUALITIES]);
+    expect(q.values).toEqual([...IMPORTABLE_QUALITIES]);
     expect(q.default).toBeUndefined();
+  });
+
+  it("offers no marker that reads as 'provenance never recorded'", () => {
+    // The allow-list is deliberately narrower than KNOWN_QUALITIES. `unknown` and `.` rank 0, which
+    // is the exact outcome this verb exists to prevent; `a`/`b`/`e`/`f` are Amber's storage
+    // abbreviations and are not claims anyone can act on about another vendor's point.
+    const q = importCommand.flags!.quality as { values?: readonly string[] };
+    for (const bad of ["unknown", ".", "a", "b", "e", "f"])
+      expect(q.values).not.toContain(bad);
+  });
+
+  it("requires a session, and does not default one", () => {
+    // 🛑 Without it, `--quality=good` is indistinguishable from a live measurement forever after.
+    // A per-invocation default would also scatter one repair job across as many sessions as the
+    // file happened to be chunked into.
+    const sess = importCommand.flags!.session as { default?: unknown };
+    expect(sess).toBeDefined();
+    expect(sess.default).toBeUndefined();
+  });
+
+  it("does not overwrite better-graded readings unless asked", () => {
+    const flag = importCommand.flags!["overwrite-measured"] as {
+      type: string;
+      default?: unknown;
+    };
+    expect(flag.type).toBe("boolean");
+    expect(flag.default).toBeFalsy();
+  });
+});
+
+describe("the timestamp column names its own convention", () => {
+  // 🛑 A 5m row is keyed on the interval END, but `liveone device history --format csv` and both
+  // vendor archives stamp the START — and both land on 5-minute boundaries, so reading one as the
+  // other validates cleanly and shifts every row by a whole interval. Putting the convention in the
+  // HEADER rather than a flag is what makes that undetectable mistake impossible: a flag can
+  // disagree with the file it is pointed at, and the person running the command is often not the
+  // person who wrote the file.
+  it("passes a start-stamped file through as intervalStart", () => {
+    const rows = parseCsv(
+      `point,interval_start,value\n${PT},2026-09-11T00:05:00Z,387\n`,
+    );
+    expect(rows).toEqual([
+      { point: PT, intervalStart: "2026-09-11T00:05:00Z", value: 387 },
+    ]);
+  });
+
+  it("refuses a file that names both, rather than picking one", () => {
+    expect(
+      refusal(() =>
+        parseCsv(`point,interval_end,interval_start,value\n${PT},a,b,1\n`),
+      ),
+    ).toMatch(/names both interval_end and interval_start/);
   });
 });
