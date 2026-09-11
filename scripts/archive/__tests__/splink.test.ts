@@ -8,7 +8,10 @@
  */
 import { describe, it, expect } from "@jest/globals";
 import {
+  ACCUMULATED,
   AVERAGED,
+  accumulatorIncrements,
+  splitIncrement,
   FIFTEEN_MIN_MS,
   FIVE_MIN_MS,
   quantities,
@@ -167,5 +170,120 @@ describe("the series list", () => {
   it("covers every quantity except SoC, which is not an average", () => {
     const all = Object.keys(quantities(rec()));
     expect(new Set([...AVERAGED, "bidi.battery/soc"])).toEqual(new Set(all));
+  });
+});
+
+/**
+ * The energy counters: SP LINK's DAY accumulators → LiveOne's LIFETIME counters.
+ *
+ * 🛑 Two properties must not break. A window's energy has to survive the split into thirds exactly
+ * — `recomputeAgg1dForDay` sums 5-minute deltas, so a split that lost a fraction would show up as a
+ * short day. And the midnight reset has to be read as a reset: treating the post-reset value as an
+ * increment is harmless (it IS one), but treating a normal reading as one would invent a whole
+ * day-to-date of energy in a single interval.
+ */
+describe("accumulatorIncrements", () => {
+  const at = (i: number) => T + i * FIFTEEN_MIN_MS;
+
+  it("differences a rising accumulator", () => {
+    const out = accumulatorIncrements([
+      { tMs: at(0), value: 10 },
+      { tMs: at(1), value: 12.5 },
+      { tMs: at(2), value: 15 },
+    ]);
+    // The first window has no predecessor, so its increment is unknowable — not zero, and not the
+    // reading itself, which is a day-to-date total.
+    expect(out.map((o) => o.increment)).toEqual([null, 2.5, 2.5]);
+  });
+
+  it("reads a FALL as the day rolling over, and the new value as the first window's energy", () => {
+    const out = accumulatorIncrements([
+      { tMs: at(0), value: 29.2069 },
+      { tMs: at(1), value: 0.6832 },
+      { tMs: at(2), value: 1.3664 },
+    ]);
+    expect(out[1].increment).toBeCloseTo(0.6832, 6);
+    expect(out[2].increment).toBeCloseTo(0.6832, 6);
+  });
+
+  it("refuses to difference across a hole", () => {
+    const out = accumulatorIncrements([
+      { tMs: at(0), value: 10 },
+      { tMs: at(2), value: 20 }, // one window missing between them
+    ]);
+    // Differencing here would attribute two windows of energy to one.
+    expect(out[1].increment).toBeNull();
+  });
+
+  it("yields null for a blank reading without breaking the chain after it", () => {
+    const out = accumulatorIncrements([
+      { tMs: at(0), value: 10 },
+      { tMs: at(1), value: null },
+      { tMs: at(2), value: 15 },
+    ]);
+    expect(out[1].increment).toBeNull();
+    // at(2)'s predecessor is at(0), two windows back — unknowable, not 5.
+    expect(out[2].increment).toBeNull();
+  });
+});
+
+describe("splitIncrement", () => {
+  it("preserves the window's energy exactly, whatever the shape", () => {
+    for (const shape of [
+      [1, 2, 3],
+      [10, 0, 0],
+      [0.001, 1000, 7],
+    ] as Array<[number, number, number]>) {
+      const out = splitIncrement(300, shape);
+      expect(out[0] + out[1] + out[2]).toBeCloseTo(300, 9);
+    }
+  });
+
+  it("weights by the shape", () => {
+    expect(splitIncrement(600, [1, 2, 3])).toEqual([100, 200, 300]);
+  });
+
+  it("falls back to equal thirds with no usable shape", () => {
+    expect(splitIncrement(300, null)).toEqual([100, 100, 100]);
+    // All non-positive: a counter cannot run backwards, so nothing here can weight it.
+    expect(splitIncrement(300, [0, 0, 0])).toEqual([100, 100, 100]);
+    expect(splitIncrement(300, [-1, -2, -3])).toEqual([100, 100, 100]);
+  });
+
+  it("clamps a single negative bucket rather than discarding the window", () => {
+    const out = splitIncrement(300, [-5, 1, 1]);
+    expect(out[0]).toBe(0);
+    expect(out[0] + out[1] + out[2]).toBeCloseTo(300, 9);
+  });
+
+  it("never emits a negative bucket from a positive increment", () => {
+    for (const shape of [
+      [-1, 5, 5],
+      [5, -1, 5],
+      [5, 5, -1],
+    ] as Array<[number, number, number]>)
+      for (const v of splitIncrement(120, shape))
+        expect(v).toBeGreaterThanOrEqual(0);
+  });
+});
+
+describe("ACCUMULATED", () => {
+  it("names solar's two halves with the shunt inverted, as the power identity does", () => {
+    const solar = ACCUMULATED.find((a) => a.series === "source.solar/energy")!;
+    expect(solar.columns).toEqual([
+      { name: "shunt1_accumulated_kwh", scale: -1 },
+      { name: "ac_coupled_energy_sample_kwh", scale: 1 },
+    ]);
+  });
+
+  it("covers every energy counter the six-point repair needs", () => {
+    expect(ACCUMULATED.map((a) => a.series).sort()).toEqual([
+      "bidi.battery.charge/energy",
+      "bidi.battery.discharge/energy",
+      "bidi.grid.export/energy",
+      "bidi.grid.import/energy",
+      "load/energy",
+      "source.solar/energy",
+    ]);
   });
 });

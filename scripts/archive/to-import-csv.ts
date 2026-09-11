@@ -60,11 +60,15 @@ import {
   type PointRow,
 } from "./mapping";
 import {
+  ACCUMULATED,
   AVERAGED,
   FIFTEEN_MIN_MS,
+  FIVE_MIN_MS,
+  accumulatorIncrements,
   quantities,
   resampleAverages,
   resampleInstant,
+  splitIncrement,
   type Series,
   type SplinkRecord,
 } from "./splink";
@@ -226,6 +230,221 @@ function produceSplink(csvs: Csv[], fromMs: number, toMs: number): Produced[] {
   });
 }
 
+// ---------------------------------------------------------------------------------------------
+// splink-15min --counters — LiveOne's lifetime energy counters. See `splink.ts`.
+// ---------------------------------------------------------------------------------------------
+/** One counter's two stored readings: the last before the run and the first after it. */
+interface Anchor {
+  preMs: number;
+  pre: number;
+  postMs: number;
+  post: number;
+}
+
+/**
+ * Read the anchors from a `liveone device history … --series '**' + '/energy.last' --format csv` file.
+ *
+ * 🛑 Those stamps are interval ENDS, and this is the one place in this tool that reads them as such.
+ * The run's first interval STARTS at `fromMs`, so the reading that precedes it is the one stamped
+ * `fromMs` exactly; the first reading after the run is the first non-blank stamped later than
+ * `toMs + 5min`.
+ */
+function readAnchors(
+  file: string,
+  fromMs: number,
+  toMs: number,
+): Map<string, Anchor> {
+  const csv = readCsv(file);
+  const tsIdx = csv.header.indexOf("timestamp_utc");
+  if (tsIdx === -1)
+    refuse(
+      `${file} has no "timestamp_utc" column — is that a --format csv history?`,
+    );
+  const out = new Map<string, Anchor>();
+  const runEndMs = toMs + FIVE_MIN_MS;
+
+  for (const [col, head] of csv.header.entries()) {
+    // "1/load/energy.last (Wh)" -> logical path "load/energy", and the unit is not optional: these
+    // counters are Wh in LiveOne and kWh in the archive, and the factor between them is 1000.
+    const m = /^\d+\/(.+)\.last \((\w+)\)$/.exec(head);
+    if (!m) continue;
+    const [, seriesPath, unit] = m;
+    if (unit !== "Wh")
+      refuse(`${file}: "${head}" is in ${unit}; these counters must be Wh`);
+    let pre: { ms: number; v: number } | null = null;
+    let post: { ms: number; v: number } | null = null;
+    for (const row of csv.rows) {
+      const ms = Date.parse(row[tsIdx]);
+      const raw = row[col];
+      if (!Number.isFinite(ms) || raw === undefined || raw === "") continue;
+      const v = num(raw, `${file}: "${head}" at ${row[tsIdx]}`)!;
+      if (ms === fromMs) pre = { ms, v };
+      if (ms > runEndMs && post === null) post = { ms, v };
+    }
+    if (pre === null || post === null) continue;
+    out.set(seriesPath, {
+      preMs: pre.ms,
+      pre: pre.v,
+      postMs: post.ms,
+      post: post.v,
+    });
+  }
+  if (out.size === 0)
+    refuse(
+      `${file} carries no "<device>/<path>.last (Wh)" column with a reading both at ` +
+        `${new Date(fromMs).toISOString()} and after ${new Date(runEndMs).toISOString()} — ` +
+        `widen the history window the anchors came from`,
+    );
+  return out;
+}
+
+function produceSplinkCounters(
+  csvs: Csv[],
+  fromMs: number,
+  toMs: number,
+  anchorsFile: string,
+): Produced[] {
+  const anchors = readAnchors(anchorsFile, fromMs, toMs);
+
+  // One record of padding on the low side: the first window's increment is unknowable without its
+  // predecessor. None needed on the high side — an increment looks backwards only.
+  const padFrom = fromMs - FIFTEEN_MIN_MS;
+  const padTo = toMs + FIFTEEN_MIN_MS;
+
+  // The power reconstruction, reused verbatim as the within-window SHAPE so the counters agree with
+  // the power series imported beside them.
+  const shapeRows = new Map<string, Map<number, number>>();
+  for (const p of produceSplink(csvs, padFrom, padTo))
+    shapeRows.set(p.source, new Map(p.rows.map((r) => [r.startMs, r.value])));
+
+  // The accumulators themselves, summed over their columns and converted kWh -> Wh.
+  const stamps: number[] = [];
+  const byStamp = new Map<number, Map<string, number | null>>();
+  for (const csv of csvs) {
+    const tsIdx = columnIndex(csv, "timestamp_utc");
+    const idx = ACCUMULATED.map((a) =>
+      a.columns.map((c) => ({ i: columnIndex(csv, c.name), scale: c.scale })),
+    );
+    for (const row of csv.rows) {
+      const ms = Date.parse(row[tsIdx]);
+      if (!Number.isFinite(ms) || ms < padFrom || ms > padTo) continue;
+      const cells = new Map<string, number | null>();
+      for (const [k, a] of ACCUMULATED.entries()) {
+        let total: number | null = 0;
+        for (const { i, scale } of idx[k]) {
+          const v = num(
+            row[i],
+            `${csv.file}: "${a.columns[0].name}" at ${row[tsIdx]}`,
+          );
+          // Any missing half makes the whole quantity unknown — never a zero standing in.
+          if (v === null) {
+            total = null;
+            break;
+          }
+          total += v * scale * 1000; // kWh -> Wh
+        }
+        cells.set(a.series, total);
+      }
+      if (!byStamp.has(ms)) stamps.push(ms);
+      byStamp.set(ms, cells);
+    }
+  }
+  stamps.sort((a, b) => a - b);
+
+  const out: Produced[] = [];
+  for (const a of ACCUMULATED) {
+    const anchor = anchors.get(a.series);
+    if (anchor === undefined)
+      refuse(
+        `no anchor for "${a.series}" — the history file must carry its .last both at ` +
+          `${new Date(fromMs).toISOString()} and after the run`,
+      );
+    const incs = accumulatorIncrements(
+      stamps.map((tMs) => ({
+        tMs,
+        value: byStamp.get(tMs)!.get(a.series) ?? null,
+      })),
+    );
+    const shape = a.shape ? shapeRows.get(a.shape) : undefined;
+
+    // Chain from the stored reading before the run.
+    let cum = anchor.pre;
+    const rows: Array<{ startMs: number; value: number }> = [];
+    let unshaped = 0;
+    for (const { tMs, increment } of incs) {
+      if (increment === null) continue;
+      const starts: [number, number, number] = [
+        tMs - FIFTEEN_MIN_MS,
+        tMs - FIFTEEN_MIN_MS + FIVE_MIN_MS,
+        tMs - FIFTEEN_MIN_MS + 2 * FIVE_MIN_MS,
+      ];
+      if (starts[0] < fromMs || starts[2] > toMs) continue; // a window the run does not fully cover
+      const s = shape
+        ? (starts.map((ms) => shape.get(ms) ?? NaN) as [number, number, number])
+        : null;
+      const usable = s !== null && s.every((v) => Number.isFinite(v));
+      if (!usable && a.shape) unshaped++;
+      const split = splitIncrement(increment, usable ? s : null);
+      for (let i = 0; i < 3; i++) {
+        cum += split[i];
+        rows.push({ startMs: starts[i], value: cum });
+      }
+    }
+    if (rows.length === 0)
+      refuse(
+        `"${a.series}" produced no windows inside ${start_end(fromMs, toMs)}`,
+      );
+
+    // 🛑 The check that makes this trustworthy. The chain's end and the next stored reading differ
+    // by exactly the ONE interval between them, so the leftover must be a plausible interval — not
+    // negative (a counter cannot run backwards) and not a multiple of the biggest bucket in the run.
+    const leftover = anchor.post - cum;
+    const biggest = rows.reduce(
+      (mx, r, i) =>
+        Math.max(
+          mx,
+          i === 0 ? r.value - anchor.pre : r.value - rows[i - 1].value,
+        ),
+      0,
+    );
+    const bound = Math.max(biggest * 2, 1);
+    if (leftover < 0 || leftover > bound)
+      refuse(
+        `"${a.series}": chaining the archive's own increments onto ${anchor.pre} Wh lands at ` +
+          `${Math.round(cum)} Wh, but the next stored reading (${new Date(anchor.postMs).toISOString()}) ` +
+          `is ${anchor.post} Wh — a leftover of ${Math.round(leftover)} Wh for the one interval ` +
+          `between them, against a largest bucket of ${Math.round(biggest)} Wh. The two instruments ` +
+          `disagree by more than one interval; nothing here scales to hide that.`,
+      );
+    out.push({
+      source: a.series,
+      match: { by: "logicalPath", value: a.series },
+      rows,
+      note:
+        `chained from ${anchor.pre} Wh; leftover ${Math.round(leftover)} Wh ` +
+        `(${((leftover * 12) / 1000).toFixed(2)} kW) for the interval ending ` +
+        `${new Date(anchor.postMs).toISOString()}` +
+        (unshaped > 0 ? `; ${unshaped} window(s) split in equal thirds` : ""),
+    });
+  }
+  return out;
+}
+
+const start_end = (a: number, b: number) =>
+  `${new Date(a).toISOString()}..${new Date(b).toISOString()}`;
+
+const SPLINK_COUNTER_ALGORITHM = {
+  name: "splink-15min-accumulators-to-5m-counters",
+  doc: "scripts/archive/splink.ts",
+  notes: [
+    "SP LINK's *_accumulated_kwh are DAY totals that reset at local midnight; a window's energy is value - previous, except across the reset where the value IS the increment. The reset is detected by the value falling, never by a clock.",
+    "LiveOne's energy points are LIFETIME counters, so the run is chained onto the last stored .last before it; `liveone import` differences each row against its predecessor.",
+    "Each 15-minute increment is split across its three 5-minute buckets in proportion to the reconstructed POWER shape for the same quantity, so the counters agree with the power series; where the shape is absent or non-positive the split is equal thirds. Either way the window's energy is preserved exactly.",
+    "Nothing is scaled to fit. The chain's end is checked against the first stored reading after the run, and the leftover must be one plausible interval; a larger disagreement is a refusal.",
+    "Quality is `estimated`: the 15-minute windows are the inverter's own metered energy, but their distribution inside each window is modelled.",
+  ],
+};
+
 const SPLINK_ALGORITHM = {
   name: "splink-15min-to-5m",
   doc: "scripts/archive/splink.ts",
@@ -249,6 +468,11 @@ function main() {
   // wants only the columns a device could never see (Mondo's SoC and site load) while its other
   // series already hold real measurements an import must not touch. Generating all of them and
   // trimming the CSV afterwards would leave the manifest describing rows nobody imported.
+  // 🛑 The counters are a SEPARATE run, not extra columns on the power one. They target different
+  // points, carry a different algorithm note, and — unlike everything else here — depend on what
+  // LiveOne already holds. Folding them in would make one manifest describe two provenances.
+  const anchorsFile = flag("counters");
+
   const only = flag("columns")
     ?.split(",")
     .map((c: string) => c.trim())
@@ -306,10 +530,17 @@ function main() {
   const toMs = bound(end, true);
   if (fromMs > toMs) refuse(`--start is after --end`);
 
-  let produced = (kind === "mondo-5min" ? produceMondo : produceSplink)(
-    csvs,
-    fromMs,
-    toMs,
+  if (anchorsFile !== undefined && kind !== "splink-15min")
+    refuse(
+      `--counters is a splink-15min reconstruction; this archive is ${kind}`,
+    );
+
+  let produced = (
+    anchorsFile !== undefined
+      ? produceSplinkCounters(csvs, fromMs, toMs, anchorsFile)
+      : kind === "mondo-5min"
+        ? produceMondo(csvs, fromMs, toMs)
+        : produceSplink(csvs, fromMs, toMs)
   ).filter((p) => p.rows.length > 0);
 
   if (only) {
@@ -386,7 +617,12 @@ function main() {
         sha256: archive.sha256,
         title: archive.title,
       },
-      files: files.map(fileDigest),
+      files: [
+        ...files.map(fileDigest),
+        // The anchors are an INPUT that came out of LiveOne, not out of the archive — cited so the
+        // readings the chain rests on can be checked against what was stored at the time.
+        ...(anchorsFile !== undefined ? [fileDigest(anchorsFile)] : []),
+      ],
       declaredCoverage: archive.coverage,
     },
     device: { handle: Number.isNaN(Number(device)) ? device : Number(device) },
@@ -409,7 +645,14 @@ function main() {
         rows: p.rows.length,
       };
     }),
-    ...(kind === "splink-15min" ? { algorithm: SPLINK_ALGORITHM } : {}),
+    ...(kind === "splink-15min"
+      ? {
+          algorithm:
+            anchorsFile !== undefined
+              ? SPLINK_COUNTER_ALGORITHM
+              : SPLINK_ALGORITHM,
+        }
+      : {}),
     rows: lines.length - 1,
   };
   fs.writeFileSync(
@@ -436,7 +679,9 @@ function main() {
     only ??
     (kind === "mondo-5min"
       ? MONDO_5MIN.map((m) => m.source)
-      : [...AVERAGED, "bidi.battery/soc"]);
+      : anchorsFile !== undefined
+        ? ACCUMULATED.map((a) => a.series)
+        : [...AVERAGED, "bidi.battery/soc"]);
   for (const s of expected)
     if (!names.has(s))
       console.log(

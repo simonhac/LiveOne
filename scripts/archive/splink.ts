@@ -215,3 +215,166 @@ export function resampleInstant(
   }
   return out;
 }
+
+// =================================================================================================
+// The energy counters.
+// =================================================================================================
+/**
+ * Reconstructing LiveOne's LIFETIME energy counters from SP LINK's DAILY accumulators.
+ *
+ * This is a different job from everything above, and it is a much better-founded one: the
+ * quantities here are the inverter's own metered energy, not an identity over its power columns.
+ * What has to be reconstructed is only the SHAPE inside each 15-minute window and the OFFSET the
+ * whole run sits at.
+ *
+ * ## 1. The archive's accumulators reset at local midnight
+ *
+ * `*_accumulated_kwh` are DAY totals, not lifetime counters — measured, not assumed. Across
+ * 2026-09-11T00:00 local (2026-09-10T14:00Z) `ac_load_accumulated_kwh` steps 29.2069 → 0.6832
+ * while `load_ac_power_average_kw` holds flat at ~2.8 kW either side. So a window's energy is
+ * `value - previous`, except at the reset, where the value IS the increment.
+ *
+ * 🛑 The reset is detected by the value FALLING, not by a clock. A UTC-day rule would be wrong (the
+ * site is +10) and a local-midnight rule would still be a guess about the inverter's own
+ * bookkeeping. A counter that only ever rises within a day makes the fall unambiguous.
+ *
+ * ## 2. LiveOne's counters are LIFETIME, so the run needs an anchor
+ *
+ * `1/load/energy` reads 5,584,502 Wh, and `liveone import` computes each row's `delta` against the
+ * immediately preceding `last`. Writing the archive's 0.68 kWh into that column would difference
+ * against five and a half million and produce one catastrophic interval. So the increments are
+ * CHAINED onto the last stored reading before the run.
+ *
+ * ## 3. Nothing is scaled to fit
+ *
+ * The chain is checked against the first stored reading AFTER the run, and the check passes on its
+ * own. Over Daylesford's 2026-09-10T14:00Z→22:30Z outage (34 windows tiling 510 minutes exactly):
+ *
+ *   series        LiveOne Δ      archive     leftover
+ *   solar             2 959 Wh     2 788 Wh     171 Wh
+ *   load             22 802       22 546        256
+ *   battery.charge        0            0          0
+ *   battery.discharge 21 595       21 502         93
+ *   grid.import           0            0          0
+ *   grid.export           0            0          0
+ *
+ * The leftover is what the ONE interval between the run's end and the next stored reading must
+ * hold, and it is a plausible interval in its own right — 3.07 kW of load, 2.05 kW of solar and
+ * 1.12 kW of discharge — which balances to 3.1 %, about an inverter's efficiency. Two independent
+ * instruments agreeing to one interval over 8.5 hours is the evidence that no fitted constant is
+ * needed here, and a `--counters` run REFUSES when the leftover is not one plausible interval
+ * rather than quietly scaling to hide the disagreement.
+ *
+ * ## 4. Splitting a window across its three buckets
+ *
+ * The window's energy is a fact; where it sits inside the window is not. Each increment is split in
+ * proportion to the reconstructed POWER shape for the same quantity — the one `resampleAverages`
+ * already produces, whose triple-mean is exactly the recorded average. So the split is consistent
+ * with the power series imported beside it, and a flat window stays flat. Where the shape is
+ * absent, zero, or would go negative, the increment is split in equal thirds: a counter cannot run
+ * backwards, and an equal split preserves the window's energy exactly, which is the only property
+ * `recomputeAgg1dForDay` reads.
+ */
+
+/** The LiveOne energy counters this produces, and the archive column each accumulates. */
+export const ACCUMULATED: Array<{
+  /** LiveOne's logical path for the counter point. */
+  series: string;
+  /** The archive's day-accumulator column. */
+  columns: Array<{ name: string; scale: number }>;
+  /** The power series whose reconstructed shape splits each window, if any. */
+  shape?: Series;
+}> = [
+  {
+    series: "source.solar/energy",
+    // Solar is the same two halves the power identity uses: the DC-coupled shunt (sign inverted at
+    // this site, exactly as `shunt1_current_average_a` is) plus the AC-coupled sample.
+    columns: [
+      { name: "shunt1_accumulated_kwh", scale: -1 },
+      { name: "ac_coupled_energy_sample_kwh", scale: 1 },
+    ],
+    shape: "source.solar/power",
+  },
+  {
+    series: "load/energy",
+    columns: [{ name: "ac_load_accumulated_kwh", scale: 1 }],
+    shape: "load/power",
+  },
+  {
+    series: "bidi.battery.charge/energy",
+    columns: [{ name: "battery_in_accumulated_kwh", scale: 1 }],
+  },
+  {
+    series: "bidi.battery.discharge/energy",
+    columns: [{ name: "battery_out_accumulated_kwh", scale: 1 }],
+  },
+  {
+    series: "bidi.grid.import/energy",
+    columns: [{ name: "ac_input_accumulated_kwh", scale: 1 }],
+  },
+  {
+    series: "bidi.grid.export/energy",
+    columns: [{ name: "ac_export_accumulated_kwh", scale: 1 }],
+  },
+];
+
+/**
+ * Per-window increments of one day-resetting accumulator, in the accumulator's own unit.
+ *
+ * `byT` must be sorted ascending and evenly spaced; a window whose predecessor is missing yields
+ * null, because the increment is unknowable without it. The FIRST window is null for the same
+ * reason — which is why a caller reads one record of padding before the run it wants.
+ */
+export function accumulatorIncrements(
+  byT: Array<{ tMs: number; value: number | null }>,
+): Array<{ tMs: number; increment: number | null }> {
+  const out: Array<{ tMs: number; increment: number | null }> = [];
+  let prev: { tMs: number; value: number } | null = null;
+  for (const { tMs, value } of byT) {
+    if (value === null) {
+      out.push({ tMs, increment: null });
+      continue;
+    }
+    let increment: number | null;
+    if (prev === null || tMs - prev.tMs !== FIFTEEN_MIN_MS) {
+      // No adjacent predecessor: the increment is unknowable. Never treat the raw value as one —
+      // outside a reset it is a day-to-date total, and importing it would invent a day of energy.
+      increment = null;
+    } else if (value < prev.value) {
+      // The day rolled over: the new value is itself the first window's energy.
+      increment = value;
+    } else {
+      increment = value - prev.value;
+    }
+    out.push({ tMs, increment });
+    prev = { tMs, value };
+  }
+  return out;
+}
+
+/**
+ * Split one window's energy across its three 5-minute buckets, in proportion to `shape`.
+ *
+ * Returns the three bucket energies, which always sum to `increment` exactly.
+ */
+export function splitIncrement(
+  increment: number,
+  shape: [number, number, number] | null,
+): [number, number, number] {
+  const third = increment / 3;
+  if (shape === null) return [third, third, third];
+  // A counter cannot run backwards, so a negative shape cannot weight it. Clamping rather than
+  // refusing keeps a window with one negative bucket (a brief reverse flow inside an otherwise
+  // forward window) from discarding the whole window's energy.
+  const w = shape.map((v) => (Number.isFinite(v) && v > 0 ? v : 0));
+  const sum = w[0] + w[1] + w[2];
+  if (sum <= 0) return [third, third, third];
+  const out: [number, number, number] = [
+    (increment * w[0]) / sum,
+    (increment * w[1]) / sum,
+    (increment * w[2]) / sum,
+  ];
+  // Push the rounding residue into the last bucket so the three sum to `increment` exactly.
+  out[2] = increment - out[0] - out[1];
+  return out;
+}
