@@ -392,7 +392,7 @@ function produceSplinkCounters(
     }
     if (rows.length === 0)
       refuse(
-        `"${a.series}" produced no windows inside ${start_end(fromMs, toMs)}`,
+        `"${a.series}" produced no windows inside ${describeWindow(fromMs, toMs)}`,
       );
 
     // 🛑 The check that makes this trustworthy. The chain's end and the next stored reading differ
@@ -430,7 +430,7 @@ function produceSplinkCounters(
   return out;
 }
 
-const start_end = (a: number, b: number) =>
+const describeWindow = (a: number, b: number) =>
   `${new Date(a).toISOString()}..${new Date(b).toISOString()}`;
 
 const SPLINK_COUNTER_ALGORITHM = {
