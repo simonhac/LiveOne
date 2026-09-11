@@ -25,6 +25,14 @@
  * 🛑 Blank is ABSENT, never zero. A blank circuit in one of these archives was not reporting; it
  * was not drawing 0 W. A blank cell emits no row, so the hole stays a hole.
  *
+ * Two archive kinds, and they are not the same job:
+ *
+ *   mondo-5min    a COLUMN MAPPING. The archive's values are already LiveOne's values, at
+ *                 LiveOne's resolution, in LiveOne's units — import them as `good`, the vendor's
+ *                 own record of those intervals.
+ *   splink-15min  a RECONSTRUCTION. See `splink.ts`: LiveOne's series are identities over the
+ *                 inverter's log, resampled from 15 minutes to 5 — import them as `estimated`.
+ *
  *   npx tsx scripts/archive/to-import-csv.ts \
  *     --source ~/Documents/hac-admin/.../mondo-5min/2026-09-11 \
  *     --points points-6.json --device 6 \
@@ -42,9 +50,18 @@ import {
   MONDO_5MIN,
   describeMatcher,
   resolveMatcher,
-  type ColumnMapping,
+  type Matcher,
   type PointRow,
 } from "./mapping";
+import {
+  AVERAGED,
+  FIFTEEN_MIN_MS,
+  quantities,
+  resampleAverages,
+  resampleInstant,
+  type Series,
+  type SplinkRecord,
+} from "./splink";
 
 class Refusal extends Error {}
 const refuse = (msg: string): never => {
@@ -87,6 +104,134 @@ function readCsv(file: string): Csv {
   };
 }
 
+function columnIndex(csv: Csv, name: string): number {
+  const i = csv.header.indexOf(name);
+  // A column the archive does not carry is a refusal, not a silent skip: the mapping describes what
+  // this archive kind IS, so a missing one means the file is not what it claims.
+  if (i === -1) refuse(`${csv.file} has no "${name}" column`);
+  return i;
+}
+
+const num = (raw: string | undefined, where: string): number | null => {
+  if (raw === undefined || raw === "") return null; // blank is ABSENT
+  const n = Number(raw);
+  if (!Number.isFinite(n)) refuse(`${where} is not a number: ${raw}`);
+  return n;
+};
+
+/** One output series: what to call it, which point it is for, and its rows. */
+interface Produced {
+  source: string;
+  match: Matcher;
+  rows: Array<{ startMs: number; value: number }>;
+  /** Set when the value is not the archive's own number. */
+  note?: string;
+}
+
+// ---------------------------------------------------------------------------------------------
+// mondo-5min — a straight column mapping.
+// ---------------------------------------------------------------------------------------------
+function produceMondo(csvs: Csv[], fromMs: number, toMs: number): Produced[] {
+  const out: Produced[] = MONDO_5MIN.map((m) => ({
+    source: m.source,
+    match: m.match,
+    rows: [],
+  }));
+  for (const csv of csvs) {
+    const tsIdx = columnIndex(csv, "timestamp_utc");
+    const idx = MONDO_5MIN.map((m) => columnIndex(csv, m.source));
+    for (const row of csv.rows) {
+      const ms = Date.parse(row[tsIdx]);
+      if (!Number.isFinite(ms) || ms < fromMs || ms > toMs) continue;
+      for (const [i, m] of MONDO_5MIN.entries()) {
+        const v = num(
+          row[idx[i]],
+          `${csv.file}: "${m.source}" at ${row[tsIdx]}`,
+        );
+        if (v === null) continue;
+        out[i].rows.push({
+          startMs: ms,
+          value: m.scale === undefined ? v : v * m.scale,
+        });
+      }
+    }
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------------------------
+// splink-15min — the reconstruction in `splink.ts`.
+// ---------------------------------------------------------------------------------------------
+function produceSplink(csvs: Csv[], fromMs: number, toMs: number): Produced[] {
+  // 🛑 Read one record PAST the window on each side. A bucket at the edge is interpolated against
+  // its neighbour, and cutting the input to the window first would make every run's edges hold
+  // flat — a real reconstruction quietly degraded by where someone chose to cut.
+  const padFrom = fromMs - FIFTEEN_MIN_MS;
+  const padTo = toMs + FIFTEEN_MIN_MS;
+
+  const records: SplinkRecord[] = [];
+  for (const csv of csvs) {
+    const i = (n: string) => columnIndex(csv, n);
+    const c = {
+      ts: i("timestamp_utc"),
+      load: i("load_ac_power_average_kw"),
+      acCoupled: i("ac_coupled_power_average_kw"),
+      shunt1: i("shunt1_current_average_a"),
+      dcV: i("dc_voltage_average_v"),
+      acIn: i("ac_input_power_average_kw"),
+      soc: i("state_of_charge_percent"),
+    };
+    for (const row of csv.rows) {
+      const ms = Date.parse(row[c.ts]);
+      if (!Number.isFinite(ms) || ms < padFrom || ms > padTo) continue;
+      const at = `${csv.file} at ${row[c.ts]}`;
+      records.push({
+        tMs: ms,
+        loadAcKw: num(row[c.load], `${at} load_ac_power_average_kw`),
+        acCoupledKw: num(row[c.acCoupled], `${at} ac_coupled_power_average_kw`),
+        shunt1A: num(row[c.shunt1], `${at} shunt1_current_average_a`),
+        dcVoltageV: num(row[c.dcV], `${at} dc_voltage_average_v`),
+        acInputKw: num(row[c.acIn], `${at} ac_input_power_average_kw`),
+        socPct: num(row[c.soc], `${at} state_of_charge_percent`),
+      });
+    }
+  }
+  records.sort((a, b) => a.tMs - b.tMs);
+
+  const q = records.map((r) => ({ tMs: r.tMs, v: quantities(r) }));
+  const series: Series[] = [...AVERAGED, "bidi.battery/soc"];
+  return series.map((s) => {
+    const byT = q.map((x) => ({ tMs: x.tMs, value: x.v[s] }));
+    const resampled =
+      s === "bidi.battery/soc" ? resampleInstant(byT) : resampleAverages(byT);
+    const held = resampled.filter((r) => r.held).length;
+    return {
+      source: s,
+      match: { by: "logicalPath", value: s },
+      // Padding is an input, not an output: trim back to the window that was asked for.
+      rows: resampled
+        .filter((r) => r.startMs >= fromMs && r.startMs <= toMs)
+        .map((r) => ({ startMs: r.startMs, value: r.value })),
+      note:
+        held > 0
+          ? `${held} bucket(s) held flat — no adjacent record to interpolate against`
+          : undefined,
+    };
+  });
+}
+
+const SPLINK_ALGORITHM = {
+  name: "splink-15min-to-5m",
+  doc: "scripts/archive/splink.ts",
+  notes: [
+    "LiveOne's series are identities over the SP PRO log, not columns of it: solar.local = -shunt1_current_average_a x dc_voltage_average_v (shunt2 is identically zero at this site), solar = remote + local, battery = load - solar. Regressed against LiveOne over 2026-08 at r = 0.984-1.000, no fitted constants.",
+    "inverter_ac_power_average_kw is NOT battery power: it correlates at -0.970 with slope -1.302, because it is AC throughput and the 1.3 was solar's missing DC half.",
+    "15-minute averages cover the TRAILING window (T-15, T] and are spread over the three 5-minute buckets starting at T-15, interpolated between window centres and rescaled so each triple's mean is exactly the recorded average — smooth and interval-energy preserving.",
+    "SoC is instantaneous, not an average: a stamp lands on its own bucket and the two between are interpolated, bounded to one 15-minute step.",
+    "Quality is `estimated`, not `calculated`: the resample is what makes these inexact.",
+  ],
+};
+
 function main() {
   const sourceDir = flag("source", true);
   const pointsFile = flag("points", true);
@@ -103,12 +248,14 @@ function main() {
     );
   const archive = parseArchiveManifest(manifestPath);
 
-  // Only the one archive kind so far; the SP LINK reconstruction lands beside it.
-  if (!/mondo-5min/.test(archive.title))
-    refuse(
-      `this transformer only understands a mondo-5min archive; the manifest says "${archive.title}"`,
-    );
-  const mapping: ColumnMapping[] = MONDO_5MIN;
+  const kind = /mondo-5min/.test(archive.title)
+    ? "mondo-5min"
+    : /splink-15min/.test(archive.title)
+      ? "splink-15min"
+      : refuse(
+          `unrecognised archive kind; the manifest says "${archive.title}". ` +
+            `Known: mondo-5min, splink-15min`,
+        );
 
   // 🛑 A window inside a declared whole-day gap is a refusal, not an empty result. The archive says
   // the vendor had nothing there; producing zero rows would look identical to "the mapping missed".
@@ -119,6 +266,32 @@ function main() {
           `the vendor has nothing there, so there is nothing to import`,
       );
 
+  // --- the rows ---------------------------------------------------------------------------------
+  // One file per local calendar year, and a UTC window can straddle two of them.
+  const years = [...new Set([start.slice(0, 4), end.slice(0, 4)])];
+  const files = years
+    .map((y) => path.join(sourceDir, `${y}.csv`))
+    .filter((f) => fs.existsSync(f));
+  if (files.length === 0) refuse(`no ${years.join("/")}.csv in ${sourceDir}`);
+  const csvs = files.map(readCsv);
+
+  // The window is expressed in whole UTC days, inclusive of both ends.
+  const fromMs = Date.parse(`${start}T00:00:00Z`);
+  const toMs = Date.parse(`${end}T23:59:59Z`);
+  if (!Number.isFinite(fromMs) || !Number.isFinite(toMs))
+    refuse(`--start/--end must be YYYY-MM-DD`);
+
+  const produced = (kind === "mondo-5min" ? produceMondo : produceSplink)(
+    csvs,
+    fromMs,
+    toMs,
+  ).filter((p) => p.rows.length > 0);
+
+  if (produced.length === 0)
+    refuse(
+      `no rows in ${start}..${end} — the archive spans ${archive.coverage["Span"] ?? "?"}`,
+    );
+
   // --- the points -------------------------------------------------------------------------------
   const pointsDoc = JSON.parse(fs.readFileSync(pointsFile, "utf8")) as {
     points?: PointRow[];
@@ -127,79 +300,38 @@ function main() {
   if (points.length === 0) refuse(`${pointsFile} lists no points`);
 
   const resolved = new Map<string, PointRow>();
-  for (const m of mapping) {
-    const hits = resolveMatcher(points, m.match);
+  for (const p of produced) {
+    const hits = resolveMatcher(points, p.match);
     // Exactly one. Zero means the point does not exist yet (mint it first); more than one means the
     // matcher is ambiguous and picking either would be a guess nothing downstream could detect.
     if (hits.length === 0)
       refuse(
-        `no point for column "${m.source}" (${describeMatcher(m.match)}) in ${pointsFile}`,
+        `no point for "${p.source}" (${describeMatcher(p.match)}) in ${pointsFile}`,
       );
     if (hits.length > 1)
       refuse(
-        `column "${m.source}" (${describeMatcher(m.match)}) matches ${hits.length} points: ` +
+        `"${p.source}" (${describeMatcher(p.match)}) matches ${hits.length} points: ` +
           hits.map((h) => h.id).join(", "),
       );
-    resolved.set(m.source, hits[0]);
+    resolved.set(p.source, hits[0]);
   }
-
-  // --- the rows ---------------------------------------------------------------------------------
-  // One file per local calendar year, and a UTC window can straddle two of them.
-  const years = [...new Set([start.slice(0, 4), end.slice(0, 4)])];
-  const csvs = years
-    .map((y) => path.join(sourceDir, `${y}.csv`))
-    .filter((f) => fs.existsSync(f));
-  if (csvs.length === 0) refuse(`no ${years.join("/")}.csv in ${sourceDir}`);
-
-  const emitted: string[] = ["point,interval_start,value"];
-  const perColumn = new Map<string, number>();
-  let firstStamp: string | null = null;
-  let lastStamp: string | null = null;
-  // The window is expressed in whole UTC days, inclusive of both ends.
-  const from = `${start}T00:00:00Z`;
-  const to = `${end}T23:59:59Z`;
-
-  for (const file of csvs) {
-    const csv = readCsv(file);
-    const tsIdx = csv.header.indexOf("timestamp_utc");
-    if (tsIdx === -1) refuse(`${file} has no timestamp_utc column`);
-    const colIdx = new Map<string, number>();
-    for (const m of mapping) {
-      const i = csv.header.indexOf(m.source);
-      // A column the archive does not carry is a refusal, not a silent skip: the mapping describes
-      // what this archive kind IS, so a missing one means the file is not what it claims.
-      if (i === -1) refuse(`${file} has no "${m.source}" column`);
-      colIdx.set(m.source, i);
-    }
-
-    for (const row of csv.rows) {
-      const ts = row[tsIdx];
-      if (ts < from || ts > to) continue;
-      if (firstStamp === null || ts < firstStamp) firstStamp = ts;
-      if (lastStamp === null || ts > lastStamp) lastStamp = ts;
-      for (const m of mapping) {
-        const raw = row[colIdx.get(m.source)!];
-        // 🛑 Blank is ABSENT. No row, so the hole stays a hole.
-        if (raw === undefined || raw === "") continue;
-        const n = Number(raw);
-        if (!Number.isFinite(n))
-          refuse(`${file}: "${m.source}" at ${ts} is not a number: ${raw}`);
-        const value = m.scale === undefined ? n : n * m.scale;
-        emitted.push(`${resolved.get(m.source)!.id},${ts},${value}`);
-        perColumn.set(m.source, (perColumn.get(m.source) ?? 0) + 1);
-      }
-    }
-  }
-
-  if (emitted.length === 1)
-    refuse(
-      `no rows in ${start}..${end} — the archive spans ${archive.coverage["Span"] ?? "?"}`,
-    );
 
   // --- write ------------------------------------------------------------------------------------
+  const lines = ["point,interval_start,value"];
+  let firstMs = Infinity;
+  let lastMs = -Infinity;
+  for (const p of produced)
+    for (const r of p.rows) {
+      lines.push(
+        `${resolved.get(p.source)!.id},${new Date(r.startMs).toISOString()},${r.value}`,
+      );
+      if (r.startMs < firstMs) firstMs = r.startMs;
+      if (r.startMs > lastMs) lastMs = r.startMs;
+    }
+
   const csvOut = `${out}.csv`;
   const manifestOut = `${out}.manifest.json`;
-  fs.writeFileSync(csvOut, `${emitted.join("\n")}\n`);
+  fs.writeFileSync(csvOut, `${lines.join("\n")}\n`);
 
   const sessionManifest: SessionManifest = {
     kind: "archive-import",
@@ -216,48 +348,61 @@ function main() {
         sha256: archive.sha256,
         title: archive.title,
       },
-      files: csvs.map(fileDigest),
+      files: files.map(fileDigest),
       declaredCoverage: archive.coverage,
     },
     device: { handle: Number.isNaN(Number(device)) ? device : Number(device) },
-    window: { start: firstStamp!, end: lastStamp!, stamp: "interval_start" },
-    mapping: mapping
-      .filter((m) => (perColumn.get(m.source) ?? 0) > 0)
-      .map((m) => {
-        const p = resolved.get(m.source)!;
-        return {
-          source: m.source,
-          point: p.id,
-          logicalPath: p.logicalPath,
-          physicalPath: p.physicalPath,
-          unit: p.unit,
-          // Only what the points file actually carries. `transform` is not in that payload, and a
-          // hardcoded null beside real fields would read as a fact nobody established.
-          metricType: p.metricType,
-          rows: perColumn.get(m.source)!,
-        };
-      }),
-    rows: emitted.length - 1,
+    window: {
+      start: new Date(firstMs).toISOString(),
+      end: new Date(lastMs).toISOString(),
+      stamp: "interval_start",
+    },
+    mapping: produced.map((p) => {
+      const pt = resolved.get(p.source)!;
+      return {
+        source: p.source,
+        point: pt.id,
+        logicalPath: pt.logicalPath,
+        physicalPath: pt.physicalPath,
+        unit: pt.unit,
+        // Only what the points file actually carries. `transform` is not in that payload, and a
+        // hardcoded null beside real fields would read as a fact nobody established.
+        metricType: pt.metricType,
+        rows: p.rows.length,
+      };
+    }),
+    ...(kind === "splink-15min" ? { algorithm: SPLINK_ALGORITHM } : {}),
+    rows: lines.length - 1,
   };
   fs.writeFileSync(
     manifestOut,
     `${JSON.stringify(sessionManifest, null, 2)}\n`,
   );
 
-  const skipped = mapping.filter((m) => !perColumn.has(m.source));
-  console.log(`wrote ${csvOut}  (${sessionManifest.rows} rows)`);
+  console.log(`wrote ${csvOut}  (${sessionManifest.rows} rows, ${kind})`);
   console.log(`wrote ${manifestOut}`);
-  console.log(`window ${firstStamp} .. ${lastStamp}  (interval_start)`);
-  for (const m of sessionManifest.mapping)
+  console.log(
+    `window ${new Date(firstMs).toISOString()} .. ${new Date(lastMs).toISOString()}  (interval_start)`,
+  );
+  for (const p of produced) {
+    const pt = resolved.get(p.source)!;
     console.log(
-      `  ${m.source.padEnd(22)} -> ${m.point}  ${m.logicalPath ?? "(no logical path)"}  ${m.rows} row(s)`,
+      `  ${p.source.padEnd(26)} -> ${pt.id}  ${pt.logicalPath ?? "(no logical path)"}  ${p.rows.length} row(s)` +
+        (p.note ? `  [${p.note}]` : ""),
     );
-  // Named, not silent: a column that produced nothing is either a circuit that was not reporting or
-  // a mapping that missed, and the difference matters.
-  for (const m of skipped)
-    console.log(
-      `  ${m.source.padEnd(22)} -> no rows (blank throughout this window)`,
-    );
+  }
+  // Named, not silent: a series that produced nothing is either absent from the archive or a
+  // mapping that missed, and the difference matters.
+  const names = new Set(produced.map((p) => p.source));
+  const expected =
+    kind === "mondo-5min"
+      ? MONDO_5MIN.map((m) => m.source)
+      : [...AVERAGED, "bidi.battery/soc"];
+  for (const s of expected)
+    if (!names.has(s))
+      console.log(
+        `  ${s.padEnd(26)} -> no rows (absent throughout this window)`,
+      );
 }
 
 try {
