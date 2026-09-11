@@ -325,7 +325,7 @@ export function descriptionFor(
     spec.mutates
       ? "WRITES. Dry by default: without --apply nothing changes and the report says what would. " +
           "Off a terminal --apply additionally requires --yes, or it refuses with exit 2."
-      : "Read-only. This command changes nothing.",
+      : (spec.localEffects ?? "Read-only. This command changes nothing."),
   );
 
   // LiveOne: systems rather than OAuth scopes.
@@ -342,6 +342,10 @@ export function descriptionFor(
   if (uses.has("clerk"))
     out.push(
       `Calls the Clerk backend API. An auth failure is exit ${EXIT.AUTH}.`,
+    );
+  if (uses.has("selectlive"))
+    out.push(
+      `Uses local credentials and verified TLS to select.live:7528. Portal or inverter authentication failure is exit ${EXIT.AUTH}.`,
     );
 
   const codes = reachableExitCodes(spec);

@@ -45,6 +45,8 @@ export const TIERS: TierManifest = {
   a: [
     // The operator CLI. One entrypoint; each domain is a composable module beneath it.
     "scripts/ops/liveone.ts",
+    // Standalone vendor exploration, independent of LiveOne authentication.
+    "scripts/selectlive.ts",
     // The generator for the committed reference. Agent-facing because a stale catalogue is how
     // discovery starts lying.
     "scripts/ops/cli-reference.ts",
