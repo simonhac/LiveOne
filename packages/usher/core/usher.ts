@@ -17,7 +17,7 @@ import { buildEntries, type UsherStore } from "./factory";
 import { runLoop, type ScheduledEntry } from "./run";
 import { Blackbox } from "./blackbox";
 import { Spool } from "./spool";
-import { recordTick, getTickState } from "../state/usher-state";
+import { recordTick, recordDelivery, getTickState } from "../state/usher-state";
 import { registry } from "../state/registry";
 import {
   createHeartbeat,
@@ -26,6 +26,7 @@ import {
 } from "./heartbeat";
 import { createWatchdog } from "./watchdog";
 import { startDrainer } from "./drainer";
+import { createCourier } from "./courier";
 
 const MAINTENANCE_INTERVAL_MS = 5 * 60_000;
 /**
@@ -138,8 +139,29 @@ export async function startUsher(opts: StartUsherOptions = {}): Promise<void> {
 
   // Long-running background services. Skipped for --once, which must return promptly.
   if (!opts.once) {
-    // Recovers the on-disk backlog independently of the poll loops — so a wedged or crashed loop
-    // can no longer strand batches that are already safely spooled.
+    // One courier per site takes the push off the poll loop's critical path: the tick reads,
+    // journals and hands off, so a slow or failing receiver can no longer cost us readings (it
+    // cost ~45 through the 2026-09-11 outage). Not attached for --once, which wants the push
+    // outcome back synchronously.
+    for (const entry of registry.entries) {
+      const siteId = entry.source.siteId;
+      entry.courier = createCourier({
+        siteId,
+        store: (readings, meta) => entry.pusher.store(readings, meta),
+        spool: entry.spool,
+        log: (m) => log(`[${siteId}] ${m}`),
+        onResult: ({ job, outcome, spooled }) => {
+          recordDelivery(siteId, outcome, spooled);
+          heartbeats.get(siteId)?.onDelivery({
+            outcome,
+            hasDeviceReadings: job.hasDeviceReadings,
+          });
+        },
+      });
+    }
+
+    // Recovers the on-disk backlog independently of the poll loops AND of the couriers — so a
+    // wedged or crashed loop can no longer strand batches that are already safely spooled.
     startDrainer(registry.entries, { log });
   }
 
@@ -156,7 +178,8 @@ export async function startUsher(opts: StartUsherOptions = {}): Promise<void> {
     onTickStart: (entry) => watchdog.noteTickStart(entry.source.siteId),
     onTick: (entry, result) => {
       recordTick(entry, result);
-      heartbeats.get(entry.source.siteId)?.onTick(result);
+      // The heartbeat is driven by the COURIER's result, not by the tick — with delivery off the
+      // critical path the tick genuinely does not know yet whether the receiver took the batch.
       const st = getTickState(entry.source.siteId);
       // Every DEGRADED_TICKS in a row, not just the first — a run that keeps growing keeps saying so.
       if (

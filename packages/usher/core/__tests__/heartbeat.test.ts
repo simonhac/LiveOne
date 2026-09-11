@@ -21,53 +21,56 @@ function harness(opts: { throttleMs?: number } = {}) {
   return { hb, calls, advance: (ms: number) => (now += ms) };
 }
 
-const DELIVERED_READINGS = { delivered: true, pushOk: true, count: 13 };
+const ACCEPTED_READINGS = {
+  outcome: "ok" as const,
+  hasDeviceReadings: true,
+};
 
 describe("heartbeat", () => {
-  it("pings when real readings were delivered and accepted", async () => {
+  it("pings when real readings were accepted by the receiver", async () => {
     const { hb, calls } = harness();
-    hb.onTick(DELIVERED_READINGS);
+    hb.onDelivery(ACCEPTED_READINGS);
     await Promise.resolve();
     expect(calls).toEqual(["https://uptime.example/heartbeat/abc"]);
   });
 
-  it("does NOT ping on a poll-only tick", async () => {
+  it("does NOT ping when the push failed transiently", async () => {
     const { hb, calls } = harness();
-    hb.onTick({ delivered: false, count: 13 });
+    hb.onDelivery({ outcome: "transient", hasDeviceReadings: true });
     await Promise.resolve();
     expect(calls).toHaveLength(0);
   });
 
-  it("does NOT ping when the push failed", async () => {
+  it("does NOT ping when the receiver rejected the batch", async () => {
     const { hb, calls } = harness();
-    hb.onTick({ delivered: true, pushOk: false, count: 13 });
+    hb.onDelivery({ outcome: "rejected", hasDeviceReadings: true });
     await Promise.resolve();
     expect(calls).toHaveLength(0);
   });
 
-  // The subtle one, and the reason `count` is part of the condition at all. On a read error with a
-  // supervisor attached, tickOnce still delivers the synthetic control-plane points and reports
-  // pushOk — so a generator that has stopped answering entirely would otherwise keep the monitor
+  // The subtle one, and the reason `hasDeviceReadings` exists at all. On a read error with a
+  // supervisor attached the hub still delivers the synthetic control-plane points, and that push
+  // succeeds — so a generator that has stopped answering entirely would otherwise keep the monitor
   // green forever. This is exactly the 2026-09-11 shape: pushes fine, device gone.
-  it("does NOT ping for a control-only tick (device read failed)", async () => {
+  it("does NOT ping for a control-only batch (device read failed)", async () => {
     const { hb, calls } = harness();
-    hb.onTick({ delivered: true, pushOk: true, count: null });
+    hb.onDelivery({ outcome: "ok", hasDeviceReadings: false });
     await Promise.resolve();
     expect(calls).toHaveLength(0);
   });
 
   it("throttles to one ping per window, then resumes", async () => {
     const { hb, calls, advance } = harness({ throttleMs: 60_000 });
-    hb.onTick(DELIVERED_READINGS);
+    hb.onDelivery(ACCEPTED_READINGS);
     advance(10_000);
-    hb.onTick(DELIVERED_READINGS);
+    hb.onDelivery(ACCEPTED_READINGS);
     advance(10_000);
-    hb.onTick(DELIVERED_READINGS);
+    hb.onDelivery(ACCEPTED_READINGS);
     await Promise.resolve();
     expect(calls).toHaveLength(1);
 
     advance(60_000);
-    hb.onTick(DELIVERED_READINGS);
+    hb.onDelivery(ACCEPTED_READINGS);
     await Promise.resolve();
     expect(calls).toHaveLength(2);
   });
@@ -80,7 +83,7 @@ describe("heartbeat", () => {
         Promise.reject(new Error("network down"))) as unknown as typeof fetch,
       log: (m) => log.push(m),
     });
-    expect(() => hb.onTick(DELIVERED_READINGS)).not.toThrow();
+    expect(() => hb.onDelivery(ACCEPTED_READINGS)).not.toThrow();
     await Promise.resolve();
     await Promise.resolve();
     expect(log.join()).toMatch(/heartbeat ping failed/);
@@ -94,7 +97,7 @@ describe("heartbeat", () => {
         fetchImpl: (() => new Promise(() => {})) as unknown as typeof fetch,
       });
       const before = Date.now();
-      hb.onTick(DELIVERED_READINGS); // returns void, synchronously
+      hb.onDelivery(ACCEPTED_READINGS); // returns void, synchronously
       expect(Date.now() - before).toBe(0);
     } finally {
       jest.useRealTimers();

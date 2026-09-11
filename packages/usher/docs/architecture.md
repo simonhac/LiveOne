@@ -94,8 +94,10 @@ data, because the collector held each batch in memory for exactly one tick.
      dropped from the delivery path — and the blackbox is the record of what was dropped.
 3. **Spool on `transient` only.** Never on a 4xx; a rejected batch would be rejected forever and
    would fill the buffer.
-4. **Drain on the next successful ack**, not on a timer. The ack _is_ the evidence the receiver
-   recovered, so `runEntryLoop` drains only when `result.pushOk`.
+4. **Drain on the next successful ack.** The ack _is_ the evidence the receiver recovered, so the
+   courier drains the backlog immediately after any successful push. A 60 s background drainer
+   (`core/drainer.ts`) backs that up, because when the ack-trigger lived in the run loop a wedged
+   loop stranded 46 spooled batches for 4 h 49 m — through the receiver's own recovery.
 5. **Re-sends are safe only because the receiver is idempotent** on
    `(systemId, pointId, measurementTime)`. This is a load-bearing precondition, not an
    implementation detail of the far side: if gusher ever stopped deduplicating, every spool drain
@@ -155,15 +157,35 @@ Sizing: roughly 1 MB/day of compressed journal, so a 1 GB volume holds years. Th
 75% of the disk during an outage — weeks of buffer. Both surface in the inspector through `StoreView`
 (`state/view.ts`): store path, disk free fraction, and each store's cached stats.
 
-### Why the tick timeout covers the read but not the push
+### The push is not on the tick path
 
-`tickOnce` applies its hard timeout to the device **read** only. The push is separately bounded by
-the Pusher's own per-attempt fetch timeout and capped retries.
+`tickOnce` reads the device, journals the batch, and hands it to that site's **courier**
+(`core/courier.ts`) — a single-worker, bounded, per-site delivery queue. The tick returns without
+waiting for the receiver.
 
-That asymmetry is deliberate and load-bearing. If the tick timeout spanned the push, a slow receiver
-could abort the tick in the window between "journalled" and "spooled" — the one window in which an
-outage silently drops a batch. A future refactor that tidies the timeout to wrap the whole tick would
-reintroduce exactly the data-loss bug the spool exists to prevent.
+This is load-bearing. `Pusher.store` is bounded, but its bound is ~74 s (4 attempts x 15 s plus 14 s
+of backoff), and `runEntryLoop` sleeps `max(0, period - elapsed)` — so while the push was awaited
+inline, any push that overran the poll period silently ate the next poll. Gusher's availability
+controlled how fast we sampled the device. Through the ~4 h receiver outage of 2026-09-11 that cost
+sheephouse ~45 readings (895 recorded against 958 expected), quite separately from the wedge that
+killed the collector later that morning.
+
+Consequences worth knowing:
+
+- **The tick no longer reports a push outcome.** `pushOk` is `undefined` whenever `queued` is set,
+  because the answer genuinely is not known yet. Delivery outcomes arrive via the courier's
+  `onResult` and are folded into the inspector separately (`recordDelivery`). Collection health and
+  delivery health are two different questions now, and the UI should not conflate them.
+- **The queue is bounded and overflows to the spool**, so memory cannot grow behind a dead receiver
+  and nothing is dropped to stay within the bound.
+- **In-memory batches do not survive a process exit.** At most the in-flight batch plus anything
+  queued (normally zero) is lost on a restart — the blackbox still has them, but they will not reach
+  LiveOne. The inline push had the same exposure for its in-flight batch; the queued ones are new.
+  If that ever matters, the fix is to spool the queue on SIGTERM, not to put the push back.
+
+The tick's hard timeout still covers the device **read** only, and must continue to. If it spanned
+delivery, a slow receiver could abort the tick between "journalled" and "handed off" — the one window
+in which an outage silently drops a batch.
 
 The read needs the timeout for a concrete reason: a Modbus read on a silently-dead socket can hang
 forever, because the client library's read timeout does not fire on a dead socket. On timeout the

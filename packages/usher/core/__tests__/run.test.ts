@@ -486,6 +486,78 @@ describe("runWithRestart", () => {
   });
 });
 
+/**
+ * The finding this closes: through the 2026-09-11 receiver outage, sheephouse recorded 895 reads
+ * where its 15 s cadence should have produced 958. Each failing push cost ~29 s, and the loop
+ * sleeps `max(0, period - elapsed)` — so a push that overran the period silently ate the next poll.
+ * With a courier the tick hands off, and the poll cadence stops depending on the receiver.
+ */
+describe("tickOnce hands delivery to a courier", () => {
+  it("does not wait for a slow push", async () => {
+    const { entry, captured } = makeEntry(async () => ({ x: 5 }));
+    const submitted: unknown[] = [];
+    Object.assign(entry, {
+      courier: {
+        submit: (j: unknown) => submitted.push(j),
+        depth: () => 0,
+        idle: async () => {},
+      },
+      // If the tick ever awaited this, the test would time out rather than fail — which is the
+      // honest shape of the bug: the loop didn't error, it just stopped being on time.
+      pusher: { store: () => new Promise(() => {}) },
+    });
+
+    const start = Date.now();
+    const r = await tickOnce(entry, () => {});
+    expect(Date.now() - start).toBeLessThan(1000);
+    expect(r).toMatchObject({ count: 1, delivered: true, queued: true });
+    expect(submitted).toHaveLength(1);
+    expect(captured.readings).toBeUndefined(); // the pusher was never called inline
+  });
+
+  it("reports pushOk as unknown when queued, rather than guessing", async () => {
+    const { entry } = makeEntry(async () => ({ x: 5 }));
+    Object.assign(entry, {
+      courier: { submit: () => {}, depth: () => 0, idle: async () => {} },
+    });
+    const r = await tickOnce(entry, () => {});
+    // Saying "ok" here would be a lie the heartbeat and the inspector would both believe.
+    expect(r.pushOk).toBeUndefined();
+    expect(r.error).toBeUndefined();
+  });
+
+  it("marks a control-only batch as carrying no device readings", async () => {
+    const { entry } = makeEntry(async () => {
+      throw new Error("modbus dead");
+    });
+    const submitted: { hasDeviceReadings: boolean }[] = [];
+    Object.assign(entry, {
+      supervisor: {
+        observeValues: () => {},
+        syntheticValues: () => ({ controlState: "stop-failing" }),
+        stateVersion: 1,
+        inTransition: () => false,
+      },
+      courier: {
+        submit: (j: { hasDeviceReadings: boolean }) => submitted.push(j),
+        depth: () => 0,
+        idle: async () => {},
+      },
+    });
+    const r = await tickOnce(entry, () => {});
+    expect(r).toMatchObject({ count: null, delivered: true, queued: true });
+    expect(submitted[0].hasDeviceReadings).toBe(false);
+  });
+
+  it("still pushes inline when there is no courier (--once, tests)", async () => {
+    const { entry, captured } = makeEntry(async () => ({ x: 5 }));
+    const r = await tickOnce(entry, () => {});
+    expect(r).toMatchObject({ count: 1, delivered: true, pushOk: true });
+    expect(r.queued).toBeUndefined();
+    expect(captured.readings).toHaveLength(1);
+  });
+});
+
 describe("shouldDeliverTick", () => {
   // A source with no supervisor, freshly delivered, nothing transitioning: the boring case.
   const base = {

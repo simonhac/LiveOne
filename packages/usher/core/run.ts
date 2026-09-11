@@ -15,6 +15,7 @@ import type { Pusher, PushOutcome } from "./pusher";
 import type { Blackbox } from "./blackbox";
 import type { Spool } from "./spool";
 import { CONTROL_MANIFEST, type RunSupervisor } from "./control";
+import type { Courier } from "./courier";
 import { delay, withTimeout } from "../lib/async";
 
 export interface Entry {
@@ -31,6 +32,13 @@ export interface Entry {
    * that blocks the poll.
    */
   supervisor?: RunSupervisor | null;
+  /**
+   * Where delivered batches go. When present the tick HANDS OFF and returns — the push no longer
+   * sits on the poll loop's critical path, so a slow receiver can't cost us readings (it cost ~45
+   * on 2026-09-11). Absent = push inline, which is what `--once` and the tests want: they need the
+   * outcome back synchronously.
+   */
+  courier?: Courier;
 }
 
 /**
@@ -102,7 +110,6 @@ export const DEFAULT_TICK_TIMEOUT_MS = 30_000;
  */
 const RECOVERY_TIMEOUT_MS = 10_000; // source.reset() on the read-error path
 const STORE_TIMEOUT_MS = 10_000; // blackbox append / spool enqueue (a wedged volume)
-const DRAIN_TIMEOUT_MS = 60_000; // spool drain (50 batches x a slow receiver)
 
 /** Outcome of one tick for a single entry. */
 export interface TickResult {
@@ -122,8 +129,14 @@ export interface TickResult {
    * errored or had nothing to send.
    */
   delivered?: boolean;
-  /** whether the push succeeded (undefined when there was nothing to push) */
+  /**
+   * Whether the push succeeded. Undefined when there was nothing to push — and also whenever the
+   * batch was handed to a courier (`queued`), because the answer is not known yet by design. Use
+   * the courier's onResult for delivery outcomes.
+   */
   pushOk?: boolean;
+  /** the batch was handed to the courier rather than pushed inline; `pushOk` will be undefined */
+  queued?: boolean;
   /** whether a failed push's batch was durably spooled for later re-send */
   spooled?: boolean;
   /** error message if the tick failed (read/build/push threw or timed out) */
@@ -170,12 +183,31 @@ export async function tickOnce(
   };
 
   /**
-   * Push a batch, and durably spool it if the receiver is transiently unavailable. Shared by the
-   * happy path and the control-only error path — they had drifted, and only one of them spooled.
+   * Get a batch delivered. Shared by the happy path and the control-only error path — they had
+   * drifted, and only one of them spooled.
+   *
+   * With a courier this HANDS OFF and returns immediately, so the poll cadence is independent of
+   * the receiver. Without one it pushes inline and reports the real outcome, which is what `--once`
+   * and the tests need.
    */
   async function deliver(
     batch: ReturnType<typeof buildReadings>,
-  ): Promise<{ outcome: PushOutcome; spooled: boolean | undefined }> {
+    hasDeviceReadings: boolean,
+  ): Promise<{
+    outcome?: PushOutcome;
+    spooled?: boolean;
+    queued?: boolean;
+  }> {
+    if (entry.courier) {
+      entry.courier.submit({
+        siteId: source.siteId,
+        sessionLabel,
+        measurementTime,
+        readings: batch,
+        hasDeviceReadings,
+      });
+      return { queued: true };
+    }
     const outcome = await pusher.store(batch, {
       sessionLabel,
       measurementTime,
@@ -270,12 +302,14 @@ export async function tickOnce(
     // a control-only batch during an outage is the most valuable thing the hub emits
     // (`controlState: "stop-failing"` during the very Modbus failure that caused it). Not
     // journalled, though: the blackbox is a record of device readings, and there are none.
-    const { outcome, spooled } = await deliver(readings);
+    // hasDeviceReadings: false — these are only the synthetic control-plane points.
+    const { outcome, spooled, queued } = await deliver(readings, false);
     return {
       ...result,
       delivered: true,
-      pushOk: outcome === "ok",
+      pushOk: queued ? undefined : outcome === "ok",
       spooled,
+      queued,
     };
   }
 
@@ -321,7 +355,7 @@ export async function tickOnce(
     log(`[${source.name}] ${e instanceof Error ? e.message : String(e)}`);
   }
 
-  const { outcome, spooled } = await deliver(readings);
+  const { outcome, spooled, queued } = await deliver(readings, true);
 
   return {
     ...base,
@@ -329,10 +363,14 @@ export async function tickOnce(
     active,
     deliveryActive,
     delivered: true,
-    pushOk: outcome === "ok",
+    queued,
+    // Handed off: the outcome is not known yet, and saying "ok" here would be a lie the heartbeat
+    // and the inspector would both believe. The courier reports it when it happens.
+    pushOk: queued ? undefined : outcome === "ok",
     spooled,
-    error:
-      outcome === "ok"
+    error: queued
+      ? undefined
+      : outcome === "ok"
         ? undefined
         : outcome === "transient"
           ? spooled
@@ -373,12 +411,15 @@ export function shouldDeliverTick(input: {
    * Slack on the "is it due yet" comparison, normally half a poll period.
    *
    * 🛑 Without it a push period that is an exact multiple of the poll period lands one whole tick
-   * late, every time. `sinceDeliveredMs` is measured from the END of the previous delivery (after
-   * the read and the push, ~1–2 s past its tick boundary) while ticks arrive ON the boundary, so
-   * the due tick is always a second or two short and delivery slips to the next one: a 60 s push
-   * cadence on a 15 s poll delivered every 75 s, and a 300 s one every 315 s. Half a period is
-   * comfortably more than any plausible tick cost and comfortably less than a whole tick, so it
-   * corrects the slip without ever delivering a tick early.
+   * late, every time. `sinceDeliveredMs` is measured from the END of the previous delivery, which
+   * is past its tick boundary by the cost of the tick, while ticks arrive ON the boundary — so the
+   * due tick is always a little short and delivery slips to the next one: a 60 s push cadence on a
+   * 15 s poll delivered every 75 s, and a 300 s one every 315 s. Half a period is comfortably more
+   * than any plausible tick cost and comfortably less than a whole tick, so it corrects the slip
+   * without ever delivering a tick early.
+   *
+   * The slip is far smaller now that the courier owns the push (the tick is a read, not a read plus
+   * up to ~74 s of retries) — but it is not zero, so the tolerance stays.
    */
   toleranceMs?: number;
 }): boolean {
@@ -501,27 +542,10 @@ async function runEntryLoop(
     } catch {
       /* an inspector hook must never break the loop */
     }
-    // The receiver just acked → it's healthy: re-send any spooled backlog (budget-bounded so a
-    // big outage backlog flushes over a few ticks without stalling the cadence).
-    if (result.pushOk && entry.spool) {
-      try {
-        // Bounded: the drain budget is 50 batches and each store() is worst-case ~74 s, so an
-        // unbounded drain is a theoretical ~1 h stall of this entry's cadence. Whatever is left
-        // over is re-tried on the next tick.
-        await withTimeout(
-          entry.spool.drain(entry.source.siteId, (b) =>
-            entry.pusher.store(b.readings, {
-              sessionLabel: b.sessionLabel,
-              measurementTime: b.measurementTime,
-            }),
-          ),
-          DRAIN_TIMEOUT_MS,
-          `spool drain exceeded ${DRAIN_TIMEOUT_MS}ms`,
-        );
-      } catch {
-        /* drain must never break the loop */
-      }
-    }
+    // Backlog recovery used to live here, gated on this tick's pushOk. It now belongs to the
+    // courier, which is the thing that actually knows when the receiver acked — and, unlike this
+    // loop, cannot be wedged out of existence (on 2026-09-11 that stranded 46 batches for 4 h 49 m).
+    // Without a courier (--once, tests) there is no backlog worth chasing.
     // The transition bracket outranks both ordinary cadences: it is the one window where the
     // interesting thing is happening between ticks rather than at them.
     const periodMs =
