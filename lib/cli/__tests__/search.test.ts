@@ -140,6 +140,107 @@ describe("parentWhen is capped, not indexed", () => {
   });
 });
 
+describe("identical fields are one piece of evidence", () => {
+  it("does not let a `when` copied from `summary` float a short entry over a better answer", () => {
+    // The `selectlive` regression, in miniature. Those six commands reached the catalogue with
+    // `when` defaulted to their own `summary` by a `leaf()` helper, so every word of their one
+    // sentence scored when+summary — 5 + 3 — in a very short document, and
+    // `selectlive history info` (about an inverter's detailed LOG) outranked `auth login` on the
+    // query "log in".
+    const corpus = [
+      tool({
+        name: "selectlive__history__info",
+        summary: "Read the inverter's detailed log.",
+        when: "Read the inverter's detailed log.",
+      }),
+      tool({
+        name: "liveone__auth__login",
+        summary: "Sign in via the browser and store a token.",
+        when: "Run this to log in on a new machine.",
+      }),
+    ];
+    expect(search(buildIndex(corpus), "log in").hits[0].name).toBe(
+      "liveone__auth__login",
+    );
+  });
+
+  it("counts a duplicated field once, at the stronger field's weight", () => {
+    const tf = (t: CatalogueTool) => buildIndex([t]).docs[0].tf.get("log");
+    const both = tf(
+      tool({ name: "x", summary: "detailed log", when: "detailed log" }),
+    );
+    const whenOnly = tf(tool({ name: "x", summary: "", when: "detailed log" }));
+    const summaryOnly = tf(
+      tool({ name: "x", summary: "detailed log", when: "" }),
+    );
+    expect(both).toBe(whenOnly);
+    expect(both).toBeGreaterThan(summaryOnly!);
+  });
+});
+
+describe("the rendered description is not indexed", () => {
+  it("scores `details` and ignores `description`, which only re-renders other fields", () => {
+    const corpus = [
+      tool({
+        name: "a__rendered",
+        summary: "Alpha.",
+        description: "zebra zebra zebra",
+      }),
+      tool({ name: "b__own-prose", summary: "Beta.", details: "zebra" }),
+    ];
+    expect(search(buildIndex(corpus), "zebra").hits.map((h) => h.name)).toEqual(
+      ["b__own-prose"],
+    );
+  });
+});
+
+describe("query-side decompounding", () => {
+  it("closes a space the corpus does not have — 'log in' reaches `login`", () => {
+    // Both halves matter: "in" is a stopword, so "log in" collapses to the single term "log",
+    // which in this corpus mostly means a data log rather than signing in.
+    const corpus = [
+      tool({ name: "x__login", summary: "Store a token for one origin." }),
+      tool({ name: "y__history", summary: "Read the detailed log." }),
+    ];
+    expect(search(buildIndex(corpus), "log in").hits[0].name).toBe("x__login");
+  });
+
+  it("compounds only when the corpus really spells those two words as one", () => {
+    // A compound no document contains would contribute nothing by itself, but as a term it
+    // would still be eligible for the prefix fallback — inviting fuzzy matching on a string
+    // the user never typed.
+    const corpus = [tool({ name: "x__signin", summary: "Store a token." })];
+    expect(search(buildIndex(corpus), "log in").hits).toEqual([]);
+  });
+});
+
+describe("a prefix hit never outranks a literal one", () => {
+  it("scores a fuzzy candidate on the larger df, not the rarer variant's", () => {
+    // "changed" stems to "chang" and the bare "change" does not stem at all, so they are
+    // separate terms and the bare form is far rarer. Scoring the fuzzy candidate on ITS OWN df
+    // handed it a rare term's idf, and a command whose help merely says "change" beat the one
+    // whose summary says "who changed it, and when".
+    const corpus = [
+      tool({
+        name: "a__history",
+        summary: "Edit history.",
+        when: "See who changed the document, and when.",
+      }),
+      tool({
+        name: "b__set-prop",
+        summary: "Set a prop.",
+        when: "Use this to change an existing card in place.",
+      }),
+      ...Array.from({ length: 6 }, (_, i) =>
+        tool({ name: `f__${i}`, summary: "Nothing changed here." }),
+      ),
+    ];
+    expect(search(buildIndex(corpus), "what changed").hits[0].name).toBe(
+      "a__history",
+    );
+  });
+});
+
 describe("truncation is never silent", () => {
   it("flags truncation when the limit drops a contender", () => {
     const r = search(buildIndex(CORPUS), "dashboard", { limit: 1 });

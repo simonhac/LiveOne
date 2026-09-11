@@ -27,9 +27,21 @@ describe("the committed catalogue", () => {
         (h) => h.name,
       );
     expect(top("edit a dashboard card")[0]).toMatch(/^liveone__dashboard__/);
-    expect(top("log in")[0]).toBe("liveone__auth__login");
     expect(top("who am i")[0]).toBe("liveone__auth__whoami");
-    expect(top("what changed and when")).toContain(
+    // The three phrasings of the same intent. All of them are two words where the catalogue has
+    // one, and "in" and "out" are stopwords, so each collapses to a single term — "log", which
+    // in THIS corpus mostly means an inverter's detailed log. "sign in" adds a second trap: the
+    // boilerplate "…as the signed-in user" is in most entries, so the word discriminates
+    // nothing. Adding one CLI to the catalogue used to be enough to move all three.
+    expect(top("log in")[0]).toBe("liveone__auth__login");
+    expect(top("sign in")[0]).toBe("liveone__auth__login");
+    expect(top("log out")[0]).toBe("liveone__auth__logout");
+    // NOT "what changed and when". That phrasing collapses to the single term "chang", which is
+    // in half the catalogue because most commands describe themselves as changing something —
+    // so it ranked `dashboard history` fifth of six, and the assertion held on the margin
+    // rather than on the ranking. A query has to carry a word that discriminates before
+    // asserting anything about where it ranks.
+    expect(top("history of edits to a dashboard")[0]).toBe(
       "liveone__dashboard__history",
     );
   });

@@ -24,6 +24,14 @@ export interface CatalogueTool {
   when: string;
   /** The parent's routing text, for a subcommand. Shared across siblings by design. */
   parentWhen?: string;
+  /**
+   * The command's own body prose, unrendered — the only part of `description` that is not either
+   * an echo of a higher-weighted field or boilerplate. This is what gets indexed.
+   */
+  details?: string;
+  /**
+   * The rendered MCP payload. DELIBERATELY NOT INDEXED — see `WEIGHTS.details`.
+   */
   description: string;
   signature: string;
   invocation: string;
@@ -58,23 +66,33 @@ export interface SearchResult {
 /**
  * Field weights. `when` and `name` lead because both are written to be matched — the one
  * deliberately, the other because a command's name is the thing people half-remember.
- */
-/**
- * Field weights. `when` and `name` lead because both are written to be matched — the one
- * deliberately, the other because a command's name is the thing people half-remember.
  *
  * `parentWhen` sits BELOW `summary` on purpose. Every sibling under one parent carries the
  * same text, so it cannot discriminate between them: its job is to bring the family into
  * contention on a query aimed at the tool, and then let the child's own summary and name
  * decide the member. Weighted like an own-`when` it would rank four identical-scoring
  * siblings above a better single answer elsewhere.
+ *
+ * `details` is the tool's OWN body prose, and the rendered `description` is deliberately not
+ * indexed at all. `description` is a composition: `summary`, `when`, `parentWhen`, `details`,
+ * and then a paragraph of boilerplate shared by most of the corpus — the capability sentence, the
+ * read-only/writes sentence, the exit-code list, the examples. Indexing it did two bad things
+ * at once. It COUNTED THE GOOD FIELDS TWICE, so a word in `summary` scored 3 + 1 and a word in
+ * `when` 5 + 1, which is a weighting nobody chose. And it made the boilerplate's vocabulary
+ * worthless: "Calls the deployed LiveOne API as the signed-in user" is in 72 of 82 entries, so
+ * `df("sign")` was 72 and `auth login` — whose summary literally begins "Sign in" — ranked
+ * fourth on the query "sign in", behind three share-link commands.
+ *
+ * It also smuggled `parentWhen` back in, at weight 1, under the label "About `x` generally:" —
+ * defeating the carve-out below that exists precisely to stop shared parent text from stacking
+ * across siblings.
  */
 const WEIGHTS = {
   name: 4,
   when: 5,
   summary: 3,
   params: 1.5,
-  description: 1,
+  details: 1,
 } as const;
 
 /**
@@ -190,6 +208,37 @@ export function tokenize(text: string): string[] {
     .map(stem);
 }
 
+/**
+ * Query-side decompounding: "log in" → also try "login".
+ *
+ * WHY THIS AND NOT A SYNONYM LIST. A CLI's verbs are compound words that operators type as two —
+ * `login`, `logout`, `whoami`, `set-prop` — and the query is where the space appears, so that is
+ * where to close it. The measured failure was "log in" and "log out": both collapse to the single
+ * term "log", because "in" and "out" are stopwords, and "log" in THIS corpus mostly means an
+ * inverter's detailed log. `auth login` was competing for a word about data logging while the
+ * word it should have been matching, its own name, was two keystrokes away.
+ *
+ * Built from the RAW split, before stopword removal — the whole point is that the dropped half
+ * carries the meaning here, and it is unreachable once `tokenize` has discarded it.
+ *
+ * GATED ON THE COMPOUND ACTUALLY EXISTING in the index. A compound no document contains would
+ * contribute nothing by itself, but as a term it would still be eligible for the prefix
+ * fallback, and inviting fuzzy matching on a string the user never typed is how this turns into
+ * noise. A hit means the corpus really does spell those two words as one.
+ */
+function compoundTerms(index: Index, query: string): string[] {
+  const raw = query
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean);
+  const out: string[] = [];
+  for (let i = 0; i + 1 < raw.length; i++) {
+    const joined = stem(raw[i] + raw[i + 1]);
+    if (index.df.has(joined)) out.push(joined);
+  }
+  return out;
+}
+
 /** The parameter half: flag and positional names, plus their help text. */
 function paramText(tool: CatalogueTool): string {
   return Object.entries(tool.input_schema.properties ?? {})
@@ -222,13 +271,32 @@ export function buildIndex(tools: CatalogueTool[]): Index {
     const add = (text: string, weight: number) => {
       for (const t of tokenize(text)) tf.set(t, (tf.get(t) ?? 0) + weight);
     };
-    // The name is split on separators by tokenize, so "bank-txn-search" indexes as three
+    // IDENTICAL TEXT IN TWO FIELDS IS ONE PIECE OF EVIDENCE, weighted by the stronger field.
+    // The weights differ because the fields answer different questions; where two of them hold
+    // the same sentence, that premise is simply false and adding both is a weighting nobody
+    // chose. Measured: every `selectlive` command reached the catalogue with `when` set to its
+    // own `summary` (a `leaf()` helper defaulted it), so each word of its one sentence scored
+    // 5 + 3 = 8 in a very short document — and `selectlive history info`, whose sentence happens
+    // to contain "log" (an inverter's detailed log), outranked `auth login` on the query
+    // "log in". Deduping is the durable half of that fix; the helper was the origin.
+    //
+    // `tool.name` is split on separators by tokenize, so "bank-txn-search" indexes as three
     // terms — which is what makes a query of any one of them reach it.
-    add(tool.name, WEIGHTS.name);
-    add(tool.when, WEIGHTS.when);
-    add(tool.summary, WEIGHTS.summary);
-    add(paramText(tool), WEIGHTS.params);
-    add(tool.description, WEIGHTS.description);
+    const fields: [string, number][] = [
+      [tool.name, WEIGHTS.name],
+      [tool.when, WEIGHTS.when],
+      [tool.summary, WEIGHTS.summary],
+      [paramText(tool), WEIGHTS.params],
+      // `tool.description` is the rendered blob and is NOT indexed. See WEIGHTS.
+      [tool.details ?? "", WEIGHTS.details],
+    ];
+    const strongest = new Map<string, number>();
+    for (const [text, weight] of fields) {
+      const key = text.trim().toLowerCase();
+      if (!key) continue;
+      strongest.set(key, Math.max(strongest.get(key) ?? 0, weight));
+    }
+    for (const [text, weight] of strongest) add(text, weight);
     let length = 0;
     for (const v of tf.values()) length += v;
     // Scored apart, so it neither stacks across siblings nor distorts the length.
@@ -246,33 +314,67 @@ export function buildIndex(tools: CatalogueTool[]): Index {
   return { docs, df, avgLength };
 }
 
+/** The three-character floor on prefix matching, which keeps "in" from reaching half the corpus. */
+const PREFIX_MIN = 3;
+/** What a prefix hit is worth against an exact one. Below 1 so an exact match always wins a tie. */
+const PREFIX_DISCOUNT = 0.5;
+
 /**
  * Okapi BM25.
  *
  * A query term that appears in a term's PREFIX also counts, at a discount: "pay" has to
  * reach "payee" and "payment", and stemming cannot do that — it truncates suffixes, and
  * "payee" is not "pay" plus one. The discount keeps a prefix hit from outranking an exact
- * one, and the four-character floor keeps "in" from matching half the corpus.
+ * one, and the three-character floor keeps "in" from matching half the corpus.
+ *
+ * THE FALLBACK IS STILL GATED ON HAVING NO EXACT EVIDENCE, deliberately. Letting a prefix hit
+ * compete with an exact one everywhere was measured and is worse: "change" and "chang" are
+ * separate terms, the first rare and the second in 80 of 82 entries, so on the query "changed"
+ * every command whose help happens to say "change" collected a large discounted-but-rare score
+ * and displaced the command that is actually about change history. Fuzzy matching is for when
+ * there is nothing better, not for topping up something that already matched.
+ *
+ * WITHIN the fallback, candidates are compared as WHOLE SCORES, each with its own `freq` paired
+ * to its own `df`. The previous form took `Math.max` of `freq` and of `df` separately across
+ * every prefix-related term at once, so it could pair one term's frequency with another term's
+ * document frequency — a combination belonging to no term in the index.
+ *
+ * The `df` a candidate scores with is the LARGER of the query term's and the matched term's,
+ * which is what makes the discount mean what this comment says it means. Scoring a candidate on
+ * the matched term's `df` alone inverts the ranking whenever the query hits the COMMONER
+ * variant: "changed" stems to "chang" (41 of 82 entries) and the bare "change" does not stem at
+ * all (7), so a command whose help says "change" collected a rare term's idf, took the 0.5
+ * discount, and still beat `dashboard history` — whose summary says, exactly, "who changed it,
+ * when". Borrowing the rarer idf lets a fuzzy match outscore a literal one; taking the larger
+ * `df` cannot.
  */
 function scoreDoc(index: Index, doc: Doc, terms: string[]): number {
-  let score = 0;
-  for (const term of terms) {
-    let freq = doc.tf.get(term) ?? 0;
-    let df = index.df.get(term) ?? 0;
-    if (freq === 0 && term.length >= 3) {
-      for (const [t, f] of doc.tf)
-        if (t.startsWith(term) || term.startsWith(t)) {
-          freq = Math.max(freq, f * 0.5);
-          df = Math.max(df, index.df.get(t) ?? 0);
-        }
-    }
-    if (freq === 0) continue;
+  const contribution = (freq: number, df: number) => {
     const idf = Math.log(1 + (index.docs.length - df + 0.5) / (df + 0.5));
-    score +=
+    return (
       idf *
       ((freq * (BM25_K1 + 1)) /
         (freq +
-          BM25_K1 * (1 - BM25_B + BM25_B * (doc.length / index.avgLength))));
+          BM25_K1 * (1 - BM25_B + BM25_B * (doc.length / index.avgLength))))
+    );
+  };
+
+  let score = 0;
+  for (const term of terms) {
+    const exact = doc.tf.get(term);
+    let best =
+      exact === undefined ? 0 : contribution(exact, index.df.get(term) ?? 0);
+    if (best === 0 && term.length >= PREFIX_MIN)
+      for (const [t, f] of doc.tf)
+        if (t.startsWith(term) || term.startsWith(t))
+          best = Math.max(
+            best,
+            contribution(
+              f * PREFIX_DISCOUNT,
+              Math.max(index.df.get(term) ?? 0, index.df.get(t) ?? 0),
+            ),
+          );
+    score += best;
   }
   return score;
 }
@@ -337,7 +439,10 @@ export function search(
 ): SearchResult {
   const limit = opts.limit ?? 5;
   const budgetChars = opts.budgetChars ?? 4000;
-  const terms = tokenize(query);
+  // Deduped: a term counted twice is evidence counted twice.
+  const terms = [
+    ...new Set([...tokenize(query), ...compoundTerms(index, query)]),
+  ];
   if (!terms.length) return { hits: [], truncated: false };
 
   const scored = index.docs

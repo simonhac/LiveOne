@@ -98,9 +98,6 @@ Verify and save the portal login, inspect authentication, or forget credentials.
 ```
 Verify and save the portal login, inspect authentication, or forget credentials.
 
-When to use:
-  Verify and save the portal login, inspect authentication, or forget credentials.
-
 No action means login. Password input is hidden. Automation: SELECTLIVE_EMAIL and SELECTLIVE_PASSWORD.
 --device additionally verifies and saves the inverter password (or SELECTLIVE_INVERTER_PASSWORD).
 status verifies the saved portal account. logout removes the local store without contacting Select.live.
@@ -154,9 +151,6 @@ List inverter serials accessible to the portal account.
 ```
 List inverter serials accessible to the portal account.
 
-When to use:
-  List inverter serials accessible to the portal account.
-
 The legacy device-list protocol supplies serial numbers only; it does not report online status.
 
 Usage:
@@ -197,9 +191,6 @@ Read inverter identity, firmware, interface versions, and logging metadata.
 
 ```
 Read inverter identity, firmware, interface versions, and logging metadata.
-
-When to use:
-  Read inverter identity, firmware, interface versions, and logging metadata.
 
 Usage:
   selectlive info [options]
@@ -242,9 +233,6 @@ Read a bounded range of inverter memory without writing settings.
 
 ```
 Read a bounded range of inverter memory without writing settings.
-
-When to use:
-  Read a bounded range of inverter memory without writing settings.
 
 Usage:
   selectlive read [options]
@@ -332,9 +320,6 @@ Read detailed log metadata and the oldest/newest record timestamps.
 ```
 Read detailed log metadata and the oldest/newest record timestamps.
 
-When to use:
-  Read detailed log metadata and the oldest/newest record timestamps.
-
 Usage:
   selectlive history info [options]
 
@@ -376,9 +361,6 @@ Preserve the full detailed buffer and optionally decode it as CSV.
 
 ```
 Preserve the full detailed buffer and optionally decode it as CSV.
-
-When to use:
-  Preserve the full detailed buffer and optionally decode it as CSV.
 
 Always acquires the complete retained buffer; start/end filter only the exported CSV.
 Raw records and manifest are preserved before decoding. CSV requires --timezone.
