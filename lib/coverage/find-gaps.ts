@@ -142,24 +142,3 @@ export async function findCoverageGaps(
   }
   return gaps;
 }
-
-/** Best present-count across the coverage points for `(device, day)`. Used by the runner's landing
- *  wait: a day is "landed" when this rises above the pre-repair value (progress) or reaches `expected`. */
-export async function countMaxPresent(
-  db: PgDb,
-  systemId: number,
-  points: CoveragePoint[],
-  day: string,
-  bucketOffsetMin: number,
-): Promise<number> {
-  if (points.length === 0) return 0;
-  const ids: PointId[] = points.map((p) => p.point);
-  const byPoint = await ReadingsDao.countAgg5mForLocalDay(
-    ids,
-    { day, offsetMin: bucketOffsetMin },
-    db,
-  );
-  let max = 0;
-  for (const n of byPoint.values()) if (n > max) max = n;
-  return max;
-}

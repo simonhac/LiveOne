@@ -797,6 +797,153 @@ async function latestAgg5mUpdatedAtForPoints(
 }
 
 /**
+ * How many of `points`' `agg_5m` rows in an interval-end window carry one of `sessionIds` — the
+ * landing count, and an EXACT one.
+ *
+ * 🛑 Counting is not a refinement of `MAX(updated_at)`; it answers a different question, and the
+ * difference is a data-corruption bug. A watermark advances on the FIRST row of a batch to land, so
+ * a publisher comparing it against a pre-flush baseline learns only "something arrived" — it cannot
+ * distinguish 1 of 25 messages applied from 25 of 25. A backfill that then recomputes `agg_1d` from
+ * `agg_5m` reads a half-landed store and writes the half into the day. That is what left Kutis'
+ * 2026-09-09 daily totals at solar 0 Wh / load 1,860 Wh against 5-minute rows summing to 35,330 and
+ * 20,210, and it is per-POINT partial (export 100 %, import 86 %, load 9 %, solar 0 %), which is the
+ * signature of a message-truncated publish rather than a truncated day.
+ *
+ * 🛑 **Keyed on `session_id`, not on a timestamp, and that is what makes it exact.** The obvious
+ * implementation — rows updated since a pre-flush baseline — cannot tell OUR landings from anyone
+ * else's, and the slack is not small just because the batch is large: what matters is the number of
+ * rows still OUTSTANDING, so ten unrelated writes can stand in for the last ten queued rows and
+ * those ten can carry most of a day's energy. It is also wrong at the boundary, because Postgres
+ * keeps `updated_at` to microseconds and a baseline read back through JavaScript's `Date` truncates
+ * to milliseconds, so a literal `>` counts the row that SET the baseline — and batch writes share
+ * one `now()`, so that is potentially a whole previous batch.
+ *
+ * The receiver stamps `session_id` from the observation onto every row it writes
+ * (`app/api/observations/receive/route.ts` → `insert5m`, whose conflict SET includes
+ * `session_id = excluded.session_id`), so counting our own sessions counts our own landings and
+ * nothing else. No baseline, no clock, no window-width trade-off.
+ *
+ * The interval-end bounds remain, as an index bound rather than a correctness one.
+ */
+async function countAgg5mForSessions(
+  points: PointId[],
+  opts: {
+    afterIntervalEndMs: number;
+    throughIntervalEndMs: number;
+    sessionIds: readonly string[];
+  },
+  exec?: ReadingsExec,
+): Promise<number> {
+  if (points.length === 0 || opts.sessionIds.length === 0) return 0;
+  const db = exec ?? requirePlanetscaleDb();
+  // SEAM: rid-keyed WHERE.
+  const ridByPoint = await RegistryCache.ridsForPoints(points);
+  const rids = [...ridByPoint.values()];
+  if (rids.length === 0) return 0;
+  const [row] = await db
+    .select({ n: sql<number>`count(*)::int` })
+    .from(pointReadingsAgg5m)
+    .where(
+      and(
+        inArray(pointReadingsAgg5m.pointRid, rids),
+        gt(pointReadingsAgg5m.intervalEnd, new Date(opts.afterIntervalEndMs)),
+        lte(
+          pointReadingsAgg5m.intervalEnd,
+          new Date(opts.throughIntervalEndMs),
+        ),
+        inArray(pointReadingsAgg5m.sessionId, [...opts.sessionIds]),
+      ),
+    );
+  return row?.n ?? 0;
+}
+
+/**
+ * Local days in the window whose `agg_5m` rows were written AFTER the `agg_1d` row computed from
+ * them — i.e. days whose daily aggregate is stale, or missing entirely while 5-minute data exists.
+ *
+ * 🛑 This is the only thing in the system that can notice a wrong day. `agg_1d` is a pure function
+ * of `agg_5m`, but nothing recomputes a past day on its own: the receiver rebuilds 5m only,
+ * `cron/daily` visits yesterday and never returns, and coverage repair skips anything inside its
+ * grace window. So a day computed from a partly-landed store — the publish→recompute race — stays
+ * wrong indefinitely and stays SELF-CONSISTENT, which is why Kutis' 2026-09-09 totals survived two
+ * nightly runs at solar 0 Wh against 5-minute rows summing to 35,330.
+ *
+ * Comparing the two `updated_at` columns catches that without needing to know what caused it: a
+ * timed-out landing, a skipped recompute, a late backfill, a crash between the two writes. And it is
+ * self-terminating — a rebuild sets `agg_1d.updated_at` to now, so a healed day stops matching.
+ *
+ * ⚠️ TODAY will nearly always match, because the live poll keeps writing 5m rows after the day's
+ * aggregate was last built. Callers must bound `toMs` to exclude the current local day, or they will
+ * rebuild it on every run forever.
+ */
+async function staleAgg1dLocalDays(
+  points: PointId[],
+  opts: { fromMs: number; toMs: number; offsetMin: number },
+  exec?: ReadingsExec,
+): Promise<string[]> {
+  if (points.length === 0) return [];
+  const db = exec ?? requirePlanetscaleDb();
+  // SEAM: rid-keyed WHERE.
+  const ridByPoint = await RegistryCache.ridsForPoints(points);
+  const rids = [...ridByPoint.values()];
+  if (rids.length === 0) return [];
+  const from = new Date(opts.fromMs);
+  const to = new Date(opts.toMs);
+
+  // 🛑 Grouped per (POINT, day), not per day. A device-wide `MAX(updated_at)` on each side compares
+  // the freshest 5m row against the freshest 1d row across ALL points, so one point with a
+  // recently-rebuilt daily row masks another that has 5-minute data and no daily row at all — which
+  // is precisely the per-point partial shape the publish race produces (export 100 %, solar 0 %).
+  const fiveMin = await db
+    .select({
+      rid: pointReadingsAgg5m.pointRid,
+      day: localDayExpr(opts.offsetMin),
+      m: max(pointReadingsAgg5m.updatedAt),
+    })
+    .from(pointReadingsAgg5m)
+    .where(
+      and(
+        inArray(pointReadingsAgg5m.pointRid, rids),
+        gt(pointReadingsAgg5m.intervalEnd, from),
+        lte(pointReadingsAgg5m.intervalEnd, to),
+      ),
+    )
+    .groupBy(pointReadingsAgg5m.pointRid, localDayExpr(opts.offsetMin));
+  if (fiveMin.length === 0) return [];
+
+  const days = [...new Set(fiveMin.map((r) => r.day))];
+  const daily = await db
+    .select({
+      rid: pointReadingsAgg1d.pointRid,
+      day: pointReadingsAgg1d.day,
+      m: max(pointReadingsAgg1d.updatedAt),
+    })
+    .from(pointReadingsAgg1d)
+    .where(
+      and(
+        inArray(pointReadingsAgg1d.pointRid, rids),
+        inArray(pointReadingsAgg1d.day, days),
+      ),
+    )
+    .groupBy(pointReadingsAgg1d.pointRid, pointReadingsAgg1d.day);
+
+  const ms = (v: unknown) =>
+    v == null ? null : new Date(v as string | number | Date).getTime();
+  const dailyBy = new Map(daily.map((r) => [`${r.rid}|${r.day}`, ms(r.m)]));
+  const stale = new Set<string>();
+  for (const r of fiveMin) {
+    const t5 = ms(r.m);
+    if (t5 == null) continue;
+    const t1 = dailyBy.get(`${r.rid}|${r.day}`) ?? null;
+    // A missing `agg_1d` row counts as stale: 5-minute data exists for this point and nothing has
+    // ever rolled it up. One stale POINT makes the whole day worth rebuilding, since the rebuild is
+    // per (device, day) anyway.
+    if (t1 == null || t5 > t1) stale.add(r.day);
+  }
+  return [...stale].sort();
+}
+
+/**
  * Per-(point, local-day) `agg_5m` row counts within an interval-end window (the coverage gap-finder,
  * `lib/coverage/find-gaps.ts`). `offsetMin` sets the local-day bucket (see {@link localDayExpr}); the
  * window is `[fromMs, toMs)` on `interval_end` (half-open, matching the original scan bounds). Result:
@@ -1840,6 +1987,8 @@ export const ReadingsDao = {
   latestAgg5mIntervalMsForPoints,
   latestAgg5mUpdatedAtForPoint,
   latestAgg5mUpdatedAtForPoints,
+  countAgg5mForSessions,
+  staleAgg1dLocalDays,
   countAgg5mByLocalDay,
   countAgg5mForLocalDay,
   insertRaw,
