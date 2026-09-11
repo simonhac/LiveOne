@@ -20,8 +20,15 @@ export interface SourceTickState {
   lastCount?: number | null;
   /** whether the source reported itself running/active last tick */
   running: boolean;
-  /** whether the last push succeeded (undefined = nothing pushed) */
+  /** whether the last DELIVERY succeeded (undefined = nothing delivered yet) */
   pushOk?: boolean;
+  /**
+   * Most recent delivery error + when. Tracked apart from `lastError` (which is the READ) because
+   * the push now happens off the tick path: a site can be collecting perfectly while delivery
+   * fails, and conflating the two is what let a dead device look healthy.
+   */
+  lastPushError?: string;
+  lastPushErrorAt?: string;
   /** most recent error message (sticky until the next error) + when it happened */
   lastError?: string;
   lastErrorAt?: string;

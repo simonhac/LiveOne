@@ -10,15 +10,23 @@
  * whether gusher is down, the hub is wedged, the hub is dead, or Fly is down. Silence is the alarm,
  * so there is no failure mode in which the alarm is missing.
  *
- * 🛑 What counts as a heartbeat is the whole design. We ping only when a tick DELIVERED REAL DEVICE
- * READINGS. Two weaker conditions are both wrong:
+ * 🛑 What counts as a heartbeat is the whole design. We ping only when REAL DEVICE READINGS WERE
+ * ACCEPTED BY THE RECEIVER. Two weaker conditions are both wrong:
  *   - "the tick succeeded" — a source can tick happily while every push fails.
- *   - "a push succeeded" — on a read error with a supervisor attached, tickOnce still delivers the
- *     synthetic control-plane points and reports pushOk. A totally dead generator would therefore
- *     keep the heartbeat green forever. `count !== null` is what excludes that.
+ *   - "a push succeeded" — on a read error with a supervisor attached, the hub still delivers the
+ *     synthetic control-plane points, and that push succeeds. A totally dead generator would
+ *     therefore keep the heartbeat green forever. `hasDeviceReadings` is what excludes that.
  */
 
-const DEFAULT_THROTTLE_MS = 60_000;
+import type { PushOutcome } from "./pusher";
+
+/**
+ * Outbound rate cap. Must stay comfortably BELOW the fastest site's delivery cadence: at 60 s it
+ * collided with kinkora's 60 s pushes, so jitter alone would drop every second ping and halve the
+ * effective heartbeat period — which silently eats the monitor's grace window. 30 s still bounds us
+ * to 2 pings/min for any pathologically fast source.
+ */
+const DEFAULT_THROTTLE_MS = 30_000;
 const PING_TIMEOUT_MS = 5_000;
 
 export interface HeartbeatOptions {
@@ -33,14 +41,10 @@ export interface HeartbeatOptions {
 
 export interface Heartbeat {
   /**
-   * Record a tick. Fire-and-forget: never awaited, never throws, and never rejects — a monitoring
-   * side-channel must not be able to affect collection.
+   * Record a delivery outcome. Fire-and-forget: never awaited, never throws, and never rejects —
+   * a monitoring side-channel must not be able to affect collection.
    */
-  onTick(result: {
-    delivered?: boolean;
-    pushOk?: boolean;
-    count: number | null;
-  }): void;
+  onDelivery(r: { outcome: PushOutcome; hasDeviceReadings: boolean }): void;
 }
 
 export function createHeartbeat(opts: HeartbeatOptions): Heartbeat {
@@ -51,9 +55,9 @@ export function createHeartbeat(opts: HeartbeatOptions): Heartbeat {
   let lastPingAt = -Infinity;
 
   return {
-    onTick(result) {
-      // See the header: real readings, actually delivered, actually accepted.
-      if (!result.delivered || !result.pushOk || result.count === null) return;
+    onDelivery(r) {
+      // See the header: real device readings, actually accepted by the receiver.
+      if (r.outcome !== "ok" || !r.hasDeviceReadings) return;
       const t = now();
       if (t - lastPingAt < throttleMs) return;
       lastPingAt = t;

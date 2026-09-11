@@ -18,6 +18,8 @@ interface TickState {
   pushOk?: boolean;
   lastError?: string;
   lastErrorAt?: string;
+  lastPushError?: string;
+  lastPushErrorAt?: string;
 }
 interface SourceView {
   siteId: string;
@@ -126,6 +128,17 @@ function SourceCard({
           {source.tick.lastError}
           {source.tick.lastErrorAt
             ? ` (${new Date(source.tick.lastErrorAt).toLocaleTimeString()})`
+            : ""}
+        </div>
+      )}
+
+      {/* Delivery is reported separately from the read now that the push is off the tick path —
+          a site can be collecting perfectly while delivery fails, and vice versa. */}
+      {source.tick?.lastPushError && (
+        <div className="px-4 pb-2 text-sm text-amber-600 dark:text-amber-400">
+          {source.tick.lastPushError}
+          {source.tick.lastPushErrorAt
+            ? ` (${new Date(source.tick.lastPushErrorAt).toLocaleTimeString()})`
             : ""}
         </div>
       )}
@@ -303,8 +316,9 @@ function Json({ value }: { value: unknown }) {
 function healthOf(s: SourceView): { dot: string; label: string } {
   const t = s.tick;
   if (!t?.lastTickAt) return { dot: "bg-gray-400", label: "no data yet" };
-  if (t.lastCount === null || t.pushOk === false)
-    return { dot: "bg-red-500", label: "last tick errored" };
+  if (t.lastCount === null) return { dot: "bg-red-500", label: "read failed" };
+  if (t.pushOk === false)
+    return { dot: "bg-amber-500", label: "delivery failing" };
   const ageSec = (Date.now() - Date.parse(t.lastTickAt)) / 1000;
   const stale = ageSec > s.intervalSec * 2 + 30;
   return stale
