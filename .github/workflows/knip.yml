@@ -1,0 +1,38 @@
+name: knip
+
+# Dead-code gate. The repo's other gates (check-route-slugs, check-readings-boundary,
+# check-warm-fold-boundary) run from `prebuild` because a broken one should stop a DEPLOY; an unused
+# export should not, so this one runs on the pull request instead.
+#
+# The point of the gate is that the report is at zero. A 400-entry report is one nobody reads, and a
+# genuinely dead export is indistinguishable from the benign ones around it — which is how the list
+# got to 400. Anything deliberately kept carries `@knipignore <reason>` in the source, or an entry in
+# knip.jsonc that says why; both are greppable, unlike a number everyone has learned to ignore.
+
+on:
+  pull_request:
+  workflow_dispatch: {}
+
+concurrency:
+  group: knip-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  knip:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - run: npm ci
+
+      # Non-zero on any finding. Config hints do not affect the exit code, so the `.css` hint (knip
+      # cannot follow CSS imports) will not fail the build.
+      - run: npm run knip

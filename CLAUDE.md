@@ -159,8 +159,18 @@ npm run type-check       # Check TypeScript types
 npm test                 # Run unit tests
 npm run db:pg:generate   # Diff PG schema.ts -> new migration in /drizzle-planetscale/
 npm run db:pg:migrate    # Apply pending PG migrations
-npm run knip             # Unused files / dependencies / exports (config: knip.json)
+npm run knip             # Unused files / dependencies / exports (config: knip.jsonc)
 ```
+
+**knip must stay at zero — it is a PR gate** (`.github/workflows/knip.yml`). It was allowed to reach
+409 findings, at which point nobody read it and a genuinely dead export was indistinguishable from
+the 300 benign ones beside it. So a new finding is not noise to be absorbed: either the code is dead
+and goes, or it is deliberate and says so — `@knipignore <reason>` on the export (grep for it to see
+everything currently awaiting a decision), or a scoped entry in `knip.jsonc` explaining itself.
+🛑 `knip --fix` only removes the `export` keyword, never the declaration, so running it on a symbol
+that is also unused internally hides dead code instead of deleting it. Check with
+`npx tsc -p tsconfig.json --noEmit --noUnusedLocals` afterwards and diff against a run from before —
+and grep for `TS6196` as well as `TS6133`, because unused TYPE aliases only show up as the former.
 
 ### Scripts Directory
 
