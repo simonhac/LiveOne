@@ -508,3 +508,116 @@ describe("computeFlowAccounting revenue leg (sink-priced)", () => {
     expect(acc.revenueC[1][1]).toBeCloseTo(10, 6);
   });
 });
+
+describe("an interval whose accumulators all read zero", () => {
+  /**
+   * 🛑 A register reading exactly 0 is not the same claim as "no datum", but `exact ?? power * dt`
+   * took the register whenever it was present — and 0 is present. So an interval where no source's
+   * accumulator happened to tick produced an empty pool, was skipped, and its load energy was
+   * DELETED from the matrix. Measured on Daylesford 2026-08-26: 62 of 288 intervals, 5.577 kWh,
+   * 32.5% of that day's sinks. The power series showed the battery supplying the house throughout —
+   * the intervals were never physically sourceless.
+   */
+  const twoHours = hours(3);
+
+  /** Battery supplies the house; its accumulator reads 0 in the middle interval, the load's does not. */
+  const battery: FlowSeries = {
+    path: "source.battery",
+    power: [2, 2, 2],
+    energyKwh: [1, 0, 1],
+  };
+  const house: FlowSeries = {
+    path: "load",
+    power: [2, 2, 2],
+    energyKwh: [1, 1, 1],
+  };
+
+  it("attributes the load instead of deleting it", () => {
+    const r = computeFlowMatrix({
+      timestamps: twoHours,
+      sources: [battery],
+      loads: [house],
+    });
+    // Two intervals of 1 kWh each, and the middle one is the interval under test.
+    expect(r.matrix[0][0]).toBeCloseTo(2, 9);
+  });
+
+  it("keeps the load's row total equal to its own metered energy", () => {
+    // The invariant the module is built around: the fallback changes WHERE the energy is
+    // attributed, never HOW MUCH. The load keeps its register; only the source weights fall back.
+    const r = computeFlowAccounting({
+      timestamps: twoHours,
+      sources: [battery, { path: "source.solar", power: [0, 0, 0] }],
+      loads: [house],
+    });
+    const rowTotal = r.energyKwh.reduce((sum, row) => sum + row[0], 0);
+    expect(rowTotal).toBeCloseTo(2, 9);
+  });
+
+  it("splits by power when the registers cannot say", () => {
+    // Solar is producing according to its power series but its accumulator did not tick either.
+    // With both at zero the exact pool is empty, so the split follows power: 3:1.
+    const r = computeFlowAccounting({
+      timestamps: hours(2),
+      sources: [
+        { path: "source.solar", power: [3, 3], energyKwh: [0] },
+        { path: "source.battery", power: [1, 1], energyKwh: [0] },
+      ],
+      loads: [{ path: "load", power: [4, 4], energyKwh: [4] }],
+    });
+    expect(r.energyKwh[0][0]).toBeCloseTo(3, 9);
+    expect(r.energyKwh[1][0]).toBeCloseTo(1, 9);
+  });
+
+  it("still drops an interval with nothing at all — power included", () => {
+    // Honest absence, not invention: no register and no power means there is genuinely nothing to
+    // attribute the load to, and a fabricated source would be worse than a gap.
+    const r = computeFlowAccounting({
+      timestamps: hours(2),
+      sources: [{ path: "source.solar", power: [0, 0], energyKwh: [0] }],
+      loads: [{ path: "load", power: [2, 2], energyKwh: [2] }],
+    });
+    expect(r.energyKwh[0][0]).toBe(0);
+  });
+
+  it("leaves an interval with a real register alone", () => {
+    // The fallback must not fire where the accumulators DID tick, or it would silently override
+    // metered attribution with power estimates.
+    const r = computeFlowAccounting({
+      timestamps: hours(2),
+      sources: [
+        { path: "source.solar", power: [10, 10], energyKwh: [1] },
+        { path: "source.battery", power: [0, 0], energyKwh: [1] },
+      ],
+      loads: [{ path: "load", power: [2, 2], energyKwh: [2] }],
+    });
+    // 1:1 by register, NOT 10:0 by power.
+    expect(r.energyKwh[0][0]).toBeCloseTo(1, 9);
+    expect(r.energyKwh[1][0]).toBeCloseTo(1, 9);
+  });
+
+  it("stays additive across intervals", () => {
+    // Property 1 of the module, and the reason the fallback is per-interval rather than a
+    // window-wide or day-proportional mix: a live 7-day Sankey must equal the sum of seven stored
+    // dailies. A window-dependent mix would break that silently.
+    const whole = computeFlowMatrix({
+      timestamps: twoHours,
+      sources: [battery],
+      loads: [house],
+    });
+    const first = computeFlowMatrix({
+      timestamps: twoHours.slice(0, 2),
+      sources: [{ path: "source.battery", power: [2, 2], energyKwh: [1] }],
+      loads: [{ path: "load", power: [2, 2], energyKwh: [1] }],
+    });
+    const second = computeFlowMatrix({
+      timestamps: twoHours.slice(1),
+      sources: [{ path: "source.battery", power: [2, 2], energyKwh: [0] }],
+      loads: [{ path: "load", power: [2, 2], energyKwh: [1] }],
+    });
+    expect(first.matrix[0][0] + second.matrix[0][0]).toBeCloseTo(
+      whole.matrix[0][0],
+      9,
+    );
+  });
+});

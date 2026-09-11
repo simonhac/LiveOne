@@ -2293,7 +2293,8 @@ Options:
   --end <YYYY-MM-DD>         Window end, inclusive (local days)
   --series <glob>            Only series matching this glob, matched against the DEVICE-LESS path, e.g. "load/*", "**/energy.delta" (repeatable; `*` does not cross `/`)  (repeatable)
   --out <path>               Write the raw OpenNEM body (or the CSV, under --format csv) to this file; stdout gets a summary
-  --list-series              List series METADATA only — id, unit, metric type, stat suffix, declared intervals, data extents and sample count; no data arrays. The natural first call against an unfamiliar subject. Refuses time flags; --interval is ignored (the per-series `intervals` field answers it)
+  --list-series              List series METADATA only — id, unit, metric type, stat suffix, declared intervals and data extents; no data arrays. The natural first call against an unfamiliar subject. Refuses time flags; --interval is ignored (the per-series `intervals` field answers it)
+  --samples                  With --list-series, also count the 5-minute rows behind each series. OFF by default: the extents are index probes, but the count reads every row the subject owns — millions, on a device with a year of history
 
 Common options:
   --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json, csv)
@@ -2640,7 +2641,8 @@ Options:
   --end <YYYY-MM-DD>         Window end, inclusive (local days)
   --series <glob>            Only series matching this glob, matched against the DEVICE-LESS path, e.g. "load/*", "**/energy.delta" (repeatable; `*` does not cross `/`)  (repeatable)
   --out <path>               Write the raw OpenNEM body (or the CSV, under --format csv) to this file; stdout gets a summary
-  --list-series              List series METADATA only — id, unit, metric type, stat suffix, declared intervals, data extents and sample count; no data arrays. The natural first call against an unfamiliar subject. Refuses time flags; --interval is ignored (the per-series `intervals` field answers it)
+  --list-series              List series METADATA only — id, unit, metric type, stat suffix, declared intervals and data extents; no data arrays. The natural first call against an unfamiliar subject. Refuses time flags; --interval is ignored (the per-series `intervals` field answers it)
+  --samples                  With --list-series, also count the 5-minute rows behind each series. OFF by default: the extents are index probes, but the count reads every row the subject owns — millions, on a device with a year of history
 
 Common options:
   --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json, csv)
@@ -5058,9 +5060,9 @@ Admin/owner only, http-only. Prints `target: <origin> as <you>` on stderr first.
     OR
   interval_start  the same instants stamped as the interval's START
   value           a number, or a string for a text point
-Name the column for what the timestamps ARE. `liveone device history --format csv` and both
-vendor archives stamp the START; calling those interval_end shifts every row one interval and
-nothing downstream can detect it. Use `-` to read the CSV from stdin.
+Name the column for what the timestamps ARE — the two obvious sources disagree. Both vendor
+archives stamp the START; `liveone device history --format csv` stamps the END. Either one
+labelled as the other shifts every row a whole interval, undetectably. `-` reads from stdin.
 
 --quality is REQUIRED and is the point of the verb: it is the only record of whether a number
 was measured or reconstructed. Grade the confidence in the VALUE, not how it reached you.

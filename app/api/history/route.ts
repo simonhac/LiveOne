@@ -596,8 +596,14 @@ export async function GET(request: NextRequest) {
           return NextResponse.json({ error: v.error }, { status: 400 });
         }
       }
+      // 🛑 `samples` is opt-in because it is the one expensive field here: a `count(*)` over every
+      // 5m row the subject owns, where the extents beside it are index probes. Unconditional, it
+      // 504'd this endpoint for a device with a year of history.
+      const wantSamples = searchParams.get("samples") === "true";
       const listing = await t.time("list", () =>
-        buildSeriesListing(handle, tzOffsetMin, patterns),
+        buildSeriesListing(handle, tzOffsetMin, patterns, {
+          samples: wantSamples,
+        }),
       );
       return NextResponse.json(
         {

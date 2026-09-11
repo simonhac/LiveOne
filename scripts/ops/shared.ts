@@ -338,10 +338,16 @@ export const HISTORY_FLAGS = {
   listSeries: {
     type: "boolean",
     help:
-      "List series METADATA only — id, unit, metric type, stat suffix, declared intervals, " +
-      "data extents and sample count; no data arrays. The natural first call against an " +
-      "unfamiliar subject. Refuses time flags; --interval is ignored (the per-series " +
-      "`intervals` field answers it)",
+      "List series METADATA only — id, unit, metric type, stat suffix, declared intervals and " +
+      "data extents; no data arrays. The natural first call against an unfamiliar subject. " +
+      "Refuses time flags; --interval is ignored (the per-series `intervals` field answers it)",
+  },
+  samples: {
+    type: "boolean",
+    help:
+      "With --list-series, also count the 5-minute rows behind each series. OFF by default: the " +
+      "extents are index probes, but the count reads every row the subject owns — millions, on a " +
+      "device with a year of history",
   },
 } as const satisfies Record<string, FlagSpec>;
 
@@ -548,9 +554,13 @@ async function runListSeriesVerb(
       );
 
   const globs = (ctx.flags.series as string[] | undefined) ?? [];
+  // 🛑 Asked for, never assumed. `samples` is a `count(*)` over every 5m row behind every series;
+  // the extents beside it are index probes. It was unconditional until it 504'd this endpoint.
+  const wantSamples = bool(ctx, "samples");
   const params = [
     address,
     "list=series",
+    ...(wantSamples ? ["samples=true"] : []),
     ...(globs.length ? [`series=${encodeURIComponent(globs.join(","))}`] : []),
   ].join("&");
   const body = await s.get<WireSeriesListing>(`/api/history?${params}`, {
@@ -609,7 +619,12 @@ async function runListSeriesVerb(
             `  ${(r.id ?? "?").padEnd(40)} ${(r.units ?? "").padEnd(4)} ${(r.metricType ?? "").padEnd(7)} ` +
             `${(r.intervals ?? []).join(",").padEnd(6)} ` +
             (r.firstData
-              ? `${r.firstData.slice(0, 10)} → ${r.lastData?.slice(0, 10) ?? "?"}  ${String(r.samples ?? "").padStart(7)} samples`
+              ? `${r.firstData.slice(0, 10)} → ${r.lastData?.slice(0, 10) ?? "?"}` +
+                // Omitted entirely rather than shown blank: a missing count means nobody asked for
+                // it (--samples), which is a different thing from a series with no rows.
+                (r.samples != null
+                  ? `  ${String(r.samples).padStart(7)} samples`
+                  : "")
               : "(no data)"),
         ),
         out !== undefined ? `wrote ${out}` : "",

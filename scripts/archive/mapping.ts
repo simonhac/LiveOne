@@ -68,7 +68,11 @@ export function describeMatcher(m: Matcher): string {
  * Mondo's 5-minute archive → Kinkora Mondo (device 6).
  *
  * Every column is already WATTS averaged over the interval, and every target point is watts, so
- * nothing is scaled. `battery_soc_pct` is a percentage against a `soc` point; `site_load_w` is the
+ * nothing is scaled. Aligned correctly (archive stamp T -> the row whose interval_end is T + 5min)
+ * the archive and device 6's own polling agree almost exactly: r = 0.99870, median absolute
+ * difference 0.1 W on battery power over 2026-08. An earlier note here blamed a much larger
+ * discrepancy on device 6 sampling every 2 minutes; that was an artefact of comparing against the
+ * wrong bucket, and it is the reason this file now states the alignment it was measured at. `battery_soc_pct` is a percentage against a `soc` point; `site_load_w` is the
  * vendor's own computed demand, which `/subcircuit/` cannot produce at all (see
  * `lib/vendors/mondo/live-usage.ts`) — those two are the reason this archive is worth importing at
  * all, since device 6 already holds the other nine from its own polling.

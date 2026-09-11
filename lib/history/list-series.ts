@@ -71,6 +71,9 @@ export async function buildSeriesListing(
   handle: number,
   tzOffsetMin: number,
   patterns?: string[],
+  // 🛑 Off by default: the sample count is a full scan of every 5m row this device owns, while the
+  // extents beside it are index probes. See `ReadingsDao.agg5mCoverageForPoints`.
+  opts?: { samples?: boolean },
 ): Promise<SeriesListing> {
   const pointManager = PointManager.getInstance();
   const seriesInfos = await pointManager.getSeriesForDevice(
@@ -80,7 +83,9 @@ export async function buildSeriesListing(
   const pointIds = [
     ...new Set(seriesInfos.map((s) => Point.encode(s.point.pointUid))),
   ];
-  const coverage = await ReadingsDao.agg5mCoverageForPoints(pointIds);
+  const coverage = await ReadingsDao.agg5mCoverageForPoints(pointIds, {
+    samples: opts?.samples === true,
+  });
   const series = renderSeriesListing(seriesInfos, coverage, tzOffsetMin);
   return { list: "series", count: series.length, series };
 }
