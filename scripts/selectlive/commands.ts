@@ -13,10 +13,16 @@ const device: Record<string, FlagSpec> = {
     schema: z.string().regex(/^\d+$/),
   },
 };
+// NO `when: spec.summary` DEFAULT. It reads as a convenience and is not one: `summary` and `when`
+// answer different questions ("what is this" / "when do I reach for it"), they are weighted
+// differently by `liveone find`'s ranking, and copying one into the other declares a routing
+// sentence that was never written. It also made every command here score its one sentence at
+// summary+when in a very short document, which is how `selectlive history info` came to outrank
+// `liveone auth login` on the query "log in". A leaf with nothing more to say than its summary
+// should say nothing; `when` is optional.
 const leaf = (spec: CommandSpec) =>
   defineCommand({
     uses: ["selectlive"],
-    when: spec.summary,
     ...spec,
   });
 export const selectliveCommand = defineCommand({

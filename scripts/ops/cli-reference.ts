@@ -203,6 +203,10 @@ function renderCatalogue(loaded: Loaded[]): string {
         summary: leaf.spec.summary,
         when: leaf.spec.when ?? "",
         parentWhen: leaf.parentWhen ?? "",
+        // The tool's own body prose, UNRENDERED. `description` below is a composition of
+        // `summary`, `when`, `parentWhen`, this, and boilerplate shared by most entries — so it is
+        // the MCP payload and not something to index. See search.ts's `WEIGHTS.details`.
+        details: leaf.spec.description ?? "",
         description: descriptionFor(leaf, { file: t.file }),
         input_schema: inputSchemaFor(leaf.spec),
         signature: signatureFor(leaf),
