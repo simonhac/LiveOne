@@ -145,6 +145,13 @@ export interface SourceWeights {
    * magnitude is decided by the same switch, and the two must agree within an interval.
    */
   anyExact: boolean;
+  /**
+   * True when the exact-energy pool was EMPTY and the weights above fell back to power. See the
+   * 🛑 note in `sourceWeightsForInterval`. Purely informational — the proportions are unitless, so
+   * nothing downstream needs to branch on it — but it is what makes the fallback countable rather
+   * than invisible.
+   */
+  poolFromPower: boolean;
 }
 
 /**
@@ -165,6 +172,24 @@ export interface SourceWeights {
  *
  * Both weights use ONE rule: exact energy where metered, else the LEFT endpoint. So `Σ numerW ==
  * totalGenW`, and a load's row total is exactly its own interval energy.
+ *
+ * 🛑 **A register reading exactly 0 is not the same claim as "no datum", and used to beat a nonzero
+ * power.** `exact ?? p1 * dt` takes the register whenever it is present, and 0 is present — so an
+ * interval where every source's accumulator happened not to tick produced an EMPTY pool, and
+ * `computeFlowAccounting` skipped it, deleting that interval's load energy from the matrix. This is
+ * not rare: measured on Daylesford 2026-08-26, 62 of 288 intervals carried load or charge with all
+ * three source registers at 0, and the 5.577 kWh in them — 32.5% of the day's sinks — vanished.
+ * Those intervals are not physically sourceless; the POWER series show the battery supplying the
+ * house throughout. It is a counter-granularity artefact.
+ *
+ * So when the exact pool comes out empty, the weights are recomputed from POWER. That is sound
+ * because the weights are only ever read as the ratio `w / genWForLoad` — unitless — so they need
+ * to be commensurable with EACH OTHER within the interval, not with the load's magnitude. The load
+ * keeps its metered energy (`anyExact` is deliberately left alone), so a load's row total is still
+ * exactly its own interval energy. The fallback is per-interval and uses only that interval's data,
+ * which is what keeps the matrix ADDITIVE across intervals (property 1) — a window-wide or
+ * day-proportional mix would not, and would make a live 7-day Sankey disagree with the sum of seven
+ * stored dailies.
  *
  * 🛑 This symmetry is the invariant, not an implementation detail. The numerator used to require BOTH
  * endpoints while the denominator required only the left one, so a source with a right-endpoint
@@ -201,28 +226,43 @@ export function sourceWeightsForInterval(
       }
     }
 
-  const denomW = new Array<number>(S).fill(0);
-  const numerW = new Array<number | null>(S).fill(null);
-  let totalGenW = 0;
-  for (let s = 0; s < S; s++) {
-    const exact = sources[s].energyKwh?.[i];
-    const p1 = sources[s].power[i];
-    if (anyExact) {
-      const d = exact ?? (p1 !== null ? p1 * deltaHours : null);
-      if (d !== null && d !== undefined) {
-        denomW[s] = d;
-        totalGenW += d;
-        numerW[s] = d;
-      }
-    } else {
+  const fromPower = (): SourceWeights => {
+    const denomW = new Array<number>(S).fill(0);
+    const numerW = new Array<number | null>(S).fill(null);
+    let totalGenW = 0;
+    for (let s = 0; s < S; s++) {
+      const p1 = sources[s].power[i];
       if (p1 !== null) {
         denomW[s] = p1;
         totalGenW += p1;
         numerW[s] = p1;
       }
     }
+    return { denomW, numerW, totalGenW, anyExact, poolFromPower: true };
+  };
+
+  if (!anyExact) return { ...fromPower(), poolFromPower: false };
+
+  const denomW = new Array<number>(S).fill(0);
+  const numerW = new Array<number | null>(S).fill(null);
+  let totalGenW = 0;
+  for (let s = 0; s < S; s++) {
+    const exact = sources[s].energyKwh?.[i];
+    const p1 = sources[s].power[i];
+    const d = exact ?? (p1 !== null ? p1 * deltaHours : null);
+    if (d !== null && d !== undefined) {
+      denomW[s] = d;
+      totalGenW += d;
+      numerW[s] = d;
+    }
   }
-  return { denomW, numerW, totalGenW, anyExact };
+  // Every accumulator read zero (or had no datum) this interval. See the 🛑 note above: that is a
+  // counter-granularity artefact, not a sourceless interval, and dropping it deletes real energy.
+  if (totalGenW <= 0) {
+    const byPower = fromPower();
+    if (byPower.totalGenW > 0) return byPower;
+  }
+  return { denomW, numerW, totalGenW, anyExact, poolFromPower: false };
 }
 
 /**
