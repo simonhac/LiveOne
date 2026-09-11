@@ -17,10 +17,24 @@ import { buildEntries, type UsherStore } from "./factory";
 import { runLoop, type ScheduledEntry } from "./run";
 import { Blackbox } from "./blackbox";
 import { Spool } from "./spool";
-import { recordTick } from "../state/usher-state";
+import { recordTick, getTickState } from "../state/usher-state";
 import { registry } from "../state/registry";
+import {
+  createHeartbeat,
+  resolveHeartbeatUrl,
+  type Heartbeat,
+} from "./heartbeat";
+import { createWatchdog } from "./watchdog";
+import { startDrainer } from "./drainer";
 
 const MAINTENANCE_INTERVAL_MS = 5 * 60_000;
+/**
+ * Log loudly once a source has failed this many ticks back-to-back. Four, because that is the size
+ * of the smaller of the two self-recovering episodes that preceded the 2026-09-11 wedge — the
+ * warning we had and could not see. Not an alert: the heartbeat is the alarm. This is the forensic
+ * breadcrumb that says which device to look at, and when it started.
+ */
+const DEGRADED_TICKS = 4;
 
 /** The scheduled entries the usher is running (empty until startUsher() has built them). */
 export function getEntries(): ScheduledEntry[] {
@@ -107,6 +121,53 @@ export async function startUsher(opts: StartUsherOptions = {}): Promise<void> {
   }, MAINTENANCE_INTERVAL_MS);
   maintenance.unref?.();
 
+  // Per-site dead-man's-switch. Built from config (not the entries) because the URL is named by the
+  // yaml and resolved from env — sites without one simply have no heartbeat.
+  const heartbeats = new Map<string, Heartbeat>();
+  for (const sc of config.sources) {
+    const url = resolveHeartbeatUrl(sc.heartbeatUrlEnv);
+    if (!url) continue;
+    heartbeats.set(
+      sc.siteId,
+      createHeartbeat({ url, log: (m) => log(`[${sc.siteId}] ${m}`) }),
+    );
+  }
+  log(
+    `usher: heartbeat ${heartbeats.size ? `on for ${[...heartbeats.keys()].join(", ")}` : "OFF (no *_HEARTBEAT_URL configured)"}`,
+  );
+
+  // Long-running background services. Skipped for --once, which must return promptly.
+  if (!opts.once) {
+    // Recovers the on-disk backlog independently of the poll loops — so a wedged or crashed loop
+    // can no longer strand batches that are already safely spooled.
+    startDrainer(registry.entries, { log });
+  }
+
+  const watchdog = createWatchdog({ log: (m) => log(m) });
+  for (const e of registry.entries) {
+    watchdog.register(e.source.siteId, e.activeIntervalMs ?? e.intervalMs);
+  }
+  if (!opts.once) watchdog.start();
+
   // recordTick feeds the inspector's per-source state; snapshots come from each source directly.
-  await runLoop(registry.entries, { once: opts.once, log, onTick: recordTick });
+  await runLoop(registry.entries, {
+    once: opts.once,
+    log,
+    onTickStart: (entry) => watchdog.noteTickStart(entry.source.siteId),
+    onTick: (entry, result) => {
+      recordTick(entry, result);
+      heartbeats.get(entry.source.siteId)?.onTick(result);
+      const st = getTickState(entry.source.siteId);
+      // Every DEGRADED_TICKS in a row, not just the first — a run that keeps growing keeps saying so.
+      if (
+        st &&
+        st.consecutiveErrors > 0 &&
+        st.consecutiveErrors % DEGRADED_TICKS === 0
+      ) {
+        log(
+          `[${entry.source.name}] ⚠ ${st.consecutiveErrors} consecutive failed ticks — last error: ${st.lastError}`,
+        );
+      }
+    },
+  });
 }

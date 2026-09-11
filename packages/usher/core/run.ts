@@ -11,11 +11,11 @@
 
 import { buildReadings } from "./build";
 import type { Source } from "./source";
-import type { Pusher } from "./pusher";
+import type { Pusher, PushOutcome } from "./pusher";
 import type { Blackbox } from "./blackbox";
 import type { Spool } from "./spool";
 import { CONTROL_MANIFEST, type RunSupervisor } from "./control";
-import { withTimeout } from "../lib/async";
+import { delay, withTimeout } from "../lib/async";
 
 export interface Entry {
   source: Source;
@@ -85,6 +85,11 @@ export interface RunOptions {
   once?: boolean;
   /** called after each tick with the entry + result — feeds the inspector's UsherState */
   onTick?: (entry: ScheduledEntry, result: TickResult) => void;
+  /**
+   * Called at the TOP of each tick, before any work. The watchdog needs this rather than onTick:
+   * onTick fires only when a tick COMPLETES, and completion is exactly what a stall removes.
+   */
+  onTickStart?: (entry: ScheduledEntry) => void;
 }
 
 /** Default hard cap on a tick. Well above a normal read+push (~1s), well below any poll interval. */
@@ -164,6 +169,40 @@ export async function tickOnce(
     at: measurementTime,
   };
 
+  /**
+   * Push a batch, and durably spool it if the receiver is transiently unavailable. Shared by the
+   * happy path and the control-only error path — they had drifted, and only one of them spooled.
+   */
+  async function deliver(
+    batch: ReturnType<typeof buildReadings>,
+  ): Promise<{ outcome: PushOutcome; spooled: boolean | undefined }> {
+    const outcome = await pusher.store(batch, {
+      sessionLabel,
+      measurementTime,
+    });
+    if (outcome !== "transient") return { outcome, spooled: undefined };
+    try {
+      const ok =
+        (await withTimeout(
+          Promise.resolve(
+            spool?.enqueue({
+              siteId: source.siteId,
+              sessionLabel,
+              measurementTime,
+              readings: batch,
+              spooledAt: new Date().toISOString(),
+            }),
+          ),
+          STORE_TIMEOUT_MS,
+          `spool enqueue exceeded ${STORE_TIMEOUT_MS}ms`,
+        )) ?? false;
+      return { outcome, spooled: ok };
+    } catch (e) {
+      log(`[${source.name}] ${e instanceof Error ? e.message : String(e)}`);
+      return { outcome, spooled: false };
+    }
+  }
+
   const supervisor = entry.supervisor ?? null;
   let readings: ReturnType<typeof buildReadings>;
   let active = false;
@@ -227,11 +266,17 @@ export async function tickOnce(
       error: readError,
     };
     if (!shouldDeliver(false)) return { ...result, delivered: false };
-    const outcome = await pusher.store(readings, {
-      sessionLabel,
-      measurementTime,
-    });
-    return { ...result, delivered: true, pushOk: outcome === "ok" };
+    // Spool these like any other batch. They used to be pushed and DISCARDED on "transient" — yet
+    // a control-only batch during an outage is the most valuable thing the hub emits
+    // (`controlState: "stop-failing"` during the very Modbus failure that caused it). Not
+    // journalled, though: the blackbox is a record of device readings, and there are none.
+    const { outcome, spooled } = await deliver(readings);
+    return {
+      ...result,
+      delivered: true,
+      pushOk: outcome === "ok",
+      spooled,
+    };
   }
 
   if (readings.length === 0) {
@@ -276,32 +321,7 @@ export async function tickOnce(
     log(`[${source.name}] ${e instanceof Error ? e.message : String(e)}`);
   }
 
-  const outcome = await pusher.store(readings, {
-    sessionLabel,
-    measurementTime,
-  });
-  let spooled: boolean | undefined;
-  if (outcome === "transient") {
-    try {
-      spooled =
-        (await withTimeout(
-          Promise.resolve(
-            spool?.enqueue({
-              siteId: source.siteId,
-              sessionLabel,
-              measurementTime,
-              readings,
-              spooledAt: new Date().toISOString(),
-            }),
-          ),
-          STORE_TIMEOUT_MS,
-          `spool enqueue exceeded ${STORE_TIMEOUT_MS}ms`,
-        )) ?? false;
-    } catch (e) {
-      log(`[${source.name}] ${e instanceof Error ? e.message : String(e)}`);
-      spooled = false;
-    }
-  }
+  const { outcome, spooled } = await deliver(readings);
 
   return {
     ...base,
@@ -370,12 +390,58 @@ export function shouldDeliverTick(input: {
   return input.sinceDeliveredMs >= dueMs - (input.toleranceMs ?? 0);
 }
 
+/**
+ * Run `fn` forever, restarting it with backoff if it ever throws.
+ *
+ * `runEntryLoop` is a `for(;;)` whose body is wrapped in try/catch at every point we thought could
+ * throw — but "every point we thought of" is the same assumption that produced the 2026-09-11
+ * wedge. If anything outside those guards throws, that entry's promise rejects, and before this
+ * existed the rejection propagated through `Promise.all` into `startUsher`'s `.catch`, which logged
+ * one line and left the process serving the inspector happily with ZERO collectors. A silent death
+ * with an HTTP server still answering is the worst shape of failure here, so the loop restarts
+ * instead.
+ *
+ * Backoff so a deterministic construction error (a bad host, a missing manifest) cannot spin.
+ */
+export async function runWithRestart(
+  fn: () => Promise<void>,
+  opts: {
+    label: string;
+    log: (m: string) => void;
+    minDelayMs?: number;
+    maxDelayMs?: number;
+    /** stop after this many restarts (tests only; production runs forever) */
+    maxRestarts?: number;
+  },
+): Promise<void> {
+  const minDelayMs = opts.minDelayMs ?? 1_000;
+  const maxDelayMs = opts.maxDelayMs ?? 60_000;
+  let delayMs = minDelayMs;
+  let restarts = 0;
+  for (;;) {
+    try {
+      await fn();
+      return; // a clean return (--once) is not a crash
+    } catch (e) {
+      if (opts.maxRestarts !== undefined && restarts >= opts.maxRestarts)
+        throw e;
+      restarts++;
+      opts.log(
+        `[${opts.label}] loop crashed: ${e instanceof Error ? e.message : String(e)} — restarting in ${delayMs}ms`,
+      );
+      await delay(delayMs);
+      delayMs = Math.min(delayMs * 2, maxDelayMs);
+    }
+  }
+}
+
 /** Run one scheduled entry's independent loop forever: tick → wait its own period → repeat. */
 async function runEntryLoop(
   entry: ScheduledEntry,
   log: (m: string) => void,
   tickTimeoutMs?: number,
   onTick?: (entry: ScheduledEntry, result: TickResult) => void,
+  onTickStart?: (entry: ScheduledEntry) => void,
 ): Promise<void> {
   const idleMs = entry.intervalMs;
   const activeMs = entry.activeIntervalMs ?? idleMs;
@@ -402,6 +468,11 @@ async function runEntryLoop(
 
   for (;;) {
     const tickStart = Date.now();
+    try {
+      onTickStart?.(entry);
+    } catch {
+      /* a watchdog hook must never break the loop */
+    }
     const result = await tickOnce(entry, log, tickTimeoutMs, (active) =>
       shouldDeliverTick({
         active,
@@ -530,8 +601,22 @@ export async function runLoop(
     entries.forEach((e, i) => opts.onTick?.(e, results[i]));
     return;
   }
-  // Each entry runs its own independent, never-resolving loop.
-  await Promise.all(
-    entries.map((e) => runEntryLoop(e, log, opts.tickTimeoutMs, opts.onTick)),
+  // Each entry runs its own independent, never-resolving loop, each restarted on its own if it
+  // ever throws. allSettled, not all: one entry dying must not reject the whole set — that is the
+  // path by which a single bad source could take every collector down with it.
+  await Promise.allSettled(
+    entries.map((e) =>
+      runWithRestart(
+        () =>
+          runEntryLoop(
+            e,
+            log,
+            opts.tickTimeoutMs,
+            opts.onTick,
+            opts.onTickStart,
+          ),
+        { label: e.source.name, log },
+      ),
+    ),
   );
 }

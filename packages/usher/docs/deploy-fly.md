@@ -63,10 +63,17 @@ instead); `apiKeyEnv` keeps secrets out of the file.
 | `TUNNEL_TOKEN`           | cloudflared tunnel token (Access → `usher.liveone.energy`)                   |
 | `MUSHER_API_KEY`         | gusher `gk_` key for the sheephouse device                                   |
 | `KINKORA_API_KEY`        | gusher `gk_` key for the kinkora device                                      |
+| `SHEEPHOUSE_HEARTBEAT_URL` | optional — BetterStack heartbeat ping URL for sheephouse (period 5 min)    |
+| `KINKORA_HEARTBEAT_URL`  | optional — BetterStack heartbeat ping URL for kinkora (period 1 min)         |
 
 > ⚠️ The sheephouse key really is **`MUSHER_API_KEY`** — that is the name `usher.example.yaml`
 > declares in `apiKeyEnv`, and the name set on the deployed app. Earlier revisions of this document
 > said `SHEEPHOUSE_API_KEY`; provisioning that name silently yields no auth, because nothing reads it.
+
+> The heartbeat URLs are optional and fail silent: a site with no URL configured simply has no
+> heartbeat, and the collector is unaffected. Create the heartbeats in BetterStack first (period =
+> the site's push cadence, grace ~3x), then set the secret. Set **grace generously** — the ping only
+> fires on a tick that delivered real readings, so a brief device blip must not page you.
 
 Non-secret WireGuard addressing lives in `fly.toml` `[env]`.
 

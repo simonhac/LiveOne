@@ -8,6 +8,7 @@ import {
 } from "@jest/globals";
 import {
   msUntilNextBoundary,
+  runWithRestart,
   shouldDeliverTick,
   tickOnce,
   type Entry,
@@ -386,6 +387,102 @@ describe("tickOnce delivery gating (poll ≠ push)", () => {
     expect(r).toMatchObject({ count: 0 });
     expect(r.delivered).toBeUndefined();
     expect(consulted).toBe(false);
+  });
+});
+
+/**
+ * The control-plane error path used to push and then DISCARD the batch on "transient". Those are
+ * the most valuable readings the hub emits during an incident — `controlState: "stop-failing"`
+ * reported during the very Modbus failure that caused it — and they were the ones being dropped.
+ */
+describe("tickOnce spools the control-only batch", () => {
+  function controlEntry() {
+    const spooled: unknown[] = [];
+    const { entry } = makeEntry(async () => {
+      throw new Error("modbus dead");
+    });
+    Object.assign(entry, {
+      supervisor: {
+        observeValues: () => {},
+        syntheticValues: () => ({ controlState: "stop-failing" }),
+        stateVersion: 1,
+        inTransition: () => false,
+      },
+      pusher: { store: async () => "transient" as const },
+      spool: {
+        enqueue: async (b: unknown) => {
+          spooled.push(b);
+          return true;
+        },
+      },
+    });
+    return { entry, spooled };
+  }
+
+  it("spools a control-only batch when the push is transient", async () => {
+    const { entry, spooled } = controlEntry();
+    const r = await tickOnce(entry, () => {});
+    expect(r).toMatchObject({ count: null, delivered: true, pushOk: false });
+    expect(r.spooled).toBe(true);
+    expect(spooled).toHaveLength(1);
+  });
+
+  it("does not journal a control-only batch (the blackbox records device readings)", async () => {
+    const { entry } = controlEntry();
+    const journalled: unknown[] = [];
+    Object.assign(entry, {
+      blackbox: {
+        append: async (b: unknown) => {
+          journalled.push(b);
+        },
+      },
+    });
+    await tickOnce(entry, () => {});
+    expect(journalled).toHaveLength(0);
+  });
+});
+
+/**
+ * Before this, a throw anywhere in the loop body outside tickOnce's guards rejected that entry's
+ * promise, Promise.all rejected, startUsher logged one line — and the process then served the
+ * inspector happily with ZERO collectors.
+ */
+describe("runWithRestart", () => {
+  it("restarts a crashing loop and backs off", async () => {
+    const logs: string[] = [];
+    let starts = 0;
+    await expect(
+      runWithRestart(
+        async () => {
+          starts++;
+          throw new Error(`boom ${starts}`);
+        },
+        {
+          label: "test",
+          log: (m) => logs.push(m),
+          minDelayMs: 1,
+          maxDelayMs: 4,
+          maxRestarts: 3,
+        },
+      ),
+    ).rejects.toThrow("boom 4");
+    expect(starts).toBe(4);
+    expect(logs).toHaveLength(3);
+    expect(logs[0]).toMatch(
+      /\[test\] loop crashed: boom 1 — restarting in 1ms/,
+    );
+    expect(logs[2]).toMatch(/restarting in 4ms/); // 1 -> 2 -> 4
+  });
+
+  it("returns without restarting when the loop returns cleanly (--once)", async () => {
+    let starts = 0;
+    await runWithRestart(
+      async () => {
+        starts++;
+      },
+      { label: "test", log: () => {}, minDelayMs: 1 },
+    );
+    expect(starts).toBe(1);
   });
 });
 
