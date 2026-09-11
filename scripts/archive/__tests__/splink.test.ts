@@ -127,15 +127,26 @@ describe("resampleInstant", () => {
     value,
   });
 
-  it("lands a stamp on its own bucket and interpolates the two between", () => {
-    // SP LINK's SoC at T equals LiveOne's soc.last for the bucket STARTING at T — measured at
-    // r = 1.00000, median absolute difference 0.011 %.
+  it("lands a stamp on the bucket it ENDS, not the one it starts", () => {
+    // 🛑 A bucket is (end-5, end], so an instantaneous reading at T is the last sample of the bucket
+    // ENDING at T — interval_start T-5. Measured against LiveOne over 2026-08: r = 0.999996 and
+    // medAbs 0.011 % at this alignment, against 0.999921 and 0.044 % one bucket later. The first cut
+    // of this function was wrong by exactly one interval, which on a slowly-moving series like SoC
+    // looks entirely plausible and is invisible to everything downstream.
     const out = resampleInstant([stamp(0, 60), stamp(1, 63)]);
     expect(out.slice(0, 3).map((o) => [o.startMs - T, o.value])).toEqual([
-      [0, 60],
-      [FIVE_MIN_MS, 61],
-      [2 * FIVE_MIN_MS, 62],
+      [-FIVE_MIN_MS, 60],
+      [0, 61],
+      [FIVE_MIN_MS, 62],
     ]);
+  });
+
+  it("agrees with where the averages put the same window's last bucket", () => {
+    // Cross-check between the two resamplers, which reach it independently: a window (T-15, T]
+    // covers the buckets starting T-15, T-10, T-5 — so a reading AT T belongs to the one at T-5.
+    const avg = resampleAverages([{ tMs: T, value: 1 }]);
+    const inst = resampleInstant([{ tMs: T, value: 1 }]);
+    expect(inst[0].startMs).toBe(avg[avg.length - 1].startMs);
   });
 
   it("refuses to bridge a span longer than one step", () => {

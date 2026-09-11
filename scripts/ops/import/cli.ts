@@ -96,9 +96,9 @@ export const importCommand = defineCommand({
     "    OR\n" +
     "  interval_start  the same instants stamped as the interval's START\n" +
     "  value           a number, or a string for a text point\n" +
-    "Name the column for what the timestamps ARE. `liveone device history --format csv` and both\n" +
-    "vendor archives stamp the START; calling those interval_end shifts every row one interval and\n" +
-    "nothing downstream can detect it. Use `-` to read the CSV from stdin.\n\n" +
+    "Name the column for what the timestamps ARE — the two obvious sources disagree. Both vendor\n" +
+    "archives stamp the START; `liveone device history --format csv` stamps the END. Either one\n" +
+    "labelled as the other shifts every row a whole interval, undetectably. `-` reads from stdin.\n\n" +
     "--quality is REQUIRED and is the point of the verb: it is the only record of whether a number\n" +
     "was measured or reconstructed. Grade the confidence in the VALUE, not how it reached you.\n\n" +
     "--session is REQUIRED and is what makes --quality honest — it is how a later reader finds out\n" +
@@ -170,11 +170,13 @@ export function parseCsv(text: string): WireRow[] {
 
   // 🛑 The TIMESTAMP COLUMN NAMES ITS OWN CONVENTION, and the file must pick one.
   //
-  // A 5m row is keyed on the interval END. But every plausible way an operator builds one of these
-  // files stamps the START: `liveone device history --format csv` emits `timestamp_utc` as the
-  // interval start, and so do the vendor archives. Both are on 5-minute boundaries, so a
-  // start-stamped file read as ends validates perfectly and lands every row one interval late —
-  // the "plausible-looking import against the wrong hour" this parser exists to make impossible.
+  // A 5m row is keyed on the interval END — and the two obvious ways to build one of these files
+  // DISAGREE about what they stamp. The vendor archives stamp the START; `liveone device history
+  // --format csv` stamps the END. Every such value sits on a 5-minute boundary, so either one read
+  // as the other validates perfectly and lands every row a whole interval out — the
+  // "plausible-looking import against the wrong hour" this parser exists to make impossible.
+  // (Both conventions were measured against stored rows, not assumed: see scripts/archive/splink.ts,
+  // where believing the wrong one put an entire SoC series one interval late.)
   //
   // Carrying it in the header rather than a `--stamp` flag is deliberate: a flag can disagree with
   // the file it is pointed at, and the person running the command is often not the person who
@@ -185,7 +187,7 @@ export function parseCsv(text: string): WireRow[] {
     throw usage(
       "the header names neither interval_end nor interval_start",
       `found: ${header.join(", ")}`,
-      "name the column for what its timestamps ARE — archives and `device history` stamp the START",
+      "name the column for what its timestamps ARE — archives stamp the START, `device history` the END",
     );
   if (iEnd !== -1 && iStart !== -1)
     throw usage(

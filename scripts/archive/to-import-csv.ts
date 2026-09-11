@@ -16,11 +16,17 @@
  * captured with `liveone device points <d> --format json`, so the resolution is reviewable before
  * anything is written and cannot silently pick a different point on a different environment.
  *
- * 🛑 It emits `interval_start`, and the column name is load-bearing. Every archive here stamps the
- * START of its interval — verified, not assumed: Mondo's `timestamp_utc` correlates with LiveOne's
- * start-labelled 5-minute buckets at r = 0.9976–0.9999 and materially worse at any shift. `liveone
- * import` keys rows on the interval END and converts; naming the column `interval_end` instead
- * would validate cleanly and put every row one interval late.
+ * 🛑 It emits `interval_start`, and the column name is load-bearing. Both archives stamp the START
+ * of their interval — verified against stored rows, not assumed: matching Mondo's `timestamp_utc`
+ * against the LiveOne row whose interval_end is `T + 5min` gives r = 0.99870 and a median absolute
+ * difference of 0.1 W, against 0.954 and 16.0 W at the same instant. `liveone import` keys rows on
+ * the interval END and converts.
+ *
+ * 🛑 Do NOT calibrate this against `liveone device history`'s own labels without checking which end
+ * they are. They are interval ENDS, while these archives stamp STARTS — so a naive comparison is
+ * off by one bucket, and on 5-minute power (heavily autocorrelated) it still returns r = 0.95+,
+ * which reads like agreement. That is how the SoC leg of `splink.ts` came to be a whole interval
+ * late; only a shift test made the difference visible.
  *
  * 🛑 Blank is ABSENT, never zero. A blank circuit in one of these archives was not reporting; it
  * was not drawing 0 W. A blank cell emits no row, so the hole stays a hole.
@@ -239,6 +245,14 @@ function main() {
   const start = flag("start", true);
   const end = flag("end", true);
   const out = flag("out", true);
+  // 🛑 Naming a subset is not a convenience, it is what keeps the manifest honest. One repair often
+  // wants only the columns a device could never see (Mondo's SoC and site load) while its other
+  // series already hold real measurements an import must not touch. Generating all of them and
+  // trimming the CSV afterwards would leave the manifest describing rows nobody imported.
+  const only = flag("columns")
+    ?.split(",")
+    .map((c: string) => c.trim())
+    .filter((c: string) => c.length > 0);
 
   // --- the archive ------------------------------------------------------------------------------
   const manifestPath = path.join(sourceDir, "manifest.md");
@@ -259,8 +273,10 @@ function main() {
 
   // 🛑 A window inside a declared whole-day gap is a refusal, not an empty result. The archive says
   // the vendor had nothing there; producing zero rows would look identical to "the mapping missed".
+  const startDay = start.slice(0, 10);
+  const endDay = end.slice(0, 10);
   for (const g of archive.gaps)
-    if (!(end < g.from || start > g.to))
+    if (!(endDay < g.from || startDay > g.to))
       refuse(
         `${start}..${end} overlaps a gap the archive declares (${g.from}..${g.to}) — ` +
           `the vendor has nothing there, so there is nothing to import`,
@@ -268,24 +284,46 @@ function main() {
 
   // --- the rows ---------------------------------------------------------------------------------
   // One file per local calendar year, and a UTC window can straddle two of them.
-  const years = [...new Set([start.slice(0, 4), end.slice(0, 4)])];
+  const years = [...new Set([startDay.slice(0, 4), endDay.slice(0, 4)])];
   const files = years
     .map((y) => path.join(sourceDir, `${y}.csv`))
     .filter((f) => fs.existsSync(f));
   if (files.length === 0) refuse(`no ${years.join("/")}.csv in ${sourceDir}`);
   const csvs = files.map(readCsv);
 
-  // The window is expressed in whole UTC days, inclusive of both ends.
-  const fromMs = Date.parse(`${start}T00:00:00Z`);
-  const toMs = Date.parse(`${end}T23:59:59Z`);
-  if (!Number.isFinite(fromMs) || !Number.isFinite(toMs))
-    refuse(`--start/--end must be YYYY-MM-DD`);
+  // A bare date means the whole UTC day, inclusive of both ends; a full ISO instant means exactly
+  // that instant. An outage does not begin at midnight, and the alternative — generate the whole day
+  // and trim afterwards — would leave the manifest describing rows that were never imported.
+  const bound = (v: string, endOfDay: boolean): number => {
+    const ms = /^\d{4}-\d{2}-\d{2}$/.test(v)
+      ? Date.parse(`${v}T${endOfDay ? "23:59:59" : "00:00:00"}Z`)
+      : Date.parse(v);
+    if (!Number.isFinite(ms))
+      refuse(`--start/--end must be YYYY-MM-DD or an ISO instant; got "${v}"`);
+    return ms;
+  };
+  const fromMs = bound(start, false);
+  const toMs = bound(end, true);
+  if (fromMs > toMs) refuse(`--start is after --end`);
 
-  const produced = (kind === "mondo-5min" ? produceMondo : produceSplink)(
+  let produced = (kind === "mondo-5min" ? produceMondo : produceSplink)(
     csvs,
     fromMs,
     toMs,
   ).filter((p) => p.rows.length > 0);
+
+  if (only) {
+    const available = new Set(produced.map((p) => p.source));
+    // A name that matches nothing is a refusal: silently producing fewer columns than asked for is
+    // how a repair comes to be half-done without anyone noticing.
+    const unknown = only.filter((c: string) => !available.has(c));
+    if (unknown.length > 0)
+      refuse(
+        `--columns names series this archive did not produce here: ${unknown.join(", ")}. ` +
+          `Available: ${[...available].join(", ")}`,
+      );
+    produced = produced.filter((p) => only.includes(p.source));
+  }
 
   if (produced.length === 0)
     refuse(
@@ -395,9 +433,10 @@ function main() {
   // mapping that missed, and the difference matters.
   const names = new Set(produced.map((p) => p.source));
   const expected =
-    kind === "mondo-5min"
+    only ??
+    (kind === "mondo-5min"
       ? MONDO_5MIN.map((m) => m.source)
-      : [...AVERAGED, "bidi.battery/soc"];
+      : [...AVERAGED, "bidi.battery/soc"]);
   for (const s of expected)
     if (!names.has(s))
       console.log(

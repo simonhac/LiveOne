@@ -38,9 +38,10 @@
  * triple's mean is exactly the recorded 15-minute average. That is smooth AND interval-energy
  * preserving — the daily totals `recomputeAgg1dForDay` builds are unaffected by the smoothing.
  *
- * SoC is different: it is an instantaneous value at T, not an average, so it is interpolated
- * linearly between stamps. Two intervening buckets, inside `derive-power.ts`'s
- * `MAX_INTERP_INTERVALS = 3`.
+ * SoC is different: it is an instantaneous value at T, not an average, so it is the LAST sample of
+ * the bucket ENDING at T and is interpolated linearly between stamps. Two intervening buckets,
+ * inside `derive-power.ts`'s `MAX_INTERP_INTERVALS = 3`. See `resampleInstant` — the off-by-one
+ * here is invisible downstream.
  *
  * 🛑 **No extrapolation.** A window with no neighbour on the side the interpolation needs falls
  * back to the step hold rather than continuing a trend off the end of the run — `derive-power.ts`:
@@ -177,9 +178,16 @@ export function resampleAverages(
 /**
  * Spread a series of INSTANTANEOUS values (SoC) onto the 5-minute grid.
  *
- * The empirical alignment is exact: SP LINK's SoC at T equals LiveOne's `soc.last` for the bucket
- * STARTING at T (r = 1.00000, median absolute difference 0.011 %). So a stamp lands on its own
- * bucket, and the two buckets between consecutive stamps are interpolated.
+ * 🛑 A 5-minute bucket is `(end-5, end]`, and an instantaneous reading at T is the LAST sample of
+ * the bucket ENDING at T — so it belongs to `interval_start = T - 5min`, not to the bucket starting
+ * at T. Measured against LiveOne over 2026-08 (n = 2 969), matching SP LINK's stamp T against the
+ * row whose interval_end is T: r = 0.999996, median absolute difference 0.011 %, against 0.999921
+ * and 0.044 % one bucket later. That is the same conclusion the averages reach from the other side
+ * — a window `(T-15, T]` covers the buckets ending T-10, T-5 and T, i.e. starting T-15, T-10 and
+ * T-5 — so the two agree that this window's last bucket starts at T-5.
+ *
+ * This was wrong in the first cut, in the one direction nothing downstream could detect: every SoC
+ * row landed a single interval late, which for a slowly-moving series looks entirely plausible.
  *
  * 🛑 Bounded to a single 15-minute step. A longer span is a hole the archive itself has, and a
  * straight line across it would be invention rather than recovery.
@@ -191,14 +199,16 @@ export function resampleInstant(
   for (let i = 0; i < byT.length; i++) {
     const { tMs, value } = byT[i];
     if (value === null) continue;
-    out.push({ startMs: tMs, value, held: false });
+    // The bucket this reading ENDS: start = T - 5min.
+    const startMs = tMs - FIVE_MIN_MS;
+    out.push({ startMs, value, held: false });
 
     const next = byT[i + 1];
     if (!next || next.value === null) continue;
     if (next.tMs - tMs !== FIFTEEN_MIN_MS) continue; // not adjacent — do not bridge it
     for (let k = 1; k <= 2; k++)
       out.push({
-        startMs: tMs + k * FIVE_MIN_MS,
+        startMs: startMs + k * FIVE_MIN_MS,
         value: value + ((next.value - value) * k) / 3,
         held: false,
       });

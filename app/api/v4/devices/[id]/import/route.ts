@@ -62,12 +62,13 @@ import {
  * run reports the three counts rather than "rows in your file", and a `downgrade` refuses the whole
  * request unless `overwriteMeasured` asks for it.
  *
- * 🛑 **`intervalStart` or `intervalEnd` — say which.** 5m rows are keyed on the interval END, but
- * every plausible source of an operator's file stamps the START: `liveone device history
- * --format csv` emits `timestamp_utc` as the interval start, and so do the vendor archives. Both
- * land on 5-minute boundaries, so a start-stamped file passed as `intervalEnd` validates cleanly
- * and lands every row one interval late — the "plausible-looking import against the wrong hour"
- * that nothing downstream can detect. Exactly one of the two fields must be present.
+ * 🛑 **`intervalStart` or `intervalEnd` — say which.** 5m rows are keyed on the interval END, and
+ * the two plausible sources of an operator's file DISAGREE about which they stamp: `liveone device
+ * history --format csv` emits `timestamp_utc` as the interval END, while both vendor archives stamp
+ * the START. Every one of those values lands on a 5-minute boundary, so passing either as the wrong
+ * field validates cleanly and shifts every row by a whole interval — the "plausible-looking import
+ * against the wrong hour" that nothing downstream can detect. Exactly one of the two fields must be
+ * present, and there is deliberately no default.
  */
 
 // Importing a window is one batched statement per call; the wall-clock cost is the round trip plus
@@ -188,7 +189,8 @@ export async function POST(
     if (hasEnd === hasStart)
       return err(
         `${where} must carry exactly one of intervalEnd or intervalStart — ` +
-          "a 5m row is keyed on the END, but archives and `device history` stamp the START, " +
+          "a 5m row is keyed on the END; the vendor archives stamp the START and `device history` " +
+          "stamps the END, " +
           "and both land on 5-minute boundaries, so guessing would silently shift every row",
       );
     const stamp = hasEnd ? r.intervalEnd : r.intervalStart;
