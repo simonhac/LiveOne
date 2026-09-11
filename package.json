@@ -53,7 +53,8 @@
     "deepsea:poll": "npm run --workspace @liveone/usher deepsea:poll",
     "usher": "npm run --workspace @liveone/usher usher",
     "build:usher": "npm run --workspace @liveone/usher build",
-    "prepare": "husky"
+    "prepare": "husky",
+    "archive:to-import-csv": "tsx scripts/archive/to-import-csv.ts"
   },
   "keywords": [],
   "author": "",

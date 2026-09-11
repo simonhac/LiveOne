@@ -89,6 +89,9 @@ export const TIERS: TierManifest = {
     // operator supplies rather than a vendor does. Nothing downstream can second-guess what it
     // wrote, so it is held to the full standard.
     "scripts/ops/import/cli.ts",
+    // The `session` domain — mints the provenance record `import` files its rows under. A writer,
+    // and the thing that makes `import --quality=good` answerable rather than laundering.
+    "scripts/ops/session/cli.ts",
     // The `derivation` domain — read+write over the v4 derivations resource, same rules as above.
     "scripts/ops/derivation/cli.ts",
     // The `owner` domain — ownership transfer with share-back, the one CLI that can move an object

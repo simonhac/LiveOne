@@ -114,6 +114,20 @@ export function hasAccessToken(request: Request): boolean {
 const cliTokenRoutes = [
   "/api/v4/dashboards(.*)", // the dashboard CLI
   "/api/v4/devices(.*)", // device list + per-device aggregate — every handler requireAuth's
+  // One session and its manifest, for `liveone session show`. A NAMED segment, never `(.*)`: there
+  // is no session collection at this address and nothing under it, so there is nothing to inherit
+  // the bypass by being a sibling.
+  //
+  // Read-only, and it is the answer to "this reading has session_id X — where did X come from?".
+  // Addressed by session id alone because that is the only thing the asker holds; requiring them to
+  // already know the device would make the answer reachable only by those who did not need it.
+  //
+  // 🛑 The authorization is on the session's DEVICE, not on the session — a session is a fact about
+  // that device's data, not a separately grantable object — and `requireDeviceAccess` failing
+  // collapses into the same 404 as "no such session", so the URL is not an existence oracle over
+  // other owners' session ids. Minting one stays under `/api/v4/devices/:id/sessions`, which is
+  // already inside the `devices(.*)` bypass above and is where the write belongs.
+  "/api/v4/sessions/:sessionId",
   "/api/v4/areas", // the readable-areas list — requireAuth (POST create authorizes the same way)
   // The area aggregate — a NAMED single segment, deliberately NOT `(.*)`: the sub-resources
   // (members, bindings, derivations, eligibility, by-handle, …) stay OUTSIDE the bypass until each

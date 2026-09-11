@@ -3,6 +3,8 @@ import {
   isSettledQuality,
   isDerivedQuality,
   qualityRank,
+  KNOWN_QUALITIES,
+  IMPORTABLE_QUALITIES,
 } from "@/lib/data-quality";
 
 describe("isSettledQuality", () => {
@@ -111,5 +113,43 @@ describe("qualityRank", () => {
   it("keeps every settled marker consistent with isSettledQuality", () => {
     for (const q of ["good", "actual", "billable", "a", "b"])
       expect(isSettledQuality(q) && qualityRank(q) > 0).toBe(true);
+  });
+});
+
+describe("IMPORTABLE_QUALITIES", () => {
+  it("is a subset of what the codebase can read back", () => {
+    // The two lists are maintained separately on purpose, so this is the guard against drift: a
+    // marker an operator can write but no consumer recognises would rank 0 forever.
+    for (const q of IMPORTABLE_QUALITIES) expect(KNOWN_QUALITIES).toContain(q);
+  });
+
+  it("offers nothing that ranks zero", () => {
+    // Ranking 0 means "provenance was never recorded" — the outcome `liveone import` exists to
+    // prevent. Offering such a marker as a menu choice would be handing it to the operator.
+    for (const q of IMPORTABLE_QUALITIES)
+      expect(qualityRank(q)).toBeGreaterThan(0);
+  });
+
+  it("excludes Amber's storage abbreviations and the vendor-lifecycle words", () => {
+    // `b`/`a`/`e`/`f` are a display concern that leaked into storage; `billable` and `forecast` are
+    // claims only a vendor makes about its own settling series.
+    for (const q of [
+      "a",
+      "b",
+      "e",
+      "f",
+      ".",
+      "unknown",
+      "billable",
+      "forecast",
+    ])
+      expect(IMPORTABLE_QUALITIES).not.toContain(q);
+  });
+
+  it("covers every marker derive-power.ts writes", () => {
+    // The precedent this verb is modelled on. If it can produce a marker an import cannot, the two
+    // paths disagree about what an operator is allowed to claim.
+    for (const q of ["good", "calculated", "interpolated"])
+      expect(IMPORTABLE_QUALITIES).toContain(q);
   });
 });

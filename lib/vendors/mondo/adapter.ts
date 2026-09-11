@@ -9,7 +9,7 @@ import type {
 import type { DeviceConfigView } from "@/lib/registry/device-config";
 import type { CommonPollingData } from "@/lib/types/common";
 import type { LatestReadingData } from "@/lib/types/readings";
-import { batterySocReading, type MondoLiveUsage } from "./live-usage";
+import { liveUsageReadings, type MondoLiveUsage } from "./live-usage";
 
 interface MondoCredentials {
   email: string;
@@ -304,25 +304,26 @@ export class MondoAdapter extends BaseVendorAdapter {
         });
       }
 
-      // Battery state of charge, which `/subcircuit` does not carry at all. Best-effort and
-      // deliberately AFTER the readings above: SoC is a nice-to-have, and a poll that returned
-      // eight circuits of power and energy must not be failed by one extra request.
-      const soc = await this.fetchBatterySoc(device, accessToken);
-      if (soc) readings.push(soc.reading);
+      // Battery state of charge and site load, neither of which `/subcircuit` carries at all.
+      // Best-effort and deliberately AFTER the readings above: both are nice-to-haves, and a poll
+      // that returned eight circuits of power and energy must not be failed by one extra request.
+      const live = await this.fetchLiveUsage(device, accessToken);
+      if (live) readings.push(...live.readings);
 
+      const extras = (live?.readings ?? [])
+        .map((r) => `${r.pointMetadata.physicalPathTail}=${r.rawValue}`)
+        .join(", ");
       console.log(
         `[Mondo] Fetch complete: ${readings.length} readings` +
-          (soc
-            ? ` (battery SoC ${soc.reading.rawValue}%)`
-            : " (no battery SoC)"),
+          (extras ? ` (${extras})` : " (no live-usage extras)"),
       );
 
       return {
         success: true,
         readings,
         recordsProcessed: readings.length,
-        rawResponse: soc
-          ? { ...subcircuitData, liveUsage: soc.rawResponse }
+        rawResponse: live
+          ? { ...subcircuitData, liveUsage: live.rawResponse }
           : subcircuitData,
       };
     } catch (error) {
@@ -335,12 +336,15 @@ export class MondoAdapter extends BaseVendorAdapter {
   }
 
   /**
-   * Battery state of charge, from the endpoint the vendor's own "Live usage" card reads.
+   * Battery state of charge and site load, from the endpoint the vendor's own "Live usage" card
+   * reads.
    *
-   * 🛑 `/subcircuit/{id}` — the endpoint the rest of this poll uses — has no SoC field, and for a
-   * long time the adapter recorded that as `batterySOC: null` with the comment "Not available from
-   * the subcircuit endpoint". True of the endpoint, and false of the vendor: the platform shows a
-   * battery percentage on every page load, and it comes from here.
+   * 🛑 `/subcircuit/{id}` — the endpoint the rest of this poll uses — produces neither, and for a
+   * long time the adapter recorded the first as `batterySOC: null` with the comment "Not available
+   * from the subcircuit endpoint". True of the endpoint, and false of the vendor: the platform
+   * shows both a battery percentage and a demand figure on every page load, and they come from
+   * here. `/subcircuit/` enumerates monitored CIRCUITS, and their sum is not the site's load — an
+   * unmonitored circuit contributes to demand and to no subcircuit.
    *
    * 🛑 The path takes the monitoring point GROUP id, not a monitoring point id — a point id is a
    * 403, not a 404, so getting it wrong looks like a permissions problem. `vendorSiteId` IS the
@@ -349,10 +353,10 @@ export class MondoAdapter extends BaseVendorAdapter {
    * Best-effort by design: returns null on any failure rather than throwing, so a vendor hiccup
    * here cannot cost us the circuit readings the caller already has in hand.
    */
-  private async fetchBatterySoc(
+  private async fetchLiveUsage(
     device: DeviceConfigView,
     accessToken: string,
-  ): Promise<{ reading: PointReadingInput; rawResponse: unknown } | null> {
+  ): Promise<{ readings: PointReadingInput[]; rawResponse: unknown } | null> {
     const url = `${this.baseUrl}/liveusage/widget/${device.vendorSiteId}`;
     try {
       const response = await fetch(url, {
@@ -363,17 +367,19 @@ export class MondoAdapter extends BaseVendorAdapter {
       });
       if (!response.ok) {
         console.warn(
-          `[Mondo] Live usage fetch failed (${response.status}); no battery SoC this poll`,
+          `[Mondo] Live usage fetch failed (${response.status}); no SoC or site load this poll`,
         );
         return null;
       }
 
       const body = (await response.json()) as MondoLiveUsage;
-      const reading = batterySocReading(body, Date.now());
-      return reading ? { reading, rawResponse: body } : null;
+      const readings = liveUsageReadings(body, Date.now());
+      // The raw payload is returned even when it yielded nothing, so `sessions.response` still
+      // archives what the vendor actually said — that is the evidence for why a field is missing.
+      return { readings, rawResponse: body };
     } catch (error) {
       console.warn(
-        `[Mondo] Live usage fetch threw; no battery SoC this poll:`,
+        `[Mondo] Live usage fetch threw; no SoC or site load this poll:`,
         error,
       );
       return null;

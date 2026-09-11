@@ -140,11 +140,38 @@ export function qualityRank(dataQuality: string | null | undefined): number {
  * hand-maintained list would drift, and the drift would be silent (an unrecognised marker is not an
  * error anywhere; it just ranks 0 and loses every arbitration it enters).
  *
- * Exists for `liveone import`, which must REFUSE an unknown marker rather than store it. A verb that
- * writes readings on an operator's say-so is the one place a typo becomes durable: `"estimate"` for
- * `"estimated"` would be accepted by the column, rank 0 forever, and read as "unknown provenance" by
- * every consumer — indistinguishable from data whose provenance was genuinely never recorded.
+ * This is the RECOGNITION set — "would a reader of this column know what this means". It is NOT the
+ * set a human may choose from; for that see `IMPORTABLE_QUALITIES`.
  */
 export const KNOWN_QUALITIES: readonly string[] = Object.freeze([
   ...QUALITY_PRECEDENCE.keys(),
+]);
+
+/**
+ * The markers an OPERATOR may stamp on rows they supply — the allow-list `liveone import` offers.
+ *
+ * A deliberately narrower set than `KNOWN_QUALITIES`, because "every marker we can read" and "every
+ * marker a person should be able to write" are different questions and `KNOWN_QUALITIES` answers
+ * only the first. Three kinds of marker are recognised but must not be offered:
+ *
+ *   - `unknown` and `.` rank 0 and read as "provenance was never recorded". An import exists to
+ *     RECORD provenance, so offering these as a choice hands the operator the exact outcome the
+ *     verb was built to prevent — and unlike a typo it would pass validation.
+ *   - `a` / `b` / `e` / `f` are Amber's storage abbreviations. `lib/data-quality.ts`'s own header
+ *     calls that abbreviation "a display concern that leaked into storage"; stamping `b`
+ *     (billable — Amber's final invoiced number) on a Sigenergy point is not a claim anyone can
+ *     act on.
+ *   - `forecast` and `billable` are vendor-lifecycle words. A vendor says them about its own
+ *     settling series; an operator importing a reconstruction is not making that claim.
+ *
+ * What is left is the five an operator can mean, and `derive-power.ts` already uses four of them for
+ * exactly this purpose: a measurement (`good` / `actual`), an identity (`calculated`), a bounded
+ * inference (`interpolated`), or a model (`estimated`).
+ */
+export const IMPORTABLE_QUALITIES: readonly string[] = Object.freeze([
+  "good",
+  "actual",
+  "calculated",
+  "interpolated",
+  "estimated",
 ]);
