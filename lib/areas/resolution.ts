@@ -57,7 +57,7 @@ export function resolveSlotsFromData(
   // stores. Encoding the binding's raw uuid is what bridges the two — `Point.encode` is total.
   const byPoint = new Map(points.map((point) => [point.id, point]));
   return RESOLUTION_SLOTS.map((definition): AreaResolutionSlot => {
-    const explicit = bindingRows
+    const chain = bindingRows
       .filter((binding) => binding.role === definition.role)
       .map((binding) => ({
         binding,
@@ -73,7 +73,13 @@ export function resolveSlotsFromData(
         (a, b) =>
           a.binding.priority - b.binding.priority ||
           a.point.id.localeCompare(b.point.id),
-      )[0];
+      );
+    // Priority is a FALLBACK CHAIN, so an inactive point does not get to hold the slot: it cannot
+    // produce a reading, and `getAllSeriesForDevice` skips it outright, so letting it win would
+    // report an available producer for a slot nothing can serve. The chain's whole job is to survive
+    // that. When EVERY member is inactive there is nothing to fall through to, and the best-priority
+    // one is still the honest answer — reported `inactive` exactly as before.
+    const explicit = chain.find((entry) => entry.point.active) ?? chain[0];
     if (explicit) {
       return {
         slot: definition.slot,

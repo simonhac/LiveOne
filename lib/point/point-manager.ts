@@ -391,7 +391,19 @@ export class PointManager {
       return this._loadOwnPoints(handle);
     }
 
-    const boundUids = (await getAreaBindingRefs(handle)).map((r) => r.pointUid);
+    const bound = await getAreaBindingRefs(handle);
+    // 🛑 `rank === 0` — the CHAIN WINNERS, not every binding. Two bindings on one serving key
+    // (`{logical_path}/{metric_type}`) are two instruments measuring one quantity, and this set
+    // becomes both the Area's series list and the flow builder's point set — where the key IS the
+    // series id (`getSeriesPath`). Taking both minted two series under one id and let
+    // `site-data-processor`'s `seriesMap.set(s.id, s)` pick by arrival order, which is how Kinkora's
+    // `bidi.battery/soc` answered 304/304 days and 81/304 days to the same request. The fallbacks are
+    // not dropped from the system — they still serve the LIVE map under a ranked field
+    // (`lib/latest-values-store.ts`) — but a stored series has one provenance, so history and flow
+    // take the winner alone. See `lib/areas/binding-chain.ts`.
+    const boundUids = bound
+      .filter((r) => r.rank === 0)
+      .map((r) => r.item.pointUid);
 
     if (boundUids.length > 0) {
       // Bindings present (override) → the bound child points ARE the set. Each binding carries the

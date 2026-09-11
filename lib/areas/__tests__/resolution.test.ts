@@ -67,6 +67,48 @@ describe("deterministic area information resolution", () => {
     });
   });
 
+  it("falls through an INACTIVE preferred binding to the next in the chain", () => {
+    // `priority` is advertised by `liveone area role set` as "how a fallback chain is expressed".
+    // Reporting the inactive point as the slot's producer would answer "this area has a battery soc
+    // producer" for a slot nothing can serve — the series layer skips inactive points outright.
+    const preferred = candidate(1, "bidi.battery", "soc", false);
+    const spare = candidate(2, "bidi.battery", "soc");
+    const result = slot(
+      [preferred, spare],
+      [
+        bindTo(preferred, "battery", "soc", 0),
+        bindTo(spare, "battery", "soc", 1),
+      ],
+      "battery/soc",
+    );
+    expect(result).toMatchObject({
+      mode: "explicit",
+      available: true,
+      producer: { kind: "point", id: spare.id },
+    });
+  });
+
+  it("still reports the best-priority binding when the whole chain is inactive", () => {
+    // Nothing to fall through to, so the answer is the same one it always was — an explicit,
+    // unavailable producer with a reason. Silence here would look like an unbound slot.
+    const preferred = candidate(1, "bidi.battery", "soc", false);
+    const spare = candidate(2, "bidi.battery", "soc", false);
+    const result = slot(
+      [preferred, spare],
+      [
+        bindTo(preferred, "battery", "soc", 0),
+        bindTo(spare, "battery", "soc", 1),
+      ],
+      "battery/soc",
+    );
+    expect(result).toMatchObject({
+      mode: "explicit",
+      available: false,
+      reason: "inactive",
+      producer: { kind: "point", id: preferred.id },
+    });
+  });
+
   it("ignores an explicit binding whose stored metric does not match its point", () => {
     const point = candidate(1, "bidi.battery", "soc");
     expect(

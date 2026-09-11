@@ -56,16 +56,96 @@ export interface LatestValue {
 export type LatestValuesMap = Record<string, LatestValue>;
 
 /**
+ * How long a chain winner's last measurement stays authoritative before a lower-priority binding is
+ * allowed to answer for its path.
+ *
+ * 15 minutes = the 5-minute standard slot × `DEVICE_STALE_SLOTS` (3), the threshold this codebase
+ * already uses for "that device has stopped, as opposed to blipped"
+ * (`lib/monitoring/device-staleness.ts`). Deliberately ONE constant rather than a per-vendor budget:
+ * the question here is not "is this device healthy" — the monitor owns that — but "has the preferred
+ * instrument gone quiet long enough that showing the other one is the better answer".
+ */
+export const CHAIN_FALLBACK_STALE_MS = 15 * 60_000;
+
+/**
+ * The latest-hash field a chain FALLBACK publishes under: `"{path}#{rank}"`, rank ≥ 1.
+ *
+ * The winner keeps the bare path, so nothing about an uncontended Area's hash changes. Separating
+ * the fields — rather than having the fallback's writer decide whether to overwrite the winner — is
+ * what keeps the ingest path free of a read-modify-write: every writer writes its own field,
+ * unconditionally, and precedence is settled at READ time, which is also the only moment staleness
+ * can honestly be judged.
+ *
+ * `#` cannot occur in a real field name: a field is `"{logical_path}/{metric_type}"`, and both halves
+ * are dotted/kebab identifiers.
+ */
+export function chainFallbackField(path: string, rank: number): string {
+  return rank === 0 ? path : `${path}#${rank}`;
+}
+
+const CHAIN_FIELD = /^(.+)#(\d+)$/;
+
+/**
+ * Collapse chain fallback fields into the paths they stand in for.
+ *
+ * Precedence: the best-ranked candidate whose measurement is within
+ * {@link CHAIN_FALLBACK_STALE_MS}; if NONE is fresh, the best-ranked one present. That second clause
+ * is what makes this degrade rather than disappear — a site that is wholly offline still reports its
+ * winner's last value, exactly as before chains existed, instead of silently promoting an equally
+ * dead fallback.
+ *
+ * Exported for tests; `getLatestValuesForSubject` is the only production caller.
+ */
+export function resolveChainFields(
+  raw: LatestValuesMap,
+  nowMs: number,
+): LatestValuesMap {
+  const ranked = new Map<string, Array<{ rank: number; value: LatestValue }>>();
+  for (const [field, value] of Object.entries(raw)) {
+    const match = CHAIN_FIELD.exec(field);
+    if (!match) continue;
+    const [, path, rank] = match;
+    const list = ranked.get(path);
+    const entry = { rank: Number(rank), value };
+    if (list) list.push(entry);
+    else ranked.set(path, [entry]);
+  }
+  // Overwhelmingly the common case: no Area has a contended path, so this costs one regex per field.
+  if (ranked.size === 0) return raw;
+
+  const out: LatestValuesMap = {};
+  for (const [field, value] of Object.entries(raw)) {
+    if (!CHAIN_FIELD.test(field)) out[field] = value;
+  }
+  for (const [path, fallbacks] of ranked) {
+    const candidates = fallbacks.slice();
+    const winner = raw[path];
+    if (winner) candidates.push({ rank: 0, value: winner });
+    candidates.sort((a, b) => a.rank - b.rank);
+    const fresh = candidates.find(
+      (c) =>
+        typeof c.value?.measurementTimeMs === "number" &&
+        nowMs - c.value.measurementTimeMs <= CHAIN_FALLBACK_STALE_MS,
+    );
+    const chosen = fresh ?? candidates[0];
+    if (chosen) out[path] = chosen.value;
+  }
+  return out;
+}
+
+/**
  * Get all latest values for ONE subject's hash.
  *
  * This is the ONLY reader of the latest-values hash. `kv-cache-manager.getLatestPointValues` was a
- * byte-identical second copy of it (same key builder, same `hgetall`, same cast) and is gone.
+ * byte-identical second copy of it (same key builder, same `hgetall`, same cast) and is gone. That
+ * sole-reader property is what lets {@link resolveChainFields} run here and nowhere else: no other
+ * consumer can see a `#`-suffixed field, so the fallback grammar never reaches a wire or a UI.
  */
 export async function getLatestValuesForSubject(
   subject: KvSubject,
 ): Promise<LatestValuesMap> {
   const values = await kv.hgetall(latestValuesKey(subject));
-  return (values as LatestValuesMap) || {};
+  return resolveChainFields((values as LatestValuesMap) || {}, Date.now());
 }
 
 /**
