@@ -15,6 +15,7 @@ import type { Pusher } from "./pusher";
 import type { Blackbox } from "./blackbox";
 import type { Spool } from "./spool";
 import { CONTROL_MANIFEST, type RunSupervisor } from "./control";
+import { withTimeout } from "../lib/async";
 
 export interface Entry {
   source: Source;
@@ -89,6 +90,15 @@ export interface RunOptions {
 /** Default hard cap on a tick. Well above a normal read+push (~1s), well below any poll interval. */
 export const DEFAULT_TICK_TIMEOUT_MS = 30_000;
 
+/**
+ * Bounds on the tick's non-device awaits. None of these collaborators THROW — they are all written
+ * to degrade quietly — but "never settles" is a different failure from "fails", and an unbounded
+ * await on one hangs the poll loop for the life of the process. See the 2026-09-11 wedge.
+ */
+const RECOVERY_TIMEOUT_MS = 10_000; // source.reset() on the read-error path
+const STORE_TIMEOUT_MS = 10_000; // blackbox append / spool enqueue (a wedged volume)
+const DRAIN_TIMEOUT_MS = 60_000; // spool drain (50 batches x a slow receiver)
+
 /** Outcome of one tick for a single entry. */
 export interface TickResult {
   name: string;
@@ -113,24 +123,6 @@ export interface TickResult {
   spooled?: boolean;
   /** error message if the tick failed (read/build/push threw or timed out) */
   error?: string;
-}
-
-/**
- * Reject after `ms` if `p` hasn't settled. Guards the loop against a read/push that hangs forever
- * (e.g. a Modbus read on a silently-dead socket whose library timeout never fires). The late
- * settlement of `p` is swallowed so it can't surface as an unhandled rejection.
- */
-function withTimeout<T>(
-  p: Promise<T>,
-  ms: number,
-  message: string,
-): Promise<T> {
-  let timer: ReturnType<typeof setTimeout>;
-  const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new Error(message)), ms);
-  });
-  p.catch(() => {}); // don't let a post-timeout rejection become unhandled
-  return Promise.race([p, timeout]).finally(() => clearTimeout(timer));
 }
 
 /**
@@ -193,8 +185,15 @@ export async function tickOnce(
     readError = e instanceof Error ? e.message : String(e);
     log(`[${source.name}] tick error: ${readError}`);
     // Drop any cached connection so the next tick reconnects (a hung/dead socket won't self-heal).
+    // BOUNDED: reset() is implemented by exactly one source (musher), it goes through that source's
+    // device mutex, and it ends in its own `.catch(() => {})` — so it can only ever hang, never
+    // throw. An unbounded await here hangs the tick, and with it the entry's whole run loop.
     try {
-      await source.reset?.();
+      await withTimeout(
+        Promise.resolve(source.reset?.()),
+        RECOVERY_TIMEOUT_MS,
+        `reset exceeded ${RECOVERY_TIMEOUT_MS}ms`,
+      );
     } catch {
       /* best-effort */
     }
@@ -255,14 +254,27 @@ export async function tickOnce(
   }
 
   // Journal BEFORE pushing — the blackbox records what was collected, not what was delivered.
-  await blackbox?.append({
-    at: new Date().toISOString(),
-    siteId: source.siteId,
-    sessionLabel,
-    measurementTime,
-    count: readings.length,
-    readings,
-  });
+  // Bounded for the same reason as reset(): append() never throws, but a wedged volume makes it
+  // never SETTLE, which hangs the tick just as effectively. Losing a journal line beats losing
+  // the collector.
+  try {
+    await withTimeout(
+      Promise.resolve(
+        blackbox?.append({
+          at: new Date().toISOString(),
+          siteId: source.siteId,
+          sessionLabel,
+          measurementTime,
+          count: readings.length,
+          readings,
+        }),
+      ),
+      STORE_TIMEOUT_MS,
+      `blackbox append exceeded ${STORE_TIMEOUT_MS}ms`,
+    );
+  } catch (e) {
+    log(`[${source.name}] ${e instanceof Error ? e.message : String(e)}`);
+  }
 
   const outcome = await pusher.store(readings, {
     sessionLabel,
@@ -270,14 +282,25 @@ export async function tickOnce(
   });
   let spooled: boolean | undefined;
   if (outcome === "transient") {
-    spooled =
-      (await spool?.enqueue({
-        siteId: source.siteId,
-        sessionLabel,
-        measurementTime,
-        readings,
-        spooledAt: new Date().toISOString(),
-      })) ?? false;
+    try {
+      spooled =
+        (await withTimeout(
+          Promise.resolve(
+            spool?.enqueue({
+              siteId: source.siteId,
+              sessionLabel,
+              measurementTime,
+              readings,
+              spooledAt: new Date().toISOString(),
+            }),
+          ),
+          STORE_TIMEOUT_MS,
+          `spool enqueue exceeded ${STORE_TIMEOUT_MS}ms`,
+        )) ?? false;
+    } catch (e) {
+      log(`[${source.name}] ${e instanceof Error ? e.message : String(e)}`);
+      spooled = false;
+    }
   }
 
   return {
@@ -411,11 +434,18 @@ async function runEntryLoop(
     // big outage backlog flushes over a few ticks without stalling the cadence).
     if (result.pushOk && entry.spool) {
       try {
-        await entry.spool.drain(entry.source.siteId, (b) =>
-          entry.pusher.store(b.readings, {
-            sessionLabel: b.sessionLabel,
-            measurementTime: b.measurementTime,
-          }),
+        // Bounded: the drain budget is 50 batches and each store() is worst-case ~74 s, so an
+        // unbounded drain is a theoretical ~1 h stall of this entry's cadence. Whatever is left
+        // over is re-tried on the next tick.
+        await withTimeout(
+          entry.spool.drain(entry.source.siteId, (b) =>
+            entry.pusher.store(b.readings, {
+              sessionLabel: b.sessionLabel,
+              measurementTime: b.measurementTime,
+            }),
+          ),
+          DRAIN_TIMEOUT_MS,
+          `spool drain exceeded ${DRAIN_TIMEOUT_MS}ms`,
         );
       } catch {
         /* drain must never break the loop */

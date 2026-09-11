@@ -24,6 +24,7 @@ import type {
   Values,
 } from "../core/source";
 import { DiagJournal } from "../core/diag-journal";
+import { delay, withTimeout } from "../lib/async";
 
 /**
  * The curated set musher pushes to gusher — the live-proven Page-4 engine points. `key` matches a
@@ -198,10 +199,20 @@ export interface MusherOptions {
   enableControl?: boolean;
 }
 
-/** Lock-hold budgets. Each op is internally timeout-bounded so the chain ALWAYS advances. */
+/** Lock-HOLD budgets: how long an op may keep the device once it has the lock. */
 const READ_LOCK_MS = 28_000; // readAll's worst case (~68 per-field fallbacks over ~300ms RTT), just under the run loop's 30 s tick cap
 const CONTROL_LOCK_MS = 12_000; // connect (5 s cap) + a handful of round trips
 const RESET_LOCK_MS = 5_000;
+/** Bound on the post-failure socket close inside the lock (DseClient.close is itself bounded). */
+const CLOSE_LOCK_MS = 3_000;
+
+/**
+ * Lock-QUEUE budgets: how long an op will wait for its TURN. Timed from enqueue, so an op stuck
+ * behind a slow predecessor is still bounded.
+ */
+const READ_QUEUE_MS = 5_000; // a poll that can't get the lock in 5 s is worthless — the next is 15 s away
+const CONTROL_QUEUE_MS = READ_LOCK_MS + CLOSE_LOCK_MS + 2_000; // ~33 s: long enough to sit out one worst-case read
+const RESET_QUEUE_MS = 2_000; // it sits on the run loop's error path — must not hold the tick
 
 export function createMusher(opts: MusherOptions): Source {
   const dse = new DseClient({
@@ -219,16 +230,39 @@ export function createMusher(opts: MusherOptions): Source {
   // are serialised through this promise chain so a command can never interleave with a poll on the
   // same socket. CRITICAL PROPERTY: the chain must always advance. A read on a silently-dead
   // socket hangs FOREVER (modbus-serial's timeout doesn't fire), and a naive chain would then hold
-  // the deadline STOP behind it indefinitely — a runaway engine. So every op is internally
-  // timeout-bounded here; on timeout the socket is force-closed (the next op reconnects) and the
-  // chain moves on, abandoning the hung promise the same way tickOnce's withTimeout does.
+  // the deadline STOP behind it indefinitely — a runaway engine.
+  //
+  // That property was asserted here but not actually upheld, and on 2026-09-11 the chain wedged
+  // for 4 h 49 m. Three things were missing, all now fixed below:
+  //   1. the recovery close() was unbounded — the one await that could (and did) never settle;
+  //   2. `chain` was the op's own promise, so a never-settling op wedged every future caller;
+  //   3. an op's timer started when its turn arrived, so a QUEUED op had no bound at all.
+  // Each op therefore now has two budgets: `ms` to hold the device, `queueMs` to wait for it.
   let chain: Promise<unknown> = Promise.resolve();
   function withLock<T>(
     label: string,
     ms: number,
+    queueMs: number,
     fn: () => Promise<T>,
   ): Promise<T> {
-    const run = chain.then(async () => {
+    // Starts NOW, at enqueue — not when our turn arrives.
+    let cancelled = false;
+    let queueTimer: ReturnType<typeof setTimeout>;
+    const queued = new Promise<never>((_, reject) => {
+      queueTimer = setTimeout(() => {
+        cancelled = true;
+        reject(new Error(`${label} waited ${queueMs}ms for the device lock`));
+      }, queueMs);
+    });
+
+    const run: Promise<T> = chain.then(async () => {
+      // Our caller gave up while we sat in the queue — a late turn must not touch the device.
+      if (cancelled)
+        throw new Error(`${label} abandoned after ${queueMs}ms in the queue`);
+      // Our turn arrived: stop the queue clock. From here `ms` is the only bound that applies —
+      // queueMs must not also cap how long we may HOLD the device (a poll read waits 5 s for its
+      // turn but is allowed 28 s once it has it).
+      clearTimeout(queueTimer!);
       let timer: ReturnType<typeof setTimeout>;
       const timeout = new Promise<never>((_, reject) => {
         timer = setTimeout(
@@ -241,14 +275,28 @@ export function createMusher(opts: MusherOptions): Source {
       try {
         return await Promise.race([op, timeout]);
       } catch (e) {
-        await dse.close().catch(() => {}); // dead/suspect socket: force a reconnect next op
+        // Dead/suspect socket: force a reconnect next op. BOUNDED — an unbounded close() here is
+        // precisely what wedged the chain. DseClient.close() is bounded too; this does not trust it.
+        await withTimeout(
+          dse.close(),
+          CLOSE_LOCK_MS,
+          `${label} close exceeded ${CLOSE_LOCK_MS}ms`,
+        ).catch(() => {});
         throw e;
       } finally {
         clearTimeout(timer!);
       }
     });
-    chain = run.catch(() => {}); // errors propagate to the caller, never down the chain
-    return run;
+
+    // The chain advances on a hard bound whatever the op does — including code added here later.
+    // This is the invariant, not an optimisation: without it one never-settling await anywhere
+    // inside the callback silently blocks every future read, reset AND deadline stop.
+    chain = Promise.race([
+      run.catch(() => {}),
+      delay(ms + CLOSE_LOCK_MS + 1_000, { unref: true }),
+    ]);
+
+    return Promise.race([run, queued]).finally(() => clearTimeout(queueTimer!));
   }
 
   // ── Diagnostics (temporary, env-gated) ──────────────────────────────────────
@@ -370,55 +418,75 @@ export function createMusher(opts: MusherOptions): Source {
   function makeControl(): SourceControl {
     return {
       start(): Promise<void> {
-        return withLock("control start", CONTROL_LOCK_MS, async () => {
-          try {
-            await dse.writeControlKey(SCF.TELEMETRY_START, {
-              verifySupport: true,
-            });
-          } finally {
-            await dse.close().catch(() => {});
-          }
-        });
+        return withLock(
+          "control start",
+          CONTROL_LOCK_MS,
+          CONTROL_QUEUE_MS,
+          async () => {
+            try {
+              await dse.writeControlKey(SCF.TELEMETRY_START, {
+                verifySupport: true,
+              });
+            } finally {
+              await dse.close().catch(() => {});
+            }
+          },
+        );
       },
       stop(): Promise<void> {
-        return withLock("control stop", CONTROL_LOCK_MS, async () => {
-          try {
-            await dse.writeControlKey(SCF.TELEMETRY_CANCEL, {
-              verifySupport: false,
-            });
-          } finally {
-            await dse.close().catch(() => {});
-          }
-        });
+        return withLock(
+          "control stop",
+          CONTROL_LOCK_MS,
+          CONTROL_QUEUE_MS,
+          async () => {
+            try {
+              await dse.writeControlKey(SCF.TELEMETRY_CANCEL, {
+                verifySupport: false,
+              });
+            } finally {
+              await dse.close().catch(() => {});
+            }
+          },
+        );
       },
       readOwnership(): Promise<ControlOwnership> {
-        return withLock("control ownership read", CONTROL_LOCK_MS, async () => {
-          try {
-            return await ownershipInner();
-          } finally {
-            await dse.close().catch(() => {});
-          }
-        });
+        return withLock(
+          "control ownership read",
+          CONTROL_LOCK_MS,
+          CONTROL_QUEUE_MS,
+          async () => {
+            try {
+              return await ownershipInner();
+            } finally {
+              await dse.close().catch(() => {});
+            }
+          },
+        );
       },
       // FC3 ONLY. This function cannot reach writeControlKey, by construction.
       preflight(): Promise<ControlPreflight> {
-        return withLock("control preflight", CONTROL_LOCK_MS, async () => {
-          try {
-            const ownership = await ownershipInner();
-            const scfMap = await dse.readScfSupport();
-            return {
-              ownership,
-              scfMap,
-              scfSupported: {
-                selectAuto: scfSupports(scfMap, SCF.SELECT_AUTO),
-                telemetryStart: scfSupports(scfMap, SCF.TELEMETRY_START),
-                telemetryCancel: scfSupports(scfMap, SCF.TELEMETRY_CANCEL),
-              },
-            };
-          } finally {
-            await dse.close().catch(() => {});
-          }
-        });
+        return withLock(
+          "control preflight",
+          CONTROL_LOCK_MS,
+          CONTROL_QUEUE_MS,
+          async () => {
+            try {
+              const ownership = await ownershipInner();
+              const scfMap = await dse.readScfSupport();
+              return {
+                ownership,
+                scfMap,
+                scfSupported: {
+                  selectAuto: scfSupports(scfMap, SCF.SELECT_AUTO),
+                  telemetryStart: scfSupports(scfMap, SCF.TELEMETRY_START),
+                  telemetryCancel: scfSupports(scfMap, SCF.TELEMETRY_CANCEL),
+                },
+              };
+            } finally {
+              await dse.close().catch(() => {});
+            }
+          },
+        );
       },
     };
   }
@@ -464,7 +532,9 @@ export function createMusher(opts: MusherOptions): Source {
     siteId: opts.siteId,
     manifest: DEEPSEA_MANIFEST,
     read(): Promise<Values> {
-      return withLock("poll read", READ_LOCK_MS, () => readInner());
+      return withLock("poll read", READ_LOCK_MS, READ_QUEUE_MS, () =>
+        readInner(),
+      );
     },
     // Running when the engine is turning / producing — drives the loop's faster (1-min) cadence. In
     // diag mode this reports run + post-run hold, so the fast cadence — and thus the 1-min
@@ -491,7 +561,7 @@ export function createMusher(opts: MusherOptions): Source {
     // otherwise reuses a `connected=true` handle whose socket may have silently died). Runs through
     // the mutex so it can never yank the socket out from under a control write in flight.
     async reset(): Promise<void> {
-      await withLock("reset", RESET_LOCK_MS, async () => {
+      await withLock("reset", RESET_LOCK_MS, RESET_QUEUE_MS, async () => {
         await dse.close().catch(() => {});
       }).catch(() => {});
     },
