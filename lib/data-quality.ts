@@ -132,3 +132,19 @@ export function qualityRank(dataQuality: string | null | undefined): number {
   if (dataQuality == null) return 0;
   return QUALITY_PRECEDENCE.get(dataQuality) ?? 0;
 }
+
+/**
+ * Every `data_quality` marker this codebase recognises, as an ALLOW-LIST.
+ *
+ * Derived from `QUALITY_PRECEDENCE`, which is the one place the vocabulary is defined — a second
+ * hand-maintained list would drift, and the drift would be silent (an unrecognised marker is not an
+ * error anywhere; it just ranks 0 and loses every arbitration it enters).
+ *
+ * Exists for `liveone import`, which must REFUSE an unknown marker rather than store it. A verb that
+ * writes readings on an operator's say-so is the one place a typo becomes durable: `"estimate"` for
+ * `"estimated"` would be accepted by the column, rank 0 forever, and read as "unknown provenance" by
+ * every consumer — indistinguishable from data whose provenance was genuinely never recorded.
+ */
+export const KNOWN_QUALITIES: readonly string[] = Object.freeze([
+  ...QUALITY_PRECEDENCE.keys(),
+]);
