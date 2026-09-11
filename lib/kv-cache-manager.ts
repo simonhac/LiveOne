@@ -260,7 +260,7 @@ function addSubscription(
 
 /** An unbound member point excluded from serving because another point claims the same path. */
 /**
- * An unbound member point withheld because {@link DISPLAY_DERIVED_PATHS} covers its path — the
+ * An unbound member point withheld because {@link isDisplayDerivedHere} says so — the
  * display layer computes that value, so serving a raw one would retire the computation silently.
  * Reported, never merely dropped: a deliberately excluded point is fine, an invisible one is not.
  */

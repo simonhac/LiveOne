@@ -108,18 +108,3 @@ export function getSupportedIntervals(
     return [];
   }
 }
-
-/**
- * Create a PointSeries from a PointInfo
- */
-export function createPointSeries(point: PointInfo): PointSeries {
-  const { aggregations, intervals } = getAggregationsForMetricType(
-    point.metricType,
-  );
-
-  return {
-    point,
-    aggregations,
-    intervals,
-  };
-}

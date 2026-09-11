@@ -80,17 +80,8 @@ export function subjectDisplayTimezone(s: ServingSubject): string {
     : s.area.displayTimezone;
 }
 
-/** Owning Clerk user id, or null for an ownerless (public) subject. */
-export function subjectOwnerId(s: ServingSubject): string | null {
-  return s.kind === "device" ? s.device.ownerClerkUserId : s.area.ownerUserId;
-}
-
 export function subjectStatus(s: ServingSubject): string {
   return s.kind === "device" ? s.device.status : s.area.status;
-}
-
-export function subjectDisplayName(s: ServingSubject): string {
-  return s.kind === "device" ? s.device.displayName : s.area.name;
 }
 
 /**

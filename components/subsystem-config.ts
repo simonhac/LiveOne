@@ -75,5 +75,3 @@ export const SUBSYSTEM_CONFIG = {
     borderColor: "border-gray-500/30",
   },
 } as const satisfies Record<string, SubsystemDisplay>;
-
-export type SubsystemKey = keyof typeof SUBSYSTEM_CONFIG;

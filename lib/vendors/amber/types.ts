@@ -84,16 +84,6 @@ export interface AmberPriceRecord {
 }
 
 /**
- * Grouped usage data by timestamp
- * Used internally to process multiple channels at the same timestamp
- */
-export interface GroupedUsageReading {
-  endTime: string;
-  records: AmberUsageRecord[];
-  quality: string; // Consolidated quality (or "MIXED" if inconsistent)
-}
-
-/**
  * Channel metadata for creating monitoring points
  */
 export interface AmberChannelMetadata {

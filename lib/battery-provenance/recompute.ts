@@ -68,6 +68,8 @@ export async function listBatteryProvenanceHandles(): Promise<number[]> {
  * ever get a modern `point_readings_flow_attr_1d` leg. The legacy↔modern consistency check must be scoped
  * to these: a non-battery Area has legacy `flow_1d` but by construction NO `flow_attr_1d`, so including it
  * is a guaranteed false-positive divergence.
+ *
+ * @knipignore No caller — the fleet-wide sweep this was written for is still driven per-area.
  */
 export async function listBatteryProvenanceAreaIds(): Promise<string[]> {
   const db = requirePlanetscaleDb();

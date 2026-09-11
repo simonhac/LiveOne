@@ -167,6 +167,8 @@ export async function getAllSystemSummaries(): Promise<SystemSummariesMap> {
  * @param cursor - Cursor from previous call, 0 for first call
  * @param count - Number of entries per page (default 100)
  * @returns Next cursor and summaries. Cursor is 0 when complete.
+ *
+ * @knipignore No caller — the paginated read for a list UI that does not exist yet.
  */
 export async function getSystemSummariesPaginated(
   cursor: number = 0,
@@ -190,6 +192,8 @@ export async function getSystemSummariesPaginated(
  * Clear summary for a system (e.g., when system is removed)
  *
  * @param systemId - System ID
+ *
+ * @knipignore No caller — the eviction half of a cache nothing currently evicts.
  */
 export async function clearSystemSummary(systemId: number): Promise<void> {
   const subject = await kvSourceSubjectForHandle(systemId);

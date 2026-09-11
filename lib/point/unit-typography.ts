@@ -68,11 +68,10 @@ export function classifyUnit(unit: string): UnitParts {
 
 /**
  * Left margins for the unit span, expressed in the span's OWN em — which is
- * `UNIT_SCALE` of the hero size, so the rendered gaps are ~0.08em and ~0.30em of
- * the hero. Never use a literal space character: it is full-width and renders
- * differently across DM Sans and TT Interphases Pro.
+ * 0.72 of the hero size (see `UNIT_CLASS` below), so the rendered gaps are
+ * ~0.08em and ~0.30em of the hero. Never use a literal space character: it is
+ * full-width and renders differently across DM Sans and TT Interphases Pro.
  */
-export const UNIT_SCALE = 0.72;
 export const GAP_CLASS: Record<UnitGap, string> = {
   none: "",
   hair: "ml-[0.11em]",

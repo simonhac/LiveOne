@@ -160,8 +160,3 @@ export interface QueueMessage {
   /** Session data (optional) */
   session?: Session;
 }
-
-/**
- * @deprecated Use QueueMessage instead
- */
-export type ObservationBatch = QueueMessage;

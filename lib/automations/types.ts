@@ -62,6 +62,7 @@ type _OutcomesAreComplete =
     ? true
     : never;
 // Referenced so `noUnusedLocals` keeps the checks above honest.
+/** @knipignore Deliberately exported so the exhaustiveness checks above are referenced and stay honest; it has no runtime consumer by design. */
 export type AutomationVocabularyIsInStep = [
   _WeekdaysAreComplete,
   _OutcomesAreComplete,

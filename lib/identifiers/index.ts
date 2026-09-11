@@ -5,7 +5,7 @@
  * replacing string-based parsing with structured objects.
  *
  * Only the names actually consumed through this barrel are re-exported. The
- * logical- and physical-path helpers are imported from their own modules
+ * logical-path and point-uid helpers are imported from their own modules
  * (`@/lib/identifiers/logical-path`, `.../point-uid`) — re-exporting them here
  * as well just gave knip a second, unused surface to report.
  */

@@ -126,6 +126,8 @@ export async function invalidateUsernameCache(username: string): Promise<void> {
  * @param oldUsername - Previous username (to invalidate)
  * @param newUsername - New username (to cache)
  * @param clerkId - Clerk user ID
+ *
+ * @knipignore No caller, but documented as live in docs/architecture/kv-store.md:178 — resolve the doc and the code together.
  */
 export async function updateUsernameCache(
   oldUsername: string | null,

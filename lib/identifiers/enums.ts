@@ -46,7 +46,12 @@ export enum PointExtension {
 }
 
 /**
- * Metric types
+ * Metric types — the closed vocabulary a logical path's metric segment may take.
+ *
+ * A vocabulary is complete or it is wrong. Members with no `MetricType.X` reference are still
+ * consumed as the string literals they equal (`"power"`, `"voltage"`, …) at the path and API
+ * boundaries, so deleting one would delete a valid value, not dead code. knip is told to skip
+ * `enumMembers` for this file — see knip.jsonc.
  */
 export enum MetricType {
   POWER = "power",
@@ -59,7 +64,9 @@ export enum MetricType {
 }
 
 /**
- * Aggregation fields for time-series data
+ * Aggregation fields for time-series data.
+ *
+ * Closed vocabulary — see {@link MetricType}.
  */
 export enum AggregationField {
   AVG = "avg",
@@ -69,25 +76,4 @@ export enum AggregationField {
   DELTA = "delta",
   SUM = "sum",
   QUALITY = "quality",
-}
-
-/**
- * Type guard to check if a string is a valid PointType
- */
-export function isPointType(value: string): value is PointType {
-  return Object.values(PointType).includes(value as PointType);
-}
-
-/**
- * Type guard to check if a string is a valid MetricType
- */
-export function isMetricType(value: string): value is MetricType {
-  return Object.values(MetricType).includes(value as MetricType);
-}
-
-/**
- * Type guard to check if a string is a valid AggregationField
- */
-export function isAggregationField(value: string): value is AggregationField {
-  return Object.values(AggregationField).includes(value as AggregationField);
 }

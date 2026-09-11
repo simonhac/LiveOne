@@ -68,22 +68,27 @@ export const BLEND_POINTS: BlendPointSpec[] = [
  * soc-meter monitor read the table, so these points are never created or written anymore. The specs are
  * kept ONLY as the canonical record of the legacy surface — the cleanup script
  * The completed legacy-param cleanup keyed its deletions on these metricTypes.
+ *
+ * @knipignore Declared learned-constant point, not yet published by the blend loop.
  */
 export const EFFICIENCY_POINT: BlendPointSpec = {
   metricType: "round-trip-efficiency",
   metricUnit: "%",
   displayName: "Battery Round-trip Efficiency",
 };
+/** @knipignore Declared learned-constant point, not yet published by the blend loop. */
 export const CAPACITY_POINT: BlendPointSpec = {
   metricType: "usable-capacity",
   metricUnit: "kWh",
   displayName: "Battery Usable Capacity",
 };
+/** @knipignore Declared learned-constant point, not yet published by the blend loop. */
 export const CHARGE_EFFICIENCY_POINT: BlendPointSpec = {
   metricType: "charge-efficiency",
   metricUnit: "%",
   displayName: "Battery Charge Efficiency",
 };
+/** @knipignore Declared learned-constant point, not yet published by the blend loop. */
 export const IDLE_LOSS_POINT: BlendPointSpec = {
   metricType: "idle-loss",
   metricUnit: "kWh/day",

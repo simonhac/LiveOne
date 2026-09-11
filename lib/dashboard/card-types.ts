@@ -141,12 +141,14 @@ export const tileFeatureSchema = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("flow-direction") }),
   z.strictObject({ kind: z.literal("toggle"), command: z.string() }),
 ]);
+/** @knipignore Typed-but-inert through two model generations; docs/plans/v4-dashboard-configurator.md sub-item B is the open 'wire it or delete it' decision. */
 export type TileFeature = z.infer<typeof tileFeatureSchema>;
 
 /** Config a promoted tile card may carry — just the inert features list. */
 export const tileCardConfigSchema = z.strictObject({
   features: z.array(tileFeatureSchema).optional(),
 });
+/** @knipignore See TileFeature — same open decision. */
 export type TileCardConfig = z.infer<typeof tileCardConfigSchema>;
 
 // --- daily-stripe -----------------------------------------------------------------------------

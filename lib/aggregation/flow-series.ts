@@ -20,14 +20,6 @@ export const SOLAR_RESIDUAL_PATH = "source.solar.residual";
  */
 export const REST_OF_HOUSE_PATH = "load.rest-of-house";
 /**
- * EV charging. A top-level load stem in its own right — NOT under `load.` — because the vendor's
- * house-load POWER figure excludes it; see the sibling-load handling in `buildFlowSeries`. Its
- * ENERGY register is the other way round (the meter counts everything), which `attachEnergyOverlays`
- * nets out.
- */
-export const EV_PATH = "ev.charge";
-
-/**
  * Per-interval power below which a solar residual is treated as measurement noise rather than
  * real unmetered generation. Series power is in kW, so this is 20 W.
  */

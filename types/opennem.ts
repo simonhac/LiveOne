@@ -19,21 +19,3 @@ export interface OpenNEMDataSeries {
   note?: string;
   path?: string; // Point path in format type.subtype.extension (e.g., "source.solar", "bidi.battery", "load")
 }
-
-export interface OpenNEMResponse {
-  type: string;
-  version: string;
-  network: string;
-  created_at: string;
-  requestStart?: string; // Start of requested time range
-  requestEnd?: string; // End of requested time range
-  data: OpenNEMDataSeries[];
-}
-
-// Interval types we'll support
-export type DataInterval = "1m" | "1d" | "1w" | "1M";
-
-export interface HistoricalDataRequest {
-  interval: DataInterval;
-  fields?: string[]; // Which fields to include (e.g., ['solar', 'load', 'battery'])
-}

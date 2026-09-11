@@ -218,10 +218,9 @@ function getPool(): Pool | null {
   });
 
   // Memoize on `global` in ALL environments. This was previously guarded by
-  // NODE_ENV !== "production", so warm production Lambdas — and every
-  // isPlanetscaleConfigured() call, which re-invokes getPool() — allocated a
-  // fresh Pool, multiplying connections without bound. One pool per instance
-  // is correct everywhere.
+  // NODE_ENV !== "production", so warm production Lambdas allocated a fresh
+  // Pool on every caller that re-invoked getPool(), multiplying connections
+  // without bound. One pool per instance is correct everywhere.
   global.__planetscalePool = pool;
 
   return pool;
@@ -293,29 +292,5 @@ export async function logConnectionPath(label = "PlanetScale"): Promise<void> {
   }
 }
 
-/**
- * Check if PlanetScale is configured and connected.
- */
-export async function isPlanetscaleConfigured(): Promise<boolean> {
-  if (!planetscaleDb) {
-    return false;
-  }
-
-  try {
-    // Reuses the memoized pool (getPool no longer allocates a second one).
-    const pool = getPool();
-    if (!pool) return false;
-
-    const client = await pool.connect();
-    await client.query("SELECT 1");
-    client.release();
-    return true;
-  } catch (error) {
-    console.error("[PlanetScale] Connection test failed:", error);
-    return false;
-  }
-}
-
 // Export schema
 export * from "./schema";
-export { schema };

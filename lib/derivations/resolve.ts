@@ -396,6 +396,8 @@ export async function listEnabledRunDetectors(
  *
  * "Owns", not "touches": the handle must be the detector's owner device. See
  * {@link resolveDeviceIdForHandle}.
+ *
+ * @knipignore No caller — handle+role lookup kept while derivations are still addressed by dx_/name/role.
  */
 export async function getRunDetectorForHandleRole(
   handle: number,

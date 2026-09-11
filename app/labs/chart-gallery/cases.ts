@@ -475,5 +475,3 @@ export const CHART_CASES: ChartCase[] = [
     height: 260,
   },
 ];
-
-export const CASE_IDS = CHART_CASES.map((c) => c.id);

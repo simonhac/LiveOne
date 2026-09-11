@@ -273,33 +273,6 @@ export function formatRelativeTime(date: Date | string): string {
 }
 
 /**
- * Format seconds since an event for display
- * @param seconds - Number of seconds since the event
- * @returns Formatted string
- */
-export function formatSecondsSince(seconds: number): string {
-  if (seconds < 60) {
-    return `${seconds}s ago`;
-  }
-
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) {
-    return `${minutes}m ago`;
-  }
-
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) {
-    const remainingMinutes = minutes % 60;
-    return remainingMinutes > 0
-      ? `${hours}h ${remainingMinutes}m ago`
-      : `${hours}h ago`;
-  }
-
-  const days = Math.floor(hours / 24);
-  return `${days}d ago`;
-}
-
-/**
  * The house 12-hour clock spelling: lowercase am/pm, no space, no leading zero — "4:16pm", "12:00am".
  *
  * Takes a bare `{ hour, minute }` rather than a `Date` or a `ZonedDateTime` so it carries NO timezone

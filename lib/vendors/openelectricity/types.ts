@@ -42,10 +42,6 @@ export type OeEndpoint = "data" | "market";
 /** Bucket sizes we use. The API supports more, but liveone only stores 5m natively. */
 export type OeInterval = "5m" | "1h" | "1d";
 
-export interface OpenElectricityCredentials {
-  apiKey: string;
-}
-
 /** A single `[startTimestampISO, value]` tuple within a result series. */
 export type OeDataPoint = [string, number | null];
 

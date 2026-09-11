@@ -478,11 +478,3 @@ export const TIMEZONE_GROUPS: TimezoneGroup[] = [
 export function isValidTimezone(timezone: string): boolean {
   return CANONICAL_TIMEZONES.some((tz) => tz.value === timezone);
 }
-
-/**
- * Get display name for a timezone
- */
-export function getTimezoneLabel(timezone: string): string {
-  const tz = CANONICAL_TIMEZONES.find((t) => t.value === timezone);
-  return tz ? tz.label : timezone;
-}

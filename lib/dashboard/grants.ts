@@ -51,7 +51,11 @@ export async function getGrant(
   return row ?? null;
 }
 
-/** Add (or re-role) a member on a dashboard. Upserts on the (dashboardId, clerkUserId) unique index. */
+/**
+ * Add (or re-role) a member on a dashboard. Upserts on the (dashboardId, clerkUserId) unique index.
+ *
+ * @knipignore No caller yet — the dashboard-sharing write path exists only as this function. Retiring it is a product decision, not a lint fix.
+ */
 export async function createGrant(args: {
   dashboardId: string;
   clerkUserId: string;
@@ -85,7 +89,11 @@ export async function listGrantsForDashboard(
     .where(eq(dashboardGrants.dashboardId, uuid));
 }
 
-/** Remove one membership. Returns true if a row was deleted. */
+/**
+ * Remove one membership. Returns true if a row was deleted.
+ *
+ * @knipignore No caller yet — pairs with createGrant; the two are the sharing write path or nothing.
+ */
 export async function revokeGrant(
   dashboardId: string,
   clerkUserId: string,

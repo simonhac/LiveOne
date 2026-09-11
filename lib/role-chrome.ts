@@ -85,8 +85,6 @@ export const ROLE_CHROME = {
   },
 } as const satisfies Record<string, RoleChrome>;
 
-export type ChromeRole = keyof typeof ROLE_CHROME;
-
 /**
  * The one retained state variant: nothing is flowing. Applies to the bidirectional tiles (Battery,
  * Grid) when power is within the dead band. This is an absence signal, not a direction signal, so it

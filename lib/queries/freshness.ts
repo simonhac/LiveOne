@@ -49,10 +49,3 @@ export function boundaryRefetchInterval(
     return Math.min(MAX_MS, Math.max(MIN_MS, ms));
   };
 }
-
-/**
- * Amber's quality-upgrade window. A window whose end is older than this (relative to
- * now) is beyond the reach of retroactive upgrades and can be treated as immutable.
- * The admin sync UI caps backfill at 7 days, so 8 days is a safe horizon.
- */
-export const AMBER_SETTLE_HORIZON_MS = 8 * 24 * 60 * 60 * 1000;

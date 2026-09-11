@@ -192,6 +192,8 @@ export async function removeDeviceCredentials(
 
 /**
  * Get all credentials for a user
+ *
+ * @knipignore No caller — a per-user credential sweep with no operator verb behind it yet.
  */
 export async function getAllUserCredentials(
   userId: string,

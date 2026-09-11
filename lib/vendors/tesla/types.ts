@@ -106,13 +106,6 @@ export interface TeslaRegion {
   fleet_api_base_url: string;
 }
 
-// Charge-control commands supported on the Fleet API.
-export type TeslaChargeCommand =
-  | "charge_start"
-  | "charge_stop"
-  | "set_charge_limit"
-  | "set_charging_amps";
-
 // Parsed result of a Tesla command POST ({ response: { result, reason } }).
 export interface TeslaCommandResult {
   result: boolean;

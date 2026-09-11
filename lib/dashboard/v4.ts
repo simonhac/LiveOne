@@ -80,14 +80,6 @@ export function emptyDashboardV4(): DashboardV4 {
   };
 }
 
-/** Narrowing helpers. */
-export function isGroupNode(n: DashboardNode): n is GroupNode {
-  return n.kind === "group";
-}
-export function isCardNode(n: DashboardNode): n is CardNode {
-  return n.kind === "card";
-}
-
 /**
  * Cheap runtime guard for a document — a corrupt-jsonb check at the read boundary, not validation.
  * Full structural validation is `validateDocV4` (v4-validate.ts).

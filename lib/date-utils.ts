@@ -108,140 +108,6 @@ export function parseDateYYYYMMDD(dateStr: string): CalendarDate {
 }
 
 /**
- * Get yesterday's date in YYYY-MM-DD format in the device's timezone
- * @param timezoneOffsetMinutes - Device's timezone offset in minutes (e.g., 600 for AEST)
- * @returns Date string in YYYY-MM-DD format
- */
-export function getYesterdayDate(timezoneOffsetMinutes: number): string {
-  // Get current UTC time
-  const nowUTC = new Date();
-
-  // Apply timezone offset to get local time
-  const localTime = new Date(
-    nowUTC.getTime() + timezoneOffsetMinutes * 60 * 1000,
-  );
-
-  // Subtract one day
-  localTime.setDate(localTime.getDate() - 1);
-
-  // Format as YYYY-MM-DD
-  const year = localTime.getFullYear();
-  const month = String(localTime.getMonth() + 1).padStart(2, "0");
-  const day = String(localTime.getDate()).padStart(2, "0");
-
-  return `${year}-${month}-${day}`;
-}
-
-/**
- * Parse time range for minute-based intervals (5m, 30m)
- * Accepts either ISO8601 datetime or date-only strings
- * @param startStr - Start time/date string
- * @param endStr - End time/date string
- * @param deviceTimezoneOffsetMin - Device's standard timezone offset in minutes (e.g., 600 for AEST)
- * @returns Tuple of [startTime, endTime] as ZonedDateTime objects
- */
-export function parseTimeRange(
-  startStr: string,
-  endStr: string,
-  deviceTimezoneOffsetMin: number,
-): [ZonedDateTime, ZonedDateTime] {
-  const startTime = parseTimeString(startStr, deviceTimezoneOffsetMin, true);
-  const endTime = parseTimeString(endStr, deviceTimezoneOffsetMin, false);
-
-  return [startTime, endTime];
-}
-
-/**
- * Parse a single time/date string into ZonedDateTime
- * @param timeStr - ISO8601 datetime or date string
- * @param deviceTimezoneOffsetMin - Device's standard timezone offset in minutes
- * @param isStartOfDay - If date-only, whether to use start (00:00) or end (23:59:59.999) of day
- */
-function parseTimeString(
-  timeStr: string,
-  deviceTimezoneOffsetMin: number,
-  isStartOfDay: boolean,
-): ZonedDateTime {
-  // Check if it's a date-only string (YYYY-MM-DD)
-  if (/^\d{4}-\d{2}-\d{2}$/.test(timeStr)) {
-    // Parse as date and convert to ZonedDateTime at start or end of day
-    const date = parseDate(timeStr);
-
-    // Create timezone string (e.g., "+10:00" for AEST, no DST)
-    const offsetHours = Math.floor(Math.abs(deviceTimezoneOffsetMin) / 60);
-    const offsetMinutes = Math.abs(deviceTimezoneOffsetMin) % 60;
-    const offsetSign = deviceTimezoneOffsetMin >= 0 ? "+" : "-";
-    const tzOffset = `${offsetSign}${String(offsetHours).padStart(2, "0")}:${String(offsetMinutes).padStart(2, "0")}`;
-
-    // Create datetime string at start or end of day
-    // End of day is midnight (00:00:00) of the next day
-    if (isStartOfDay) {
-      const datetimeStr = `${timeStr}T00:00:00.000${tzOffset}`;
-      const absolute = parseAbsolute(datetimeStr, tzOffset);
-      return toZoned(absolute, "Australia/Sydney");
-    } else {
-      // End of day: add one day and use 00:00:00
-      const nextDay = date.add({ days: 1 });
-      const year = nextDay.year;
-      const month = String(nextDay.month).padStart(2, "0");
-      const day = String(nextDay.day).padStart(2, "0");
-      const datetimeStr = `${year}-${month}-${day}T00:00:00.000${tzOffset}`;
-      const absolute = parseAbsolute(datetimeStr, tzOffset);
-      return toZoned(absolute, "Australia/Sydney");
-    }
-  }
-
-  // It's a full datetime string - parse it directly
-  // If no timezone specified, it will be treated as UTC
-  try {
-    // First try parsing with timezone info
-    const absolute = parseAbsolute(timeStr, "UTC");
-    return toZoned(absolute, "Australia/Sydney");
-  } catch (e) {
-    // If that fails, try adding Z for UTC
-    const absolute = parseAbsolute(timeStr + "Z", "UTC");
-    return toZoned(absolute, "Australia/Sydney");
-  }
-}
-
-/**
- * Parse date range for daily intervals (1d)
- * Accepts only ISO8601 date strings (YYYY-MM-DD)
- * @param startStr - Start date string
- * @param endStr - End date string
- * @returns Tuple of [startDate, endDate] as CalendarDate objects
- * @throws Error if strings are not valid date-only format
- */
-export function parseDateRange(
-  startStr: string,
-  endStr: string,
-): [CalendarDate, CalendarDate] {
-  // Strict validation - must be date-only format
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(startStr)) {
-    throw new Error(
-      `Invalid start date format. Expected YYYY-MM-DD, got: ${startStr}`,
-    );
-  }
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(endStr)) {
-    throw new Error(
-      `Invalid end date format. Expected YYYY-MM-DD, got: ${endStr}`,
-    );
-  }
-
-  const startDate = parseDate(startStr);
-  const endDate = parseDate(endStr);
-
-  // Validate that start is before or equal to end
-  if (startDate.compare(endDate) > 0) {
-    throw new Error(
-      `Start date (${startStr}) must be before or equal to end date (${endStr})`,
-    );
-  }
-
-  return [startDate, endDate];
-}
-
-/**
  * Convert a ZonedDateTime to Unix timestamp (seconds since epoch)
  * @param zonedDateTime - The ZonedDateTime to convert
  * @returns Unix timestamp in seconds
@@ -608,33 +474,6 @@ export function containingCalendarPeriod(
 }
 
 /**
- * Convert Unix timestamp to ISO8601 with fixed AEST offset (+10:00)
- * @param unixTimestamp - Unix timestamp (can be in seconds or milliseconds)
- * @param isMilliseconds - Whether the timestamp is in milliseconds (default: false for seconds)
- * @returns ISO string with +10:00 offset (e.g., "2025-08-16T20:36:41+10:00")
- */
-export function unixToFormattedAEST(
-  unixTimestamp: number,
-  isMilliseconds = false,
-): string {
-  // Convert to milliseconds if needed
-  const epochMillis = isMilliseconds ? unixTimestamp : unixTimestamp * 1000;
-  const date = new Date(epochMillis);
-
-  // Add 10 hours to UTC to get AEST
-  const aestTime = new Date(date.getTime() + 10 * 60 * 60 * 1000);
-
-  const year = aestTime.getUTCFullYear();
-  const month = String(aestTime.getUTCMonth() + 1).padStart(2, "0");
-  const day = String(aestTime.getUTCDate()).padStart(2, "0");
-  const hour = String(aestTime.getUTCHours()).padStart(2, "0");
-  const minute = String(aestTime.getUTCMinutes()).padStart(2, "0");
-  const second = String(aestTime.getUTCSeconds()).padStart(2, "0");
-
-  return `${year}-${month}-${day}T${hour}:${minute}:${second}+10:00`;
-}
-
-/**
  * Format a JavaScript Date to an ISO string with timezone offset
  * @param date - JavaScript Date object
  * @param timezoneOffsetMin - Timezone offset in minutes from UTC (positive for east, negative for west)
@@ -673,32 +512,6 @@ export function formatTime_fromJSDate(
 
   // Return ISO format with timezone offset
   return `${year}-${month}-${day}T${hour}:${minute}:${second}${millisStr}${offsetStr}`;
-}
-
-/**
- * Format a Date as HH:mm+TZ in the device's timezone
- * @param date - JavaScript Date object (in UTC)
- * @param timezoneOffsetMin - Timezone offset in minutes (positive for east of UTC)
- * @returns Time string in HH:mm+TZ format (e.g., "14:30+10:00")
- */
-export function formatJustTime_fromJSDate(
-  date: Date,
-  timezoneOffsetMin: number,
-): string {
-  // Apply the timezone offset to get local time
-  const localTime = new Date(date.getTime() + timezoneOffsetMin * 60 * 1000);
-
-  // Format time as HH:mm using UTC methods (since we've already applied the offset)
-  const hour = String(localTime.getUTCHours()).padStart(2, "0");
-  const minute = String(localTime.getUTCMinutes()).padStart(2, "0");
-
-  // Format the timezone offset (e.g., "+10:00" or "-05:00")
-  const offsetHours = Math.floor(Math.abs(timezoneOffsetMin) / 60);
-  const offsetMinutes = Math.abs(timezoneOffsetMin) % 60;
-  const offsetSign = timezoneOffsetMin >= 0 ? "+" : "-";
-  const offsetStr = `${offsetSign}${String(offsetHours).padStart(2, "0")}:${String(offsetMinutes).padStart(2, "0")}`;
-
-  return `${hour}:${minute}${offsetStr}`;
 }
 
 /**

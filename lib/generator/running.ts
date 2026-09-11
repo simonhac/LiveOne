@@ -1,9 +1,6 @@
 import type { LatestPointValues } from "@/lib/types/api";
 import { runningPathForRole } from "@/lib/run-tracking/running-point";
 
-/** Latest-map logical path of the generator's derived running state (`source.generator/running`). */
-export const GENERATOR_RUNNING_PATH = runningPathForRole("generator") as string;
-
 /**
  * Whether a tracked device is ON right now, read from the generic `/api/data` latest map (the
  * derived `<role stem>/running` point the run-tracking cron publishes — value 1/0). Returns
@@ -24,11 +21,4 @@ export function runningFromLatest(
   const p = latest?.[path];
   if (!p || p.value == null) return undefined;
   return p.value > 0;
-}
-
-/** {@link runningFromLatest} pinned to the generator. */
-export function generatorRunningFromLatest(
-  latest: LatestPointValues | null | undefined,
-): boolean | undefined {
-  return runningFromLatest(latest, "generator");
 }

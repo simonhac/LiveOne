@@ -11,7 +11,11 @@
 export const GENERATOR_RUN_REQUEST_ADDRESS =
   "source.generator.control.request/duration";
 
-/** Every Tesla charge-control address, for the copy layers' "is this a car" test. */
+/**
+ * Every Tesla charge-control address, for the copy layers' "is this a car" test.
+ *
+ * @knipignore Tesla Phase 2 surface: charge commands need the signing proxy before anything reads this.
+ */
 export const TESLA_CHARGE_ADDRESSES = [
   "ev.charge/active",
   "ev.charge.limit/soc",

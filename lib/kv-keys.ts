@@ -65,7 +65,11 @@ export function areaSubject(id: AreaId): KvAreaSubject {
   return { kind: "area", id };
 }
 
-/** Stable ordering/dedupe token for a subject — the TypeID is globally unique across both kinds. */
+/**
+ * Stable ordering/dedupe token for a subject — the TypeID is globally unique across both kinds.
+ *
+ * @knipignore No caller — the subject half of the KV key vocabulary; see invalidateKvSubjectCache.
+ */
 export function subjectToken(s: KvSubject): string {
   return s.id;
 }
