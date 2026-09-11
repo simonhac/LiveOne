@@ -114,12 +114,3 @@ function compareChain(a: ChainCandidate, b: ChainCandidate): number {
     a.pointUid.localeCompare(b.pointUid)
   );
 }
-
-/** The rank-0 members — the points an Area actually serves. */
-export function chainWinners<T extends ChainCandidate>(
-  candidates: readonly T[],
-): T[] {
-  return rankBindingChains(candidates)
-    .filter((r) => r.rank === 0)
-    .map((r) => r.item);
-}

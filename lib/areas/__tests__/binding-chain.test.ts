@@ -1,6 +1,5 @@
 import { describe, expect, it } from "@jest/globals";
 import {
-  chainWinners,
   rankBindingChains,
   servingKey,
   type ChainCandidate,
@@ -19,6 +18,12 @@ function binding(
 const ranks = (candidates: ChainCandidate[]) =>
   rankBindingChains(candidates).map((r) => [r.item.pointUid, r.rank]);
 
+/** What a serving path takes — the same `rank === 0` filter every caller applies. */
+const winners = (candidates: ChainCandidate[]) =>
+  rankBindingChains(candidates)
+    .filter((r) => r.rank === 0)
+    .map((r) => r.item.pointUid);
+
 describe("binding chains", () => {
   it("contends on the serving key, not the (role, metric) slot", () => {
     // Kinkora's load slot: four circuits, four distinct paths. Every one of them serves — this is
@@ -29,12 +34,7 @@ describe("binding chains", () => {
       binding("hws", "load.hws", "power", 2),
       binding("ev", "load.ev", "power", 3),
     ];
-    expect(chainWinners(circuits).map((c) => c.pointUid)).toEqual([
-      "ev",
-      "hvac",
-      "hws",
-      "pool",
-    ]);
+    expect(winners(circuits)).toEqual(["ev", "hvac", "hws", "pool"]);
   });
 
   it("orders two points on ONE serving key by priority, lowest first", () => {

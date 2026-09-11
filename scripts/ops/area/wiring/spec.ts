@@ -107,7 +107,13 @@ export const ROLE_SPEC = {
   description:
     "A binding is AREA-SCOPED ROLE RESOLUTION, not point metadata: it says which point fills\n" +
     "`grid/rate` IN THIS AREA. The same point may be bound in one area and unbound in another.\n" +
-    "Priority is the slot's selection order, and `set` takes it from ARGUMENT ORDER.",
+    "Priority is the slot's selection order, and `set` takes it from ARGUMENT ORDER.\n" +
+    "\n" +
+    "What priority orders is points that MEASURE THE SAME THING — same logical path, same\n" +
+    "metric. Several points with DIFFERENT paths in one slot (load.hvac, load.pool, load.ev)\n" +
+    "all serve; they are circuits, not rivals. Two on the SAME path are a fallback chain: the\n" +
+    "first serves the area's history, charts and Sankey, and the rest stand by in the live map,\n" +
+    "taking over if it goes quiet for 15 minutes or its point goes inactive.",
   subcommands: {
     list: {
       name: "list",
@@ -131,7 +137,9 @@ export const ROLE_SPEC = {
         "Fill one (role, metric) slot — priority follows argument order.",
       when:
         "Replaces THAT SLOT and leaves every other slot untouched. Naming several points sets the\n" +
-        "slot's whole priority order in one write, which is how a fallback chain is expressed.",
+        "slot's whole priority order in one write, which is how a fallback chain is expressed —\n" +
+        "first argument preferred. Two points on the same logical path fall back; two on different\n" +
+        "paths both serve.",
       mutates: true,
       args: [
         AREA_ARG,

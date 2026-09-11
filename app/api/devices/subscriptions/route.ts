@@ -50,14 +50,18 @@ export async function GET(request: NextRequest) {
     // Paths an Area could not auto-serve because two of its points claim the same
     // `logicalPath/metricType` — the ONE way a point can legitimately stay out of an area's latest
     // map. Surfaced here (and warned at every rebuild) so exclusion is never silent.
-    let contested: Awaited<
-      ReturnType<typeof buildSubscriptionRegistry>
-    >["contested"] = [];
+    type Build = Awaited<ReturnType<typeof buildSubscriptionRegistry>>;
+    let contested: Build["contested"] = [];
+    // Paths several BINDINGS claim, resolved by `priority` into a fallback chain rather than
+    // contested. The opposite of the list above — authored intent that worked — but worth returning
+    // for the same reason: "which instrument is this area actually reading?" should never need a
+    // guess. `pointRids[0]` serves the path.
+    let chains: Build["chains"] = [];
     if (action === "build") {
       console.log(
         "Building subscription registry (requested via ?action=build)",
       );
-      ({ contested } = await buildSubscriptionRegistry());
+      ({ contested, chains } = await buildSubscriptionRegistry());
     }
 
     // Scan KV for all subscription keys
@@ -91,7 +95,7 @@ export async function GET(request: NextRequest) {
     return jsonResponse({
       namespace: getEnvironment(),
       subscriptions,
-      ...(action === "build" && { contested }),
+      ...(action === "build" && { contested, chains }),
       note: "Use ?action=build to force rebuild the registry from database",
     });
   } catch (error) {
