@@ -2045,7 +2045,48 @@ async function syncProdToDev(options: SyncProdToDevOptions) {
   return run(options);
 }
 
+/** Bounded, untransformed raw reference page. Keep the full microsecond key for paging. */
+async function readTrialReferencePage(
+  point: PointId,
+  window: {
+    start: string;
+    end: string;
+    asOf: string;
+    cursor?: string;
+    limit: number;
+  },
+  exec?: ReadingsExec,
+) {
+  const db = exec ?? requirePlanetscaleDb();
+  const rid = await RegistryCache.ridForPoint(point);
+  return db
+    .select({
+      timestamp: sql<string>`to_char(${pointReadings.measurementTime}, 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`,
+      receivedTime: pointReadings.receivedTime,
+      createdAt: pointReadings.createdAt,
+      value: pointReadings.value,
+      error: pointReadings.error,
+      dataQuality: pointReadings.dataQuality,
+      sessionId: pointReadings.sessionId,
+    })
+    .from(pointReadings)
+    .where(
+      and(
+        eq(pointReadings.pointRid, rid),
+        sql`${pointReadings.measurementTime} >= ${window.start}::timestamp`,
+        sql`${pointReadings.measurementTime} < ${window.end}::timestamp`,
+        sql`${pointReadings.createdAt} <= ${window.asOf}::timestamp`,
+        window.cursor
+          ? sql`${pointReadings.measurementTime} > ${window.cursor}::timestamp`
+          : undefined,
+      ),
+    )
+    .orderBy(pointReadings.measurementTime)
+    .limit(window.limit + 1);
+}
+
 export const ReadingsDao = {
+  readTrialReferencePage,
   readRaw,
   read5m,
   read30m,

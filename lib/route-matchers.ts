@@ -17,6 +17,7 @@ const publicRoutes = [
   "/api/collectors/me/status",
   "/api/collectors/me/baseline",
   "/api/collectors/me/production",
+  "/api/collectors/me/readings",
   "/api/health", // Health check endpoint for monitoring
   "/api/health/devices", // per-device poll health for an external monitor — gated by X-Health-Key, not Clerk
   "/api/cron(.*)", // Cron endpoints have their own authentication via CRON_SECRET
