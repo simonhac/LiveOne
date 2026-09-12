@@ -206,6 +206,19 @@ function synthesizeRestOfHouse(
 }
 
 /**
+ * The points the master-load energy balance is drawn from — its presence test and its timestamp
+ * scan, which must agree: a path that can contribute a value must also be able to contribute the
+ * reading time that value is stamped with.
+ */
+const BALANCE_SOURCE_PATHS = [
+  SOLAR_TOTAL_PATH,
+  "source.solar.local/power",
+  "source.solar.remote/power",
+  "bidi.battery/power",
+  "bidi.grid/power",
+] as const;
+
+/**
  * Synthesize master load point from energy balance if it doesn't exist
  * Creates a LatestPointValue with proper timestamp from source points
  */
@@ -240,8 +253,16 @@ function synthesizeMasterLoad(
   const batteryPower = getValue("bidi.battery/power");
   const gridPower = getValue("bidi.grid/power");
 
-  // Only synthesize if we have at least one source of data
-  if (generation === 0 && batteryPower === 0 && gridPower === 0) {
+  // Synthesize whenever the balance's inputs are PRESENT — never on whether they are non-zero.
+  // This guard used to read `generation === 0 && batteryPower === 0 && gridPower === 0`, which
+  // conflates "this area publishes no solar/battery/grid points" with "every one of them happens to
+  // read 0 W right now". The second is an ordinary instant on a quiet site — Kutis at 1am, idle
+  // battery, no grid flow, no sun — and it made the Load tile vanish and reappear as the site
+  // breathed, because `calculateAllLoads` returns [] with no master and `loadTile.isAvailable` is
+  // that array's length. An area with genuinely no inputs still returns null and the tile still
+  // hides; an area whose inputs all read zero now synthesizes 0 kW, which is the honest answer.
+  const hasBalanceInputs = BALANCE_SOURCE_PATHS.some((path) => latest[path]);
+  if (!hasBalanceInputs) {
     return null;
   }
 
@@ -250,16 +271,8 @@ function synthesizeMasterLoad(
   const synthesizedValue = Math.max(0, generation + batteryPower + gridPower);
 
   // Find most recent timestamp from all source points
-  const sourcePaths = [
-    "source.solar/power",
-    "source.solar.local/power",
-    "source.solar.remote/power",
-    "bidi.battery/power",
-    "bidi.grid/power",
-  ];
-
   let maxTime: Date | null = null;
-  for (const path of sourcePaths) {
+  for (const path of BALANCE_SOURCE_PATHS) {
     const time = getTime(path);
     if (time && (!maxTime || time > maxTime)) {
       maxTime = time;
