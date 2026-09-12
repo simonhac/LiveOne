@@ -138,10 +138,29 @@ export function parseRRuleSubset(raw: unknown): ParseOutcome<string> {
   const byday = parts.get("BYDAY");
   if (byday !== undefined) {
     for (const term of byday.split(",")) {
-      if (!BYDAY_TERM.test(term))
+      const match = BYDAY_TERM.exec(term);
+      if (!match)
         return fail(
           `trigger.schedule.rrule: BYDAY term '${term}' is not a weekday, optionally ordinal-prefixed (e.g. TH, 1SA, -1FR)`,
         );
+      // 🛑 The ordinal has to be bounded HERE, because the library will not do it for us: it
+      // accepts `BYDAY=6MO`, stores fine, and then throws "Maximum iterations (10000) exceeded"
+      // the first time anything expands it — after the row is already in the table. A poison rule
+      // like that 500s every subsequent `GET /api/v4/automations?area=…`, because the list maps
+      // every row through `automationWire` -> `nextOccurrence`.
+      //
+      // RFC 5545 caps the ordinal at 53 (the weeks in a year). Under FREQ=MONTHLY the real cap is
+      // 5, since no month holds a sixth Monday — and a rule that can never match is a typo, not a
+      // schedule.
+      const ordinal =
+        match[1] === undefined ? null : Math.abs(Number(match[1]));
+      if (ordinal !== null) {
+        const cap = freq === "MONTHLY" ? 5 : 53;
+        if (ordinal > cap)
+          return fail(
+            `trigger.schedule.rrule: BYDAY term '${term}' is out of range (FREQ=${freq} allows an ordinal of 1..${cap})`,
+          );
+      }
     }
   }
 
@@ -152,7 +171,16 @@ export function parseRRuleSubset(raw: unknown): ParseOutcome<string> {
   )
     return fail("trigger.schedule.rrule: WKST must be a weekday code");
 
-  const numericList = (key: string, min: number, max: number) => {
+  // `signed` is per-part, not global: counting from the end is meaningful for BYMONTHDAY (-1 = the
+  // last day) and for BYSETPOS (-1 = the last match), and meaningless for BYMONTH — there is no
+  // "second-to-last month" in RFC 5545. A shared `Math.abs` range check accepted `BYMONTH=-2`,
+  // which the library then sanitises away, dropping the month filter the owner actually wrote.
+  const numericList = (
+    key: string,
+    min: number,
+    max: number,
+    signed: boolean,
+  ) => {
     const value = parts.get(key);
     if (value === undefined) return null;
     for (const term of value.split(",")) {
@@ -160,6 +188,7 @@ export function parseRRuleSubset(raw: unknown): ParseOutcome<string> {
       if (
         !/^[+-]?\d+$/.test(term) ||
         n === 0 ||
+        (!signed && n < 0) ||
         Math.abs(n) < min ||
         Math.abs(n) > max
       )
@@ -168,9 +197,9 @@ export function parseRRuleSubset(raw: unknown): ParseOutcome<string> {
     return null;
   };
   const ranges =
-    numericList("BYMONTHDAY", 1, 31) ??
-    numericList("BYMONTH", 1, 12) ??
-    numericList("BYSETPOS", 1, 366);
+    numericList("BYMONTHDAY", 1, 31, true) ??
+    numericList("BYMONTH", 1, 12, false) ??
+    numericList("BYSETPOS", 1, 366, true);
   if (ranges !== null) return fail(ranges);
 
   const canonical = ALLOWED_KEYS.filter((k) => parts.has(k))
@@ -178,10 +207,17 @@ export function parseRRuleSubset(raw: unknown): ParseOutcome<string> {
     .join(";");
 
   // Second gate: the library has to accept it too, so a rule that stores is a rule that expands.
+  //
+  // 🛑 It has to EXPAND, not just construct. `new RRuleTemporal(…)` is lazy — it parses the string
+  // and returns, so it accepts rules it cannot iterate, and the throw then lands on whoever first
+  // asks for an occurrence. That is after the row is written: POST 500s from `automationWire`
+  // having already inserted, and every later read of the area's automations 500s the same way.
+  // Asking for one occurrence here is the difference between a 422 and a stored poison rule.
   try {
-    new RRuleTemporal({
+    const probe = new RRuleTemporal({
       rruleString: `DTSTART;TZID=UTC:20260101T090000\nRRULE:${canonical}`,
     });
+    probe.next(new Date(Date.UTC(2026, 0, 1)));
   } catch (err) {
     return fail(
       `trigger.schedule.rrule is not a valid recurrence rule: ${err instanceof Error ? err.message : String(err)}`,

@@ -366,6 +366,41 @@ describe("GET …/calendar.ics", () => {
     expect(mockStore.listForArea).not.toHaveBeenCalled();
   });
 
+  // 🛑 The token IS the credential for this route, so echoing the request URL into the body makes
+  // every exported or forwarded copy of the .ics file a working subscription.
+  it("🛑 names the feed in URL: without leaking the token into the body", async () => {
+    const body = await (await feed(AREA, "?token=supersecret")).text();
+    expect(body).not.toContain("supersecret");
+    // Unfolded first: RFC 5545 breaks a content line at 75 octets and continues it with a leading
+    // space, and this URL is longer than that — so a naive substring match on the raw body would
+    // fail even when the property is perfectly correct.
+    const unfolded = body.replace(/\r\n /g, "");
+    expect(unfolded).toContain(
+      `URL:https://liveone.energy/api/v4/areas/${AREA}/calendar.ics`,
+    );
+  });
+
+  // Drizzle's `.$type<>()` is compile-time only (see `lib/automations/types.ts`), so a legacy or
+  // hand-written row can hold anything. The trigger was already parsed; the action was not, and
+  // `row.action.kind` on a null threw — taking out the whole feed rather than one event.
+  it("🛑 survives a row whose action JSON is malformed, and still serves the others", async () => {
+    mockStore.listForArea.mockResolvedValue([
+      exerciseRow({ id: AU_UUID, action: null as never }),
+      exerciseRow({
+        id: "b2c3d4e5-0000-4000-8000-000000000002",
+        name: "Second exercise",
+      }),
+    ]);
+    const res = await feed(AREA, `?token=${TOKEN}`);
+    expect(res.status).toBe(200);
+    const body = await res.text();
+    // The good row is served...
+    expect(body).toContain("SUMMARY:Second exercise");
+    // ...and the malformed one still gets an event, with the fallback duration rather than a throw.
+    expect(body).toContain("SUMMARY:Generator exercise");
+    expect((body.match(/BEGIN:VEVENT/g) ?? []).length).toBe(2);
+  });
+
   it("404s a malformed area id, indistinguishably", async () => {
     expect((await feed("not-an-area", `?token=${TOKEN}`)).status).toBe(404);
   });

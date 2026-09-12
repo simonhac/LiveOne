@@ -76,7 +76,7 @@ export async function create(values: {
  *
  * 🛑 Bumping `revision` here — in EVERY writer, not just the claim — is what makes it a row version
  * rather than a dispatch counter. A writer that forgot to bump it would leave a stale `revision`
- * looking fresh to `claimExerciseDispatch`, which is the whole thing the token exists to prevent.
+ * looking fresh to `claimExerciseSlot`, which is the whole thing the token exists to prevent.
  */
 const stamped = () => ({
   updatedAt: new Date(),
@@ -218,19 +218,32 @@ export async function intervalsOverlapping(
 /**
  * Record what the evaluator decided about an exercise slot.
  *
- * `consume` is the whole point: it writes the slot instant into `lastTriggeredRunStart`, which is
- * what stops the slot being considered again. A `waiting` decision deliberately does NOT consume —
- * the slot must stay due so the next tick can retry inside the grace window.
+ * `runStart` moves the WATERMARK (`lastTriggeredRunStart`), which is what stops a slot being
+ * considered again — see `isDue`. Three intents, and the difference between them matters:
+ *  - a `Date` — advance it to that slot, or RESTORE it to a previous value after a claimed dispatch
+ *    turned out to be declinable. The restore is why this is a value rather than a boolean: a
+ *    release must put back the watermark the row had BEFORE the claim, because writing `null` would
+ *    wipe it and re-arm whatever earlier occurrence it was holding.
+ *  - `null` — clear it, for a row that genuinely had no watermark before the claim.
+ *  - omitted — leave it exactly as it is, which is what a `waiting` decision on an unclaimed slot
+ *    wants: the slot stays due so the next tick can retry inside the grace window.
  *
  * `lastTriggeredAt` means "we actually dispatched something", so it is stamped ONLY on `fired`.
  * Stamping it for a satisfied or missed slot would make "when did this rule last run the engine"
  * unanswerable.
+ *
+ * 🛑 `expectRevision` makes this a compare-and-set, and it is not optional in spirit. This write can
+ * carry `enabled: false`, and it used to key on the id alone: a tick that computed `disable` from
+ * the schedule it read, then had an owner PATCH an RDATE onto that schedule mid-dispatch, would
+ * retire a rule that now had an occurrence left — recording `final: true` as its reason, which was
+ * no longer true. Returns false when the row has moved on, so the caller can say so.
  */
 export async function recordExerciseOutcome(
   uuid: string,
   opts: {
     context: ExerciseArmedContext;
-    consume: boolean;
+    /** The watermark after this write. Omit to leave it untouched. See above. */
+    runStart?: Date | null;
     nowMs: number;
     /**
      * The schedule has no occurrences left, so retire the rule in the SAME write that consumes its
@@ -239,21 +252,27 @@ export async function recordExerciseOutcome(
      * to say why it never fires again.
      */
     disable?: boolean;
+    /** The revision this decision was computed against. Refuses the write if the row has moved on. */
+    expectRevision?: number;
   },
-): Promise<void> {
+): Promise<boolean> {
   const now = new Date(opts.nowMs);
-  await requirePlanetscaleDb()
+  const rows = await requirePlanetscaleDb()
     .update(automations)
     .set({
       armedContext: opts.context,
-      ...(opts.consume
-        ? { lastTriggeredRunStart: new Date(opts.context.slotAt) }
-        : {}),
+      ...("runStart" in opts ? { lastTriggeredRunStart: opts.runStart } : {}),
       ...(opts.disable ? { enabled: false } : {}),
       ...(opts.context.outcome === "fired" ? { lastTriggeredAt: now } : {}),
       ...stamped(),
     })
-    .where(eq(automations.id, uuid));
+    .where(
+      opts.expectRevision === undefined
+        ? eq(automations.id, uuid)
+        : exerciseClaimWhere(uuid, opts.expectRevision),
+    )
+    .returning({ id: automations.id });
+  return rows.length > 0;
 }
 
 /**
@@ -282,40 +301,54 @@ export function exerciseClaimWhere(uuid: string, revision: number) {
 }
 
 /**
- * Compare-and-set on `revision`, taken immediately before dispatching a start.
+ * Claim a slot for dispatch AND consume it, in one statement, immediately before starting an engine.
  *
  * `/api/cron/derivations` holds no cron lease, so two invocations really can overlap. For a charge
  * limit a duplicate `turn_off` is harmless; here a duplicate dispatch re-extends a running engine's
- * stop deadline, so the race is worth one extra round trip. Returns false if another tick got
- * there first.
+ * stop deadline, so the race is worth one extra round trip. Returns null if another tick got there
+ * first, and otherwise the revision this caller now owns — which `recordExerciseOutcome` needs, so
+ * that the write finishing this decision can compare-and-set against the row it was computed from.
  *
  * Correct under READ COMMITTED: the losing tick blocks on the row lock, then re-evaluates its
  * `WHERE` against the winner's committed row, whose `revision` has moved on past the value it read.
  *
- * 🛑 What this does NOT do, and never did as an `updated_at` CAS either: it protects ticks that read
- * the SAME revision, not ticks that read in sequence. A tick that lists the rule AFTER a previous
- * tick's claim commits but BEFORE that tick reaches `recordExerciseOutcome` (the slot is consumed
- * only once the dispatch returns) reads the bumped revision and claims it legitimately, and both
- * dispatch. The window is the length of one dispatch — an HTTP round trip to the hub — against a
- * minutely cron, so it needs a dispatch to outlive its own tick. Closing it properly means consuming
- * the slot before dispatching, or a durable per-slot lease; both change what a crash mid-dispatch
- * costs, so neither is a drive-by.
+ * 🛑 The consume is IN this statement, and that is the whole point of the design.
+ *
+ * It used to be a bare revision bump, with the slot consumed only once the dispatch returned — and a
+ * CAS on `revision` protects ticks that read the SAME revision, not ticks that read in sequence. A
+ * tick listing the rule after this claim committed but before the slot was consumed read the bumped
+ * revision, found the slot still unconsumed, and claimed it legitimately: both dispatched. The old
+ * comment argued that needed "a dispatch to outlive its own tick", which understated it — the
+ * dispatch is an HTTP round trip to the Fly hub against a minutely cron, so the window opens exactly
+ * when the hub is slow or unreachable, which is when a start is most likely to be retried.
+ *
+ * Consuming here makes the second dispatch structurally impossible: the second tick sees the slot
+ * closed and never reaches `decideExercise`. What it buys with is a narrower failure — a crash
+ * between this statement and the dispatch leaves a slot marked dealt-with that never ran. That is
+ * one silently missed exercise rather than a generator started twice, it needs a crash inside a
+ * ~1s window, and `reportUndecidedSlots` is watching. The alternative that avoids both is a durable
+ * per-slot lease, which costs a column and a stale-lease timeout to earn nothing more for one
+ * generator.
+ *
+ * A declined dispatch RELEASES the slot — see `recordExerciseOutcome`, and note that releasing means
+ * restoring the previous watermark, not writing null.
  *
  * The bump goes through `stamped()` like every other write, so it is `revision + 1` computed IN SQL
  * rather than from the caller's arithmetic — the counter follows what the row actually holds.
  *
  * See `exerciseClaimWhere` for why the key is an integer and not `updated_at`.
  */
-export async function claimExerciseDispatch(
+export async function claimExerciseSlot(
   uuid: string,
   revision: number,
-): Promise<boolean> {
+  slotAtMs: number,
+): Promise<{ revision: number } | null> {
   const rows = await requirePlanetscaleDb()
     .update(automations)
-    .set(stamped())
+    .set({ lastTriggeredRunStart: new Date(slotAtMs), ...stamped() })
     .where(exerciseClaimWhere(uuid, revision))
-    .returning({ id: automations.id });
-  return rows.length > 0;
+    .returning({ revision: automations.revision });
+  return rows[0] ?? null;
 }
 
 /**

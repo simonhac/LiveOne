@@ -25,43 +25,78 @@ describe("isDue", () => {
   const createdAtMs = at("2026-01-01T00:00:00+11:00");
 
   it("is due when nothing has consumed it", () => {
-    expect(isDue({ slot, lastTriggeredRunStartMs: null, createdAtMs })).toBe(
-      true,
+    expect(isDue({ slot, lastTriggeredRunStartMs: null, createdAtMs })).toEqual(
+      {
+        due: true,
+      },
     );
   });
 
   it("🛑 is NOT due once the exact slot instant has been consumed", () => {
     expect(
       isDue({ slot, lastTriggeredRunStartMs: slot.atMs, createdAtMs }),
-    ).toBe(false);
+    ).toEqual({ due: false, reason: "dealt-with" });
   });
 
-  it("is due again for a different slot", () => {
+  it("is due again for a LATER slot", () => {
     expect(
       isDue({
         slot,
         lastTriggeredRunStartMs: slot.atMs - 7 * 24 * 60 * MIN,
         createdAtMs,
       }),
-    ).toBe(true);
+    ).toEqual({ due: true });
   });
 
-  it("🛑 is NOT due for a slot that predates the rule", () => {
+  // 🛑 The watermark. `lastTriggeredRunStart` is ONE timestamp column, so "everything up to here is
+  // dealt with" is the only thing it can mean — and reading it as an exact match is how removing a
+  // consumed occurrence re-armed an earlier one.
+  it("🛑 is NOT due for a slot EARLIER than the watermark, not merely equal to it", () => {
+    // Two slots an hour apart, both inside one grace window, both dealt with — the key holds the
+    // later one. The owner then skips the later occurrence, so `previousOccurrence` returns the
+    // earlier slot. Under an exact match that no longer matched the key and the engine started for
+    // an occurrence it had already handled.
+    expect(
+      isDue({
+        slot,
+        lastTriggeredRunStartMs: slot.atMs + 60 * MIN,
+        createdAtMs,
+      }),
+    ).toEqual({ due: false, reason: "dealt-with" });
+  });
+
+  it("🛑 is NOT due for a slot that predates the rule, and says which reason", () => {
     // Otherwise a rule created on Friday immediately reports Thursday as a missed exercise — a
-    // week it did not exist for.
+    // week it did not exist for. The REASON matters: the evaluator retires a spent rule on
+    // `dealt-with` and must not do so on this one, which has simply not started yet.
     expect(
       isDue({
         slot,
         lastTriggeredRunStartMs: null,
         createdAtMs: slot.atMs + MIN,
       }),
-    ).toBe(false);
+    ).toEqual({ due: false, reason: "predates-rule" });
   });
 
   it("is due for a slot at the exact moment of creation", () => {
     expect(
       isDue({ slot, lastTriggeredRunStartMs: null, createdAtMs: slot.atMs }),
-    ).toBe(true);
+    ).toEqual({ due: true });
+  });
+
+  // 🛑 `slot.atMs <= null` coerces the null to 0 in JS, so a bare `<=` answers "not due" for every
+  // slot on a rule that has never fired — the whole feature, silently off.
+  it("🛑 treats a NULL watermark as 'nothing consumed', not as zero", () => {
+    expect(isDue({ slot, lastTriggeredRunStartMs: null, createdAtMs })).toEqual(
+      { due: true },
+    );
+    expect(
+      isDue({
+        slot: { atMs: 1 },
+        lastTriggeredRunStartMs: null,
+        createdAtMs: 0,
+      }),
+    ).toEqual({ due: true });
   });
 });
 

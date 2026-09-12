@@ -41,6 +41,16 @@ export interface ExerciseSummary {
   satisfied: number;
   waiting: number;
   missed: number;
+  /**
+   * Slots this tick counted as due and then left to another tick, having lost a compare-and-set —
+   * either the dispatch claim or the outcome write.
+   *
+   * 🛑 Counted, not ignored, because `reportUndecidedSlots` compares `due` against the outcomes and
+   * alerts on the shortfall. A lost CAS IS a decision — the winning writer made it, and the slot is
+   * untouched either way — so without this the races the design expects raise the 🚨 "produced no
+   * decision" alarm, and an alarm that fires on correct behaviour is one nobody reads.
+   */
+  lostClaim: number;
   /** Rules retired this tick because the slot just consumed was their last. */
   exhausted: number;
 }
@@ -86,14 +96,36 @@ export async function evaluateExercise(
 
   const slot = previousOccurrence(trigger.schedule, det.displayTimezone, nowMs);
   if (!slot) return;
-  if (
-    !isDue({
-      slot,
-      lastTriggeredRunStartMs: row.lastTriggeredRunStart?.getTime() ?? null,
-      createdAtMs: row.createdAt.getTime(),
-    })
-  )
+  const due = isDue({
+    slot,
+    lastTriggeredRunStartMs: row.lastTriggeredRunStart?.getTime() ?? null,
+    createdAtMs: row.createdAt.getTime(),
+  });
+  if (!due.due) {
+    // 🛑 Exhaustion has to be asked HERE TOO, not only where a slot is consumed.
+    //
+    // `retire` below only runs on a tick that has a due slot, so a rule could be left enabled with
+    // nothing to fire and no way to say why: consume its second-to-last slot, then `skip` the last
+    // one, and `previousOccurrence` returns the already-dealt-with slot forever — this early return,
+    // every minute, with the exhaustion check never reached. That is the exact outcome the
+    // same-write retirement was built to prevent, arrived at from the other side.
+    //
+    // Only for `dealt-with`. A slot that PREDATES the rule means the schedule has not started yet,
+    // and disabling a rule for having been written before its own first occurrence would be a new
+    // bug rather than a fix. `isExhausted` is pure, and the write it guards is terminal — the row
+    // leaves `listEnabled` — so this costs one comparison per tick and at most one write per rule.
+    if (
+      due.reason === "dealt-with" &&
+      isExhausted(trigger.schedule, det.displayTimezone, slot.atMs)
+    ) {
+      console.warn(
+        `[automations] ${row.id} has no occurrences left after ${new Date(slot.atMs).toISOString()} — disabling`,
+      );
+      await store.disableAutomation(row.id);
+      summary.exercise.exhausted++;
+    }
     return;
+  }
 
   summary.exercise.due++;
 
@@ -137,14 +169,33 @@ export async function evaluateExercise(
     return;
   }
 
+  // No dispatch on this path, so nothing has been claimed and the watermark is this write's to move:
+  // advance it for a terminal decision, and OMIT it for `waiting` so the slot stays due for the next
+  // tick inside the grace window. `expectRevision` is the row as listed, which is the revision every
+  // input to `decideExercise` was read against.
   const consume = decision.kind === "consume";
   const final = retire(consume);
-  await store.recordExerciseOutcome(row.id, {
+  const applied = await store.recordExerciseOutcome(row.id, {
     context: final ? { ...decision.context, final: true } : decision.context,
-    consume,
+    ...(consume ? { runStart: new Date(slot.atMs) } : {}),
     disable: final,
     nowMs,
+    expectRevision: row.revision,
   });
+  if (!applied) {
+    // An owner edit landed between listing the row and deciding about it. The decision was computed
+    // from a schedule that no longer applies, so dropping it is correct — but a dropped decision that
+    // said `final` would otherwise have disabled a rule on stale grounds, which is the whole reason
+    // this write is a CAS.
+    console.warn(
+      `[automations] ${row.id} outcome '${decision.context.outcome}' not recorded — the row changed ` +
+        `during evaluation (expected revision ${row.revision}); it will be reconsidered next tick`,
+    );
+    // Counted for the same reason a lost dispatch claim is: the slot is untouched and the next tick
+    // will decide again, so this is correct behaviour and must not raise the undecided-slot alarm.
+    summary.exercise.lostClaim++;
+    return;
+  }
   countOutcome(summary, decision.context.outcome);
   if (final) summary.exercise.exhausted++;
 }
@@ -211,21 +262,10 @@ async function fireExercise(
   summary: SummarySink,
   retire: (consume: boolean) => boolean,
 ): Promise<void> {
-  // 🛑 `/api/cron/derivations` holds no lease, so two ticks CAN overlap. Claim the row first —
-  // a compare-and-set on the integer `revision` — because the thing being guarded is starting an
-  // engine. (It was a CAS on `updated_at` until #468, where a microsecond the round trip could not
-  // carry made it match nothing; `store.exerciseClaimWhere` has the whole story.)
-  const claimed = await store.claimExerciseDispatch(row.id, row.revision);
-  if (!claimed) {
-    // Expected and rare in a genuine two-tick race — but it is ALSO what a broken CAS looked like,
-    // and losing EVERY tick is indistinguishable from having nothing to do unless it says so. This
-    // line is the one that would have made a silent 100% failure visible on day one.
-    console.warn(
-      `[automations] ${row.id} lost the exercise dispatch claim — another tick got there first`,
-    );
-    return;
-  }
-
+  // 🛑 EVERY read happens BEFORE the claim, so the only thing between claiming a slot and dispatching
+  // it is the dispatch. These two lookups are pure reads that can fail for configuration reasons, and
+  // claiming first would consume a slot for a start that never happened — so their "slot stays due"
+  // below would have become a lie, and a misconfigured action point would silently cost a run.
   const loaded = await loadPointByUuid(actionPointUuid);
   if (!loaded) {
     summary.errors++;
@@ -240,6 +280,27 @@ async function fireExercise(
     console.error(
       `[automations] ${row.id} action device ${loaded.deviceRid} not found — slot stays due`,
     );
+    return;
+  }
+
+  // 🛑 `/api/cron/derivations` holds no lease, so two ticks CAN overlap. Claim the slot — a
+  // compare-and-set on the integer `revision` that ALSO consumes it — because the thing being
+  // guarded is starting an engine, and a bare revision bump left a window in which a second tick
+  // read the bumped revision, found the slot still open, and dispatched too. `store.claimExerciseSlot`
+  // has the full argument, including what consuming early costs instead.
+  //
+  // (It was a CAS on `updated_at` until #468, where a microsecond the round trip could not carry made
+  // it match nothing; `store.exerciseClaimWhere` has that story.)
+  const priorRunStart = row.lastTriggeredRunStart;
+  const claim = await store.claimExerciseSlot(row.id, row.revision, slot.atMs);
+  if (!claim) {
+    // Expected and rare in a genuine two-tick race — but it is ALSO what a broken CAS looked like,
+    // and losing EVERY tick is indistinguishable from having nothing to do unless it says so. This
+    // line is the one that would have made a silent 100% failure visible on day one.
+    console.warn(
+      `[automations] ${row.id} lost the exercise dispatch claim — another tick got there first`,
+    );
+    summary.exercise.lostClaim++;
     return;
   }
 
@@ -259,16 +320,32 @@ async function fireExercise(
     reason?: string,
   ) => {
     const final = retire(consume);
-    await store.recordExerciseOutcome(row.id, {
+    const applied = await store.recordExerciseOutcome(row.id, {
       context: exerciseContext(slot, outcomeName, nowMs, {
         reason,
         evidence,
         final,
       }),
-      consume,
+      // The claim already consumed the slot. Keeping it consumed is a no-op restatement; RELEASING it
+      // means restoring the watermark this row carried BEFORE the claim, never null — null would wipe
+      // whatever earlier occurrence it was holding and re-arm it.
+      runStart: consume ? new Date(slot.atMs) : priorRunStart,
       disable: final,
       nowMs,
+      // Against the revision the claim handed us, not the one the row was listed with.
+      expectRevision: claim.revision,
     });
+    if (!applied) {
+      // The row moved under us mid-dispatch — only an owner edit can do that, and a PATCH clears the
+      // arming state anyway. Say so: on a release this leaves the slot consumed, which costs this
+      // occurrence, and that is not something to discover from a silence.
+      summary.errors++;
+      console.error(
+        `[automations] ${row.id} outcome '${outcomeName}' not recorded — the row changed during dispatch ` +
+          `(expected revision ${claim.revision}). The slot stays consumed.`,
+      );
+      return;
+    }
     countOutcome(summary, outcomeName);
     if (final) summary.exercise.exhausted++;
   };

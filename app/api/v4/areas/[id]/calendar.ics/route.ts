@@ -22,7 +22,10 @@ import { Area } from "@/lib/ids";
 import { loadAreaForAuth } from "@/lib/areas/http";
 import { validateCalendarToken } from "@/lib/areas/calendar-tokens";
 import * as store from "@/lib/automations/store";
-import { parseAutomationTrigger } from "@/lib/automations/types";
+import {
+  parseAutomationAction,
+  parseAutomationTrigger,
+} from "@/lib/automations/types";
 import { toRecurrenceLines } from "@/lib/automations/recurrence";
 import type {
   AutomationRow,
@@ -84,7 +87,12 @@ export async function GET(
     //
     // Little is lost: it was only ever a hint, Apple ignores it in favour of the subscription's
     // own Auto-refresh setting, and a client that polls on its own schedule is the normal case.
-    url: request.url,
+    // 🛑 The URL WITHOUT the token. `request.url` carries `?token=…`, and putting it here writes
+    // the credential into the VCALENDAR body — so an exported or forwarded .ics file is itself a
+    // working, long-lived subscription for anyone who opens it in a text editor. Query-string auth
+    // is the deliberate decision; handing the credential to every copy of the payload is not part
+    // of it.
+    url: feedUrlWithoutToken(request.url),
   });
 
   for (const row of rows) {
@@ -116,9 +124,17 @@ export async function GET(
     }
     // The requested run LENGTH is the action's value — so the block in the calendar is how long
     // the engine is being asked to run for, not an arbitrary slot.
+    //
+    // Through the PARSER, like the trigger above it. Drizzle's `.$type<AutomationAction>()` is a
+    // compile-time convenience for writers and nothing at all at runtime (see `types.ts`), so a
+    // legacy or hand-written row with `action: null` makes `row.action.kind` throw — and one bad
+    // row would take out the whole feed rather than its own event.
+    const action = parseAutomationAction(row.action);
     const minutes =
-      row.action.kind === "point-action" && row.action.action === "set_value"
-        ? row.action.value
+      action.ok &&
+      action.value.kind === "point-action" &&
+      action.value.action === "set_value"
+        ? action.value.value
         : 30;
 
     const event = calendar.createEvent({
@@ -154,6 +170,20 @@ export async function GET(
       "Content-Disposition": `inline; filename="${slug(area.displayName)}-automations.ics"`,
     },
   });
+}
+
+/**
+ * The feed's own URL with the credential stripped, for the VCALENDAR `URL:` property.
+ *
+ * 🛑 `request.url` IS the credential — the token is the whole of the authentication for this route.
+ * Echoing it into the body means every exported, mailed or mirrored copy of the `.ics` file carries
+ * a working subscription for whoever holds the file, which is a wider audience than whoever was
+ * given the URL. Strip it and the property still does its job: it names the feed.
+ */
+function feedUrlWithoutToken(rawUrl: string): string {
+  const url = new URL(rawUrl);
+  url.searchParams.delete("token");
+  return url.toString();
 }
 
 /**

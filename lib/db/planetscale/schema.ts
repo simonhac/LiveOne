@@ -1646,7 +1646,7 @@ export const automations = pgTable(
     armedContext: jsonb("armed_context").$type<AutomationArmedContext | null>(),
     createdAt: tsMs("created_at").notNull().defaultNow(),
     updatedAt: tsMs("updated_at").notNull().defaultNow(),
-    // 🛑 The optimistic-concurrency token, and the ONLY thing `claimExerciseDispatch` compares.
+    // 🛑 The optimistic-concurrency token, and the ONLY thing `claimExerciseSlot` compares.
     // House rule (see `docs/architecture/data-model.md`): optimistic concurrency uses an integer
     // `revision`, NEVER a timestamp. `updated_at` was the CAS key until #468 and it was the wrong
     // one twice over — its DB-side `now()` default put it outside what a JS `Date` can echo back,

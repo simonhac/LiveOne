@@ -82,6 +82,53 @@ describeSuite("parseRRuleSubset", () => {
     expect(parseRRuleSubset(undefined).ok).toBe(false);
     expect(parseRRuleSubset("").ok).toBe(false);
   });
+
+  // 🛑 The three ways a rule used to pass validation and then break something downstream. Each of
+  // these stored happily before, because the "second gate" only CONSTRUCTED the library object and
+  // construction is lazy.
+  it("refuses an unmatchable BYDAY ordinal instead of storing a rule nothing can expand", () => {
+    // `6MO` under FREQ=MONTHLY has no sixth Monday to find, so the library hunts to its 10,000
+    // iteration guard and THROWS — at expansion, long after the row was written. That made every
+    // later `GET /api/v4/automations?area=…` 500, because the list maps each row through
+    // `automationWire` -> `nextOccurrence`.
+    const out = parseRRuleSubset("FREQ=MONTHLY;BYDAY=6MO");
+    expect(out.ok).toBe(false);
+    if (!out.ok) expect(out.error).toContain("out of range");
+
+    // RFC 5545 caps the ordinal at 53 whatever the frequency.
+    expect(parseRRuleSubset("FREQ=YEARLY;BYDAY=54MO").ok).toBe(false);
+    expect(parseRRuleSubset("FREQ=MONTHLY;BYDAY=-6FR").ok).toBe(false);
+
+    // ...and the forms that ARE meaningful still pass.
+    expect(parseRRuleSubset("FREQ=MONTHLY;BYDAY=1SA").ok).toBe(true);
+    expect(parseRRuleSubset("FREQ=MONTHLY;BYDAY=5MO").ok).toBe(true);
+    expect(parseRRuleSubset("FREQ=MONTHLY;BYDAY=-1FR").ok).toBe(true);
+    expect(parseRRuleSubset("FREQ=YEARLY;BYDAY=53MO").ok).toBe(true);
+  });
+
+  it("refuses a NEGATIVE BYMONTH, which the library would silently drop", () => {
+    // Counting from the end is meaningful for BYMONTHDAY (-1 = the last day) and BYSETPOS, and
+    // meaningless for a month. One shared `Math.abs` range check accepted all three; the library
+    // then sanitised BYMONTH to 1..12 and removed the filter the owner actually wrote.
+    const out = parseRRuleSubset("FREQ=MONTHLY;BYMONTH=-2;BYMONTHDAY=1");
+    expect(out.ok).toBe(false);
+    if (!out.ok) expect(out.error).toContain("BYMONTH term");
+
+    expect(parseRRuleSubset("FREQ=MONTHLY;BYMONTH=2;BYMONTHDAY=1").ok).toBe(
+      true,
+    );
+    // The signed parts keep their negatives.
+    expect(parseRRuleSubset("FREQ=MONTHLY;BYMONTHDAY=-1").ok).toBe(true);
+    expect(parseRRuleSubset("FREQ=MONTHLY;BYDAY=MO;BYSETPOS=-1").ok).toBe(true);
+  });
+
+  it("refuses a rule the library cannot EXPAND, not merely one it cannot construct", () => {
+    // A rule whose only match is a date that never occurs. Constructing it succeeds; asking for one
+    // occurrence is what surfaces the problem, which is why the gate now asks.
+    const out = parseRRuleSubset("FREQ=YEARLY;BYMONTH=2;BYMONTHDAY=30");
+    expect(out.ok).toBe(false);
+    if (!out.ok) expect(out.error).toContain("not a valid recurrence rule");
+  });
 });
 
 describeSuite("one-off (no rrule)", () => {

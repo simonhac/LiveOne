@@ -3,6 +3,8 @@ import {
   isPublicRoute,
   isShareableRoute,
   hasAccessToken,
+  isCalendarFeedRoute,
+  hasFeedToken,
 } from "../route-matchers";
 
 // createRouteMatcher's predicate reads the request URL; provide both `url` (used
@@ -241,5 +243,72 @@ describe("share-link bypass decision (mirrors middleware.ts)", () => {
   });
   it("does NOT bypass a share-eligible route without a token", () => {
     expect(bypassesAuth(req("/api/data?systemId=1"))).toBe(false);
+  });
+});
+
+// The calendar feed's own bypass — the third term in middleware.ts, and the only thing standing
+// between an anonymous request and `calendar.ics`. The share-link block above has had a test since
+// it was written; this one shipped without one.
+const bypassesAuthForFeed = (request: any) =>
+  (request.method === "GET" || request.method === "HEAD") &&
+  isCalendarFeedRoute(request) &&
+  hasFeedToken(request);
+
+const AR = "ar_01k9fahd43fkbb2ge7dwsjhzqf";
+
+describe("calendar-feed bypass decision (mirrors middleware.ts)", () => {
+  it("bypasses a GET to the feed with ?token=", () => {
+    expect(
+      bypassesAuthForFeed(req(`/api/v4/areas/${AR}/calendar.ics?token=abc`)),
+    ).toBe(true);
+  });
+
+  it("bypasses a HEAD the same way (a client probing the feed)", () => {
+    expect(
+      bypassesAuthForFeed(
+        req(`/api/v4/areas/${AR}/calendar.ics?token=abc`, "HEAD"),
+      ),
+    ).toBe(true);
+  });
+
+  it("does NOT bypass the feed without a token", () => {
+    expect(bypassesAuthForFeed(req(`/api/v4/areas/${AR}/calendar.ics`))).toBe(
+      false,
+    );
+  });
+
+  it("does NOT bypass a write to the feed path", () => {
+    expect(
+      bypassesAuthForFeed(
+        req(`/api/v4/areas/${AR}/calendar.ics?token=abc`, "POST"),
+      ),
+    ).toBe(false);
+  });
+
+  it("🛑 does NOT bypass the TOKEN-MANAGEMENT route — a feed token must not mint its successor", () => {
+    expect(
+      bypassesAuthForFeed(req(`/api/v4/areas/${AR}/calendar-tokens?token=abc`)),
+    ).toBe(false);
+  });
+
+  it("🛑 does NOT bypass a sibling area route that happens to carry ?token=", () => {
+    for (const p of [
+      `/api/v4/areas/${AR}?token=abc`,
+      `/api/v4/areas/${AR}/members?token=abc`,
+      `/api/v4/areas/${AR}/derivations?token=abc`,
+      `/api/data?systemId=1&token=abc`,
+    ]) {
+      expect(bypassesAuthForFeed(req(p))).toBe(false);
+    }
+  });
+
+  it("🛑 does NOT bypass a NESTED path under areas/ — the matcher is one named segment", () => {
+    // With `(.*)` this matched, pre-authorizing any route someone nests under `areas/` later. It
+    // 404s at Next today, which is why nobody would have noticed the boundary was wrong.
+    expect(
+      bypassesAuthForFeed(
+        req(`/api/v4/areas/${AR}/nested/deeper/calendar.ics?token=abc`),
+      ),
+    ).toBe(false);
   });
 });

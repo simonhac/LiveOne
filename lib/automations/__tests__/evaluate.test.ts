@@ -37,7 +37,7 @@ const ACTIVE_PT_UUID = Point.toUuid(ACTIVE_PT);
 const ACT_PT_UUID = Point.toUuid(Point.generate());
 
 // 🛑 Mocking the store wholesale is right for testing the EVALUATOR, and it is also why the
-// microsecond-precision CAS bug shipped: with `claimExerciseDispatch` stubbed, no test anywhere ran
+// microsecond-precision CAS bug shipped: with `claimExerciseSlot` stubbed, no test anywhere ran
 // that module's SQL, and a predicate matching nothing looked exactly like one that worked. The SQL
 // itself is pinned in `store-claim.test.ts` (codec + generated SQL) and `store.integration.test.ts`
 // (executed against a real Postgres). Do not try to cover it from here — it structurally cannot be.
@@ -49,7 +49,7 @@ jest.mock("@/lib/automations/store", () => ({
   disableAutomation: jest.fn(),
   intervalsOverlapping: jest.fn(),
   recordExerciseOutcome: jest.fn(),
-  claimExerciseDispatch: jest.fn(),
+  claimExerciseSlot: jest.fn(),
 }));
 jest.mock("@/lib/run-tracking/live", () => ({ getOpenRun: jest.fn() }));
 jest.mock("@/lib/derivations/resolve", () => ({
@@ -179,8 +179,10 @@ beforeEach(() => {
   mockStore.recordFired.mockResolvedValue(undefined);
   mockStore.disableAutomation.mockResolvedValue(undefined);
   mockStore.intervalsOverlapping.mockResolvedValue([]);
-  mockStore.recordExerciseOutcome.mockResolvedValue(undefined);
-  mockStore.claimExerciseDispatch.mockResolvedValue(true);
+  // Both are compare-and-set now: the claim hands back the revision it took, and the outcome write
+  // reports whether it applied. A bare `undefined` here would read as a LOST CAS everywhere.
+  mockStore.recordExerciseOutcome.mockResolvedValue(true);
+  mockStore.claimExerciseSlot.mockResolvedValue({ revision: 4 });
 
   mockDetectors.mockResolvedValue([detector()]);
   mockOpenRun.mockResolvedValue(openRun(T0 - 90 * MIN));
@@ -798,6 +800,7 @@ describe("evaluateAutomations — the batch", () => {
         satisfied: 0,
         waiting: 0,
         missed: 0,
+        lostClaim: 0,
         exhausted: 0,
       },
       armed: 0,
@@ -896,7 +899,7 @@ describe("evaluateExercise", () => {
     expect(mockStore.recordExerciseOutcome).toHaveBeenCalledWith(
       AU_UUID,
       expect.objectContaining({
-        consume: true,
+        runStart: new Date(EX_SLOT),
         disable: true,
         context: expect.objectContaining({ outcome: "fired", final: true }),
       }),
@@ -933,7 +936,9 @@ describe("evaluateExercise", () => {
     expect(summary.exercise.exhausted).toBe(0);
     expect(mockStore.recordExerciseOutcome).toHaveBeenCalledWith(
       AU_UUID,
-      expect.objectContaining({ consume: false, disable: false }),
+      // No `runStart` AT ALL on this path: the slot must stay due, and the watermark it already
+      // carries (an earlier occurrence) must not be touched — writing null would re-arm that one.
+      expect.not.objectContaining({ runStart: expect.anything() }),
     );
   });
 
@@ -952,18 +957,139 @@ describe("evaluateExercise", () => {
       waiting: 0,
       exhausted: 0,
       missed: 0,
+      lostClaim: 0,
     });
     expect(mockStore.recordExerciseOutcome).toHaveBeenCalledWith(
       AU_UUID,
       expect.objectContaining({
-        consume: true,
+        runStart: new Date(EX_SLOT),
         context: expect.objectContaining({ outcome: "fired", slotAt: EX_SLOT }),
       }),
     );
     // 🛑 The claim is a compare-and-set, so it is only a claim if it carries the version THIS row
     // was read at. Passing anything else (a constant, or the old `updatedAt`) makes it either
     // unconditional or unsatisfiable, and both look identical from here — see #468.
-    expect(mockStore.claimExerciseDispatch).toHaveBeenCalledWith(AU_UUID, 3);
+    // 🛑 And it carries the SLOT, because the claim consumes it in the same statement — that is what
+    // closes the window in which a second tick read the bumped revision, found the slot still open,
+    // and dispatched a second start.
+    expect(mockStore.claimExerciseSlot).toHaveBeenCalledWith(
+      AU_UUID,
+      3,
+      EX_SLOT,
+    );
+  });
+
+  // 🛑 The watermark, end to end. Two slots inside one grace window both dealt with, then the later
+  // one skipped: `previousOccurrence` returns the EARLIER slot, which under the old exact-match key
+  // no longer matched and started the engine for an occurrence already handled.
+  it("🛑 does not re-arm an EARLIER slot when the consumed one is skipped away", async () => {
+    mockStore.listEnabled.mockResolvedValue([
+      exerciseRow({
+        // The watermark sits an hour PAST the slot the schedule now yields.
+        lastTriggeredRunStart: new Date(EX_SLOT + 60 * MIN),
+      }),
+    ]);
+
+    const summary = await evaluateAutomations(EX_NOW);
+
+    expect(mockDispatch).not.toHaveBeenCalled();
+    expect(mockStore.recordExerciseOutcome).not.toHaveBeenCalled();
+    expect(summary.exercise.due).toBe(0);
+  });
+
+  // 🛑 The other half of the retirement promise. `retire` only runs on a tick that HAS a due slot,
+  // so a rule whose remaining occurrences are skipped after its last consumed one used to return at
+  // the not-due check every minute, forever, enabled, with nothing to fire and no way to say why.
+  it("🛑 retires a spent rule found on the NOT-DUE path, after its last slot was skipped", async () => {
+    mockStore.listEnabled.mockResolvedValue([
+      exerciseRow({
+        lastTriggeredRunStart: new Date(EX_SLOT),
+        trigger: {
+          kind: "exercise",
+          source: { kind: "derivation", derivationId: DX_UUID },
+          schedule: {
+            // Two occurrences, the second excluded — so nothing remains after the consumed one.
+            start: "2026-09-10T09:00",
+            rrule: "FREQ=WEEKLY;BYDAY=TH;COUNT=2",
+            exdates: ["2026-09-17T09:00"],
+            graceMinutes: 180,
+          },
+          unless: {
+            loadPointId: LOAD_PT_UUID,
+            minMinutes: 30,
+            minLoadKw: 1.5,
+            dipToleranceSeconds: 180,
+            withinDays: 7,
+          },
+        },
+      } as Partial<AutomationRow>),
+    ]);
+
+    const summary = await evaluateAutomations(EX_NOW);
+
+    expect(mockDispatch).not.toHaveBeenCalled();
+    expect(mockStore.disableAutomation).toHaveBeenCalledWith(AU_UUID);
+    expect(summary.exercise.exhausted).toBe(1);
+    // Not a fire, not a missed slot — the rule simply has nothing left.
+    expect(summary.exercise.due).toBe(0);
+  });
+
+  it("🛑 does NOT disable a rule whose slot merely PREDATES it", async () => {
+    // `previousOccurrence` happily returns a slot from before the row existed. Retiring there would
+    // kill a schedule for having been written before its own first occurrence.
+    mockStore.listEnabled.mockResolvedValue([
+      exerciseRow({
+        lastTriggeredRunStart: null,
+        createdAt: new Date(EX_SLOT + MIN),
+      }),
+    ]);
+
+    const summary = await evaluateAutomations(EX_NOW);
+
+    expect(mockStore.disableAutomation).not.toHaveBeenCalled();
+    expect(summary.exercise.exhausted).toBe(0);
+  });
+
+  // 🛑 The outcome write is a CAS now, because it can carry `enabled: false`. An owner edit landing
+  // mid-evaluation used to let a decision computed from the OLD schedule retire a rule that now had
+  // an occurrence left — recording `final: true` as the reason, which was no longer true.
+  it("🛑 drops an outcome whose row changed under it, and does not raise the undecided alarm", async () => {
+    mockStore.recordExerciseOutcome.mockResolvedValue(false);
+    mockStore.listEnabled.mockResolvedValue([exerciseRow()]);
+
+    const summary = await evaluateAutomations(EX_SLOT + 200 * MIN);
+
+    // The decision was `missed` (grace expired) and it was refused by the CAS.
+    expect(summary.exercise.missed).toBe(0);
+    // Counted as a lost CAS, so `reportUndecidedSlots` stays quiet: the slot is untouched and the
+    // next tick decides again.
+    expect(summary.exercise.due).toBe(1);
+    expect(summary.exercise.lostClaim).toBe(1);
+  });
+
+  it("carries the listed revision as the outcome CAS key on the non-dispatch path", async () => {
+    mockStore.listEnabled.mockResolvedValue([exerciseRow()]);
+
+    await evaluateAutomations(EX_SLOT + 200 * MIN);
+
+    expect(mockStore.recordExerciseOutcome).toHaveBeenCalledWith(
+      AU_UUID,
+      expect.objectContaining({ expectRevision: 3 }),
+    );
+  });
+
+  it("carries the CLAIM's revision as the outcome CAS key after a dispatch", async () => {
+    // Not the row's listed revision (3): the claim bumped it, so the outcome must compare against
+    // what the claim returned or it would refuse its own write every time.
+    mockStore.claimExerciseSlot.mockResolvedValue({ revision: 9 });
+    mockStore.listEnabled.mockResolvedValue([exerciseRow()]);
+
+    await evaluateAutomations(EX_NOW);
+
+    expect(mockStore.recordExerciseOutcome).toHaveBeenCalledWith(
+      AU_UUID,
+      expect.objectContaining({ expectRevision: 9 }),
+    );
   });
 
   it("does nothing at all when the slot has already been consumed", async () => {
@@ -993,7 +1119,7 @@ describe("evaluateExercise", () => {
     expect(mockStore.recordExerciseOutcome).toHaveBeenCalledWith(
       AU_UUID,
       expect.objectContaining({
-        consume: true,
+        runStart: new Date(EX_SLOT),
         context: expect.objectContaining({ outcome: "satisfied" }),
       }),
     );
@@ -1026,7 +1152,7 @@ describe("evaluateExercise", () => {
     expect(summary.exercise.waiting).toBe(1);
     expect(mockStore.recordExerciseOutcome).toHaveBeenCalledWith(
       AU_UUID,
-      expect.objectContaining({ consume: false }),
+      expect.not.objectContaining({ runStart: expect.anything() }),
     );
   });
 
@@ -1040,7 +1166,7 @@ describe("evaluateExercise", () => {
     expect(mockStore.recordExerciseOutcome).toHaveBeenCalledWith(
       AU_UUID,
       expect.objectContaining({
-        consume: true,
+        runStart: new Date(EX_SLOT),
         context: expect.objectContaining({ outcome: "missed" }),
       }),
     );
@@ -1077,7 +1203,10 @@ describe("evaluateExercise", () => {
     expect(mockStore.recordExerciseOutcome).toHaveBeenCalledWith(
       AU_UUID,
       expect.objectContaining({
-        consume: false,
+        // 🛑 RELEASED back to the watermark the row held BEFORE the claim (null here), not left
+        // consumed and not blindly nulled — the claim consumed the slot up front, so the decline
+        // path is what reopens it for the next tick inside the grace window.
+        runStart: null,
         context: expect.objectContaining({
           outcome: "waiting",
           reason: "panel_not_in_auto",
@@ -1100,7 +1229,7 @@ describe("evaluateExercise", () => {
     expect(summary.errors).toBe(1);
     expect(mockStore.recordExerciseOutcome).toHaveBeenCalledWith(
       AU_UUID,
-      expect.objectContaining({ consume: false }),
+      expect.objectContaining({ runStart: null }),
     );
   });
 
@@ -1120,13 +1249,18 @@ describe("evaluateExercise", () => {
 
   it("🛑 losing the claim means NOT dispatching", async () => {
     // Two overlapping cron ticks. The loser must not re-extend the engine's stop deadline.
-    mockStore.claimExerciseDispatch.mockResolvedValue(false);
+    mockStore.claimExerciseSlot.mockResolvedValue(null);
     mockStore.listEnabled.mockResolvedValue([exerciseRow()]);
 
-    await evaluateAutomations(EX_NOW);
+    const summary = await evaluateAutomations(EX_NOW);
 
     expect(mockDispatch).not.toHaveBeenCalled();
     expect(mockStore.recordExerciseOutcome).not.toHaveBeenCalled();
+    // 🛑 And it is COUNTED. `reportUndecidedSlots` alerts when `due` exceeds the outcomes recorded,
+    // so an uncounted lost claim made the one race this design expects raise the 🚨 "produced no
+    // decision" alarm — training an operator to ignore the alarm built for #468's silent failure.
+    expect(summary.exercise.due).toBe(1);
+    expect(summary.exercise.lostClaim).toBe(1);
   });
 
   it("refuses to dispatch when the detector has gone away", async () => {
