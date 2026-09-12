@@ -36,7 +36,7 @@ The inspector serves embedded assets at `/`. `/api/usher/state` and `/api/usher/
 inspector bearer token. The stream sends default SSE messages every two seconds. The JSON state exposes the Usher envelope,
 pollers, collection/delivery timestamps,
 configuration errors, storage accounting, DSE registers, and Fronius power/SOC, inverter details and
-the last 20 reports. Fronius discovery metadata remains qualification work.
+the last 20 reports. Fronius hardware identity, battery and meter details are discovered in the background.
 Generator HTTP requests return a trial-mode refusal. The simulator-tested supervisor retains
 absolute deadlines, persists before starts, keeps ambiguous starts armed and retries failed stops.
 Production control activation is intentionally unavailable.
@@ -158,3 +158,9 @@ any successful sample becomes stale after twice its poll interval, with a one-mi
 
 The encoding follows the [OTLP/HTTP JSON specification](https://opentelemetry.io/docs/specs/otlp/#json-protobuf-encoding).
 Configure the trial monitoring source to accept JSON; production Usher monitoring variables are not read.
+
+Fronius performs one bounded background discovery pass per reader instance against the same three
+read-only metadata endpoints used by TypeScript Usher. Discovery failures do not fail power sampling.
+Each request has a two-second deadline and a 1 MiB response limit. Reader shutdown cancels and joins
+outstanding discovery requests before acknowledging replacement. Discovery does not run during replay;
+missing hardware identity stays absent. A fresh reader instance retries discovery after a failure.

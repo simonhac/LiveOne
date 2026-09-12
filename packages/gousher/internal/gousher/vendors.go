@@ -16,9 +16,9 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
-	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -375,12 +375,17 @@ type froniusInv struct {
 	Energy map[string]*Integral
 }
 type Fronius struct {
-	history  []map[string]any
-	sequence int
-	inv      []froniusInv
-	client   *http.Client
-	baseline map[string]float64
-	latest   map[string]any
+	discoveryOnce    sync.Once
+	discoveryCancel  context.CancelFunc
+	discoveryWorkers sync.WaitGroup
+	discoveryMu      sync.Mutex
+	discovery        map[string]map[string]any
+	history          []map[string]any
+	sequence         int
+	inv              []froniusInv
+	client           *http.Client
+	baseline         map[string]float64
+	latest           map[string]any
 }
 
 func NewFronius(p Poller) *Fronius {
@@ -391,6 +396,7 @@ func NewFronius(p Poller) *Fronius {
 	return f
 }
 func (f *Fronius) Sample(ctx context.Context, at time.Time) (Sample, error) {
+	f.startDiscovery()
 	raw := map[string]any{}
 	var first error
 	for j := range f.inv {
@@ -511,6 +517,9 @@ func (f *Fronius) Harvest(at time.Time) (map[string]any, bool) {
 // Inspector is called by the collection goroutine; the runtime publishes a detached
 // copy so HTTP/SSE never reads mutable integration state concurrently.
 func (f *Fronius) Inspector(at time.Time) map[string]any {
+	f.discoveryMu.Lock()
+	discovery := clone(f.discovery)
+	f.discoveryMu.Unlock()
 	devices := []map[string]any{}
 	faults := []map[string]any{}
 	for _, i := range f.inv {
@@ -520,8 +529,16 @@ func (f *Fronius) Inspector(at time.Time) map[string]any {
 		}
 		energy["loadWh"] = nil
 		device := map[string]any{"ip": i.Config.Host, "hostname": i.Config.Host, "name": i.Config.Host, "isMaster": i.Config.Master, "energyCounters": energy}
-		// Power-flow reads do not provide device identity/discovery metadata. Do not
-		// manufacture serial numbers or advertise unqueried battery/meter information.
+		if info := discovery[i.Config.Host]; info != nil {
+			device["info"] = info
+			inverter := obj(info["inverter"])
+			if serial, ok := inverter["serialNumber"].(string); ok && serial != "" {
+				device["serialNumber"] = serial
+			}
+			if name, ok := inverter["customName"].(string); ok && name != "" {
+				device["name"] = name
+			}
+		}
 		if i.Last["faultCode"] != nil {
 			device["faultCode"] = i.Last["faultCode"]
 			faults = append(faults, map[string]any{"ip": i.Config.Host, "faultCode": i.Last["faultCode"], "timestamp": i.Last["faultTimestamp"]})
@@ -538,7 +555,17 @@ func (f *Fronius) Inspector(at time.Time) map[string]any {
 	history := append([]map[string]any{}, f.history...)
 	return map[string]any{"site": map[string]any{"devices": devices, "siteMetrics": metrics, "hasFault": len(faults) > 0, "faults": faults}, "latestSiteMetrics": metrics, "minutely": history}
 }
-func (f *Fronius) Close() error { f.client.CloseIdleConnections(); return nil }
+func (f *Fronius) StopBackground() {
+	if f.discoveryCancel != nil {
+		f.discoveryCancel()
+	}
+	f.discoveryWorkers.Wait()
+}
+func (f *Fronius) Close() error {
+	f.StopBackground()
+	f.client.CloseIdleConnections()
+	return nil
+}
 
 func (i *froniusInv) ingest(r map[string]any, at time.Time) error {
 	data := obj(obj(r["Body"])["Data"])
@@ -547,17 +574,10 @@ func (i *froniusInv) ingest(r map[string]any, at time.Time) error {
 		return errors.New("missing Fronius Site")
 	}
 	v := map[string]any{"solarW": scale(site["P_PV"], 1, true), "batteryW": scale(site["P_Akku"], 1, true), "gridW": scale(site["P_Grid"], 1, true)}
-	invs := obj(data["Inverters"])
-	keys := []string{}
-	for k := range invs {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	if len(keys) > 0 {
-		v["batterySOC"] = pick(obj(invs[keys[0]]), "SOC")
-	}
-	if len(keys) > 0 {
-		status := obj(obj(invs[keys[0]])["DeviceStatus"])["StatusCode"]
+	first := firstObject(obj(data["Inverters"]))
+	if first != nil {
+		v["batterySOC"] = pick(first, "SOC")
+		status := obj(first["DeviceStatus"])["StatusCode"]
 		if n, ok := number(status); ok && n != 0 && n != 7 {
 			v["faultCode"] = n
 			v["faultTimestamp"] = at.Format("2006-01-02T15:04:05-07:00")

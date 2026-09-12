@@ -350,6 +350,9 @@ func (r *Runtime) collect(ctx context.Context, g *generation) {
 		r.health[g.p.ID] = h
 		r.mu.Unlock()
 	}()
+	if source, ok := g.source.(interface{ StopBackground() }); ok {
+		defer source.StopBackground()
+	}
 	p := g.p
 	nextPush := time.Now()
 	lastActive := false

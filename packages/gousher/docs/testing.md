@@ -38,7 +38,7 @@ npm run type-check
 npm run knip
 ```
 
-The current runs pass 51 top-level Go tests (plus fixture subtests), 303 TypeScript unit tests and
+The current runs pass 56 top-level Go tests (plus fixture subtests), 303 TypeScript unit tests and
 five PostgreSQL integration tests. The integration suite verifies the real gusher handler, registry,
 point minting and durable outbox boundary using computed Go batches. Only external credential lookup,
 queue delivery and cache services are substituted. It does not exercise the downstream materializer
@@ -54,3 +54,11 @@ partial rejection and cancellation. A read-duration regression failed because th
 missing; it now passes. A virtual-time watchdog test drove stale detection before the first sample.
 A process-identity test failed because separate collectors would share one metric identity; exports
 now carry a stable, distinct identifier for each process lifetime. All pass under the Go race detector.
+
+After telemetry commit `1aaf0130`, `TestFroniusDiscoveryDoesNotDelayPowerAndPopulatesInspector`
+failed because no discovered identity reached the inspector. Background discovery made it pass;
+a separate cancellation check verifies shutdown waits for its requests. Two numeric-order tests
+then failed: lexical sorting selected device `10` before `2`, unlike TypeScript `Object.values`.
+Both metadata and power parsing now use numeric device-ID order and pass under the race detector.
+
+`TestFroniusCollectionStopCancelsDiscovery` then failed because a disabled reader left its metadata request running. Collection now joins background shutdown before reporting completion; the test and race suite pass.
