@@ -1378,7 +1378,13 @@ export class DseClient {
 
   async connect(): Promise<void> {
     if (this.connected) return;
-    this.log(`TCP connect ${this.host}:${this.port} …`);
+    // No log on a SUCCESSFUL connect. musher deliberately reconnects every tick
+    // (sources/musher.ts), so success is the expected case and carries no information — measured at
+    // 47 lines / 75 s, which was 63% of this app's non-diag log volume. The signal is the failure
+    // path below: the timeout, with the "is the Teleport VPN up?" hint. Keep that one.
+    //
+    // Not demoted to debug because this logger has no levels — it is a bare (m: string) => void
+    // handed in by the caller. Adding levels to carry one line of noise is the wrong trade.
     // modbus-serial's setTimeout only bounds Modbus request time, not the initial
     // TCP handshake — race a manual timeout so a down VPN fails fast with a hint.
     try {
