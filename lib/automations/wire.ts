@@ -7,11 +7,13 @@
  * from here as a "point not found".
  */
 import { Area, Automation, Derivation, Point } from "@/lib/ids";
+import { nextOccurrence } from "./recurrence";
 import type {
   AutomationAction,
   AutomationArmedContext,
   AutomationRow,
   AutomationTrigger,
+  ExerciseSchedule,
 } from "@/lib/db/planetscale/schema";
 import {
   parseAutomationAction,
@@ -35,7 +37,7 @@ type WireTrigger =
   | {
       kind: "exercise";
       source: WireSource;
-      schedule: { weekdays: string[]; time: string; graceMinutes: number };
+      schedule: ExerciseSchedule;
       unless: {
         loadPointId: string; // pt_…
         minMinutes: number;
@@ -63,6 +65,16 @@ export interface AutomationWire {
   lastTriggeredRunStart: Date | null;
   /** Read-only on the wire; PR-G's "12.4 kWh so far" needs `baselineKwh`. */
   armedContext: AutomationArmedContext | null;
+  /**
+   * The next scheduled occurrence, epoch ms — exercise rules only, and only when the caller
+   * supplied the area's timezone.
+   *
+   * DERIVED, never stored: it is a pure function of the schedule and the zone, and a stored copy
+   * would be a second answer to the same question that goes stale the moment either changes. Null
+   * means "no more occurrences" (a spent one-off, a finished COUNT/UNTIL) as well as "not an
+   * exercise rule" — both are "nothing further is scheduled", which is what a reader wants.
+   */
+  nextAt: number | null;
 }
 
 function triggerWire(raw: unknown): AutomationWire["trigger"] {
@@ -105,20 +117,36 @@ function actionWire(raw: unknown): AutomationWire["action"] {
     : { kind: "point-action", pointId, action: "turn_off" };
 }
 
-/** Stored row → wire shape. `Date`s serialize to ISO via `NextResponse.json`. */
-export function automationWire(row: AutomationRow): AutomationWire {
+/**
+ * Stored row → wire shape. `Date`s serialize to ISO via `NextResponse.json`.
+ *
+ * `at` is optional because the schedule's zone lives on the AREA, not on the row, and not every
+ * caller has loaded it. Without it the shape is unchanged except that `nextAt` is null — a missing
+ * zone must not be reported as a missing schedule. `nowMs` is passed rather than read so this
+ * stays a pure function of its arguments, the `decide.ts` discipline.
+ */
+export function automationWire(
+  row: AutomationRow,
+  at?: { timezone: string; nowMs: number },
+): AutomationWire {
+  const trigger = triggerWire(row.trigger);
   return {
     id: Automation.encode(row.id),
     areaId: Area.encode(row.areaId),
     name: row.name,
     enabled: row.enabled,
     mode: row.mode,
-    trigger: triggerWire(row.trigger),
+    trigger,
     action: actionWire(row.action),
     armedAt: row.armedAt,
     lastTriggeredAt: row.lastTriggeredAt,
     lastTriggeredRunStart: row.lastTriggeredRunStart,
     armedContext: parseArmedContext(row.armedContext),
+    nextAt:
+      at !== undefined && trigger?.kind === "exercise"
+        ? (nextOccurrence(trigger.schedule, at.timezone, at.nowMs)?.atMs ??
+          null)
+        : null,
   };
 }
 

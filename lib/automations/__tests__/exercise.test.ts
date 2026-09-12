@@ -1,16 +1,12 @@
 /**
- * Table tests for the pure exercise core.
+ * Table tests for the pure exercise core: what to DO about a slot, once there is one.
  *
- * Every case is a clock case, which is exactly why `nowMs` is injected: the daylight-saving tests
- * below are unreachable against a real clock, and they are the ones most likely to break silently.
- *
- * Melbourne is the reference zone because that is where the generator is. Its 2026 transitions:
- * DST ends Sun 5 April (clocks back, AEDT +11 → AEST +10) and starts Sun 4 October (clocks
- * forward, AEST +10 → AEDT +11).
+ * Every case is a clock case, which is exactly why `nowMs` is injected. Finding the slot in the
+ * first place is the recurrence grammar's job and is tested in `recurrence.test.ts` — including
+ * the daylight-saving cases, which used to live here against `currentSlot`.
  */
 import { describe, expect, it } from "@jest/globals";
 import {
-  currentSlot,
   decideExercise,
   importKw,
   isDue,
@@ -18,104 +14,11 @@ import {
   type LoadedSample,
   type LoadedStretch,
 } from "../exercise";
-import type { ExerciseSchedule } from "@/lib/db/planetscale/schema";
 
-const TZ = "Australia/Melbourne";
 const MIN = 60_000;
-
-const schedule = (over: Partial<ExerciseSchedule> = {}): ExerciseSchedule => ({
-  weekdays: ["thu"],
-  time: "09:00",
-  graceMinutes: 180,
-  ...over,
-});
 
 /** A local wall-clock instant in Melbourne, as epoch ms. */
 const at = (iso: string) => new Date(iso).getTime();
-
-describe("currentSlot", () => {
-  it("returns today's slot once the time has passed", () => {
-    // Thu 10 Sep 2026, 10:00 local (AEST, +10:00).
-    const now = at("2026-09-10T10:00:00+10:00");
-    expect(currentSlot(schedule(), TZ, now)).toEqual({
-      atMs: at("2026-09-10T09:00:00+10:00"),
-    });
-  });
-
-  it("returns LAST week's slot when today's has not arrived yet", () => {
-    // Thu 10 Sep 2026, 08:00 local — an hour before the slot.
-    const now = at("2026-09-10T08:00:00+10:00");
-    expect(currentSlot(schedule(), TZ, now)).toEqual({
-      atMs: at("2026-09-03T09:00:00+10:00"),
-    });
-  });
-
-  it("is inclusive of the slot instant itself", () => {
-    const now = at("2026-09-10T09:00:00+10:00");
-    expect(currentSlot(schedule(), TZ, now)).toEqual({ atMs: now });
-  });
-
-  it("walks back to the most recent matching weekday", () => {
-    // Sat 12 Sep — two days after Thursday's slot.
-    const now = at("2026-09-12T23:00:00+10:00");
-    expect(currentSlot(schedule(), TZ, now)).toEqual({
-      atMs: at("2026-09-10T09:00:00+10:00"),
-    });
-  });
-
-  it("picks the nearest of several weekdays", () => {
-    const multi = schedule({ weekdays: ["mon", "thu"] });
-    // Fri 11 Sep — Thursday is nearer than Monday.
-    const now = at("2026-09-11T12:00:00+10:00");
-    expect(currentSlot(multi, TZ, now)).toEqual({
-      atMs: at("2026-09-10T09:00:00+10:00"),
-    });
-    // Wed 9 Sep — now Monday is the most recent.
-    const wed = at("2026-09-09T12:00:00+10:00");
-    expect(currentSlot(multi, TZ, wed)).toEqual({
-      atMs: at("2026-09-07T09:00:00+10:00"),
-    });
-  });
-
-  describe("🛑 daylight saving — the slot is a WALL CLOCK time, not a fixed offset", () => {
-    it("holds 09:00 local across the April end of DST", () => {
-      // DST ended Sun 5 Apr 2026. Thu 9 Apr is AEST (+10:00); the week before was AEDT (+11:00).
-      const now = at("2026-04-09T12:00:00+10:00");
-      expect(currentSlot(schedule(), TZ, now)).toEqual({
-        atMs: at("2026-04-09T09:00:00+10:00"),
-      });
-
-      // Thu 2 Apr, still AEDT: 09:00 local is +11:00. A naive "subtract 7 days from the instant"
-      // would land on 08:00 local here, which is the drift this test exists to catch.
-      const before = at("2026-04-02T12:00:00+11:00");
-      expect(currentSlot(schedule(), TZ, before)).toEqual({
-        atMs: at("2026-04-02T09:00:00+11:00"),
-      });
-    });
-
-    it("holds 09:00 local across the October start of DST", () => {
-      // DST started Sun 4 Oct 2026. Thu 8 Oct is AEDT (+11:00).
-      const now = at("2026-10-08T12:00:00+11:00");
-      expect(currentSlot(schedule(), TZ, now)).toEqual({
-        atMs: at("2026-10-08T09:00:00+11:00"),
-      });
-    });
-
-    it("a Sunday slot lands correctly on the transition day itself", () => {
-      // Sun 4 Oct 2026 is the spring-forward day; 09:00 is well clear of the 02:00 gap.
-      const sunday = schedule({ weekdays: ["sun"] });
-      const now = at("2026-10-04T12:00:00+11:00");
-      expect(currentSlot(sunday, TZ, now)).toEqual({
-        atMs: at("2026-10-04T09:00:00+11:00"),
-      });
-    });
-  });
-
-  it("returns null when no weekday matches inside the lookback", () => {
-    // An empty weekday list cannot occur via the parser, but the function must not loop forever.
-    expect(currentSlot(schedule({ weekdays: [] }), TZ, Date.now())).toBeNull();
-  });
-});
 
 describe("isDue", () => {
   const slot = { atMs: at("2026-09-10T09:00:00+10:00") };

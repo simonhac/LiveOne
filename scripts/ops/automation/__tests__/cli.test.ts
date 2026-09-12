@@ -13,9 +13,10 @@ import {
   automationLine,
   actionWords,
   decisionLines,
-  parseTime,
-  parseWeekdays,
+  buildRRule,
+  parseStart,
   resolveAutomation,
+  scheduleLines,
   triggerWords,
   type WireAutomation,
 } from "../model";
@@ -58,8 +59,8 @@ const CREATE = [
   "--derivation=generator",
   "--load-point=bidi.grid/power",
   "--action-point=source.generator.control.request/duration",
-  "--weekdays=thu",
-  "--time=09:00",
+  "--start=2026-09-17 09:00",
+  "--rrule=FREQ=WEEKLY;BYDAY=TH",
   "--minutes=30",
 ];
 
@@ -90,8 +91,7 @@ describe("create-exercise", () => {
     "--derivation",
     "--load-point",
     "--action-point",
-    "--weekdays",
-    "--time",
+    "--start",
     "--minutes",
   ])("requires %s", (flag) => {
     const argv = CREATE.filter((a) => !a.startsWith(`${flag}=`));
@@ -100,6 +100,13 @@ describe("create-exercise", () => {
 
   it("rejects an unknown flag rather than ignoring it", () => {
     expect(failure([...CREATE, "--min-load=1.5"])).toContain("min-load");
+  });
+
+  // A one-off is the BASE case of the grammar, not a special mode — so --rrule is the optional
+  // part, and dropping it must still parse.
+  it("accepts a one-off: a start and no rrule", () => {
+    const argv = CREATE.filter((a) => !a.startsWith("--rrule="));
+    expect(success(argv).flags.rrule).toBeUndefined();
   });
 
   it("takes the optional knobs", () => {
@@ -129,35 +136,79 @@ describe("arity", () => {
       expect(failure([verb, "daylesford"])).toContain("automation");
     },
   );
+
+  it("skip takes the area, the automation AND a date", () => {
+    expect(failure(["skip", "daylesford", "x"])).toContain("date");
+    expect(failure(["skip", "daylesford", "--date=2026-09-24"])).toContain(
+      "automation",
+    );
+  });
+
+  it("upcoming takes exactly the area", () =>
+    expect(failure(["upcoming"])).toContain("area"));
 });
 
-describe("parseWeekdays", () => {
-  it("takes one day", () => expect(parseWeekdays("thu")).toEqual(["thu"]));
+describe("parseStart", () => {
+  it("accepts a space or a T between the date and the time", () => {
+    expect(parseStart("2026-09-17 09:00")).toBe("2026-09-17T09:00");
+    expect(parseStart("2026-09-17T09:00")).toBe("2026-09-17T09:00");
+  });
 
-  it("takes several, trimming and lower-casing", () =>
-    expect(parseWeekdays(" Mon , THU ")).toEqual(["mon", "thu"]));
-
-  it("refuses a day that is not a day", () =>
-    expect(refusal(() => parseWeekdays("thur"))).toContain("not a weekday"));
-
-  it("refuses an empty list — a schedule with no days never fires", () =>
-    expect(refusal(() => parseWeekdays(" , "))).toContain("never fires"));
-});
-
-describe("parseTime", () => {
-  it.each(["00:00", "09:00", "23:59"])("accepts %s", (t) =>
-    expect(parseTime(t)).toBe(t),
-  );
-
-  it.each(["9:00", "24:00", "09:60", "0900", "morning"])("refuses %s", (t) =>
-    expect(refusal(() => parseTime(t))).toContain("is not a time"),
+  it.each(["2026-09-17 9:00", "2026-09-17", "24:00", "next thursday"])(
+    "refuses %s",
+    (t) => expect(refusal(() => parseStart(t))).toContain("not a start time"),
   );
 
   // 🛑 A spring-forward Sunday skips 02:00–02:59 entirely, so a slot in it never occurs and the
   // rule silently never fires. Caught here so the message explains why, rather than as a 422.
-  it.each(["02:00", "02:30", "02:59"])(
+  it.each(["2026-10-04 02:00", "2026-10-04 02:30", "2026-10-04 02:59"])(
     "refuses %s — the daylight-saving gap hour",
-    (t) => expect(refusal(() => parseTime(t))).toContain("daylight-saving"),
+    (t) => expect(refusal(() => parseStart(t))).toContain("daylight-saving"),
+  );
+});
+
+describe("buildRRule", () => {
+  it("is undefined for a one-off — no rule at all is the base case", () =>
+    expect(buildRRule({})).toBeUndefined());
+
+  it("canonicalises what it is given", () =>
+    expect(buildRRule({ rrule: "byday=th;freq=weekly" })).toBe(
+      "FREQ=WEEKLY;BYDAY=TH",
+    ));
+
+  // Canonical part ORDER, not the order they were typed in — so two spellings of the same rule
+  // store identically and a `show` diff is about the rule, not the typing.
+  it("folds --until into the rule", () =>
+    expect(
+      buildRRule({ rrule: "FREQ=WEEKLY;BYDAY=TH", until: "2026-12-31" }),
+    ).toBe("FREQ=WEEKLY;UNTIL=20261231;BYDAY=TH"));
+
+  it("folds --count into the rule", () =>
+    expect(buildRRule({ rrule: "FREQ=WEEKLY;BYDAY=TH", count: 6 })).toBe(
+      "FREQ=WEEKLY;COUNT=6;BYDAY=TH",
+    ));
+
+  it("refuses --until and --count together — a rule has one ending", () =>
+    expect(
+      refusal(() =>
+        buildRRule({
+          rrule: "FREQ=WEEKLY;BYDAY=TH",
+          until: "2026-12-31",
+          count: 6,
+        }),
+      ),
+    ).toContain("one ending"));
+
+  it("refuses --until without --rrule — there is no repeat to bound", () =>
+    expect(refusal(() => buildRRule({ until: "2026-12-31" }))).toContain(
+      "one-off",
+    ));
+
+  // The same validator the server runs, so the CLI and the API cannot disagree about the subset.
+  it.each(["FREQ=HOURLY", "FREQ=WEEKLY;BYHOUR=9", "BYDAY=TH"])(
+    "refuses %s before anything is resolved over the network",
+    (rule) =>
+      expect(refusal(() => buildRRule({ rrule: rule }))).toContain("--rrule"),
   );
 });
 
@@ -173,7 +224,11 @@ describe("rendering", () => {
       trigger: {
         kind: "exercise",
         source: { kind: "derivation", derivationId: "dx_1" },
-        schedule: { weekdays: ["thu"], time: "09:00", graceMinutes: 180 },
+        schedule: {
+          start: "2026-09-17T09:00",
+          rrule: "FREQ=WEEKLY;BYDAY=TH",
+          graceMinutes: 180,
+        },
         unless: {
           loadPointId: "pt_load",
           minMinutes: 30,
@@ -192,11 +247,48 @@ describe("rendering", () => {
       lastTriggeredAt: null,
       lastTriggeredRunStart: null,
       armedContext: null,
+      nextAt: null,
       ...over,
     }) as WireAutomation;
 
   it("summarises an exercise trigger by its schedule", () =>
-    expect(triggerWords(row().trigger)).toBe("exercise thu 09:00"));
+    expect(triggerWords(row().trigger)).toBe(
+      "exercise 2026-09-17T09:00 FREQ=WEEKLY;BYDAY=TH",
+    ));
+
+  it("marks a one-off as one, rather than showing a blank rule", () =>
+    expect(
+      triggerWords({
+        kind: "exercise",
+        source: { kind: "derivation", derivationId: "dx_1" },
+        schedule: { start: "2026-09-12T09:00", graceMinutes: 180 },
+      }),
+    ).toBe("exercise 2026-09-12T09:00 (once)"));
+
+  it("words the schedule, and says plainly when nothing is left", () => {
+    const lines = scheduleLines(
+      { start: "2026-09-17T09:00", graceMinutes: 180 },
+      "Australia/Melbourne",
+      null,
+    ).join("\n");
+    expect(lines).toContain("once");
+    expect(lines).toContain("no occurrences left");
+  });
+
+  it("lists the dates a rule skips", () => {
+    const lines = scheduleLines(
+      {
+        start: "2026-09-17T09:00",
+        rrule: "FREQ=WEEKLY;BYDAY=TH",
+        exdates: ["2026-09-24T09:00"],
+        graceMinutes: 180,
+      },
+      "Australia/Melbourne",
+      Date.UTC(2026, 8, 30, 23, 0),
+    ).join("\n");
+    expect(lines).toContain("Thursday");
+    expect(lines).toContain("skipping:     2026-09-24T09:00");
+  });
 
   it("summarises a charge-session trigger by its thresholds", () =>
     expect(

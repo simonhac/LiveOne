@@ -100,6 +100,9 @@ export const TIERS: TierManifest = {
     // The `automation` domain — the deferred-action rules, including the one that can start a
     // diesel engine on a schedule.
     "scripts/ops/automation/index.ts",
+    // The `calendar` domain — mints the bearer URL a calendar app subscribes to. A credential
+    // manager, which is why it is not three more `automation` verbs.
+    "scripts/ops/calendar/index.ts",
     // Cross-domain plumbing (flag groups, ref resolution, the shared history verb).
     "scripts/ops/shared.ts",
     // The `api` escape-hatch verb — composed by liveone.ts, same rules as the other modules.

@@ -11,12 +11,12 @@
  * precedent), nothing else does.
  */
 import { isCanonicalUuid } from "@/lib/ids";
+import { parseRRuleSubset, WALL_CLOCK } from "./recurrence";
 import type {
   AutomationAction,
   AutomationArmedContext,
   AutomationTrigger,
   AutomationTriggerSource,
-  AutomationWeekday,
   ChargeArmedContext,
   ChargeSessionTrigger,
   ExerciseArmedContext,
@@ -27,24 +27,13 @@ import type {
 } from "@/lib/db/planetscale/schema";
 
 /**
- * Runtime mirrors of the two closed vocabularies whose home is `schema.ts`.
+ * Runtime mirror of the closed outcome vocabulary whose home is `schema.ts`.
  *
- * They are re-declared rather than imported because the schema import above is deliberately
- * TYPE-ONLY (the `point-control.ts` precedent) — importing the const arrays would make this module
- * pull drizzle in at runtime, and this file is the one every untrusted body is parsed through.
- * Drift is caught at COMPILE time in both directions: `satisfies` catches a value that is not in
- * the schema's union, and the `Exclude<...> extends never` checks catch a schema addition that was
- * not mirrored here.
+ * Re-declared rather than imported because the schema import above is deliberately TYPE-ONLY (the
+ * `point-control.ts` precedent) — importing the const array would make this module pull drizzle in
+ * at runtime, and this file is the one every untrusted body is parsed through. `satisfies` catches
+ * a value that is not in the schema's union.
  */
-const WEEKDAYS = [
-  "sun",
-  "mon",
-  "tue",
-  "wed",
-  "thu",
-  "fri",
-  "sat",
-] as const satisfies readonly AutomationWeekday[];
 const OUTCOMES = [
   "fired",
   "satisfied",
@@ -53,28 +42,21 @@ const OUTCOMES = [
   "missed-running",
 ] as const satisfies readonly ExerciseOutcome[];
 
-type _WeekdaysAreComplete =
-  Exclude<AutomationWeekday, (typeof WEEKDAYS)[number]> extends never
-    ? true
-    : never;
 type _OutcomesAreComplete =
   Exclude<ExerciseOutcome, (typeof OUTCOMES)[number]> extends never
     ? true
     : never;
 /**
- * 🛑 THIS ASSERTS NOTHING. It was meant to fail the build when a weekday or outcome is missing
- * from the arrays above, but a missing member only makes the corresponding branch `never`, and
- * `[never, true]` is a perfectly legal tuple type — nothing errors. The `satisfies` clauses on
- * WEEKDAYS/OUTCOMES check that every listed value is valid, NOT that every valid value is listed,
- * so the completeness check this was standing in for does not currently exist.
+ * 🛑 THIS ASSERTS NOTHING. It was meant to fail the build when an outcome is missing from the
+ * array above, but a missing member only makes the branch `never`, and `[never]` is a perfectly
+ * legal tuple type — nothing errors. The `satisfies` clause on OUTCOMES checks that every listed
+ * value is valid, NOT that every valid value is listed, so the completeness check this was
+ * standing in for does not currently exist.
  *
  * @knipignore Kept only so the inert check stays visible until it is either made real (an
- * assignment that fails on `never`) or removed along with the two conditional types.
+ * assignment that fails on `never`) or removed along with the conditional type.
  */
-export type AutomationVocabularyIsInStep = [
-  _WeekdaysAreComplete,
-  _OutcomesAreComplete,
-];
+export type AutomationVocabularyIsInStep = [_OutcomesAreComplete];
 
 export type ParseOutcome<T> =
   | { ok: true; value: T }
@@ -165,8 +147,6 @@ const EXERCISE_DEFAULTS = {
   withinDays: 7,
 } as const;
 
-const HH_MM = /^([01]\d|2[0-3]):[0-5]\d$/;
-
 /** A required positive number that falls back to a default when absent. */
 function parseKnob(
   raw: unknown,
@@ -179,42 +159,80 @@ function parseKnob(
   return { ok: true, value: parsed.value as number };
 }
 
-function parseWeekdays(raw: unknown): ParseOutcome<AutomationWeekday[]> {
-  if (!Array.isArray(raw) || raw.length === 0)
-    return fail("trigger.schedule.weekdays must be a non-empty array");
-  const seen = new Set<AutomationWeekday>();
-  for (const day of raw) {
-    if (
-      typeof day !== "string" ||
-      !(WEEKDAYS as readonly string[]).includes(day)
-    )
-      return fail(
-        `trigger.schedule.weekdays must contain only: ${WEEKDAYS.join(", ")}`,
-      );
-    seen.add(day as AutomationWeekday);
+/**
+ * A local wall-clock instant, "YYYY-MM-DDTHH:MM".
+ *
+ * The regex alone would accept 2026-02-31, so the date is round-tripped through `Date.UTC` as
+ * well. It is checked in UTC deliberately: this is a CALENDAR validity check ("is there such a
+ * day"), not an instant, and the area's zone has no bearing on whether February has a 31st.
+ */
+function parseWallClock(raw: unknown, field: string): ParseOutcome<string> {
+  if (typeof raw !== "string")
+    return fail(`${field} must be a "YYYY-MM-DDTHH:MM" local wall clock time`);
+  const m = WALL_CLOCK.exec(raw);
+  if (!m)
+    return fail(`${field} must be a "YYYY-MM-DDTHH:MM" local wall clock time`);
+
+  const [, year, month, day] = m;
+  const probe = new Date(Date.UTC(+year, +month - 1, +day));
+  if (
+    probe.getUTCFullYear() !== +year ||
+    probe.getUTCMonth() !== +month - 1 ||
+    probe.getUTCDate() !== +day
+  )
+    return fail(`${field} is not a real calendar date`);
+
+  // 🛑 A daylight-saving spring-forward skips a local hour outright, so a slot inside it never
+  // occurs and the rule would silently never fire. Australian transitions are at 02:00 local; the
+  // whole hour is refused rather than silently shifted, because shifting it would be us inventing a
+  // time the owner did not ask for.
+  if (m[4] === "02")
+    return fail(
+      `${field} must not be in the 02:00–02:59 hour (a daylight-saving change can skip it entirely)`,
+    );
+
+  return { ok: true, value: raw };
+}
+
+/**
+ * An EXDATE/RDATE list. Sorted and deduped so that two spellings of the same set store identically
+ * — the job `parseWeekdays` used to do for the weekday list.
+ */
+function parseDateList(
+  raw: unknown,
+  field: string,
+): ParseOutcome<string[] | undefined> {
+  if (raw === undefined || raw === null) return { ok: true, value: undefined };
+  if (!Array.isArray(raw)) return fail(`${field} must be an array`);
+  if (raw.length === 0) return { ok: true, value: undefined };
+
+  const seen = new Set<string>();
+  for (const entry of raw) {
+    const parsed = parseWallClock(entry, `${field} entries`);
+    if (!parsed.ok) return fail(parsed.error);
+    seen.add(parsed.value);
   }
-  // Deduped and re-sorted into week order so two spellings of the same schedule store identically.
-  return { ok: true, value: WEEKDAYS.filter((d) => seen.has(d)) };
+  // Lexicographic sort IS chronological for this fixed-width format.
+  return { ok: true, value: [...seen].sort() };
 }
 
 function parseSchedule(raw: unknown): ParseOutcome<ExerciseSchedule> {
   if (!isObject(raw)) return fail("trigger.schedule must be an object");
 
-  const weekdays = parseWeekdays(raw.weekdays);
-  if (!weekdays.ok) return fail(weekdays.error);
+  const start = parseWallClock(raw.start, "trigger.schedule.start");
+  if (!start.ok) return fail(start.error);
 
-  if (typeof raw.time !== "string" || !HH_MM.test(raw.time))
-    return fail(
-      "trigger.schedule.time must be a 24-hour HH:MM wall clock time",
-    );
-  // 🛑 A daylight-saving spring-forward skips a local hour outright, so a slot inside it never
-  // occurs and the rule would silently never fire. Australian transitions are at 02:00 local; the
-  // whole hour is refused rather than silently shifted, because shifting it would be us inventing a
-  // time the owner did not ask for.
-  if (raw.time.startsWith("02:"))
-    return fail(
-      "trigger.schedule.time must not be in the 02:00–02:59 hour (a daylight-saving change can skip it entirely)",
-    );
+  let rrule: string | undefined;
+  if (raw.rrule !== undefined && raw.rrule !== null) {
+    const parsed = parseRRuleSubset(raw.rrule);
+    if (!parsed.ok) return fail(parsed.error);
+    rrule = parsed.value;
+  }
+
+  const exdates = parseDateList(raw.exdates, "trigger.schedule.exdates");
+  if (!exdates.ok) return fail(exdates.error);
+  const rdates = parseDateList(raw.rdates, "trigger.schedule.rdates");
+  if (!rdates.ok) return fail(rdates.error);
 
   const graceMinutes = parseKnob(
     raw.graceMinutes,
@@ -223,14 +241,16 @@ function parseSchedule(raw: unknown): ParseOutcome<ExerciseSchedule> {
   );
   if (!graceMinutes.ok) return fail(graceMinutes.error);
 
-  return {
-    ok: true,
-    value: {
-      weekdays: weekdays.value,
-      time: raw.time,
-      graceMinutes: graceMinutes.value,
-    },
+  const value: ExerciseSchedule = {
+    start: start.value,
+    graceMinutes: graceMinutes.value,
   };
+  // Optional fields are OMITTED rather than stored as undefined/[], so the stored jsonb of a
+  // one-off with no exceptions is the smallest thing that says what it means.
+  if (rrule !== undefined) value.rrule = rrule;
+  if (exdates.value !== undefined) value.exdates = exdates.value;
+  if (rdates.value !== undefined) value.rdates = rdates.value;
+  return { ok: true, value };
 }
 
 function parseUnless(raw: unknown): ParseOutcome<ExerciseUnless> {
@@ -393,6 +413,7 @@ function parseExerciseArmedContext(
   };
   if (typeof raw.reason === "string" && raw.reason !== "")
     out.reason = raw.reason;
+  if (raw.final === true) out.final = true;
 
   if (isObject(raw.evidence)) {
     const minutes = finite(raw.evidence.minutes);
@@ -415,4 +436,23 @@ export function chargeArmedContext(
 ): ChargeArmedContext | null {
   if (ctx === null) return null;
   return "kind" in ctx ? null : ctx;
+}
+
+/**
+ * `mode: "once"` and an exercise trigger are two answers to the same question, so the pair is
+ * refused rather than one of them silently winning.
+ *
+ * `mode` is a CHARGE-path concept — it decides whether a rule disarms for good after it fires
+ * (`decide.ts`), and the exercise path never arms, so nothing has ever read it there. Under the
+ * old weekday grammar that was merely inert. Under this one a one-off is expressible in the
+ * schedule itself (a `start` with no `rrule`), and a rule saying "once" in one field and "every
+ * Thursday" in another is exactly the confusion that made a rule NAMED "one-off Sat 12 Sep" fire
+ * every week.
+ */
+export function refuseOnceExercise(
+  mode: string,
+  trigger: AutomationTrigger,
+): string | null {
+  if (mode !== "once" || trigger.kind !== "exercise") return null;
+  return "mode must be 'standing' for an exercise trigger — a one-off exercise is a schedule with no rrule";
 }

@@ -232,6 +232,13 @@ export async function recordExerciseOutcome(
     context: ExerciseArmedContext;
     consume: boolean;
     nowMs: number;
+    /**
+     * The schedule has no occurrences left, so retire the rule in the SAME write that consumes its
+     * last slot. One statement rather than a consume followed by a disable, because the two must
+     * not be separable: a crash between them would leave a spent rule enabled and no longer able
+     * to say why it never fires again.
+     */
+    disable?: boolean;
   },
 ): Promise<void> {
   const now = new Date(opts.nowMs);
@@ -242,6 +249,7 @@ export async function recordExerciseOutcome(
       ...(opts.consume
         ? { lastTriggeredRunStart: new Date(opts.context.slotAt) }
         : {}),
+      ...(opts.disable ? { enabled: false } : {}),
       ...(opts.context.outcome === "fired" ? { lastTriggeredAt: now } : {}),
       ...stamped(),
     })

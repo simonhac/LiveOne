@@ -79,7 +79,10 @@ import {
 import { scheduleRepoll } from "@/lib/control/repoll";
 import { DeviceConfigRegistry } from "@/lib/registry/device-config";
 import { ReadingsDao } from "@/lib/readings/dao";
-import type { AutomationRow } from "@/lib/db/planetscale/schema";
+import type {
+  AutomationRow,
+  ExerciseTrigger,
+} from "@/lib/db/planetscale/schema";
 import { evaluateAutomations } from "@/lib/automations/evaluate";
 
 const mockStore = jest.mocked(store);
@@ -789,7 +792,14 @@ describe("evaluateAutomations — the batch", () => {
   it("an empty enabled set is a clean zero summary", async () => {
     expect(await evaluateAutomations(T0)).toEqual({
       evaluated: 0,
-      exercise: { due: 0, fired: 0, satisfied: 0, waiting: 0, missed: 0 },
+      exercise: {
+        due: 0,
+        fired: 0,
+        satisfied: 0,
+        waiting: 0,
+        missed: 0,
+        exhausted: 0,
+      },
       armed: 0,
       disarmed: 0,
       fired: 0,
@@ -815,7 +825,11 @@ function exerciseRow(over: Partial<AutomationRow> = {}): AutomationRow {
     trigger: {
       kind: "exercise",
       source: { kind: "derivation", derivationId: DX_UUID },
-      schedule: { weekdays: ["thu"], time: "09:00", graceMinutes: 180 },
+      schedule: {
+        start: "2026-09-03T09:00",
+        rrule: "FREQ=WEEKLY;BYDAY=TH",
+        graceMinutes: 180,
+      },
       unless: {
         loadPointId: LOAD_PT_UUID,
         minMinutes: 30,
@@ -863,6 +877,66 @@ describe("evaluateExercise", () => {
     mockOpenRun.mockResolvedValue(null);
   });
 
+  it("retires a rule whose last slot this was, in the same write that consumes it", async () => {
+    // A one-off: `start` and no `rrule`. Once this slot is dealt with there is nothing after it,
+    // so the row is disabled as it fires rather than sitting enabled with nothing left to do.
+    mockStore.listEnabled.mockResolvedValue([
+      exerciseRow({
+        trigger: {
+          ...(exerciseRow().trigger as ExerciseTrigger),
+          schedule: { start: "2026-09-10T09:00", graceMinutes: 180 },
+        },
+      }),
+    ]);
+
+    const summary = await evaluateAutomations(EX_NOW);
+
+    expect(summary.exercise.fired).toBe(1);
+    expect(summary.exercise.exhausted).toBe(1);
+    expect(mockStore.recordExerciseOutcome).toHaveBeenCalledWith(
+      AU_UUID,
+      expect.objectContaining({
+        consume: true,
+        disable: true,
+        context: expect.objectContaining({ outcome: "fired", final: true }),
+      }),
+    );
+  });
+
+  it("does NOT retire a rule that has more occurrences coming", async () => {
+    mockStore.listEnabled.mockResolvedValue([exerciseRow()]);
+
+    const summary = await evaluateAutomations(EX_NOW);
+
+    expect(summary.exercise.exhausted).toBe(0);
+    expect(mockStore.recordExerciseOutcome).toHaveBeenCalledWith(
+      AU_UUID,
+      expect.objectContaining({ disable: false }),
+    );
+  });
+
+  it("does NOT retire a spent rule on a WAITING outcome — the slot is not consumed", async () => {
+    // The slot is still this rule's to act on, so retiring now would strand it un-fired.
+    mockOpenRun.mockResolvedValue({ id: "run-1" } as never);
+    mockStore.listEnabled.mockResolvedValue([
+      exerciseRow({
+        trigger: {
+          ...(exerciseRow().trigger as ExerciseTrigger),
+          schedule: { start: "2026-09-10T09:00", graceMinutes: 180 },
+        },
+      }),
+    ]);
+
+    const summary = await evaluateAutomations(EX_NOW);
+
+    expect(summary.exercise.waiting).toBe(1);
+    expect(summary.exercise.exhausted).toBe(0);
+    expect(mockStore.recordExerciseOutcome).toHaveBeenCalledWith(
+      AU_UUID,
+      expect.objectContaining({ consume: false, disable: false }),
+    );
+  });
+
   it("dispatches set_value with the configured minutes and consumes the slot", async () => {
     mockStore.listEnabled.mockResolvedValue([exerciseRow()]);
 
@@ -876,6 +950,7 @@ describe("evaluateExercise", () => {
       fired: 1,
       satisfied: 0,
       waiting: 0,
+      exhausted: 0,
       missed: 0,
     });
     expect(mockStore.recordExerciseOutcome).toHaveBeenCalledWith(

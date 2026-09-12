@@ -56,6 +56,7 @@ import {
   areaBindings,
   areaMembers,
   areas,
+  areaCalendarTokens,
   automations,
   batteryProvenanceDaily,
   dashboardGrants,
@@ -509,6 +510,14 @@ export const REFERENCE_LEDGER: LedgerEntry[] = [
   },
   {
     column: shareTokens.dashboardId,
+    verdict: { protectedBy: "fk", onDelete: "cascade" },
+  },
+  {
+    column: areaCalendarTokens.areaId,
+    // CASCADE, like a dashboard's share tokens: a feed token grants "the schedule of THIS area"
+    // and nothing else, so once the area is gone the token grants nothing. Leaving it behind would
+    // be a live credential pointing at a row that cannot be read — revocable by nobody, because
+    // every management verb is scoped through the area that no longer exists.
     verdict: { protectedBy: "fk", onDelete: "cascade" },
   },
   {

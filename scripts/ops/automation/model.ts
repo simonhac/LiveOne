@@ -20,18 +20,11 @@ import {
 } from "../shared";
 import type { ApiSession } from "@/lib/cli-kit/api-session";
 import { Point } from "@/lib/ids";
-
-/** The seven weekday keys the API accepts, in week order. */
-export const WEEKDAYS = [
-  "sun",
-  "mon",
-  "tue",
-  "wed",
-  "thu",
-  "fri",
-  "sat",
-] as const;
-export type Weekday = (typeof WEEKDAYS)[number];
+import {
+  describe as describeSchedule,
+  parseRRuleSubset,
+} from "@/lib/automations/recurrence";
+import type { ExerciseSchedule } from "@/lib/db/planetscale/schema";
 
 export const AREA_ARG = {
   name: "area",
@@ -56,7 +49,7 @@ export interface WireTrigger {
   source: WireSource;
   afterMinutes?: number;
   afterKwh?: number;
-  schedule?: { weekdays: string[]; time: string; graceMinutes: number };
+  schedule?: ExerciseSchedule;
   unless?: {
     loadPointId: string;
     minMinutes: number;
@@ -80,6 +73,7 @@ export interface WireArmedContext {
   at?: number;
   reason?: string;
   evidence?: { minutes: number; peakKw: number; endedAt: number };
+  final?: boolean;
   baselineKwh?: number;
   baselineAt?: number;
 }
@@ -97,6 +91,8 @@ export interface WireAutomation {
   lastTriggeredAt: string | null;
   lastTriggeredRunStart: string | null;
   armedContext: WireArmedContext | null;
+  /** Next scheduled occurrence, epoch ms — exercise rules only; null when nothing is left. */
+  nextAt: number | null;
 }
 
 /** Resolve `<automation>` within an area: `au_` id, else name. */
@@ -111,44 +107,85 @@ export function resolveAutomation(
   });
 }
 
-/** `thu` or `mon,thu` → the API's weekday array. Order and duplicates are the server's problem. */
-export function parseWeekdays(raw: string): Weekday[] {
-  const parts = raw
-    .split(",")
-    .map((p) => p.trim().toLowerCase())
-    .filter((p) => p !== "");
-  if (parts.length === 0)
+/**
+ * `2026-09-17 09:00` (or with a `T`) → the API's `"YYYY-MM-DDTHH:MM"`.
+ *
+ * Validated HERE, before anything is resolved over the network, so a typo costs nothing. The
+ * server checks the same things again — this is a better error message, not the gate.
+ */
+export function parseStart(raw: string): string {
+  const normalised = raw.trim().replace(" ", "T");
+  if (!/^\d{4}-\d{2}-\d{2}T([01]\d|2[0-3]):[0-5]\d$/.test(normalised))
     throw usage(
-      "--weekdays is empty",
-      "a schedule with no days never fires",
-      `pass one or more of: ${WEEKDAYS.join(", ")}`,
-    );
-  for (const p of parts)
-    if (!(WEEKDAYS as readonly string[]).includes(p))
-      throw usage(
-        `"${p}" is not a weekday`,
-        "weekdays are the three-letter lower-case forms",
-        `pass one or more of: ${WEEKDAYS.join(", ")}`,
-      );
-  return parts as Weekday[];
-}
-
-/** `09:00`, validated here so a typo fails before anything is resolved over the network. */
-export function parseTime(raw: string): string {
-  if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(raw))
-    throw usage(
-      `"${raw}" is not a time`,
-      "expected a 24-hour HH:MM wall-clock time in the AREA's timezone",
-      "for example --time=09:00",
+      `"${raw}" is not a start time`,
+      "expected a local date and 24-hour time in the AREA's timezone",
+      'for example --start="2026-09-17 09:00"',
     );
   // 🛑 The server refuses this hour too; catching it here explains WHY rather than returning a 422.
-  if (raw.startsWith("02:"))
+  if (normalised.slice(11, 13) === "02")
     throw usage(
-      `--time=${raw} is inside the daylight-saving gap hour`,
+      `--start=${raw} is inside the daylight-saving gap hour`,
       "clocks jump from 02:00 to 03:00 on the spring-forward Sunday, so a 02:xx slot does not exist that day and the rule would silently skip it",
       "pick a time outside 02:00–02:59",
     );
-  return raw;
+  return normalised;
+}
+
+/** `YYYY-MM-DD`, for `--until` and `skip --date`. */
+export function parseDate(raw: string, flag: string): string {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(raw.trim()))
+    throw usage(
+      `"${raw}" is not a date`,
+      `--${flag} takes a calendar date`,
+      `for example --${flag}=2026-12-31`,
+    );
+  return raw.trim();
+}
+
+/**
+ * Assemble and validate the RRULE, folding the `--until`/`--count` sugar into it.
+ *
+ * The sugar exists because "every Thursday until Christmas" is the common shape and
+ * `--rrule="FREQ=WEEKLY;BYDAY=TH;UNTIL=20261225"` is not how anyone says it. They are mutually
+ * exclusive for the RFC's reason: a rule carrying two different endings has no sensible reading.
+ * Returns undefined for a one-off — no rrule at all, which is the base case.
+ */
+export function buildRRule(opts: {
+  rrule?: string;
+  until?: string;
+  count?: number;
+}): string | undefined {
+  if (opts.until !== undefined && opts.count !== undefined)
+    throw usage(
+      "--until and --count together",
+      "a rule can have one ending, not two",
+      "drop whichever of --until / --count you did not mean",
+    );
+  if (opts.rrule === undefined) {
+    if (opts.until !== undefined || opts.count !== undefined)
+      throw usage(
+        "--until/--count without --rrule",
+        "they bound a REPEAT, and with no --rrule this is a one-off that happens exactly once",
+        "add --rrule, or drop --until/--count",
+      );
+    return undefined;
+  }
+
+  let text = opts.rrule;
+  if (opts.until !== undefined)
+    text += `;UNTIL=${opts.until.replace(/-/g, "")}`;
+  if (opts.count !== undefined) text += `;COUNT=${opts.count}`;
+
+  // The SAME validator the server uses, so "the CLI accepted it and the API refused it" cannot
+  // happen — and the refusal arrives before the area and three points are resolved.
+  const parsed = parseRRuleSubset(text);
+  if (!parsed.ok)
+    throw usage(
+      parsed.error.replace("trigger.schedule.rrule", "--rrule"),
+      "the recurrence grammar is an RFC 5545 subset",
+      'for example --rrule="FREQ=WEEKLY;BYDAY=TH" or --rrule="FREQ=MONTHLY;BYDAY=1SA"',
+    );
+  return parsed.value;
 }
 
 // ---------------------------------------------------------------------------
@@ -167,12 +204,19 @@ export function automationLine(a: WireAutomation): string {
   ].join("  ");
 }
 
-/** A one-line summary of what a trigger does — the thing `list` is actually for. */
+/**
+ * A one-line summary of what a trigger does — the thing `list` is actually for.
+ *
+ * Deliberately the RAW rule rather than `describe()`'s prose: a `list` column has ~34 characters,
+ * and "every week on Thursday at 9 AM GMT+10" does not fit while `FREQ=WEEKLY;BYDAY=TH` does. The
+ * prose belongs on `show`, which has a whole line for it.
+ */
 export function triggerWords(t: WireTrigger | null): string {
   if (!t) return "UNREADABLE";
   if (t.kind === "exercise") {
     const s = t.schedule;
-    return s ? `exercise ${s.weekdays.join(",")} ${s.time}` : "exercise";
+    if (!s) return "exercise";
+    return `exercise ${s.start} ${s.rrule ?? "(once)"}`;
   }
   const legs = [
     t.afterMinutes !== undefined ? `${t.afterMinutes} min` : null,
@@ -189,6 +233,24 @@ export function actionWords(a: WireAction | null): string {
     : `turn off ${a.pointId}`;
 }
 
+/** The schedule in words, plus what it excludes — the `show` rendering. */
+export function scheduleLines(
+  schedule: ExerciseSchedule,
+  timezone: string,
+  nextAt: number | null,
+): string[] {
+  const out = [
+    `  schedule:     ${describeSchedule(schedule, timezone)}`,
+    `  starting:     ${schedule.start} (${timezone})`,
+    `  next:         ${nextAt === null ? "never — the schedule has no occurrences left" : new Date(nextAt).toISOString()}`,
+  ];
+  if (schedule.exdates?.length)
+    out.push(`  skipping:     ${schedule.exdates.join(", ")}`);
+  if (schedule.rdates?.length)
+    out.push(`  also:         ${schedule.rdates.join(", ")}`);
+  return out;
+}
+
 /**
  * The last decision, for `show`.
  *
@@ -203,6 +265,10 @@ export function decisionLines(ctx: WireArmedContext | null): string[] {
   ];
   if (ctx.at) out.push(`  decided:      ${new Date(ctx.at).toISOString()}`);
   if (ctx.reason) out.push(`  because:      ${ctx.reason}`);
+  if (ctx.final)
+    out.push(
+      "  and:          that was its LAST slot, so the rule was disabled",
+    );
   if (ctx.evidence)
     out.push(
       `  evidence:     ${ctx.evidence.minutes.toFixed(1)} min under load, peak ` +

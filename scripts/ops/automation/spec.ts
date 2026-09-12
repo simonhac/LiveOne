@@ -3,7 +3,7 @@
  */
 import { type CommandSpec } from "@/lib/cli/cli";
 import { BASE_URL_FLAG } from "../shared";
-import { AREA_ARG, AUTOMATION_ARG, WEEKDAYS } from "./model";
+import { AREA_ARG, AUTOMATION_ARG } from "./model";
 
 const TARGET_ARGS = [AREA_ARG, AUTOMATION_ARG];
 
@@ -43,8 +43,8 @@ export const AUTOMATION_SUBCOMMANDS = {
       "Schedule a generator exercise run — unless it has already run under load recently.",
     when:
       "Reach for this for anti-wet-stacking: a diesel that idles for weeks glazes its bores. The\n" +
-      "rule fires on a weekly wall-clock slot and SKIPS itself when the engine has already done\n" +
-      "real work, so a generator in normal use is never exercised unnecessarily.",
+      "rule fires on a wall-clock slot and SKIPS itself when the engine has already done real\n" +
+      "work, so a generator in normal use is never exercised unnecessarily.",
     description:
       "🛑 This creates something that STARTS AN ENGINE, on a schedule, unattended. Dry-run is the\n" +
       "default; read the printed rule before `--apply`.\n" +
@@ -61,6 +61,18 @@ export const AUTOMATION_SUBCOMMANDS = {
       "\n" +
       "The rule never dispatches while a run is already in progress: a second request would\n" +
       "recompute the hub's stop deadline from now and truncate the run someone else asked for.\n" +
+      "\n" +
+      "WHEN it runs is an RFC 5545 subset — --start is the first occurrence and, on its own, the\n" +
+      "whole of a one-off; --rrule repeats it:\n" +
+      "  --rrule='FREQ=WEEKLY;BYDAY=TH'                 every Thursday\n" +
+      "  --rrule='FREQ=WEEKLY;INTERVAL=2;BYDAY=TH'      every second Thursday\n" +
+      "  --rrule='FREQ=MONTHLY;BYDAY=1SA'               the first Saturday of each month\n" +
+      "  --rrule='FREQ=MONTHLY;BYMONTHDAY=-1'           the last day of each month\n" +
+      "Supported parts: FREQ (DAILY|WEEKLY|MONTHLY|YEARLY), INTERVAL, COUNT, UNTIL, BYDAY,\n" +
+      "BYMONTHDAY, BYMONTH, BYSETPOS, WKST. Anything else is refused rather than ignored.\n" +
+      "--until/--count are sugar folded into the rule, and are mutually exclusive.\n" +
+      "\n" +
+      "A rule that runs out of occurrences DISABLES itself as it consumes its last slot.\n" +
       "\n" +
       "Times are the AREA's local wall clock and stay that way across daylight saving.",
     mutates: true,
@@ -85,17 +97,26 @@ export const AUTOMATION_SUBCOMMANDS = {
         placeholder: "path|pt_",
         help: "Writable run-request point, often on another device (e.g. generator:source.generator.control.request/duration)",
       },
-      weekdays: {
+      start: {
         type: "string",
         required: true,
-        placeholder: "thu",
-        help: `Comma-separated: ${WEEKDAYS.join(", ")}`,
+        placeholder: "2026-09-17 09:00",
+        help: "First occurrence, local date + 24-hour time (not 02:00–02:59). Alone = a one-off",
       },
-      time: {
+      rrule: {
         type: "string",
-        required: true,
-        placeholder: "09:00",
-        help: "24-hour local wall-clock start time (not 02:00–02:59)",
+        placeholder: "FREQ=WEEKLY;BYDAY=TH",
+        help: "How it repeats, RFC 5545. Omit for a one-off",
+      },
+      until: {
+        type: "string",
+        placeholder: "2026-12-31",
+        help: "Stop repeating after this date (needs --rrule; not with --count)",
+      },
+      count: {
+        type: "number",
+        placeholder: "6",
+        help: "Stop after this many occurrences (needs --rrule; not with --until)",
       },
       minutes: {
         type: "number",
@@ -130,7 +151,70 @@ export const AUTOMATION_SUBCOMMANDS = {
       "liveone automation create-exercise daylesford --derivation=generator " +
         "--load-point=bidi.grid/power " +
         "--action-point='Daylesford Generator':source.generator.control.request/duration " +
-        "--weekdays=thu --time=09:00 --minutes=30",
+        "--start='2026-09-17 09:00' --rrule='FREQ=WEEKLY;BYDAY=TH' --minutes=30",
+      "liveone automation create-exercise daylesford --derivation=generator " +
+        "--load-point=bidi.grid/power --action-point=generator:source.generator.control.request/duration " +
+        "--start='2026-09-12 09:00' --minutes=30",
+    ],
+  },
+
+  upcoming: {
+    name: "upcoming",
+    summary:
+      "Every scheduled occurrence on an area, dated, for the next N days.",
+    when:
+      "The verification tool when you have no calendar client to hand — and the direct way to\n" +
+      "answer 'is this actually a one-off, or did I write a standing rule'. Read-only.",
+    description:
+      "Merges every enabled exercise rule on the area into one dated list, in the AREA's local\n" +
+      "time, with EXDATEs already removed and RDATEs already added — i.e. what will really happen,\n" +
+      "not what the rule says.",
+    args: [AREA_ARG],
+    flags: {
+      ...BASE_URL_FLAG,
+      days: {
+        type: "number",
+        placeholder: "30",
+        help: "How far ahead to look (default 30)",
+      },
+      all: {
+        type: "boolean",
+        help: "Include DISABLED rules, marked as such",
+      },
+    },
+    exitCodes: { 1: "nothing is scheduled in the window" },
+    examples: ["liveone automation upcoming daylesford --days=90"],
+  },
+
+  skip: {
+    name: "skip",
+    summary:
+      "Skip one occurrence of a repeating rule, leaving the rule itself alone.",
+    when:
+      "'Not next Thursday' — site work, someone on holiday, a generator already booked. The rule\n" +
+      "keeps running afterwards; only that one instance is dropped.",
+    description:
+      "Adds an EXDATE for the named date's occurrence. `upcoming` lists the dates that have one,\n" +
+      "and running `skip` on a date that is already skipped is a no-op rather than an error.\n" +
+      "\n" +
+      "The route replaces the whole trigger, so this re-sends it — but a slot ALREADY dealt with\n" +
+      "today stays dealt with, because an exdate-only edit deliberately does not clear the\n" +
+      "consumed-slot key. Without that, skipping next week at 09:30 could start the engine a\n" +
+      "second time this morning.",
+    mutates: true,
+    args: TARGET_ARGS,
+    flags: {
+      ...BASE_URL_FLAG,
+      date: {
+        type: "string",
+        required: true,
+        placeholder: "2026-09-24",
+        help: "The local date to skip — there must be an occurrence on it",
+      },
+    },
+    exitCodes: { 1: "there is no occurrence on that date" },
+    examples: [
+      "liveone automation skip daylesford 'Generator exercise' --date=2026-09-24",
     ],
   },
 

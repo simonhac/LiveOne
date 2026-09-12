@@ -163,7 +163,14 @@ export async function evaluateAutomations(
     fired: 0,
     skipped: 0,
     errors: 0,
-    exercise: { due: 0, fired: 0, satisfied: 0, waiting: 0, missed: 0 },
+    exercise: {
+      due: 0,
+      fired: 0,
+      satisfied: 0,
+      waiting: 0,
+      missed: 0,
+      exhausted: 0,
+    },
   };
   const rows = await store.listEnabled();
   for (const row of rows) {

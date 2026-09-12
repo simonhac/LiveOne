@@ -30,6 +30,78 @@ const AU_UUID = Automation.toUuid(AU);
 const AR = Area.generate();
 const AR_UUID = Area.toUuid(AR);
 
+describe("parseAutomationTrigger — exercise schedule", () => {
+  const exercise = (schedule: unknown) => ({
+    kind: "exercise",
+    source: { kind: "derivation", derivationId: DX_UUID },
+    schedule,
+    unless: { loadPointId: PT_UUID },
+  });
+  const scheduleOf = (schedule: unknown) => {
+    const out = parseAutomationTrigger(exercise(schedule));
+    if (!out.ok) throw new Error(out.error);
+    if (out.value.kind !== "exercise") throw new Error("not an exercise");
+    return out.value.schedule;
+  };
+  const errorFor = (schedule: unknown) => {
+    const out = parseAutomationTrigger(exercise(schedule));
+    return out.ok ? null : out.error;
+  };
+
+  it("a start with no rrule is a one-off, and stores nothing it does not need", () => {
+    expect(scheduleOf({ start: "2026-09-12T09:00" })).toEqual({
+      start: "2026-09-12T09:00",
+      graceMinutes: 180,
+    });
+  });
+
+  it("canonicalises the rrule and sorts + dedupes the date lists", () => {
+    expect(
+      scheduleOf({
+        start: "2026-09-17T09:00",
+        rrule: "byday=th;freq=weekly",
+        exdates: ["2026-10-01T09:00", "2026-09-24T09:00", "2026-10-01T09:00"],
+        rdates: ["2026-09-20T09:00"],
+      }),
+    ).toEqual({
+      start: "2026-09-17T09:00",
+      rrule: "FREQ=WEEKLY;BYDAY=TH",
+      exdates: ["2026-09-24T09:00", "2026-10-01T09:00"],
+      rdates: ["2026-09-20T09:00"],
+      graceMinutes: 180,
+    });
+  });
+
+  it("treats an empty date list as absent rather than storing []", () => {
+    expect(scheduleOf({ start: "2026-09-12T09:00", exdates: [] })).toEqual({
+      start: "2026-09-12T09:00",
+      graceMinutes: 180,
+    });
+  });
+
+  it("refuses a date the calendar does not have", () => {
+    expect(errorFor({ start: "2026-02-31T09:00" })).toContain(
+      "not a real calendar date",
+    );
+  });
+
+  it("🛑 refuses a start inside the daylight-saving gap hour", () => {
+    expect(errorFor({ start: "2026-10-04T02:30" })).toContain("02:00–02:59");
+  });
+
+  it("refuses the retired weekday grammar rather than guessing at it", () => {
+    expect(errorFor({ weekdays: ["thu"], time: "09:00" })).toContain(
+      "trigger.schedule.start",
+    );
+  });
+
+  it("refuses a malformed exdate, naming the field", () => {
+    expect(
+      errorFor({ start: "2026-09-12T09:00", exdates: ["2026-09-12"] }),
+    ).toContain("trigger.schedule.exdates entries");
+  });
+});
+
 describe("parseAutomationTrigger", () => {
   const good = {
     kind: "charge-session",

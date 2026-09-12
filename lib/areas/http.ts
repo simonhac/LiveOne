@@ -51,6 +51,8 @@ export interface AreaAuthRow {
   status: string;
   displayName: string;
   location: AreaLocation | null;
+  /** The zone every wall-clock schedule in this area is read in (`lib/automations/recurrence.ts`). */
+  displayTimezone: string;
 }
 
 /** Load the facts a route needs to authorize/patch an area, or null if the uuid is unknown. */
@@ -65,6 +67,7 @@ export async function loadAreaForAuth(
       status: areas.status,
       displayName: areas.name,
       location: areas.location,
+      displayTimezone: areas.displayTimezone,
     })
     .from(areas)
     // config-v4 Phase 13 PR 5: handle from `legacy_handles`, not the dropped column. LEFT, so
