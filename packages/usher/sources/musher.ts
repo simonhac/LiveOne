@@ -354,7 +354,33 @@ export function createMusher(opts: MusherOptions): Source {
       fields,
       pageErrors: dump.pageErrors,
     };
-    log(`[musher-diag] ${JSON.stringify(record)}`); // secondary: ephemeral live-tail
+    // A SUMMARY to stdout, the full record to the journal.
+    //
+    // This line used to be `JSON.stringify(record)` — the whole ~94-register dump, ~9 KB, every
+    // poll. Measured 2026-09-12 and again 2026-09-13: it was 98.9% of this app's entire log payload
+    // and ~91% of the fleet's, twice, independently. That is a lot to spend on a duplicate: the
+    // journal beside it is the DESIGNED artefact (core/diag-journal.ts exists precisely because
+    // Fly's log buffer is ephemeral), it compresses ~106:1, and it holds roughly three months.
+    // The stdout copy was redundant storage of something already kept better, for three days.
+    //
+    // What survives here is what a live tail is actually for: the envelope, how much of the dump
+    // failed, and the three fields that MOVE. diag-journal.ts names them — of ~100 registers, only
+    // batteryV, controllerTime and engineRunTime change between polls, which is exactly why the
+    // rest compresses away. ~150 B against ~9,100 B, and nothing durable is lost.
+    const naCount = Object.values(fields).filter(
+      (f) => (f as Record<string, unknown>).na !== undefined,
+    ).length;
+    const errCount = Object.values(fields).filter(
+      (f) => (f as Record<string, unknown>).e !== undefined,
+    ).length;
+    const moving = (key: string): unknown =>
+      (fields[key] as Record<string, unknown> | undefined)?.v;
+    log(
+      `[musher-diag] ${record.site}/${record.unit} running=${running} hold=${hold} ` +
+        `batteryV=${moving("batteryV")} runTime=${moving("engineRunTime")} ` +
+        `ctrlTime=${moving("controllerTime")} ` +
+        `sentinels=${naCount} errors=${errCount} pageErrors=${record.pageErrors.length}`,
+    );
     void journal?.append(record); // primary: durable /data/usher/diag/*.jsonl
   }
 
