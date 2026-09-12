@@ -63,6 +63,10 @@ else
   log "TUNNEL_TOKEN not set — inspector NOT exposed (WG-only)."
 fi
 
+if ! /usr/local/bin/usher-trial-services; then
+  log "trial forwarding unavailable; continuing production collection"
+fi
+
 sleep 5 # let the UDMs (re)handshake so the first device read reaches the LANs
 
 # Bind LOOPBACK ONLY, explicitly. Next standalone reads $HOSTNAME as its bind address, and in a Fly

@@ -109,3 +109,21 @@ Create a **Tunnel** in the Zero Trust dashboard → public hostname `usher.liveo
 `http://127.0.0.1:3000`; copy the token to `TUNNEL_TOKEN`. Add an **Access application** on that
 hostname with a policy allowing the owner identity only. Nothing is reachable without passing Access;
 there is no public Fly HTTP origin to bypass. See the `cloudflare-one` skill for exact steps.
+
+## Opt-in Kinkora shadow-trial forwarding
+
+`USHER_TRIAL_FORWARDING=1` starts two private sidecars. The SSH listener on 6PN port 2222 accepts
+only the dedicated `trial-forward` key and permits local forwarding solely to `10.0.1.190:80` and
+`10.0.1.191:80`. Shell commands, password auth, reverse forwarding, agent forwarding and TTYs are
+disabled. Its host key persists under `/data/usher/trial-ssh`; pin that key on the shadow client.
+
+Inject `/etc/usher/trial/client.pub`, `feed.crt` and `feed.key`. The certificate must cover
+`liveone-flyhub.internal`. The TLS feed proxy binds only 6PN port 8443 and forwards GET requests for
+`/api/usher/trial` to the loopback production server; every other path returns 404. The underlying
+feed requires `USHER_TRIAL_MONITOR_TOKEN`. The existing Access ingress and loopback binding are
+unchanged. Neither sidecar starts without the explicit opt-in. Configuration failure logs and leaves
+production collection running; unavailable trial services must prevent shadow qualification.
+
+For baseline capture, separately set `USHER_TRIAL_CAPTURE_DIR` and `USHER_TRIAL_CAPTURE_REVISION`.
+Do not reuse any production delivery credential for these endpoints. Verify the generator supervisor
+is idle before restarting the shared hub, and confirm both production sources recover afterward.

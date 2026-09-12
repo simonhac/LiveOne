@@ -17,3 +17,7 @@ backups
 **/*.sqlite3
 **/*.dump
 **/*.sql.gz
+
+# Never upload workspace credentials or temporary operational artifacts.
+.context
+**/.env*
