@@ -146,7 +146,7 @@ live service deployment was performed; Docker is unavailable locally.
 
 ## Fronius-first monitoring correction
 
-Preparing Kinkora exposed that `source.read()` only harvests cached Fronius data. The new regression
+Preparing the Fronius trial exposed that `source.read()` only harvests cached Fronius data. The new regression
 initially failed with zero production-read callback calls after a simulated inverter connection reset.
 The inverter now reports actual background power-flow attempts (success, malformed response or caught
 failure), and the site connects them to the production monitor. The run loop excludes cached harvests.

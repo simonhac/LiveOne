@@ -1,3 +1,6 @@
+import { referenceQuery, referencePage } from "./reference-export";
+import { ReadingsDao } from "@/lib/readings/dao";
+import { Point } from "@/lib/ids";
 import { summarizeProductionEvidence } from "./production-evidence";
 import { baselineFixture } from "./baseline";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
@@ -11,6 +14,7 @@ import {
   managedPollers,
   devices,
   sessions,
+  points,
 } from "@/lib/db/planetscale/schema";
 import { getDeviceCredentials } from "@/lib/secure-credentials";
 import {
@@ -280,7 +284,13 @@ export async function adminCollectors(req: NextRequest) {
 
 export async function collectorApi(
   req: NextRequest,
-  operation: "config" | "credentials" | "status" | "baseline" | "production",
+  operation:
+    | "config"
+    | "credentials"
+    | "status"
+    | "baseline"
+    | "production"
+    | "readings",
 ) {
   try {
     if (!db) throw new ApiError("Database unavailable", 503);
@@ -347,6 +357,57 @@ export async function collectorApi(
         },
         { headers: { ETag: etag, "Cache-Control": "no-store" } },
       );
+    }
+    if (operation === "readings" && req.method === "GET") {
+      const input = referenceQuery.parse(
+        Object.fromEntries(req.nextUrl.searchParams),
+      );
+      const [assignment] = await db
+        .select()
+        .from(managedPollers)
+        .where(
+          and(
+            eq(managedPollers.id, input.pollerId),
+            eq(managedPollers.collectorId, collector.id),
+          ),
+        );
+      if (!assignment || assignment.deleted)
+        throw new ApiError("Poller not found", 404);
+      if (assignment.revision !== input.revision)
+        throw new ApiError("Stale poller revision", 409);
+      const [point] = await db
+        .select({
+          id: points.id,
+          physicalPath: points.physicalPath,
+          metricType: points.metricType,
+          unit: points.unit,
+          transform: points.transform,
+          updatedAt: points.updatedAt,
+        })
+        .from(points)
+        .where(
+          and(
+            eq(points.id, input.pointId),
+            eq(points.deviceId, assignment.deviceId),
+          ),
+        );
+      if (!point) throw new ApiError("Point not found", 404);
+      const rows = await ReadingsDao.readTrialReferencePage(
+        Point.encode(point.id),
+        input,
+      );
+      return response({
+        version: 1,
+        deviceId: assignment.deviceId,
+        pollerId: assignment.id,
+        revision: assignment.revision,
+        point,
+        start: input.start,
+        end: input.end,
+        asOf: input.asOf,
+        values: "raw-untransformed",
+        ...referencePage(rows, input.limit),
+      });
     }
     if (operation === "credentials" && req.method === "GET") {
       const pollerId = z

@@ -71,8 +71,8 @@ control only while idle with no latch or deadline outstanding.
 
 ## First vendor selected
 
-Fronius at Kinkora is first (2026-09-13). See the [site preparation](../deploy/fronius-kinkora/README.md)
-for both inverters, replay bootstrap, operations template and remaining deployment prerequisites.
+Fronius is the first selected vendor (2026-09-13). Site identities, network configurations
+and operator runbooks are maintained outside this repository in private administration records.
 Management API deployment and enrollment are complete. The original production hub is back
 on its normal configuration. No live Go trial has begun; activation now depends on the isolated
 reference export, comparison, network and supervision gates above.

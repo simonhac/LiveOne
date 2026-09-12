@@ -1,3 +1,5 @@
+import { PgDialect } from "drizzle-orm/pg-core";
+import { ReadingsDao } from "@/lib/readings/dao";
 import { beforeEach, describe, expect, it, jest } from "@jest/globals";
 import { createHash } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
@@ -7,6 +9,9 @@ import { requireAdmin } from "@/lib/api-auth";
 import { getDeviceCredentials } from "@/lib/secure-credentials";
 import { planetscaleDb } from "@/lib/db/planetscale";
 
+jest.mock("@/lib/readings/dao", () => ({
+  ReadingsDao: { readTrialReferencePage: jest.fn() },
+}));
 jest.mock("@/lib/api-auth", () => ({ requireAdmin: jest.fn() }));
 jest.mock("@/lib/secure-credentials", () => ({
   getDeviceCredentials: jest.fn(),
@@ -38,13 +43,19 @@ const p = {
   appliedRevision: 1,
   deleted: false,
 };
+const queryPredicates: unknown[] = [];
 function queued(...rows: unknown[][]) {
   for (const data of rows) {
     const result = Object.assign(Promise.resolve(data), {
       for: () => Promise.resolve(data),
     });
     (db.select as jest.Mock).mockReturnValueOnce({
-      from: () => ({ where: () => result }),
+      from: () => ({
+        where: (predicate: unknown) => {
+          queryPredicates.push(predicate);
+          return result;
+        },
+      }),
     });
   }
 }
@@ -60,6 +71,7 @@ function req(method: string, op: string, body?: unknown, bearer = token) {
 }
 beforeEach(() => {
   jest.resetAllMocks();
+  queryPredicates.length = 0;
   (db.transaction as jest.Mock).mockImplementation(async (fn: unknown) =>
     (fn as (db: unknown) => unknown)(db),
   );
@@ -293,3 +305,55 @@ it("exports only scoped measured cloud read evidence", async () => {
   delete process.env.LIVEONE_TRIAL_READ_EVIDENCE;
   delete process.env.LIVEONE_TRIAL_READ_EVIDENCE_SINCE;
 });
+
+const pointId = "44444444-4444-4444-8444-444444444444";
+const referenceUrl = `readings?pollerId=${pollerId}&pointId=${pointId}&revision=2&start=2026-01-01T00:00:00Z&end=2026-01-01T01:00:00Z&asOf=2026-01-01T02:00:00Z&limit=1`;
+it("exports assigned raw readings without display transforms and with bounded pagination", async () => {
+  queued(
+    [collector],
+    [p],
+    [{ id: pointId, transform: "d", physicalPath: "solar", unit: "Wh" }],
+  );
+  jest.mocked(ReadingsDao.readTrialReferencePage).mockResolvedValue([
+    { timestamp: "2026-01-01T00:00:00.000001Z", value: 0 },
+    { timestamp: "2026-01-01T00:00:00.000002Z", value: 1 },
+  ] as never);
+  const r = await collectorApi(req("GET", referenceUrl), "readings");
+  expect(r.status).toBe(200);
+  const payload = await r.json();
+  const dialect = new PgDialect();
+  expect(dialect.sqlToQuery(queryPredicates[1] as never).params).toEqual([
+    pollerId,
+    collectorId,
+  ]);
+  expect(dialect.sqlToQuery(queryPredicates[2] as never).params).toEqual([
+    pointId,
+    p.deviceId,
+  ]);
+  expect(payload.values).toBe("raw-untransformed");
+  expect(payload.readings).toHaveLength(1);
+  expect(payload.readings[0].value).toBe(0);
+  expect(payload.nextCursor).toBe("2026-01-01T00:00:00.000001Z");
+  expect(r.headers.get("cache-control")).toBe("no-store");
+});
+it.each(["assignment", "point", "deleted", "revision"])(
+  "rejects inaccessible reference %s before reading data",
+  async (kind) => {
+    queued(
+      [collector],
+      kind === "assignment"
+        ? []
+        : [
+            {
+              ...p,
+              deleted: kind === "deleted",
+              revision: kind === "revision" ? 3 : 2,
+            },
+          ],
+      [],
+    );
+    const r = await collectorApi(req("GET", referenceUrl), "readings");
+    expect(r.status).toBe(kind === "revision" ? 409 : 404);
+    expect(ReadingsDao.readTrialReferencePage).not.toHaveBeenCalled();
+  },
+);

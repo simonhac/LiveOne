@@ -65,7 +65,7 @@ required, with tests for shifted timestamps, gaps, resets, unit/sign mismatches 
 
 ## Independent access and supervision
 
-Provision a dedicated trial route to Kinkora that does not traverse or require changes to
+Provision a dedicated trial route to the trial site that does not traverse or require changes to
 `liveone-flyhub`. A separately configured site VPN peer or site-side trial machine is a
 candidate, subject to actual network configuration and credentials. No route is qualified yet.
 Restrict destinations to the two Fronius HTTP endpoints; enforce read-only requests and budgets.
@@ -94,3 +94,151 @@ qualification gate before enabling live reads; do not fabricate a baseline or si
 
 Device coexistence still matters even with a separate network path: both readers ultimately
 share the same inverters and site network. No existing successful fixture test waives that gate.
+
+## Implemented reference export and offline comparison
+
+`GET /api/collectors/me/readings` uses the existing collector bearer credential.
+It checks the active assignment, its revision and ownership of the requested point;
+there is no administrator or arbitrary device access. A paused assignment can export
+reference data without starting device reads. The endpoint reads through ReadingsDao.
+
+Required query parameters: `pollerId` (UUID), `revision`, `pointId` (point UUID),
+`start`, `end`, `asOf` (UTC ISO timestamps). Windows are half-open, at most one hour,
+and must end no later than the fixed past ingestion cutoff. Optional `limit` is
+1–1000 (default 500); `cursor` is the exact `nextCursor` from the preceding page.
+Preserve the same parameters across pages. Paging uses the full microsecond timestamp,
+not a JavaScript millisecond round-trip. The response contains raw untransformed
+values, quality/error fields, receipt and ingestion times, session identity and point
+metadata. No rows is an empty array; a missing numeric value remains null.
+
+The cutoff excludes subsequently ingested rows. It is **not** a database snapshot:
+retention or in-place corrections may affect later reads. Retain exported pages as
+immutable evidence, wait for normal delivery to settle, and repeat suspect exports.
+Point metadata is current export-time metadata, not historical metadata. The downloader
+rejects metadata changes between pages; it cannot reconstruct historical configuration.
+
+Save an export (the output directory must not already exist):
+
+```sh
+# Supply LIVEONE_COLLECTOR_TOKEN through the runner's secret environment.
+npx tsx scripts/gousher/export-readings.ts https://liveone.energy \
+  POLLER_UUID REVISION POINT_UUID \
+  2026-09-13T00:00:00Z 2026-09-13T01:00:00Z .context/reference-hour
+```
+
+Only directories with `complete.json` are complete exports. This command has not
+been run against production as part of implementation; the endpoint needs deployment.
+
+`npx tsx scripts/gousher/compare-readings.ts input.json > report.json` compares
+explicitly mapped series offline and exits 1 for differences or insufficient evidence.
+The input contains `start`, `end`, `windowMs`, `minimumCoverage`, `absoluteTolerance`,
+`relativeTolerance`, and `reference`/`trial` objects. Each series contains `deviceId`,
+`physicalPath`, `metricType`, `unit`, `transform`, `cadenceMs` and `samples`.
+Samples contain `timestamp`, numeric-or-null `value`, optional `receivedTime`,
+`sessionId`, `counterEpoch`, `error` and `dataQuality`. Assemble reference samples from retained
+pages and trial samples from the separate receiver; retain this input with the report.
+The retained-export adapter described below assembles this input; scheduled review is not wired up yet.
+
+Supported metrics are power (W), SOC (%) and cumulative energy (Wh, transform `d`).
+The two sides must declare matching unit/transform semantics. Power/SOC use the mean
+of occupied cadence-slot means in each UTC window. Coverage is occupied valid slots
+out of expected slots, so bursts cannot fill missing slots. Energy differences use
+common boundaries, linearly interpolated only across gaps of at most 1.5 cadences;
+startup extrapolation, falling counters and explicit counter-epoch changes invalidate the window.
+Ingestion session IDs are per-upload identities and do not identify counter resets.
+The current exports have no counter epoch: a reset that catches up between samples
+cannot be detected from values alone. This remains a limitation of live energy evidence.
+Incremental energy is deliberately unsupported until its interval semantics are verified.
+Windows must be complete, UTC-aligned and divisible by both cadences. Duplicate
+millisecond timestamps invalidate qualification. Reports include arrival lag (unknown
+when receipt times are absent), maximum gaps, coverage, duplicates, resets and value
+differences separately. Missing on both sides never passes.
+
+Tolerance is `absoluteTolerance + relativeTolerance * abs(reference)` and is supplied
+before comparison. No default qualification thresholds are asserted. This offline
+report does not establish coexistence, supervisor health, or permission to activate
+live reads. Independent networking, production baseline and supervision gates above
+remain outstanding.
+
+### Comparing retained reference and receiver exports
+
+The existing trial receiver `/export` supplies batches in receipt-file order, with
+an immutable cutoff across pages. Download using its separate receiver credential:
+
+```sh
+# Supply GOUSHER_RECEIVER_TOKEN through the runner's secret environment.
+# Use the same AS_OF cutoff saved in the reference export's complete.json.
+npx tsx scripts/gousher/export-trial.ts https://RECEIVER_HOST/export \
+  POLLER_UUID REVISION SITE_ID \
+  START END AS_OF .context/trial-hour
+npx tsx scripts/gousher/compare-exports.ts policy.json \
+  .context/reference-hour .context/trial-hour .context/comparison-hour
+```
+
+All output directories must be new. The comparison command requires complete
+manifests and validates page order, continuation markers, assignment, revision,
+point identity, physical paths, units, transform semantics and cutoff consistency.
+A missing trial point contributes null; ambiguous repeated paths are rejected.
+It writes `input.json`, `report.json` and `sources.json` with SHA-256 hashes of the
+policy, manifests and pages. Keep the original directories with these outputs.
+The receiver does not export per-batch receipt times, so trial arrival lag is
+unknown; export time is never substituted for arrival time.
+
+The policy JSON contains:
+
+```json
+{
+  "pollerId": "11111111-1111-4111-8111-111111111111",
+  "revision": 2,
+  "vendorSiteId": "REPLACE_WITH_ASSIGNED_SITE",
+  "deviceId": "22222222-2222-4222-8222-222222222222",
+  "pointId": "33333333-3333-4333-8333-333333333333",
+  "referencePath": "REPLACE_WITH_PRODUCTION_PHYSICAL_PATH",
+  "trialPath": "REPLACE_WITH_TRIAL_PHYSICAL_PATH",
+  "metricType": "power",
+  "unit": "W",
+  "transform": "n",
+  "start": "2026-09-13T00:05:00Z",
+  "end": "2026-09-13T00:55:00Z",
+  "windowMs": 300000,
+  "referenceCadenceMs": 60000,
+  "trialCadenceMs": 60000,
+  "minimumCoverage": 1,
+  "absoluteTolerance": 0,
+  "relativeTolerance": 0
+}
+```
+
+These zero-tolerance example values are placeholders, not qualified live thresholds.
+Set cadence to the exported **reporting** cadence, not the two-second device read
+cadence. For cumulative energy, export extra readings before and after the comparison
+range so both interval boundaries are supported; for example compare 00:05–00:55
+using 00:00–01:00 exports. The comparison tool never extrapolates a missing boundary.
+Exporting a whole hour and comparing its final boundary without following data will
+correctly leave that energy window unqualified.
+
+## Operational preflight — 2026-09-12 23:06 UTC
+
+Read-only Fly machine inventory found production `liveone-flyhub` started, and
+`liveone-gousher-trial` plus `liveone-gousher-ops` stopped. The existing inspector
+snapshot at 23:06:42 UTC reported an empty spool, zero consecutive tick errors for
+both sources, a successful Fronius upload and inverter samples less than one second
+old. This is a point observation, not a new sustained baseline or coexistence result.
+
+The existing source inventory provides:
+
+| Surface | Evidence available | Limitation |
+| --- | --- | --- |
+| Existing inspector state | Per-inverter last successful fetch, source tick errors, delivery result, spool | A tick is not every background inverter read; no read-latency distribution |
+| Existing runtime telemetry | Process CPU, event-loop delay/utilization, memory and GC | Process health does not measure individual device-read failures |
+| Existing spool telemetry | Delivery backlog, drops and disk availability | Delivery success does not prove uninterrupted sampling |
+| LiveOne readings export | Received readings, measurement/receipt times and coverage | Missing reads and their causes cannot be reconstructed from successful uploads |
+
+The per-read failure/p95 recorder is the disabled trial monitor. The source inventory
+has not identified equivalent measurements in ordinary telemetry. A replacement gate
+needs review and a measured baseline; none has been selected or enabled here.
+
+The existing production site WireGuard route terminates on production flyhub.
+Reusing it would violate the independent-path requirement. Site-side access details
+for a new peer or trial machine are still needed. No router, VPN, production setting,
+collector assignment or trial machine was changed by this preflight.
