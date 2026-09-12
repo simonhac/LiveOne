@@ -36,6 +36,11 @@ const ACTIVE_PT = Point.generate();
 const ACTIVE_PT_UUID = Point.toUuid(ACTIVE_PT);
 const ACT_PT_UUID = Point.toUuid(Point.generate());
 
+// 🛑 Mocking the store wholesale is right for testing the EVALUATOR, and it is also why the
+// microsecond-precision CAS bug shipped: with `claimExerciseDispatch` stubbed, no test anywhere ran
+// that module's SQL, and a predicate matching nothing looked exactly like one that worked. The SQL
+// itself is pinned in `store-claim.test.ts` (codec + generated SQL) and `store.integration.test.ts`
+// (executed against a real Postgres). Do not try to cover it from here — it structurally cannot be.
 jest.mock("@/lib/automations/store", () => ({
   listEnabled: jest.fn(),
   armAutomation: jest.fn(),

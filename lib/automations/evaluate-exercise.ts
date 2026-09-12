@@ -201,7 +201,15 @@ async function fireExercise(
   // 🛑 `/api/cron/derivations` holds no lease, so two ticks CAN overlap. Claim the row first —
   // a compare-and-set on updated_at — because the thing being guarded is starting an engine.
   const claimed = await store.claimExerciseDispatch(row.id, row.updatedAt);
-  if (!claimed) return;
+  if (!claimed) {
+    // Expected and rare in a genuine two-tick race — but it is ALSO what a broken CAS looked like,
+    // and losing EVERY tick is indistinguishable from having nothing to do unless it says so. This
+    // line is the one that would have made a silent 100% failure visible on day one.
+    console.warn(
+      `[automations] ${row.id} lost the exercise dispatch claim — another tick got there first`,
+    );
+    return;
+  }
 
   const loaded = await loadPointByUuid(actionPointUuid);
   if (!loaded) {

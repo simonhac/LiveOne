@@ -46,6 +46,8 @@ import {
   parseAutomationTrigger,
 } from "./types";
 import { evaluateExercise, type ExerciseSummary } from "./evaluate-exercise";
+import { sendAlert } from "@/lib/alerts";
+import { kv, kvKey } from "@/lib/kv";
 
 export interface AutomationsSummary {
   evaluated: number;
@@ -173,7 +175,46 @@ export async function evaluateAutomations(
       console.error(`[automations] ${row.id} evaluation failed:`, err);
     }
   }
+  await reportUndecidedSlots(summary);
   return summary;
+}
+
+/**
+ * A slot that was this rule's to act on, and produced no decision at all, is by definition a bug.
+ *
+ * Every outcome — fired, satisfied, waiting, missed — writes `armed_context`, so `due` without one
+ * of them means the evaluator fell out of the path between `isDue` and `decideExercise` (the shape
+ * of the microsecond-precision CAS failure that stopped two live generator rules ever firing, and
+ * which produced no log line of its own for two days). Anything else that gets stuck the same way
+ * will announce itself here rather than looking like an idle tick.
+ *
+ * Best-effort, like every other step in this cron: a webhook that is unset or unreachable must not
+ * cost us the evaluation that already happened.
+ */
+async function reportUndecidedSlots(
+  summary: AutomationsSummary,
+): Promise<void> {
+  const ex = summary.exercise;
+  const decided = ex.fired + ex.satisfied + ex.waiting + ex.missed;
+  if (ex.due === 0 || decided >= ex.due) return;
+
+  const message = `${ex.due - decided} scheduled exercise slot(s) were due and produced no decision — see [automations] logs`;
+  // The log line is unconditional: this cron runs every minute, and the whole point is that the
+  // condition should be greppable for as long as it lasts.
+  console.error(`[automations] ${message}`, ex);
+
+  // The webhook is not. A stuck slot stays stuck for its whole grace window, so an un-suppressed
+  // alert is ~180 identical Slack messages, which is how a channel gets muted. One an hour is
+  // still unmissable. KV unreachable errs towards sending — a missed alert is the failure that
+  // this whole function exists to stop.
+  try {
+    const key = kvKey("automations:alert:exercise-undecided");
+    if (await kv.get(key)) return;
+    await kv.set(key, Date.now(), { ex: 3600 });
+  } catch (err) {
+    console.error("[automations] alert suppression check failed:", err);
+  }
+  await sendAlert(`🚨 LiveOne automations: ${message}`, "[automations]");
 }
 
 async function evaluateOne(

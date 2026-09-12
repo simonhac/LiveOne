@@ -42,7 +42,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { sql } from "drizzle-orm";
 import { requireCronOrAdmin } from "@/lib/api-auth";
 import { cronSkipReason } from "@/lib/cron/guard";
-import { envLabel } from "@/lib/env";
+import { sendAlert as postAlert } from "@/lib/alerts";
 import { planetscaleDb } from "@/lib/db/planetscale";
 import { ReadingsDao } from "@/lib/readings";
 import { DeviceRegistry } from "@/lib/registry";
@@ -118,23 +118,9 @@ const BATPROV_SOC_METER_TOL_KWH = num(
 /**
  * Send a Slack-compatible alert if a webhook is configured. Best-effort; never throws.
  * The webhook is shared across environments, so every message is prefixed with the
- * environment name (see lib/env.ts).
+ * environment name — see `lib/alerts.ts`, which owns that policy for every sender.
  */
-async function sendAlert(text: string): Promise<boolean> {
-  const url = process.env.OBSERVATIONS_ALERT_WEBHOOK_URL;
-  if (!url) return false;
-  try {
-    const res = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text: `[${envLabel()}] ${text}` }),
-    });
-    return res.ok;
-  } catch (err) {
-    console.error("[MonitorObservations] alert webhook failed:", err);
-    return false;
-  }
-}
+const sendAlert = (text: string) => postAlert(text, "[MonitorObservations]");
 
 export async function GET(request: NextRequest) {
   const auth = await requireCronOrAdmin(request);
