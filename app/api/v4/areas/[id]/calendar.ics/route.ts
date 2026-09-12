@@ -66,7 +66,7 @@ export async function GET(
     prodId: { company: "LiveOne", product: "automations", language: "EN" },
     // A real VTIMEZONE component, not just a TZID string: Apple Calendar will otherwise place
     // every event at the wrong hour for half the year.
-    timezone: { name: timezone, generator: getVtimezoneComponent },
+    timezone: { name: timezone, generator: vtimezoneOrComplain },
     // An hour. The schedules change rarely, and a client that re-reads more often than this is
     // spending our request budget to learn nothing.
     ttl: 3600,
@@ -90,6 +90,16 @@ export async function GET(
     // the library lists it as an optional peer. Proven identical under TZ=UTC, America/New_York,
     // Asia/Kolkata and Australia/Melbourne.
     const start = DateTime.fromISO(trigger.schedule.start, { zone: timezone });
+    // An area whose `display_timezone` is not a zone luxon knows yields an INVALID DateTime, and
+    // `createEvent` throws on one — which would 500 the entire subscription over a single
+    // misconfigured row. Skip the event, say why, and serve the rest.
+    if (!start.isValid) {
+      console.error(
+        `[calendar] ${row.id}: cannot place '${trigger.schedule.start}' in '${timezone}' ` +
+          `(${start.invalidReason}) — omitting it from the feed`,
+      );
+      continue;
+    }
     // The requested run LENGTH is the action's value — so the block in the calendar is how long
     // the engine is being asked to run for, not an arbitrary slot.
     const minutes =
@@ -128,6 +138,31 @@ export async function GET(
       "Content-Disposition": `inline; filename="${slug(area.displayName)}-automations.ics"`,
     },
   });
+}
+
+/**
+ * `getVtimezoneComponent`, but it says so when it comes back empty.
+ *
+ * 🛑 The package resolves its zone data with `readFileSync(__dirname + "/zones/…")` inside an
+ * EMPTY CATCH, so a missing file is indistinguishable from a missing zone and both are reported as
+ * `null`. That silence shipped a VTIMEZONE-less feed to production TWICE — once because the `.ics`
+ * data was not traced into the bundle, and again because the package was bundled and `__dirname`
+ * no longer pointed at it. `next.config.js` now fixes both, and this makes a third cause
+ * greppable instead of invisible.
+ *
+ * Deliberately NOT a throw. Most clients resolve a bare IANA `TZID=` from their own database, so a
+ * feed without VTIMEZONE is degraded rather than useless — and failing the whole subscription
+ * would be a worse outcome for the subscriber than a loud log is for us.
+ */
+function vtimezoneOrComplain(timezone: string): string | null {
+  const component = getVtimezoneComponent(timezone);
+  if (!component)
+    console.error(
+      `[calendar] no VTIMEZONE for '${timezone}' — every DTSTART in this feed carries a TZID a ` +
+        `strict client now cannot resolve. Check that @touch4it/ical-timezones is in ` +
+        `serverExternalPackages AND its zones/** are in outputFileTracingIncludes.`,
+    );
+  return component ?? null;
 }
 
 /** The exercise trigger of a row, or null — an unparseable or charge-session row is skipped. */

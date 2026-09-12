@@ -3,10 +3,18 @@ const nextConfig = {
   distDir: process.env.BUILD_DIR || ".next",
   // 🛑 `@touch4it/ical-timezones` reads its zone data with
   // `fs.readFileSync(path.join(__dirname, "zones", …))` and swallows the failure in an EMPTY
-  // CATCH, returning null. A dynamic read like that is invisible to Next's static tracing, so the
-  // .ics files were left out of the serverless bundle and the calendar feed shipped with no
-  // VTIMEZONE component at all — silently, because the package cannot report what it discarded.
-  // Without it a strict client cannot resolve the `TZID=` on every DTSTART in that feed.
+  // CATCH, returning null. The calendar feed therefore shipped with no VTIMEZONE component at all,
+  // silently, and a strict client cannot resolve the `TZID=` on every DTSTART without one.
+  //
+  // BOTH entries below are required, and each alone looks like it should be enough:
+  //
+  //  - `serverExternalPackages` keeps the package OUT of the route bundle. Bundled, its
+  //    `__dirname` resolves to `.next/server/app/api/.../calendar.ics/`, so the join misses no
+  //    matter what else is on disk. This was the second bug: the files were shipped and STILL not
+  //    found.
+  //  - `outputFileTracingIncludes` ships the `.ics` data. A dynamic `readFileSync` is invisible to
+  //    static tracing, so being external is not enough to get the files deployed either.
+  serverExternalPackages: ["@touch4it/ical-timezones"],
   outputFileTracingIncludes: {
     "/api/v4/areas/[id]/calendar.ics": [
       "./node_modules/@touch4it/ical-timezones/zones/**",
