@@ -13,6 +13,11 @@
   },
   "dependencies": {
     "@liveone/protocol": "1.0.0",
+    "@opentelemetry/core": "^2.11.0",
+    "@opentelemetry/exporter-metrics-otlp-http": "^0.213.0",
+    "@opentelemetry/resources": "^2.11.0",
+    "@opentelemetry/sdk-metrics": "^2.11.0",
+    "@opentelemetry/semantic-conventions": "^1.43.0",
     "axios": "^1.11.0",
     "date-fns": "^4.1.0",
     "jose": "^5.10.0",
