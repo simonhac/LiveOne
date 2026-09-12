@@ -1,5 +1,14 @@
 # First trial: Fronius at Kinkora
 
+> **Trial suspended — 2026-09-13:** Production trial capture caused growing filesystem
+> overhead on the original `liveone-flyhub`, alongside severe CPU starvation and
+> degraded Fronius/DSE reads. Production capture, the trial monitor feed and trial
+> SSH/TLS sidecars have been disabled; the Go collector and ops staging machines
+> are stopped. Do not re-enable these templates as a routine deployment step.
+> The next trial design should use existing LiveOne readings for production
+> comparisons and isolated fixtures for raw-input parity. The instructions below
+> describe the previous setup and are retained as historical context.
+
 Selected by the user on 2026-09-13. Repository production configuration identifies one aggregated
 site (`kinkora`) with master `10.0.1.190` and slave `10.0.1.191`, sampled every two seconds and
 harvested every minute. These are configuration references, not a new live discovery result.
