@@ -175,8 +175,9 @@ orphaning it costs at most one mis-timed poll per OE device.
 
 Lazy-populated on first access, because a Clerk API lookup is ~4–10 s against ~400–500 ms for a KV hit.
 Written by `cacheUsernameMapping()`, read by `getUserIdByUsername()`, invalidated by
-`invalidateUsernameCache()` / `updateUsernameCache()` (`lib/user-cache.ts`). No TTL — invalidated on a
-username change.
+`invalidateUsernameCache()` (`lib/user-cache.ts`). No TTL, and nothing pushes a rename in: the read
+path re-validates a hit against Clerk and invalidates it there and then, so a stale entry costs one
+slow lookup rather than a wrong answer.
 
 ## Rebuilding — the only supported way to change a key shape
 

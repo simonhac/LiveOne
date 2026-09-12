@@ -27,7 +27,9 @@ export interface BlendPointSpec {
 }
 
 /** The derived blend points (keyed by metricType within the `bidi.battery` stem). All written per
- *  interval by the blend loop from the same `FoldStep` (unlike EFFICIENCY_POINT, written by the η shell). */
+ *  interval by the blend loop from the same `FoldStep`. (The four learned DEVICE PARAMETERS —
+ *  η / C / η_c / idle — are not points at all: the learn writes them into `battery_provenance_daily`
+ *  in natural units, and the loader and soc-meter monitor read the table.) */
 export const BLEND_POINTS: BlendPointSpec[] = [
   {
     metricType: "carbon-intensity",
@@ -60,43 +62,6 @@ export const BLEND_POINTS: BlendPointSpec[] = [
     displayName: "Battery Usable Energy",
   },
 ];
-
-/**
- * LEGACY param-point specs — the four learned battery DEVICE PARAMETERS (η / C / η_c / idle) used to be
- * persisted as helper points under these metricTypes (ordinals 110-113). The learn now writes them into
- * `battery_provenance_daily` (natural units — ratios, not the points' ×100 percent) and the loader /
- * soc-meter monitor read the table, so these points are never created or written anymore. The specs are
- * kept ONLY as the canonical record of the legacy surface — the cleanup script
- * The completed legacy-param cleanup keyed its deletions on these metricTypes.
- *
- * @knipignore RETIRED, not pending — see above: the learn writes these into
- * `battery_provenance_daily` and the points are never created. Kept only as the canonical record
- * of the legacy surface the cleanup script keyed its deletions on. Delete once that is no longer
- * worth having in the tree.
- */
-export const EFFICIENCY_POINT: BlendPointSpec = {
-  metricType: "round-trip-efficiency",
-  metricUnit: "%",
-  displayName: "Battery Round-trip Efficiency",
-};
-/** @knipignore RETIRED legacy param-point spec — see {@link EFFICIENCY_POINT}. */
-export const CAPACITY_POINT: BlendPointSpec = {
-  metricType: "usable-capacity",
-  metricUnit: "kWh",
-  displayName: "Battery Usable Capacity",
-};
-/** @knipignore RETIRED legacy param-point spec — see {@link EFFICIENCY_POINT}. */
-export const CHARGE_EFFICIENCY_POINT: BlendPointSpec = {
-  metricType: "charge-efficiency",
-  metricUnit: "%",
-  displayName: "Battery Charge Efficiency",
-};
-/** @knipignore RETIRED legacy param-point spec — see {@link EFFICIENCY_POINT}. */
-export const IDLE_LOSS_POINT: BlendPointSpec = {
-  metricType: "idle-loss",
-  metricUnit: "kWh/day",
-  displayName: "Battery Idle Loss",
-};
 
 export interface EnsureBlendResult {
   status: "created" | "exists" | "no-battery-point" | "mixed";

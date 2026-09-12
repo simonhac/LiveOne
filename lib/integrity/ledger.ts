@@ -36,8 +36,8 @@
  *   - `fk` — Postgres enforces it. The test PROVES this one against `getTableConfig`, so it cannot
  *     be claimed falsely; `onDelete` is recorded because `set null` and `cascade` and `no action`
  *     are three different user-visible outcomes, not an implementation detail.
- *   - `assertNotReliedUpon` — no FK, or an FK whose action is itself the hazard. A delete path
- *     names this dependent (see `./relied-upon.ts`).
+ *   - `refuseIfReliedUpon` — no FK, or an FK whose action is itself the hazard. A delete route
+ *     names this dependent and 409s (see `./http.ts`, over `findDependents` in `./relied-upon.ts`).
  *   - `deliberately-unprotected` — a reference in the loose sense that is CORRECT to leave loose,
  *     with the reason. Mostly logs, buffers and archives: rows whose whole job is to record what
  *     was true at a moment, and which must survive the disappearance of what they described.
@@ -83,7 +83,7 @@ import type { Subject } from "./relied-upon";
 
 type Verdict =
   | { protectedBy: "fk"; onDelete: "cascade" | "set null" | "no action" }
-  | { protectedBy: "assertNotReliedUpon"; subject: Subject; reason: string }
+  | { protectedBy: "refuseIfReliedUpon"; subject: Subject; reason: string }
   | { protectedBy: "deliberately-unprotected"; reason: string };
 
 export interface LedgerEntry {
@@ -464,7 +464,7 @@ export const REFERENCE_LEDGER: LedgerEntry[] = [
     column: dashboards.doc,
     extract: (v) => [...scanDocRefs(v)],
     verdict: {
-      protectedBy: "assertNotReliedUpon",
+      protectedBy: "refuseIfReliedUpon",
       subject: "area",
       reason:
         "the doc names areas and devices by TypeID with no FK. A deleted area leaves the node in place, resolving to nothing, and the renderer simply skips it — the silent failure this whole module exists for.",
@@ -514,7 +514,7 @@ export const REFERENCE_LEDGER: LedgerEntry[] = [
   {
     column: users.defaultDashboardId,
     verdict: {
-      protectedBy: "assertNotReliedUpon",
+      protectedBy: "refuseIfReliedUpon",
       subject: "dashboard",
       reason:
         "🛑 It HAS an FK — `ON DELETE SET NULL` — which is precisely why it needs naming anyway. The FK guarantees the column never dangles, and that is the whole problem: the user's default is silently emptied and they land somewhere else at next login with nothing saying why. An enforced constraint is not the same as a visible outcome.",
@@ -595,7 +595,7 @@ export const REFERENCE_LEDGER: LedgerEntry[] = [
     verdict: {
       protectedBy: "deliberately-unprotected",
       reason:
-        "raw point uuids in jsonb with no FK — and, since the HTTP surface moved onto `derivation_sources` (block-model increment 1, PR 3), READ BY NOTHING. It is written and never consulted: the engines resolve from `derivation_sources`, and so does the wire projection, so a stale or dangling uuid here changes no behaviour anywhere. That is what demotes it from `assertNotReliedUpon` — naming a dependent that cannot be affected would pad every refusal with a row nobody needs to act on. 🛑 The real protection is `derivation_sources.point_id`'s composite FK, which refuses to delete a point a live derivation reads. This entry, the dual-write and the column all go together in 0064.",
+        "raw point uuids in jsonb with no FK — and, since the HTTP surface moved onto `derivation_sources` (block-model increment 1, PR 3), READ BY NOTHING. It is written and never consulted: the engines resolve from `derivation_sources`, and so does the wire projection, so a stale or dangling uuid here changes no behaviour anywhere. That is what demotes it from `refuseIfReliedUpon` — naming a dependent that cannot be affected would pad every refusal with a row nobody needs to act on. 🛑 The real protection is `derivation_sources.point_id`'s composite FK, which refuses to delete a point a live derivation reads. This entry, the dual-write and the column all go together in 0064.",
     },
   },
   {
@@ -610,7 +610,7 @@ export const REFERENCE_LEDGER: LedgerEntry[] = [
     column: automations.trigger,
     extract: automationTriggerRefs,
     verdict: {
-      protectedBy: "assertNotReliedUpon",
+      protectedBy: "refuseIfReliedUpon",
       subject: "derivation",
       reason:
         "jsonb, no FK, and three separate point/derivation references (`source.derivationId`, `source.pointId`, `unless.loadPointId`). `evaluate.ts` logs 'did not resolve to an enabled run detector' and carries on, so a broken trigger stops firing rather than failing.",

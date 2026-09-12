@@ -1,5 +1,6 @@
 /**
- * The route adapter for `assertNotReliedUpon` — one call, so that no handler can forget `?force`.
+ * The delete interlock every route uses: `findDependents`, then a 409 that NAMES them — one call,
+ * so that no handler can forget `?force`.
  *
  * Kin to the "return a response or null" refusal contract of `checkReferences`
  * (`lib/automations/references.ts`) and `checkDocRefsReadable` (`lib/dashboard/v4-routes.ts`), and

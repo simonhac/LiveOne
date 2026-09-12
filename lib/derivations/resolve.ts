@@ -392,22 +392,6 @@ export async function listEnabledRunDetectors(
 }
 
 /**
- * The enabled run detector a legacy (handle, role) OWNS, or null.
- *
- * "Owns", not "touches": the handle must be the detector's owner device. See
- * {@link resolveDeviceIdForHandle}.
- *
- * @knipignore No caller — handle+role lookup kept while derivations are still addressed by dx_/name/role.
- */
-export async function getRunDetectorForHandleRole(
-  handle: number,
-  role: string,
-): Promise<ResolvedRunDetector | null> {
-  const [det] = await listEnabledRunDetectors({ handle, role });
-  return det ?? null;
-}
-
-/**
  * The enabled run detector for `role` that any of these devices is a SOURCE of, or null.
  *
  * What `/api/device/{rid}/run-periods` asks. The handle it is given is usually the COMPOSITE — the

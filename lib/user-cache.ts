@@ -118,24 +118,3 @@ async function cacheUsernameMapping(
 async function invalidateUsernameCache(username: string): Promise<void> {
   await kv.del(kvKey(`username:${username}`));
 }
-
-/**
- * Update username cache when username changes
- * Invalidates old username and caches new one
- *
- * @param oldUsername - Previous username (to invalidate)
- * @param newUsername - New username (to cache)
- * @param clerkId - Clerk user ID
- *
- * @knipignore No caller, but documented as live in docs/architecture/kv-store.md:178 — resolve the doc and the code together.
- */
-export async function updateUsernameCache(
-  oldUsername: string | null,
-  newUsername: string,
-  clerkId: string,
-): Promise<void> {
-  if (oldUsername) {
-    await invalidateUsernameCache(oldUsername);
-  }
-  await cacheUsernameMapping(newUsername, clerkId);
-}

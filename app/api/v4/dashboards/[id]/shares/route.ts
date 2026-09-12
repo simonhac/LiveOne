@@ -143,7 +143,7 @@ export async function PATCH(
 /**
  * DELETE — revoke one token. Idempotent: re-revoking an already-revoked token is a 200, not an error.
  *
- * 🛑 **Deliberately NOT gated by `assertNotReliedUpon`, and this must not be "fixed" later for
+ * 🛑 **Deliberately NOT gated by `refuseIfReliedUpon`, and this must not be "fixed" later for
  * consistency.** Every other delete in the v4 tree refuses while something still depends on the
  * row, because there the dependency is a reason to stop and think. Here the dependency IS THE
  * REASON TO PROCEED: you revoke a share link when it has leaked, and whoever is currently relying

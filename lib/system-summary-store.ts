@@ -161,34 +161,6 @@ export async function getAllSystemSummaries(): Promise<SystemSummariesMap> {
 }
 
 /**
- * Get system summaries with pagination using HSCAN
- * Use for deployments with >100 systems
- *
- * @param cursor - Cursor from previous call, 0 for first call
- * @param count - Number of entries per page (default 100)
- * @returns Next cursor and summaries. Cursor is 0 when complete.
- *
- * @knipignore No caller — the paginated read for a list UI that does not exist yet.
- */
-export async function getSystemSummariesPaginated(
-  cursor: number = 0,
-  count: number = 100,
-): Promise<{ cursor: number; summaries: SystemSummariesMap }> {
-  const key = summariesKey();
-  const [nextCursor, results] = await kv.hscan(key, cursor, { count });
-
-  // HSCAN returns flat array: [field1, value1, field2, value2, ...]
-  const summaries: SystemSummariesMap = {};
-  for (let i = 0; i < results.length; i += 2) {
-    const systemId = String(results[i]);
-    const summary = results[i + 1] as unknown as SystemSummary;
-    summaries[systemId] = summary;
-  }
-
-  return { cursor: Number(nextCursor), summaries };
-}
-
-/**
  * Clear summary for a system (e.g., when system is removed)
  *
  * @param systemId - System ID

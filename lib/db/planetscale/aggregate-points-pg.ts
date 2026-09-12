@@ -408,31 +408,3 @@ export async function recompute5mForRawObservationsBestEffort(
     console.error(`[PG-Agg5m] recompute failed for system=${systemId}:`, err);
   }
 }
-
-/**
- * 1d cron hook: recompute a device/day's 1d aggregates in PG from PG 5m. Best-effort.
- * No-op if PG isn't configured.
- *
- * @knipignore No caller — the best-effort variant of a recompute every current path does strictly.
- */
-export async function recompute1dForDayBestEffort(
-  device: DeviceForDailyAgg,
-  day: CalendarDate,
-): Promise<void> {
-  if (!planetscaleDb) return;
-  try {
-    const { rowsUpserted } = await recomputeAgg1dForDay(
-      planetscaleDb,
-      device,
-      day,
-    );
-    console.log(
-      `[PG-Agg1d] system=${device.id} day=${day.toString()} upserted=${rowsUpserted}`,
-    );
-  } catch (err) {
-    console.error(
-      `[PG-Agg1d] recompute failed for system=${device.id} day=${day.toString()}:`,
-      err,
-    );
-  }
-}

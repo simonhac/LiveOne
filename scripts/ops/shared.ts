@@ -277,7 +277,7 @@ export async function pointInArea(
  * Render the `detail.dependents` of a referential-integrity 409 (`lib/integrity`), or null when the
  * refusal carries none.
  *
- * Shared because the shape is the server's, not any one domain's: `assertNotReliedUpon` answers for
+ * Shared because the shape is the server's, not any one domain's: `refuseIfReliedUpon` answers for
  * dashboards, areas, automations and derivations alike, and `via`/`effect` are the two fields that
  * make a refusal actionable — the ones a second, hand-rolled renderer is most likely to drop.
  */

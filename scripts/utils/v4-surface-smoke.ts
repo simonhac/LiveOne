@@ -1103,7 +1103,7 @@ async function main(): Promise<void> {
           "the plain DELETE did not refuse as expected — not sending a forcing verb after that",
         );
       }
-      // ⚠️ GAP, stated rather than discovered: the SECOND interlock (`assertNotReliedUpon` naming
+      // ⚠️ GAP, stated rather than discovered: the SECOND interlock (`refuseIfReliedUpon` naming
       // the intervals, the output point and any automation) is unreachable from here — provoking it
       // would mean disabling a live production detector. Covered in
       // `app/api/v4/__tests__/derivations-routes.test.ts`.
