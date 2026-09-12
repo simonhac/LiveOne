@@ -4,7 +4,7 @@ primary_region = "syd"
 kill_signal = "SIGTERM"
 kill_timeout = "30s"
 [build]
-  dockerfile = "packages/gousher/deploy/fly/Dockerfile"
+  dockerfile = "Dockerfile"
 [mounts]
   source = "gousher_trial_data"
   destination = "/data"

@@ -1,0 +1,9 @@
+# Only the collector package is required. Exclude workspace credentials, databases,
+# build output and node_modules from remote builder uploads.
+**
+!packages/
+!packages/gousher/
+!packages/gousher/**
+packages/gousher/**/.context
+packages/gousher/**/node_modules
+packages/gousher/**/.env*
