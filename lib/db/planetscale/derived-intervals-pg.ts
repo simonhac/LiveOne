@@ -31,7 +31,7 @@
  */
 import { and, desc, eq, gte, lt, lte, sql } from "drizzle-orm";
 import { planetscaleDb } from "./index";
-import { derivedIntervals } from "./schema";
+import { derivedIntervalProvenance, derivedIntervals } from "./schema";
 import { ReadingsDao } from "@/lib/readings";
 import type { PointId } from "@/lib/ids";
 import { detectRunPeriods, type Sample } from "@/lib/run-tracking/detect";
@@ -43,7 +43,7 @@ import {
   NO_PROVENANCE,
   type PeriodProvenance,
 } from "@/lib/run-tracking/energy";
-import { resolveIntensitySeries } from "@/lib/run-tracking/intensity";
+import { resolveIntensitySeriesByArea } from "@/lib/run-tracking/intensity";
 import type { ResolvedRunDetector } from "@/lib/derivations/resolve";
 
 type PgDb = NonNullable<typeof planetscaleDb>;
@@ -212,6 +212,8 @@ export async function recomputeIntervalsForWindow(
     // Batched energy (one read for the whole window) — replaces the legacy per-event N+1.
     let energies: (number | null)[] = periods.map(() => null);
     let provenance: PeriodProvenance[] = periods.map(() => NO_PROVENANCE);
+    /** Per-area provenance — one entry per area that can price these runs, parallel to `periods`. */
+    let areaProvenance: { areaId: string; rows: PeriodProvenance[] }[] = [];
     /**
      * No counter, but the signal IS power — so integrate it rather than storing NULL.
      *
@@ -260,7 +262,9 @@ export async function recomputeIntervalsForWindow(
       // advisory lock and, at this point, no row locks at all.
       const spanStartMs = Math.min(...windows.map((w) => w.startMs));
       const spanEndMs = Math.max(...windows.map((w) => w.endMs ?? nowMs));
-      const intensity = await resolveIntensitySeries(db, det, {
+      // ONE SERIES PER AREA that can price these runs, not one for "the" area. See
+      // `derived_interval_provenance` in the schema for why this stopped being a single answer.
+      const areaSeries = await resolveIntensitySeriesByArea(db, det, {
         startMs: spanStartMs,
         endMs: spanEndMs,
       });
@@ -273,7 +277,17 @@ export async function recomputeIntervalsForWindow(
         ? allocateCounterToWindows(windows, readings, nowMs, samples)
         : allocatePowerToWindows(windows, samples, nowMs);
       energies = energyFromAllocation(alloc);
-      if (intensity) provenance = provenanceFromAllocation(alloc, intensity);
+      areaProvenance = areaSeries.map(({ areaId, series }) => ({
+        areaId,
+        rows: provenanceFromAllocation(alloc, series),
+      }));
+      // The LEGACY columns on `derived_intervals`, for readers that have not yet been taught to name
+      // an area. Populated only when exactly ONE area can price these runs — which is every device
+      // in the fleet bar Kutis, and was the tacit assumption the dropped `LIMIT 1` encoded. When two
+      // areas can, "what did this run cost?" genuinely has no single answer, so the columns say
+      // UNKNOWN and the area-aware reader supplies the number. That is a deliberate choice not to
+      // guess; the alternative is the silent $0.00 this whole change exists to remove.
+      if (areaProvenance.length === 1) provenance = areaProvenance[0].rows;
     }
 
     // Delete exactly the span we rebuild: [anchor, winEnd]. Bounded so later periods (relative to
@@ -322,6 +336,40 @@ export async function recomputeIntervalsForWindow(
       }));
       await tx.insert(derivedIntervals).values(rows);
       inserted = rows.length;
+
+      // Per-area provenance, after its parent rows exist (composite FK) and with no delete of its
+      // own: the `DELETE FROM derived_intervals` above CASCADEs, so a run's old per-area rows can
+      // never outlive the run and be read alongside its replacement.
+      //
+      // An ALL-NULL row is skipped rather than stored. "No row for this area" is already the way this
+      // table spells unknown, so a row of four nulls would be a second spelling of the same thing —
+      // and the case it would cover (a window the counter never spanned, `NO_PROVENANCE`) is exactly
+      // unknown.
+      const provRows = areaProvenance.flatMap(({ areaId, rows: pv }) =>
+        periods.flatMap((p, i) => {
+          const v = pv[i];
+          if (
+            v.costC === null &&
+            v.emissionsG === null &&
+            v.renewableKwh === null &&
+            v.estimatedKwh === null
+          )
+            return [];
+          return [
+            {
+              derivationId: det.id,
+              startTime: new Date(p.startMs),
+              areaId,
+              costC: v.costC,
+              emissionsG: v.emissionsG,
+              renewableKwh: v.renewableKwh,
+              estimatedKwh: v.estimatedKwh,
+            },
+          ];
+        }),
+      );
+      if (provRows.length > 0)
+        await tx.insert(derivedIntervalProvenance).values(provRows);
     }
 
     return {

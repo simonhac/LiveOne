@@ -36,7 +36,7 @@ open(root+'/schema.sql','w').write('\n'.join(parts))
 PY
 "$PG_BINDIR/psql" "$GOUSHER_TEST_DATABASE_URL" -v ON_ERROR_STOP=1 -f "$trial_dir/schema.sql" > "$trial_dir/schema.log"
 "$PG_BINDIR/psql" "$GOUSHER_TEST_DATABASE_URL" -v ON_ERROR_STOP=1 -c 'DROP TABLE managed_pollers; DROP TABLE collectors;' > /dev/null
-"$PG_BINDIR/psql" "$GOUSHER_TEST_DATABASE_URL" -v ON_ERROR_STOP=1 -f drizzle-planetscale/0066_gousher_managed_pollers.sql > "$trial_dir/migration.log"
+"$PG_BINDIR/psql" "$GOUSHER_TEST_DATABASE_URL" -v ON_ERROR_STOP=1 -f drizzle-planetscale/0067_gousher_managed_pollers.sql > "$trial_dir/migration.log"
 (cd packages/gousher
  for vendor in deepsea fronius selectronic sigenergy; do
   go run ./cmd/gousher -replay "internal/gousher/testdata/$vendor.jsonl" -replay-batches "$trial_dir/$vendor.jsonl"

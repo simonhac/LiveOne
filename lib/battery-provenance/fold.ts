@@ -191,9 +191,9 @@ export interface FoldState {
    * charging from solar gave up vs exporting. An independent delta accumulator (not a second full
    * basis); only solar charge contributes (`solarCostOpp − solarCost`), everything else scales it in
    * lockstep with `costC`. The full opportunity basis, if ever wanted, is `costC + forgoneC`. It is
-   * ≥ 0 given the producer invariant `solarCostOpp ≥ solarCost` (compute.ts floors the feed-in at 0
-   * with solarCost≡0); the fold itself neither types nor clamps that, so a caller that priced solar's
-   * actual cost above its forgone rate could drive it negative.
+   * ≥ 0 given the producer invariant `solarCostOpp ≥ solarCost` (compute.ts floors the feed-in
+   * RECEIPT at 0 with solarCost≡0); the fold itself neither types nor clamps that, so a caller that
+   * priced solar's actual cost above its forgone rate could drive it negative.
    */
   forgoneC: number;
   /** E_est — portion of the stored energy whose provenance was estimated/provisional (kWh). */

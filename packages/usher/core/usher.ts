@@ -17,6 +17,7 @@ import { buildEntries, type UsherStore } from "./factory";
 import { runLoop, type ScheduledEntry } from "./run";
 import { Blackbox } from "./blackbox";
 import { Spool } from "./spool";
+import { startSpoolMetrics } from "./spool-metrics";
 import { recordTick, recordDelivery, getTickState } from "../state/usher-state";
 import { registry } from "../state/registry";
 import {
@@ -70,7 +71,19 @@ async function buildStore(
   const blackbox = await Blackbox.create(path.join(dataDir, "blackbox"), {
     log,
   });
-  const spool = await Spool.create(path.join(dataDir, "spool"), { log });
+  const spoolDir = path.join(dataDir, "spool");
+
+  // Registered BEFORE the spool exists, because the metrics have to be able to report that the
+  // spool does NOT exist. `Spool.create` returning null is the worst of the failure modes here —
+  // buffering is silently off and every transient push failure is discarded — and a metric set
+  // that only comes up when the spool does would report that state as a clean absence of data.
+  let spool: Spool | null = null;
+  const { onDrop } = startSpoolMetrics({
+    dir: spoolDir,
+    getSpool: () => spool,
+  });
+  spool = await Spool.create(spoolDir, { log, onDrop });
+
   log(
     `usher: store at ${dataDir} (blackbox ${blackbox ? "on" : "OFF"}, spool ${spool ? "on" : "OFF"})`,
   );

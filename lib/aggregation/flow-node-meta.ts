@@ -127,7 +127,7 @@ export function labelForFlowPath(
 
 /**
  * The per-load SELL price series feeding `computeFlowAccounting`'s `revenueC` leg. Only the grid EXPORT
- * sink is priced — by the resolved feed-in tariff (`resolveExportPriceSeries`) — because it is the only
+ * sink is priced — by the area's bound feed-in series (`bidi.grid.export/rate`, negated) — because it is the only
  * sink that pays us; every other load consumes energy rather than buying it, so it gets `null` ("no
  * knowable price") and contributes nothing to the revenue leg or its denominator.
  *

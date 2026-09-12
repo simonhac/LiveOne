@@ -1,134 +1,38 @@
 /**
- * Export (feed-in) tariff resolution — pure, NO IO. Turns an area's `ExportTariffConfig` into the single
- * per-interval `exportPrice[]` series (c/kWh feed-in) that the battery-provenance fold consumes for SOLAR
- * OPPORTUNITY COST. The fold never sees modes/schedules/bands — only this series — so a future persisted
- * "tariff device" (Option B) is a drop-in: it would materialise the SAME schedule (via `ScheduleTariffProvider`,
- * reused by that writer) into a `bidi.grid.export/rate` point the loader reads exactly like Amber, with no
- * fold change. See `lib/capabilities/config.ts` for the schema and docs/architecture/battery-provenance.md.
+ * The feed-in tariff's SIGN CONVENTION — the one thing left of export-tariff resolution once the
+ * tariff became a bound point rather than config.
  *
- * Local time uses the Area's FIXED standard offset (`tzOffsetMin`), matching how the rest of the engine
- * derives local-day boundaries (see `battery-provenance-pg.ts` localDaysInRange) — DST-stable by design.
+ * WHAT WAS HERE, AND WHY IT WENT. This module used to turn an `ExportTariffConfig`
+ * (`none` | `amber` | `schedule`) into the per-interval `exportPrice[]` series the fold consumes,
+ * with a `ScheduleTariffProvider` that synthesised a retailer schedule out of effective-dated plans
+ * in `devices.config` jsonb. That was a SECOND implementation of "a price over time" alongside the
+ * one the system already has — a point, bound to a role in an area — and the two could disagree:
+ * `mode: "amber"` carried no information whatsoever, since it resolved to the very
+ * `bidi.grid.export/rate` series the area already binds. An area's feed-in tariff is now simply that
+ * bound point, and a site whose tariff is NOT measured will publish one from a tariff device (see
+ * docs/plans/block-model.md) rather than describe it in config. Deferred until a residence needs it:
+ * no site in the fleet had `mode: "schedule"`, and its time-of-use half threw on use.
+ *
+ * That deletion also removed a live inconsistency worth recording. Amber's measured
+ * `bidi.grid.export/rate` is NEGATIVE when you are being paid, while a schedule plan's `cPerKwh` was
+ * a positive receipt — so `mode` was the discriminator that reconciled the sign, and the fold's own
+ * opportunity-cost leg (`Math.max(0, exportPrice[i])`, lib/battery-provenance/compute.ts) therefore
+ * floored an `amber` site's solar opportunity cost to 0 while giving a `schedule` site a non-zero
+ * one. The same physical situation priced two ways, decided by which representation somebody picked.
+ * With one source there is one convention and nothing left to discriminate on.
  */
-import type {
-  ExportTariffConfig,
-  ExportTariffPlan,
-  ExportTariffRate,
-} from "@/lib/capabilities/config";
-
-/** A source of the feed-in price at an interval end. `null` = no export tariff (opportunity == actual). */
-export interface TariffProvider {
-  /** Feed-in price (c/kWh) applicable at `intervalEndMs` (epoch ms). null = no tariff at that time. */
-  exportPriceAt(intervalEndMs: number): number | null;
-}
-
-/** Constant no-tariff provider (mode "none", or a schedule that predates its earliest plan). */
-export const NO_TARIFF: TariffProvider = { exportPriceAt: () => null };
-
-/** Local calendar fields for an epoch-ms at a fixed standard offset (UTC getters on the shifted instant). */
-function localFields(ms: number, tzOffsetMin: number) {
-  const d = new Date(ms + tzOffsetMin * 60000);
-  return {
-    ymd: d.toISOString().slice(0, 10), // "YYYY-MM-DD" (ISO dates sort lexically)
-    minutesOfDay: d.getUTCHours() * 60 + d.getUTCMinutes(),
-    dayOfWeek: d.getUTCDay(), // 0=Sun … 6=Sat
-    month: d.getUTCMonth() + 1, // 1 … 12
-  };
-}
 
 /**
- * A retailer-schedule provider: selects the effective plan for the interval's local date (newest
- * `effectiveFrom` ≤ date wins; before the earliest plan ⇒ null) then evaluates its rate. Pure & reusable —
- * the future tariff-device writer (Option B) will call this same class to materialise the export-rate point.
+ * The measured feed-in series in the RECEIPTS convention — positive c/kWh = money we RECEIVE — which
+ * is what the flow accounting's `revenueC` leg needs.
+ *
+ * NOT interchangeable with the raw series the fold reads: `bidi.grid.export/rate` is Amber's raw
+ * feedIn `perKwh`, negative when you are being paid (`AmberNow.tsx` flips it the same way for
+ * display), and the fold consumes it un-normalised. This negation is the whole difference, and it
+ * has a name so that the two readings of one series cannot be confused for the same number.
  */
-export class ScheduleTariffProvider implements TariffProvider {
-  private readonly plans: ExportTariffPlan[];
-
-  constructor(
-    plans: ExportTariffPlan[],
-    private readonly tzOffsetMin: number,
-  ) {
-    // Ascending by effectiveFrom; a missing effectiveFrom is "always" (sorts earliest).
-    this.plans = [...plans].sort((a, b) =>
-      (a.effectiveFrom ?? "").localeCompare(b.effectiveFrom ?? ""),
-    );
-  }
-
-  exportPriceAt(intervalEndMs: number): number | null {
-    const f = localFields(intervalEndMs, this.tzOffsetMin);
-    const plan = this.pickPlan(f.ymd);
-    if (!plan) return null;
-    return evalRate(plan.rate, intervalEndMs, this.tzOffsetMin);
-  }
-
-  /** Newest plan whose `effectiveFrom` ≤ the local date (missing effectiveFrom = always). */
-  private pickPlan(localYmd: string): ExportTariffPlan | null {
-    let chosen: ExportTariffPlan | null = null;
-    for (const p of this.plans) {
-      if (p.effectiveFrom === undefined || p.effectiveFrom <= localYmd)
-        chosen = p;
-      else break; // sorted ascending — the rest are in the future
-    }
-    return chosen;
-  }
-}
-
-/** Evaluate a rate at an instant. `flat` is built now; `tou` is schema-reserved (evaluator lands later). */
-function evalRate(
-  rate: ExportTariffRate,
-  intervalEndMs: number,
-  tzOffsetMin: number,
-): number | null {
-  if (rate.kind === "flat") return rate.cPerKwh;
-  // rate.kind === "tou" — reserved for the TOU/tariff-device work; not evaluated yet.
-  void intervalEndMs;
-  void tzOffsetMin;
-  throw new Error(
-    "TOU export tariffs are not implemented yet (schema reserved for the TOU / tariff-device work)",
-  );
-}
-
-/**
- * Resolve the per-interval feed-in price series (c/kWh) the fold consumes, aligned to `timeline`.
- *   - undefined | { mode: "none" } → all null (no opportunity cost).
- *   - { mode: "amber" }            → the measured `bidi.grid.export/rate` series (loader-supplied).
- *   - { mode: "schedule", plans }  → synthesised on-the-fly from the effective-dated schedule.
- * `amberExportPrice` is the measured series the loader already reads (used only for mode "amber").
- */
-export function resolveExportPriceSeries(
-  cfg: ExportTariffConfig | undefined,
-  timeline: number[],
-  tzOffsetMin: number,
-  amberExportPrice: (number | null)[],
+export function exportReceiptSeries(
+  exportPrice: (number | null)[],
 ): (number | null)[] {
-  if (!cfg || cfg.mode === "none") return timeline.map(() => null);
-  if (cfg.mode === "amber") return amberExportPrice;
-  const provider = new ScheduleTariffProvider(cfg.plans, tzOffsetMin);
-  return timeline.map((ms) => provider.exportPriceAt(ms));
-}
-
-/**
- * The same feed-in series in the RECEIPTS convention — positive c/kWh = money we RECEIVE — which is what
- * the flow accounting's `revenueC` leg needs. It is NOT interchangeable with
- * {@link resolveExportPriceSeries}: the two tariff modes disagree in sign at the source, and that
- * function hands both to the fold verbatim.
- *
- *   - `amber`    — the measured `bidi.grid.export/rate` is Amber's raw feedIn `perKwh`, which is
- *                  NEGATIVE when you are being paid (`AmberNow.tsx` flips it the same way for display).
- *                  Negated here.
- *   - `schedule` — an `ExportTariffPlan`'s `cPerKwh` is already a plain positive receipt. Passed through.
- *
- * ⚠️ The fold's own solar opportunity cost reads the un-normalised series through
- * `Math.max(0, exportPrice[i])`, so on an `amber` Area every interval floors to 0 and `forgoneC` /
- * the `price-opportunity` point stay flat. That predates this function and is deliberately left alone —
- * changing it would move existing battery-provenance numbers.
- */
-export function resolveExportReceiptSeries(
-  cfg: ExportTariffConfig | undefined,
-  timeline: number[],
-  tzOffsetMin: number,
-  amberExportPrice: (number | null)[],
-): (number | null)[] {
-  if (cfg?.mode === "amber")
-    return amberExportPrice.map((v) => (v === null ? null : -v));
-  return resolveExportPriceSeries(cfg, timeline, tzOffsetMin, amberExportPrice);
+  return exportPrice.map((v) => (v === null ? null : -v));
 }

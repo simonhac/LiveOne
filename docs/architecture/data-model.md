@@ -40,7 +40,8 @@ truth for every column; these are roles, not schemas.
 | `area_members`      | An area's 1..N member devices, `(area_id, device_id, ordinal)`.                                                                                     |
 | `area_bindings`     | Typed role→point **overrides**; absent means the area defaults to the union of its members' points.                                                 |
 | `derivations`       | Persisted derived series (run tracking, HWS model), generalizing the former per-feature tracker tables.                                             |
-| `derived_intervals` | Materialized run/interval records produced by a derivation, with per-interval statistics and provenance.                                            |
+| `derived_intervals` | Materialized run/interval records produced by a derivation, with per-interval signal statistics. Its four provenance columns are LEGACY and filled only when a single area can price the run — see below.            |
+| `derived_interval_provenance` | What a run cost / emitted / drew **through one area's meters**, `(derivation_id, start_time, area_id)`. A run is a device fact; its cost is area-relative, so there is one row per area that can price it and NO row means unknown-in-that-area. Same keying as `point_readings_flow_attr_1d` and `battery_provenance_daily`. |
 | `automations`       | Deferred-action rules scoped to an area, with a jsonb trigger/action pair: reactive `charge-session` (stops a charge) and scheduled `exercise` (starts a generator). TypeID `au_`. See [automations.md](../automations.md). |
 
 **Presentation**

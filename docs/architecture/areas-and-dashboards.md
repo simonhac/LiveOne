@@ -66,7 +66,7 @@ one deterministic chain:
 
 ```
 explicit binding (lowest `priority` wins) → auto shape-match (exactly ONE candidate)
-  → area config producer (areas.config: generatorSource, exportTariff, …) → absent
+  → area config producer (areas.config: generatorSource, …) → absent
 ```
 
 Two candidates with no explicit binding is a **"needs your choice"** state surfaced in the editor,

@@ -47,7 +47,7 @@ jest.mock("@/lib/readings", () => ({
 }));
 // Provenance is resolved from the persisted blend and is not what this test is about.
 jest.mock("@/lib/run-tracking/intensity", () => ({
-  resolveIntensitySeries: async () => null,
+  resolveIntensitySeriesByArea: async () => [],
 }));
 jest.mock("@/lib/db/planetscale", () => ({ planetscaleDb: null }));
 

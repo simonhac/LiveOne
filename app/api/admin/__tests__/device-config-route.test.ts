@@ -10,9 +10,9 @@
  *
  * Observed 2026-09-12: `spec` was never parsed, so a single press of Save in the Device Config tab
  * would have erased Kutis's `{solarSizeKw: 11.9, batterySizeKwh: 32.24}` (and with it the chart y-axis
- * hint `maxPowerHintFromSpec` derives from it), and Kinkora Mondo's
- * `batteryProvenance.exportTariff: {mode:"amber"}` — the entire source of that site's solar opportunity
- * cost. Both are silent: the PATCH answers 200 either way.
+ * hint `maxPowerHintFromSpec` derives from it), and Daylesford's
+ * `batteryProvenance.generatorSource` — the off-grid site's entire cost and emissions basis. Both are
+ * silent: the PATCH answers 200 either way.
  *
  * So the assertions below are round-trip assertions, not field-by-field ones. If you add a field to
  * `DeviceConfig`, add it to `FULL_CONFIG` — a new field that does not survive `GET → PATCH` is the bug
@@ -50,7 +50,14 @@ const FULL_CONFIG: DeviceConfig = {
   spec: { solarSizeKw: 11.9, batterySizeKwh: 32.24 },
   nameplateKw: 10,
   updateCadenceSeconds: 300,
-  batteryProvenance: { exportTariff: { mode: "amber" } },
+  batteryProvenance: {
+    generatorSource: {
+      emissionsIntensity: 1000,
+      pricePerKwh: 45,
+      renewableFraction: 0,
+    },
+    reserveFloorMaxPct: 12,
+  },
 };
 
 const params = Promise.resolve({ systemId: "13" });

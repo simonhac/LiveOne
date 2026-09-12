@@ -303,7 +303,7 @@ export function computeFlowAccounting(input: {
    * Optional per-load SELL price (c/kWh at each timestamp) — index-aligned to `loads`, a null entry (or
    * a null sample) meaning "this sink pays nothing knowable". Drives the `revenueC` leg. Independent of
    * `sourceIntensities`: supply either, both, or neither. Today the caller sets only `load.grid`, from
-   * the resolved export tariff (`resolveExportPriceSeries`).
+   * the area's bound feed-in series (`bidi.grid.export/rate`, negated by `exportReceiptSeries`).
    */
   loadPrices?: ((number | null)[] | null)[];
   /**

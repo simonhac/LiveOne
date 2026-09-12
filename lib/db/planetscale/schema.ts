@@ -1160,6 +1160,76 @@ export const derivedIntervals = pgTable(
   }),
 );
 
+/**
+ * PER-AREA run provenance — what a run cost, emitted and drew AS SEEN THROUGH ONE AREA'S METERS.
+ *
+ * WHY THIS IS NOT FOUR COLUMNS ON `derived_intervals`. It was, and that was the defect. A run is a
+ * DEVICE fact (the charger drew 17.8 kWh — true regardless of who is looking), but its cost, carbon
+ * and renewable share are only meaningful RELATIVE TO AN AREA'S BINDINGS: the same Kutis EV session
+ * costs 17.9c through High Street Kew, which binds the Amber meter, and is UNPRICEABLE through the
+ * Kutis area-of-one, which does not. Both answers are correct. `derived_intervals` could hold one,
+ * so `resolveSiteForDetector` picked an area by `ORDER BY ordinal, areas.id LIMIT 1` — a guess at a
+ * key the table had dropped, unobservable from outside, and silently wrong for two months (every
+ * Kutis EV run read $0.00 while the Sankey priced the same energy fine).
+ *
+ * Every OTHER layer of the provenance system was already keyed by area and always has been:
+ * `point_readings_flow_attr_1d` is PK'd on `(area_id, day, …)`, `battery_provenance_daily` on
+ * `(area_id, day)`, the fold's checkpoints likewise, and the blend's output points live on a helper
+ * device minted PER AREA (which is why "Kutis · derived" and "High Street Kew · derived" both exist
+ * and compute different blends for the same physical battery). Runs were the one exception. This
+ * table removes the exception rather than improving the guess.
+ *
+ * So the writer ENUMERATES instead of choosing: one row per (run, area-that-can-price-it). A device
+ * whose only area is its own area-of-one gets exactly one row and no ambiguity can arise — which is
+ * every device in the fleet bar one. The reader names its area (`/api/device/{handle}/run-periods`
+ * is already keyed on the viewing area's handle), and NO ROW means unknown-in-this-area, which is a
+ * true answer rather than the confident zero the guess produced.
+ *
+ * The four columns keep `derived_intervals`' exact semantics — NULL = UNKNOWN, never zero, and
+ * `estimated_kwh` is their confidence denominator. See `lib/run-tracking/energy.ts`.
+ */
+export const derivedIntervalProvenance = pgTable(
+  "derived_interval_provenance",
+  {
+    derivationId: uuid("derivation_id").notNull(),
+    startTime: tsMs("start_time").notNull(),
+    // The area whose bindings priced this run. CASCADE: provenance is disposable derived output,
+    // reproducible by a recompute, so it follows the area rather than blocking its delete — the same
+    // rule `derived_intervals` follows for its derivation, and what keeps the prod→dev sync's area
+    // idDrift cleanup safe.
+    areaId: uuid("area_id")
+      .notNull()
+      .references(() => areas.id, { onDelete: "cascade" }),
+    costC: doublePrecision("cost_c"), // cents (signed) — Σ sliceKwh × price(t) in THIS area
+    emissionsG: doublePrecision("emissions_g"), // grams CO₂
+    renewableKwh: doublePrecision("renewable_kwh"), // kWh
+    estimatedKwh: doublePrecision("estimated_kwh"), // kWh whose source intensity was estimated OR unknown
+    createdAt: tsMs("created_at").notNull().defaultNow(),
+    updatedAt: tsMs("updated_at").notNull().defaultNow(),
+  },
+  (table) => ({
+    pk: primaryKey({
+      columns: [table.derivationId, table.startTime, table.areaId],
+    }),
+    // Composite FK onto the run itself, so a recompute's `DELETE FROM derived_intervals` over a
+    // window takes this table's rows with it. That is the whole reason the parent's identity is
+    // repeated here rather than a surrogate key being introduced: the recompute already deletes by
+    // `(derivation_id, start_time)` range, and CASCADE means the provenance writer never has to
+    // delete anything of its own — there is no window in which a run's old per-area rows could
+    // outlive the run and be read alongside its replacement.
+    runFk: foreignKey({
+      columns: [table.derivationId, table.startTime],
+      foreignColumns: [
+        derivedIntervals.derivationId,
+        derivedIntervals.startTime,
+      ],
+      name: "derived_interval_provenance_run_fk",
+    }).onDelete("cascade"),
+    // The read path is "this area's provenance for these runs" — area first, then the run range.
+    areaIdx: index("dip_area_start_idx").on(table.areaId, table.startTime),
+  }),
+);
+
 // dashboard_revisions: post-image edit history — row (dashboard, N) IS version N, written in the
 // SAME transaction as every doc write (updateDashboardDoc, the CLI/scripts' shared writeDoc, and
 // createDashboard's revision-1 row; wired 2026-08-30 — the table predates its writers by a phase).
@@ -1710,6 +1780,8 @@ export type Derivation = typeof derivations.$inferSelect;
 export type NewDerivation = typeof derivations.$inferInsert;
 export type DerivedInterval = typeof derivedIntervals.$inferSelect;
 export type NewDerivedInterval = typeof derivedIntervals.$inferInsert;
+export type NewDerivedIntervalProvenance =
+  typeof derivedIntervalProvenance.$inferInsert;
 export type DashboardRevision = typeof dashboardRevisions.$inferSelect;
 export type NewDashboardRevision = typeof dashboardRevisions.$inferInsert;
 export type LegacyHandle = typeof legacyHandles.$inferSelect;

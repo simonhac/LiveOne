@@ -345,9 +345,19 @@ export function blendLoadIntensities(
   return steps;
 }
 
+/** One AREA through which a detector's runs can be priced. */
+interface DetectorSite {
+  config: (typeof devices.$inferSelect)["config"] | null;
+  handle: number | null;
+  /** The SITE area's id — what `boundPoints` is keyed by (the fold reaches it via `handle`). */
+  areaId: string;
+  /** The site area's location, for the NEM region the grid signal comes from. */
+  location: AreaLocation | null;
+}
+
 /**
- * The SITE the detector's device belongs to — the area whose bindings the battery-provenance fold
- * reads — as both its battery device's config and its addressing handle.
+ * EVERY site a detector's runs can be priced through — the areas whose bindings the
+ * battery-provenance fold reads — each with its battery device's config and its addressing handle.
  *
  * WHY THIS IS A HOP AT ALL. `generatorSource` is config on the site's BATTERY device, and the fold
  * is keyed by the site area's handle — but a detector's OWN device is typically not the battery
@@ -357,24 +367,33 @@ export function blendLoadIntensities(
  * config, and that area's handle. One place to configure: a site that prices its Sankey prices its
  * runs.
  *
+ * 🛑 THIS RETURNS A LIST, AND THAT IS THE POINT. It used to `LIMIT 1` under an
+ * `ORDER BY ordinal, areas.id`, because run provenance was four columns on `derived_intervals` with
+ * no area on the row — so something had to pick one of a device's areas, and it picked by a rule
+ * that is invisible from outside the query. A device can genuinely belong to two areas that BOTH
+ * price it differently and both correctly (Kutis sits in its own area-of-one and in High Street Kew,
+ * which is the only one of the two that binds the Amber meter), and the pick silently went to the
+ * one that could not price at all: every Kutis EV run read $0.00 for two months while the Sankey
+ * priced the same energy without difficulty. `derived_interval_provenance` is keyed per area, like
+ * every other layer of the provenance system, so the caller now writes one row per site and nothing
+ * chooses. The ordering that remains is for STABLE OUTPUT ORDER, not preference.
+ *
+ * `areas.status = 'active'` is new with the list, and was a latent defect in its own right: nothing
+ * excluded an ARCHIVED area, so an archived site that still carried a `battery/power` binding was a
+ * legitimate candidate for pricing live runs (Kutis has exactly such an area — "Kuti House",
+ * archived — which is harmless only because it has no bindings).
+ *
  * Migration 0063 removed the first hop. This used to start from the detector's `area_id`, walk to
  * that area's member devices, and only then fan out — because a detector was FILED under an area
  * rather than owned by a device. `det.ownerDeviceId` is that device directly, so the `member` alias
  * and its join are gone; nothing else about the resolution changed.
  */
-async function resolveSiteForDetector(
+async function listSitesForDetector(
   db: PgDb,
   det: ResolvedRunDetector,
-): Promise<{
-  config: (typeof devices.$inferSelect)["config"] | null;
-  handle: number | null;
-  /** The SITE area's id — what `boundPoints` is keyed by (the fold reaches it via `handle`). */
-  areaId: string;
-  /** The site area's location, for the NEM region the grid signal comes from. */
-  location: AreaLocation | null;
-} | null> {
+): Promise<DetectorSite[]> {
   const sibling = alias(areaMembers, "sibling");
-  const [row] = await db
+  const rows = await db
     .select({
       config: devices.config,
       handle: legacyHandles.handle,
@@ -403,29 +422,36 @@ async function resolveSiteForDetector(
     .leftJoin(legacyHandles, eq(legacyHandles.areaId, sibling.areaId))
     // INNER, and total: `area_members.area_id` is an FK into `areas`, so this cannot drop a row.
     .innerJoin(areas, eq(areas.id, sibling.areaId))
-    .where(eq(sibling.deviceId, det.ownerDeviceId))
+    .where(
+      and(
+        eq(sibling.deviceId, det.ownerDeviceId),
+        // See the doc comment: an ARCHIVED area is not a site. Without this an archived area with a
+        // stale `battery/power` binding would price live runs.
+        eq(areas.status, "active"),
+      ),
+    )
     // ORDINAL, not priority — this must agree with the fold, which picks the battery device as the
     // first `role=battery, metric=power` of `boundPoints`, ordered by `ordinal`
     // (lib/battery-provenance/load.ts). Ordering by `priority` looks equivalent and is not: the two
     // columns are independent, so a site with two battery bindings could price its runs off one
-    // device and its Sankey off the other.
-    //
-    // `areaId` is the tiebreak, and it is load-bearing rather than cosmetic: this query fans out
-    // across EVERY area the device belongs to, while `ordinal` is only meaningful WITHIN one area
-    // (`area_bindings_slot_priority_unique` is scoped to `area_id`). Without it, two areas binding
-    // at the same ordinal would resolve to whichever row Postgres happened to emit first — and the
-    // reader and the writer run this query separately, so they could disagree between two requests.
-    .orderBy(asc(areaBindings.ordinal), asc(sibling.areaId))
-    .limit(1);
+    // device and its Sankey off the other. That still decides WHICH BATTERY DEVICE within an area;
+    // it no longer decides which area, because every area is now returned.
+    .orderBy(asc(areaBindings.ordinal), asc(sibling.areaId));
 
-  return row
-    ? {
-        config: row.config ?? null,
-        handle: row.handle ?? null,
-        areaId: row.areaId,
-        location: (row.location ?? null) as AreaLocation | null,
-      }
-    : null;
+  // One row per (area, battery/power binding), so an area with a fallback chain appears more than
+  // once. First-by-ordinal wins WITHIN an area — the fold's own rule, which is why the ordering
+  // above is still load-bearing even though nothing is dropped between areas.
+  const byArea = new Map<string, DetectorSite>();
+  for (const row of rows) {
+    if (byArea.has(row.areaId)) continue;
+    byArea.set(row.areaId, {
+      config: row.config ?? null,
+      handle: row.handle ?? null,
+      areaId: row.areaId,
+      location: (row.location ?? null) as AreaLocation | null,
+    });
+  }
+  return [...byArea.values()];
 }
 
 /**
@@ -450,32 +476,40 @@ export async function resolveIntensityInputPoints(
   det: ResolvedRunDetector,
 ): Promise<PointId[]> {
   if (!(LOAD_PRICED_ROLES as readonly string[]).includes(det.role)) return [];
-  const site = await resolveSiteForDetector(db, det);
-  // No handle ⇒ `resolveLoadIntensity` returns null and the run is never priced — nothing to watch.
-  if (site?.handle == null) return [];
-
-  const gen = resolveGeneratorIntensity(
-    site.config?.batteryProvenance?.generatorSource,
-  );
-  const bound = await boundPoints(db, site.areaId);
+  // The UNION over every site, because the run is now priced through every site: a factor that moves
+  // in ANY of them changes a stored provenance row, so watching only one would leave the others to
+  // drift silently — the exact defect this probe exists to close.
   const watched: PointId[] = [];
-  for (const b of bound) {
-    if (b.stem === "bidi.battery" && PERSISTED_BLEND_METRICS.includes(b.metric))
-      watched.push(b.point);
-    else if (
-      b.role === "grid" &&
-      b.metric === "rate" &&
-      b.stem === "bidi.grid.import" &&
-      !(gen && gen.priceC != null)
-    )
-      watched.push(b.point);
-  }
-  if (!gen) {
-    const oe = await resolveOeRegionPoints(
-      db,
-      nemRegionForLocation(site.location),
+  for (const site of await listSitesForDetector(db, det)) {
+    // No handle ⇒ `resolveLoadIntensity` returns null for this site and no row is written for it —
+    // nothing to watch.
+    if (site.handle == null) continue;
+
+    const gen = resolveGeneratorIntensity(
+      site.config?.batteryProvenance?.generatorSource,
     );
-    for (const p of oe) watched.push(p.point);
+    const bound = await boundPoints(db, site.areaId);
+    for (const b of bound) {
+      if (
+        b.stem === "bidi.battery" &&
+        PERSISTED_BLEND_METRICS.includes(b.metric)
+      )
+        watched.push(b.point);
+      else if (
+        b.role === "grid" &&
+        b.metric === "rate" &&
+        b.stem === "bidi.grid.import" &&
+        !(gen && gen.priceC != null)
+      )
+        watched.push(b.point);
+    }
+    if (!gen) {
+      const oe = await resolveOeRegionPoints(
+        db,
+        nemRegionForLocation(site.location),
+      );
+      for (const p of oe) watched.push(p.point);
+    }
   }
   return [...new Set(watched)];
 }
@@ -511,11 +545,10 @@ export async function resolveIntensityInputPoints(
  */
 async function resolveLoadIntensity(
   db: PgDb,
-  det: ResolvedRunDetector,
+  site: DetectorSite,
   window: IntensityWindow,
 ): Promise<IntensitySeries | null> {
-  const site = await resolveSiteForDetector(db, det);
-  if (site?.handle == null) return null;
+  if (site.handle == null) return null;
 
   // Pad so the timeline BRACKETS the runs rather than starting inside them: it is built from the
   // agg_5m rows in the requested range, so an unpadded window starts at or after the run's own
@@ -566,23 +599,50 @@ async function resolveLoadIntensity(
   return stepIntensity(inputs.timeline, steps);
 }
 
+/** A detector's factor series AS SEEN THROUGH ONE AREA. */
+export interface AreaIntensitySeries {
+  areaId: string;
+  series: IntensitySeries;
+}
+
 /**
- * Resolve the factor series for a detector, or null when this device's intensity is unknowable.
+ * The factor series for a detector's runs, ONE PER AREA that can price them.
  *
  * Resolved ONCE per detector per recompute — never per run. `window` is required by the load leg
  * (it folds over that span) and ignored by the generator leg (constants); a caller with no runs to
  * price should not call this at all.
+ *
+ * An area that cannot price the runs is OMITTED rather than represented by a null series: no row in
+ * `derived_interval_provenance` for that area is precisely "unknown through this area", and it is
+ * the same answer, stored in the same shape, whether the area lacks a tariff, a handle, a blend or
+ * any data at all. An empty result means the runs are unpriceable everywhere — what a null return
+ * from the single-area predecessor used to mean.
  */
-export async function resolveIntensitySeries(
+export async function resolveIntensitySeriesByArea(
   db: PgDb,
   det: ResolvedRunDetector,
+  window: IntensityWindow,
+): Promise<AreaIntensitySeries[]> {
+  const sites = await listSitesForDetector(db, det);
+  const out: AreaIntensitySeries[] = [];
+  for (const site of sites) {
+    const series = await resolveSiteIntensity(db, det, site, window);
+    if (series) out.push({ areaId: site.areaId, series });
+  }
+  return out;
+}
+
+/** One site's factor series, or null when this device's intensity is unknowable THERE. */
+async function resolveSiteIntensity(
+  db: PgDb,
+  det: ResolvedRunDetector,
+  site: DetectorSite,
   window: IntensityWindow,
 ): Promise<IntensitySeries | null> {
   // Enumerated, not inferred — see the module doc on why `category === "source"` is the wrong gate.
   if (det.role === GENERATOR_ROLE) {
-    const site = await resolveSiteForDetector(db, det);
     const gen = resolveGeneratorIntensity(
-      site?.config?.batteryProvenance?.generatorSource,
+      site.config?.batteryProvenance?.generatorSource,
     );
     if (!gen) return null;
     return constantIntensity({
@@ -598,7 +658,7 @@ export async function resolveIntensitySeries(
     });
   }
   if ((LOAD_PRICED_ROLES as readonly string[]).includes(det.role)) {
-    return resolveLoadIntensity(db, det, window);
+    return resolveLoadIntensity(db, site, window);
   }
   return null;
 }

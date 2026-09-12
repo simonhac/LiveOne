@@ -294,7 +294,7 @@ const DIESEL = constantIntensity({
   gPerKwh: 1000,
   renewable: 0,
   // Fully configured: price, emissions and renewable fraction all known, so none of a diesel run's
-  // energy is estimated. (`resolveIntensitySeries` sets this to 1 when `pricePerKwh` is absent.)
+  // energy is estimated. (`resolveIntensitySeriesByArea` sets this to 1 when `pricePerKwh` is absent.)
   estimatedFraction: 0,
 });
 
