@@ -1,3 +1,4 @@
+FROM caddy:2-alpine AS trial-proxy
 # usher hub — Fly.io image: multi-peer WireGuard hub + cloudflared + the Next.js standalone server.
 #
 # BUILD CONTEXT = the repo root (the usher is an npm workspace and the standalone build traces the
@@ -19,11 +20,16 @@ RUN npm run --workspace @liveone/usher build
 FROM node:22-alpine AS runner
 # wireguard-tools = wg + wg-quick; iproute2 = ip(8); bash = wg-quick interpreter; curl/ca-certs for
 # fetching cloudflared. Kernel WireGuard needs no userspace binary on Fly's Firecracker host.
-RUN apk add --no-cache wireguard-tools iproute2 bash ca-certificates curl \
+RUN apk add --no-cache wireguard-tools iproute2 bash ca-certificates curl openssh-server \
  && case "$(uname -m)" in x86_64) CF=amd64;; aarch64) CF=arm64;; *) CF=amd64;; esac \
  && curl -fsSL "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${CF}" \
       -o /usr/local/bin/cloudflared \
  && chmod +x /usr/local/bin/cloudflared
+
+COPY --from=trial-proxy /usr/bin/caddy /usr/local/bin/caddy
+RUN adduser -D -s /bin/false trial-forward
+COPY packages/usher/deploy/fly/trial-services.sh /usr/local/bin/usher-trial-services
+RUN chmod 755 /usr/local/bin/usher-trial-services
 
 WORKDIR /app
 ENV NODE_ENV=production
