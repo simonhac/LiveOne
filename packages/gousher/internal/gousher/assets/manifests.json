@@ -1,0 +1,491 @@
+{
+  "deepsea": [
+    {
+      "key": "oilPressureKpa",
+      "physicalPathTail": "oil_pressure_kpa",
+      "logicalPathStem": "source.generator.oil",
+      "metricType": "pressure",
+      "metricUnit": "kPa",
+      "defaultName": "Oil Pressure",
+      "subsystem": "generator"
+    },
+    {
+      "key": "coolantTempC",
+      "physicalPathTail": "coolant_temp_c",
+      "logicalPathStem": "source.generator.coolant",
+      "metricType": "temperature",
+      "metricUnit": "°C",
+      "defaultName": "Coolant Temp",
+      "subsystem": "generator"
+    },
+    {
+      "key": "oilTempC",
+      "physicalPathTail": "oil_temp_c",
+      "logicalPathStem": "source.generator.oil",
+      "metricType": "temperature",
+      "metricUnit": "°C",
+      "defaultName": "Oil Temp",
+      "subsystem": "generator"
+    },
+    {
+      "key": "fuelLevelPct",
+      "physicalPathTail": "fuel_level_pct",
+      "logicalPathStem": "source.generator.fuel",
+      "metricType": "level",
+      "metricUnit": "%",
+      "defaultName": "Fuel Level",
+      "subsystem": "generator"
+    },
+    {
+      "key": "chargeAltV",
+      "physicalPathTail": "charge_alt_v",
+      "logicalPathStem": "source.generator.charge_alt",
+      "metricType": "voltage",
+      "metricUnit": "V",
+      "defaultName": "Charge Alternator",
+      "subsystem": "generator"
+    },
+    {
+      "key": "batteryV",
+      "physicalPathTail": "battery_v",
+      "logicalPathStem": "source.generator.battery",
+      "metricType": "voltage",
+      "metricUnit": "V",
+      "defaultName": "Battery Voltage",
+      "subsystem": "generator"
+    },
+    {
+      "key": "engineRpm",
+      "physicalPathTail": "engine_rpm",
+      "logicalPathStem": "source.generator.engine",
+      "metricType": "speed",
+      "metricUnit": "rpm",
+      "defaultName": "Engine Speed",
+      "subsystem": "generator"
+    },
+    {
+      "key": "genFreqHz",
+      "physicalPathTail": "gen_freq_hz",
+      "logicalPathStem": "source.generator.output",
+      "metricType": "frequency",
+      "metricUnit": "Hz",
+      "defaultName": "Generator Frequency",
+      "subsystem": "generator"
+    },
+    {
+      "key": "remoteStartInput",
+      "physicalPathTail": "remote_start_input",
+      "logicalPathStem": "source.generator.remote_start",
+      "metricType": "state",
+      "metricUnit": "bool",
+      "defaultName": "Remote Start Input",
+      "subsystem": "generator"
+    },
+    {
+      "key": "fuelRelay",
+      "physicalPathTail": "fuel_relay",
+      "logicalPathStem": "source.generator.fuel_relay",
+      "metricType": "state",
+      "metricUnit": "bool",
+      "defaultName": "Fuel Relay",
+      "subsystem": "generator"
+    },
+    {
+      "key": "crankRelay",
+      "physicalPathTail": "crank_relay",
+      "logicalPathStem": "source.generator.crank_relay",
+      "metricType": "state",
+      "metricUnit": "bool",
+      "defaultName": "Crank Relay",
+      "subsystem": "generator"
+    },
+    {
+      "key": "atSpeed",
+      "physicalPathTail": "at_speed",
+      "logicalPathStem": "source.generator.at_speed",
+      "metricType": "state",
+      "metricUnit": "bool",
+      "defaultName": "At Speed",
+      "subsystem": "generator"
+    },
+    {
+      "key": "controlModeName",
+      "physicalPathTail": "control_mode",
+      "logicalPathStem": "source.generator.mode",
+      "metricType": "state",
+      "metricUnit": "text",
+      "defaultName": "Control Mode",
+      "subsystem": "generator"
+    }
+  ],
+  "fronius": [
+    {
+      "key": "solarW",
+      "physicalPathTail": "solarW",
+      "logicalPathStem": "source.solar",
+      "defaultName": "Solar",
+      "subsystem": "solar",
+      "metricType": "power",
+      "metricUnit": "W"
+    },
+    {
+      "key": "solarRemoteW",
+      "physicalPathTail": "solarRemoteW",
+      "logicalPathStem": "source.solar.remote",
+      "defaultName": "Solar Remote",
+      "subsystem": "solar",
+      "metricType": "power",
+      "metricUnit": "W"
+    },
+    {
+      "key": "solarLocalW",
+      "physicalPathTail": "solarLocalW",
+      "logicalPathStem": "source.solar.local",
+      "defaultName": "Solar Local",
+      "subsystem": "solar",
+      "metricType": "power",
+      "metricUnit": "W"
+    },
+    {
+      "key": "loadW",
+      "physicalPathTail": "loadW",
+      "logicalPathStem": "load",
+      "defaultName": "Load",
+      "subsystem": "load",
+      "metricType": "power",
+      "metricUnit": "W"
+    },
+    {
+      "key": "batteryW",
+      "physicalPathTail": "batteryW",
+      "logicalPathStem": "bidi.battery",
+      "defaultName": "Battery",
+      "subsystem": "battery",
+      "metricType": "power",
+      "metricUnit": "W"
+    },
+    {
+      "key": "gridW",
+      "physicalPathTail": "gridW",
+      "logicalPathStem": "bidi.grid",
+      "defaultName": "Grid",
+      "subsystem": "grid",
+      "metricType": "power",
+      "metricUnit": "W"
+    },
+    {
+      "key": "batterySOC",
+      "physicalPathTail": "batterySOC",
+      "logicalPathStem": "bidi.battery",
+      "defaultName": "Battery",
+      "subsystem": "battery",
+      "metricType": "soc",
+      "metricUnit": "%"
+    },
+    {
+      "key": "faultCode",
+      "physicalPathTail": "faultCode",
+      "logicalPathStem": null,
+      "defaultName": "Fault",
+      "subsystem": null,
+      "metricType": "diagnostic",
+      "metricUnit": "text"
+    },
+    {
+      "key": "faultTimestamp",
+      "physicalPathTail": "faultTimestamp",
+      "logicalPathStem": null,
+      "defaultName": "Fault",
+      "subsystem": null,
+      "metricType": "diagnostic",
+      "metricUnit": "epochMs"
+    },
+    {
+      "key": "generatorStatus",
+      "physicalPathTail": "generatorStatus",
+      "logicalPathStem": null,
+      "defaultName": "Generator",
+      "subsystem": null,
+      "metricType": "status",
+      "metricUnit": "bool"
+    },
+    {
+      "key": "solarWhInterval",
+      "physicalPathTail": "solarWhInterval",
+      "logicalPathStem": "source.solar",
+      "defaultName": "Solar",
+      "subsystem": "solar",
+      "metricType": "energy",
+      "metricUnit": "Wh"
+    },
+    {
+      "key": "loadWhInterval",
+      "physicalPathTail": "loadWhInterval",
+      "logicalPathStem": "load",
+      "defaultName": "Load",
+      "subsystem": "load",
+      "metricType": "energy",
+      "metricUnit": "Wh"
+    },
+    {
+      "key": "batteryInWhInterval",
+      "physicalPathTail": "batteryInWhInterval",
+      "logicalPathStem": "bidi.battery.charge",
+      "defaultName": "Battery Charge",
+      "subsystem": "battery",
+      "metricType": "energy",
+      "metricUnit": "Wh"
+    },
+    {
+      "key": "batteryOutWhInterval",
+      "physicalPathTail": "batteryOutWhInterval",
+      "logicalPathStem": "bidi.battery.discharge",
+      "defaultName": "Battery Discharge",
+      "subsystem": "battery",
+      "metricType": "energy",
+      "metricUnit": "Wh"
+    },
+    {
+      "key": "gridInWhInterval",
+      "physicalPathTail": "gridInWhInterval",
+      "logicalPathStem": "bidi.grid.import",
+      "defaultName": "Import",
+      "subsystem": "grid",
+      "metricType": "energy",
+      "metricUnit": "Wh"
+    },
+    {
+      "key": "gridOutWhInterval",
+      "physicalPathTail": "gridOutWhInterval",
+      "logicalPathStem": "bidi.grid.export",
+      "defaultName": "Export",
+      "subsystem": "grid",
+      "metricType": "energy",
+      "metricUnit": "Wh"
+    }
+  ],
+  "selectronic": [
+    {
+      "key": "solarW",
+      "physicalPathTail": "solar_w",
+      "logicalPathStem": "source.solar",
+      "defaultName": "Solar",
+      "subsystem": "solar",
+      "metricType": "power",
+      "metricUnit": "W",
+      "transform": null
+    },
+    {
+      "key": "solarInverterW",
+      "physicalPathTail": "solarinverter_w",
+      "logicalPathStem": "source.solar.remote",
+      "defaultName": "Solar Remote",
+      "subsystem": "solar",
+      "metricType": "power",
+      "metricUnit": "W",
+      "transform": null
+    },
+    {
+      "key": "shuntW",
+      "physicalPathTail": "shunt_w",
+      "logicalPathStem": "source.solar.local",
+      "defaultName": "Solar Local",
+      "subsystem": "solar",
+      "metricType": "power",
+      "metricUnit": "W",
+      "transform": null
+    },
+    {
+      "key": "loadW",
+      "physicalPathTail": "load_w",
+      "logicalPathStem": "load",
+      "defaultName": "Load",
+      "subsystem": "load",
+      "metricType": "power",
+      "metricUnit": "W",
+      "transform": null
+    },
+    {
+      "key": "batteryW",
+      "physicalPathTail": "battery_w",
+      "logicalPathStem": "bidi.battery",
+      "defaultName": "Battery",
+      "subsystem": "battery",
+      "metricType": "power",
+      "metricUnit": "W",
+      "transform": null
+    },
+    {
+      "key": "gridW",
+      "physicalPathTail": "grid_w",
+      "logicalPathStem": "bidi.grid",
+      "defaultName": "Grid",
+      "subsystem": "grid",
+      "metricType": "power",
+      "metricUnit": "W",
+      "transform": null
+    },
+    {
+      "key": "batterySOC",
+      "physicalPathTail": "battery_soc",
+      "logicalPathStem": "bidi.battery",
+      "defaultName": "Battery",
+      "subsystem": "battery",
+      "metricType": "soc",
+      "metricUnit": "%",
+      "transform": null
+    },
+    {
+      "key": "faultCode",
+      "physicalPathTail": "fault_code",
+      "logicalPathStem": null,
+      "defaultName": "Fault Code",
+      "subsystem": "system",
+      "metricType": "code",
+      "metricUnit": "number",
+      "transform": null
+    },
+    {
+      "key": "faultTimestamp",
+      "physicalPathTail": "fault_ts",
+      "logicalPathStem": null,
+      "defaultName": "Fault Time",
+      "subsystem": "system",
+      "metricType": "time",
+      "metricUnit": "epochMs",
+      "transform": null
+    },
+    {
+      "key": "generatorStatus",
+      "physicalPathTail": "gen_status",
+      "logicalPathStem": null,
+      "defaultName": "Generator Status",
+      "subsystem": "generator",
+      "metricType": "active",
+      "metricUnit": "bool",
+      "transform": null
+    },
+    {
+      "key": "solarKwhTotal",
+      "physicalPathTail": "solar_wh_total",
+      "logicalPathStem": "source.solar",
+      "defaultName": "Solar",
+      "subsystem": "solar",
+      "metricType": "energy",
+      "metricUnit": "Wh",
+      "transform": "d"
+    },
+    {
+      "key": "loadKwhTotal",
+      "physicalPathTail": "load_wh_total",
+      "logicalPathStem": "load",
+      "defaultName": "Load",
+      "subsystem": "load",
+      "metricType": "energy",
+      "metricUnit": "Wh",
+      "transform": "d"
+    },
+    {
+      "key": "batteryInKwhTotal",
+      "physicalPathTail": "battery_in_wh_total",
+      "logicalPathStem": "bidi.battery.charge",
+      "defaultName": "Battery Charge",
+      "subsystem": "battery",
+      "metricType": "energy",
+      "metricUnit": "Wh",
+      "transform": "d"
+    },
+    {
+      "key": "batteryOutKwhTotal",
+      "physicalPathTail": "battery_out_wh_total",
+      "logicalPathStem": "bidi.battery.discharge",
+      "defaultName": "Battery Discharge",
+      "subsystem": "battery",
+      "metricType": "energy",
+      "metricUnit": "Wh",
+      "transform": "d"
+    },
+    {
+      "key": "gridInKwhTotal",
+      "physicalPathTail": "grid_in_wh_total",
+      "logicalPathStem": "bidi.grid.import",
+      "defaultName": "Import",
+      "subsystem": "grid",
+      "metricType": "energy",
+      "metricUnit": "Wh",
+      "transform": "d"
+    },
+    {
+      "key": "gridOutKwhTotal",
+      "physicalPathTail": "grid_out_wh_total",
+      "logicalPathStem": "bidi.grid.export",
+      "defaultName": "Export",
+      "subsystem": "grid",
+      "metricType": "energy",
+      "metricUnit": "Wh",
+      "transform": "d"
+    }
+  ],
+  "sigenergy": [
+    {
+      "key": "solarW",
+      "physicalPathTail": "solar_w",
+      "logicalPathStem": "source.solar",
+      "defaultName": "Solar",
+      "subsystem": "solar",
+      "metricType": "power",
+      "metricUnit": "W",
+      "transform": null
+    },
+    {
+      "key": "batteryW",
+      "physicalPathTail": "battery_w",
+      "logicalPathStem": "bidi.battery",
+      "defaultName": "Battery",
+      "subsystem": "battery",
+      "metricType": "power",
+      "metricUnit": "W",
+      "transform": null
+    },
+    {
+      "key": "batterySOC",
+      "physicalPathTail": "battery_soc",
+      "logicalPathStem": "bidi.battery",
+      "defaultName": "Battery",
+      "subsystem": "battery",
+      "metricType": "soc",
+      "metricUnit": "%",
+      "transform": null
+    },
+    {
+      "key": "gridW",
+      "physicalPathTail": "grid_w",
+      "logicalPathStem": "bidi.grid",
+      "defaultName": "Grid",
+      "subsystem": "grid",
+      "metricType": "power",
+      "metricUnit": "W",
+      "transform": null
+    },
+    {
+      "key": "loadW",
+      "physicalPathTail": "load_w",
+      "logicalPathStem": "load.rest-of-house",
+      "defaultName": "Load",
+      "subsystem": "load",
+      "metricType": "power",
+      "metricUnit": "W",
+      "transform": null
+    },
+    {
+      "key": "evW",
+      "physicalPathTail": "ev_w",
+      "logicalPathStem": "load.ev",
+      "defaultName": "EV Charger",
+      "subsystem": "ev",
+      "metricType": "power",
+      "metricUnit": "W",
+      "transform": null
+    }
+  ]
+}

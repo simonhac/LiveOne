@@ -20,6 +20,12 @@ import {
 
 const navItems = [
   {
+    name: "Pollers",
+    href: "/admin/pollers",
+    icon: Radio,
+    description: "Managed collector tasks",
+  },
+  {
     name: "Systems",
     href: "/admin/devices",
     icon: Server,

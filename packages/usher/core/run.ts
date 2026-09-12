@@ -252,6 +252,11 @@ export async function tickOnce(
     active = source.isRunning?.(values) ?? false;
     deliveryActive = source.isDeliveryActive?.(values) ?? active;
     readings = buildReadings(source.manifest, values);
+    try {
+      source.capture?.(measurementTime, readings);
+    } catch {
+      log("trial capture unavailable");
+    }
   } catch (e) {
     readError = e instanceof Error ? e.message : String(e);
     log(`[${source.name}] tick error: ${readError}`);

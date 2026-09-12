@@ -1,0 +1,25 @@
+[Unit]
+Description=Gousher shadow collector
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=gousher
+Group=gousher
+WorkingDirectory=/var/lib/gousher
+EnvironmentFile=/etc/gousher/secrets
+ExecStart=/usr/local/bin/gousher -config /etc/gousher/bootstrap.yaml
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=40
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/gousher
+UMask=0077
+MemoryMax=256M
+
+[Install]
+WantedBy=multi-user.target

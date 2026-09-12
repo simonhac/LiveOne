@@ -215,6 +215,9 @@ export function createFusher(opts: FusherOptions): Source {
         gridOutWhInterval: m.gridOutWhInterval,
       };
     },
+    capture(at, expected) {
+      site.captureHarvest(at, expected);
+    },
     // Live detail for the inspector (2 s power flow + per-inverter state + minutely history).
     snapshot() {
       return {

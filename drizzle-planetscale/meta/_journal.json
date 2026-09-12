@@ -463,6 +463,13 @@
       "when": 1789187785061,
       "tag": "0065_area_calendar_tokens",
       "breakpoints": true
+    },
+    {
+      "idx": 66,
+      "version": "7",
+      "when": 1789208065020,
+      "tag": "0066_gousher_managed_pollers",
+      "breakpoints": true
     }
   ]
 }

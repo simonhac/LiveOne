@@ -1,3 +1,4 @@
+import { captureTrial } from "../core/trial-capture";
 /**
  * musher — the Modbus source (DeepSea DSE7410 → gusher).
  *
@@ -223,6 +224,7 @@ export function createMusher(opts: MusherOptions): Source {
   });
   // Retain the last read for the inspector (the generic all-values table).
   let lastValues: Values | null = null;
+  let lastRaw: Record<string, number[]> = {};
   let lastReadAt: string | null = null;
 
   // ── the device mutex ────────────────────────────────────────────────────────
@@ -360,6 +362,9 @@ export function createMusher(opts: MusherOptions): Source {
     try {
       // readAll() returns the whole mapped set; buildReadings pushes only the manifest fields.
       const dump = await dse.readAll();
+      lastRaw = Object.fromEntries(
+        dump.readings.map((r) => [r.field.key, r.rawWords]),
+      );
       const values: Values = {};
       for (const r of dump.readings) values[r.field.key] = r.value;
       deriveDigitalValues(values); // remote_start_input, relays, control_mode text
@@ -566,6 +571,18 @@ export function createMusher(opts: MusherOptions): Source {
       }).catch(() => {});
     },
     control: opts.enableControl ? makeControl() : undefined,
+    capture(at, expected) {
+      captureTrial({
+        source: "deepsea",
+        pollerId: opts.siteId,
+        vendorSiteId: opts.siteId,
+        at,
+        expectedAt: at,
+        raw: lastRaw,
+        harvest: true,
+        expected,
+      });
+    },
     // Live detail for the inspector — the last full register read (all mapped fields).
     snapshot() {
       return { values: lastValues, at: lastReadAt };

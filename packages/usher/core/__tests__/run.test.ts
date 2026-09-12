@@ -681,3 +681,26 @@ describe("shouldDeliverTick", () => {
     ).toBe(true);
   });
 });
+
+it("offers trial capture the exact harvest time and readings without delaying delivery", async () => {
+  const { entry, captured } = makeEntry(async () => ({ x: 5 }));
+  const capture = jest.fn();
+  Object.assign(entry.source, { capture });
+  await tickOnce(entry, () => {});
+  expect(capture).toHaveBeenCalledWith(
+    captured.meta?.measurementTime,
+    captured.readings,
+  );
+});
+
+it("a failed trial capture hook does not fail a production tick", async () => {
+  const { entry, captured } = makeEntry(async () => ({ x: 5 }));
+  Object.assign(entry.source, {
+    capture: () => {
+      throw Error("diagnostic disk failed");
+    },
+  });
+  const result = await tickOnce(entry, () => {});
+  expect(result.error).toBeUndefined();
+  expect(captured.readings).toHaveLength(1);
+});

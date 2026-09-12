@@ -12,6 +12,10 @@ const publicRoutes = [
   "/sign-in(.*)",
   "/sign-up(.*)",
   "/.well-known(.*)", // Tesla partner public key (.pem) — Tesla fetches it unauthenticated
+  "/api/collectors/me/config", // dedicated collector bearer authentication in-handler
+  "/api/collectors/me/credentials",
+  "/api/collectors/me/status",
+  "/api/collectors/me/baseline",
   "/api/health", // Health check endpoint for monitoring
   "/api/health/devices", // per-device poll health for an external monitor — gated by X-Health-Key, not Clerk
   "/api/cron(.*)", // Cron endpoints have their own authentication via CRON_SECRET

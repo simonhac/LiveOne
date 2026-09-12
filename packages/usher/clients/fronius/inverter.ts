@@ -51,6 +51,7 @@ export class Inverter {
 
   // Latest data
   private lastPowerData?: PowerData;
+  onTrialSample?: (at: Date, raw: unknown) => void;
   private lastApiResponse?: any;
   private lastDataFetch?: Date;
   private faultCode?: string | number;
@@ -207,6 +208,11 @@ export class Inverter {
           this.faultTimestamp = undefined;
         }
 
+        try {
+          this.onTrialSample?.(now, data);
+        } catch {
+          /* Recording cannot fail a device read. */
+        }
         return powerData;
       }
 
