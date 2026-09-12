@@ -115,6 +115,34 @@ describe("runtime metrics", () => {
     );
   });
 
+  it("reports CPU as a fraction of the guest's CPUs, not raw seconds", () => {
+    // A ratio survives a `fly scale vm` with no retuning — the same reason mem_total_ratio is one.
+    // It is also bounded, which an alert threshold depends on.
+    const v = __internals.readCpuUtilization();
+    expect(Number.isFinite(v)).toBe(true);
+    expect(v).toBeGreaterThanOrEqual(0);
+    expect(__internals.CPU_COUNT).toBeGreaterThanOrEqual(1);
+  });
+
+  it("reads event-loop utilization and active handles without throwing", () => {
+    // Both are read from inside an observable callback; a throw there takes down the whole
+    // collection cycle rather than one metric.
+    expect(() => __internals.readEventLoopUtilization()).not.toThrow();
+    const elu = __internals.readEventLoopUtilization();
+    expect(elu).toBeGreaterThanOrEqual(0);
+    expect(elu).toBeLessThanOrEqual(1);
+    expect(__internals.readActiveHandles()).toBeGreaterThanOrEqual(0);
+  });
+
+  it("observes no GC series until a GC of that kind has actually run", () => {
+    // An absent `major` series means none has run — which is not the same claim as "major pause
+    // time is zero", and the chart should not be able to make the second one.
+    for (const [kind, ms] of __internals.gcPauseMsByKind) {
+      expect(typeof kind).toBe("string");
+      expect(ms).toBeGreaterThan(0);
+    }
+  });
+
   it("does not throw reading the event-loop p99 before any samples exist", () => {
     // percentile() throws on an empty histogram, and a throwing observable callback takes down the
     // entire collection cycle rather than one metric.

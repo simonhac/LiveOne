@@ -60,11 +60,20 @@ export const SPOOL_DRAIN_BUDGET = 50;
 const isBatchFile = (n: string) => n.endsWith(".json");
 const sanitize = (siteId: string) => siteId.replace(/[^a-zA-Z0-9_-]/g, "_");
 
+/** Why a batch that had been accepted for buffering was destroyed. See core/spool-metrics.ts. */
+export type SpoolDropReason = "disk_cap" | "rejected" | "unreadable";
+
 export interface SpoolOptions {
   log?: (m: string) => void;
   now?: () => number;
   diskSpaceFn?: DiskSpaceFn;
   maxDiskFrac?: number;
+  /**
+   * Called once per DESTROYED batch. A hook rather than an import so this module stays free of
+   * telemetry: it is unit-tested with injected dependencies and must not grow an OTel import graph.
+   * Every one of these is data loss, so it must never be able to throw into the caller.
+   */
+  onDrop?: (reason: SpoolDropReason) => void;
 }
 
 export class Spool {
@@ -78,6 +87,7 @@ export class Spool {
     private readonly now: () => number,
     private readonly space: DiskSpaceFn,
     private readonly maxDiskFrac: number,
+    private readonly onDrop: (reason: SpoolDropReason) => void,
   ) {}
 
   /** Create the spool dir (probe write). Returns null — degrade, don't throw — if unwritable. */
@@ -96,6 +106,15 @@ export class Spool {
       opts.now ?? Date.now,
       opts.diskSpaceFn ?? defaultDiskSpace,
       opts.maxDiskFrac ?? SPOOL_MAX_DISK_FRAC,
+      // Swallowed on purpose: a broken metrics pipeline must not turn "we dropped a batch" into
+      // "we crashed the collector". The log line below is the durable record either way.
+      (reason) => {
+        try {
+          opts.onDrop?.(reason);
+        } catch {
+          /* metrics are best-effort */
+        }
+      },
     );
     await spool.refreshStats();
     return spool;
@@ -136,6 +155,7 @@ export class Spool {
       const size = (await fs.stat(file).catch(() => null))?.size ?? 0;
       await fs.unlink(file).catch(() => {});
       bytes -= size;
+      this.onDrop("disk_cap");
       this.log(
         `spool: over ${this.maxDiskFrac * 100}% of disk — DROPPED oldest unsent batch ${victim} (still in the blackbox journal)`,
       );
@@ -173,6 +193,7 @@ export class Spool {
           batch = JSON.parse(await fs.readFile(file, "utf8")) as SpooledBatch;
         } catch {
           await fs.unlink(file).catch(() => {});
+          this.onDrop("unreadable");
           this.log(`spool: unreadable batch file ${name} — deleted`);
           dropped++;
           continue;
@@ -184,6 +205,7 @@ export class Spool {
           sent++;
         } else {
           dropped++;
+          this.onDrop("rejected");
           this.log(
             `spool: batch ${name} permanently rejected by the receiver — dropped (still in the blackbox journal)`,
           );
