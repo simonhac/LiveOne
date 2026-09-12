@@ -65,54 +65,71 @@ export class TrialCapture {
     budget = { bytes: 32 * 1024 * 1024, reserveBytes: 64 * 1024 * 1024 },
   ): TrialCapture {
     let sequence = 0;
+    // This directory has one writer. Scan once on startup/recovery, then maintain
+    // the inventory as writes commit so capture cost does not grow with retention.
+    let inventory:
+      | { name: string; size: number; mtimeMs: number }[]
+      | undefined;
+    let retainedBytes = 0;
     return new TrialCapture(async (text) => {
-      await fs.mkdir(dir, { recursive: true, mode: 0o700 });
-      const data = await compress(text + "\n");
-      if (data.length > budget.bytes) throw Error("Capture exceeds budget");
-      const entries = await fs.readdir(dir);
-      for (const name of entries.filter((f) => f.startsWith(".pending-")))
-        await fs.unlink(path.join(dir, name));
-      const files = await Promise.all(
-        entries
-          .filter((f) => !f.startsWith(".") && f.endsWith(".jsonl.gz"))
-          .map(async (name) => ({
-            name,
-            ...(await fs.stat(path.join(dir, name))),
-          })),
-      );
-      files.sort(
-        (a, b) => a.mtimeMs - b.mtimeMs || a.name.localeCompare(b.name),
-      );
-      let bytes = files.reduce((sum, f) => sum + f.size, 0);
-      let disk = await fs.statfs(dir);
-      let free = Number(disk.bavail) * Number(disk.bsize);
-      while (
-        files.length &&
-        (bytes + data.length > budget.bytes ||
-          free - data.length < budget.reserveBytes)
-      ) {
-        const oldest = files.shift()!;
-        await fs.unlink(path.join(dir, oldest.name));
-        bytes -= oldest.size;
-        disk = await fs.statfs(dir);
-        free = Number(disk.bavail) * Number(disk.bsize);
-      }
-      if (free - data.length < budget.reserveBytes)
-        throw Error("Capture free-space reserve reached");
-      const name = `${new Date().toISOString().replace(/:/g, "-")}-${String(sequence++).padStart(12, "0")}-${randomUUID()}.jsonl.gz`;
-      const temp = path.join(dir, `.pending-${name}`);
-      const final = path.join(dir, name);
-      const file = await fs.open(temp, "wx", 0o600);
       try {
-        await file.writeFile(data);
-        await file.sync();
-      } finally {
-        await file.close();
-      }
-      try {
-        await fs.rename(temp, final);
-      } finally {
-        await fs.unlink(temp).catch(() => {});
+        await fs.mkdir(dir, { recursive: true, mode: 0o700 });
+        const data = await compress(text + "\n");
+        if (data.length > budget.bytes) throw Error("Capture exceeds budget");
+        if (!inventory) {
+          const entries = await fs.readdir(dir);
+          for (const name of entries.filter((f) => f.startsWith(".pending-")))
+            await fs.unlink(path.join(dir, name));
+          const recovered = [];
+          // Bound startup filesystem concurrency as well as steady-state work.
+          for (const name of entries.filter(
+            (f) => !f.startsWith(".") && f.endsWith(".jsonl.gz"),
+          )) {
+            const info = await fs.stat(path.join(dir, name));
+            recovered.push({ name, size: info.size, mtimeMs: info.mtimeMs });
+          }
+          recovered.sort(
+            (a, b) => a.mtimeMs - b.mtimeMs || a.name.localeCompare(b.name),
+          );
+          inventory = recovered;
+          retainedBytes = recovered.reduce((sum, f) => sum + f.size, 0);
+        }
+        const files = inventory;
+        let disk = await fs.statfs(dir);
+        let free = Number(disk.bavail) * Number(disk.bsize);
+        while (
+          files.length &&
+          (retainedBytes + data.length > budget.bytes ||
+            free - data.length < budget.reserveBytes)
+        ) {
+          const oldest = files.shift()!;
+          await fs.unlink(path.join(dir, oldest.name));
+          retainedBytes -= oldest.size;
+          disk = await fs.statfs(dir);
+          free = Number(disk.bavail) * Number(disk.bsize);
+        }
+        if (free - data.length < budget.reserveBytes)
+          throw Error("Capture free-space reserve reached");
+        const name = `${new Date().toISOString().replace(/:/g, "-")}-${String(sequence++).padStart(12, "0")}-${randomUUID()}.jsonl.gz`;
+        const temp = path.join(dir, `.pending-${name}`);
+        const final = path.join(dir, name);
+        const file = await fs.open(temp, "wx", 0o600);
+        try {
+          await file.writeFile(data);
+          await file.sync();
+        } finally {
+          await file.close();
+        }
+        try {
+          await fs.rename(temp, final);
+          files.push({ name, size: data.length, mtimeMs: Date.now() });
+          retainedBytes += data.length;
+        } finally {
+          await fs.unlink(temp).catch(() => {});
+        }
+      } catch (error) {
+        inventory = undefined;
+        throw error;
       }
     });
   }
