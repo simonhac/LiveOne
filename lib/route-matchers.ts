@@ -107,7 +107,12 @@ export function hasAccessToken(request: Request): boolean {
 // token table with its own predicate. Sharing the matcher would mean a dashboard share token could
 // try this route and a calendar token could try `/api/data`; each is refused downstream, but the
 // boundary would no longer say which credential belongs where.
-const calendarFeedRoutes = ["/api/v4/areas/(.*)/calendar.ics"];
+// 🛑 `:id`, a NAMED SINGLE segment — never `(.*)`, which matches slashes. This is the convention
+// this file states for the `/api/v4/areas/…` tree, and it is the difference between bypassing
+// `auth.protect()` for ONE route and pre-authorizing every route anyone nests under `areas/` later.
+// `/api/v4/areas/a/b/c/calendar.ics` matched the wildcard form; it 404s at Next today, which is
+// exactly the kind of "harmless" that stops being harmless the day the path exists.
+const calendarFeedRoutes = ["/api/v4/areas/:id/calendar.ics"];
 
 export const isCalendarFeedRoute = createRouteMatcher(calendarFeedRoutes);
 
@@ -269,7 +274,7 @@ const cliTokenRoutes = [
   "/api/cli-auth/whoami", // the `target:` line — which deployment, as whom, against which database
   // Minting and revoking an area's calendar feed tokens, for `liveone calendar`. Owner-or-admin in
   // the handler (`loadAreaForOwner`); the FEED itself is not here, it has its own matcher above.
-  "/api/v4/areas/(.*)/calendar-tokens",
+  "/api/v4/areas/:id/calendar-tokens",
   // 🛑 Enumerated, NOT `/api/cli-auth(.*)`. A wildcard would sweep in `authorize`, and a CLI token
   // must not be able to mint its own successor without a fresh human approval in a browser.
 ];

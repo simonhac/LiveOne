@@ -18,6 +18,7 @@ import { capabilitiesForDevice } from "@/lib/capabilities/server";
 import { loadAreaBindings, loadAreaMembers } from "@/lib/areas/v4-load";
 import { areaDetailResponse } from "@/lib/areas/v4-shapes";
 import { DeviceConfigRegistry } from "@/lib/registry/device-config";
+import { isValidTimezone } from "@/lib/timezones";
 
 /**
  * The TypeID-native area aggregate (§9.2): meta + members + bindings + capabilities in ONE payload,
@@ -181,6 +182,17 @@ export async function PATCH(
     if (typeof body.displayTimezone !== "string" || !body.displayTimezone)
       return NextResponse.json(
         { error: "displayTimezone must be a non-empty string" },
+        { status: 422 },
+      );
+    // 🛑 A REAL zone, not just a non-empty string. This column is what
+    // `/api/v4/areas/[id]/calendar.ics` places every DTSTART in, so a typo like
+    // "Australia/Melbournee" silently empties that area's calendar feed — every event is skipped
+    // with a log nobody is reading. Catch it at the one moment someone is looking at an error.
+    if (!isValidTimezone(body.displayTimezone))
+      return NextResponse.json(
+        {
+          error: `displayTimezone '${body.displayTimezone}' is not a known IANA timezone`,
+        },
         { status: 422 },
       );
     patch.displayTimezone = body.displayTimezone;

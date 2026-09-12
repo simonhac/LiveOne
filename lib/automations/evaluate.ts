@@ -165,6 +165,7 @@ export async function evaluateAutomations(
     errors: 0,
     exercise: {
       due: 0,
+      lostClaim: 0,
       fired: 0,
       satisfied: 0,
       waiting: 0,
@@ -189,6 +190,10 @@ export async function evaluateAutomations(
 /**
  * A slot that was this rule's to act on, and produced no decision at all, is by definition a bug.
  *
+ * `lostClaim` counts as decided: losing the dispatch CAS is the one race this design expects, and
+ * the winning tick recorded the outcome. Leaving it out made every genuine two-tick race raise the
+ * alarm below, which is the fastest way to teach an operator to ignore it.
+ *
  * Every outcome — fired, satisfied, waiting, missed — writes `armed_context`, so `due` without one
  * of them means the evaluator fell out of the path between `isDue` and `decideExercise` (the shape
  * of the microsecond-precision CAS failure that stopped two live generator rules ever firing, and
@@ -202,7 +207,8 @@ async function reportUndecidedSlots(
   summary: AutomationsSummary,
 ): Promise<void> {
   const ex = summary.exercise;
-  const decided = ex.fired + ex.satisfied + ex.waiting + ex.missed;
+  const decided =
+    ex.fired + ex.satisfied + ex.waiting + ex.missed + ex.lostClaim;
   if (ex.due === 0 || decided >= ex.due) return;
 
   const message = `${ex.due - decided} scheduled exercise slot(s) were due and produced no decision — see [automations] logs`;

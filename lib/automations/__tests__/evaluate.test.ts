@@ -798,6 +798,7 @@ describe("evaluateAutomations — the batch", () => {
         satisfied: 0,
         waiting: 0,
         missed: 0,
+        lostClaim: 0,
         exhausted: 0,
       },
       armed: 0,
@@ -952,6 +953,7 @@ describe("evaluateExercise", () => {
       waiting: 0,
       exhausted: 0,
       missed: 0,
+      lostClaim: 0,
     });
     expect(mockStore.recordExerciseOutcome).toHaveBeenCalledWith(
       AU_UUID,
@@ -1123,10 +1125,15 @@ describe("evaluateExercise", () => {
     mockStore.claimExerciseDispatch.mockResolvedValue(false);
     mockStore.listEnabled.mockResolvedValue([exerciseRow()]);
 
-    await evaluateAutomations(EX_NOW);
+    const summary = await evaluateAutomations(EX_NOW);
 
     expect(mockDispatch).not.toHaveBeenCalled();
     expect(mockStore.recordExerciseOutcome).not.toHaveBeenCalled();
+    // 🛑 And it is COUNTED. `reportUndecidedSlots` alerts when `due` exceeds the outcomes recorded,
+    // so an uncounted lost claim made the one race this design expects raise the 🚨 "produced no
+    // decision" alarm — training an operator to ignore the alarm built for #468's silent failure.
+    expect(summary.exercise.due).toBe(1);
+    expect(summary.exercise.lostClaim).toBe(1);
   });
 
   it("refuses to dispatch when the detector has gone away", async () => {

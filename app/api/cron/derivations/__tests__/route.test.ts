@@ -59,6 +59,7 @@ const AUTOMATIONS_SUMMARY = {
     satisfied: 0,
     waiting: 0,
     missed: 0,
+    lostClaim: 0,
     exhausted: 0,
   },
 };

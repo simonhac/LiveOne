@@ -13,6 +13,7 @@ import {
 } from "@/lib/areas/create";
 import { Area } from "@/lib/ids";
 import { DeviceConfigRegistry } from "@/lib/registry/device-config";
+import { isValidTimezone } from "@/lib/timezones";
 
 /**
  * config-v4 areas collection (§9.2), TypeID-native. The readable set (areas the caller owns ∪ areas
@@ -103,6 +104,15 @@ export async function POST(request: NextRequest) {
     typeof body?.displayTimezone === "string" && body.displayTimezone
       ? body.displayTimezone
       : (first?.displayTimezone ?? "Australia/Sydney");
+  // 🛑 See the same check on PATCH: this column is the zone the calendar feed places every DTSTART
+  // in, and an unknown one empties the feed rather than failing it.
+  if (!isValidTimezone(displayTimezone))
+    return NextResponse.json(
+      {
+        error: `displayTimezone '${displayTimezone}' is not a known IANA timezone`,
+      },
+      { status: 422 },
+    );
 
   const location = body?.location
     ? mergeAreaLocation(null, locationPatchFromBody(body.location))

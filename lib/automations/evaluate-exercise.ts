@@ -41,6 +41,15 @@ export interface ExerciseSummary {
   satisfied: number;
   waiting: number;
   missed: number;
+  /**
+   * Slots this tick counted as due and then handed to another tick, having lost the dispatch CAS.
+   *
+   * 🛑 Counted, not ignored, because `reportUndecidedSlots` compares `due` against the outcomes and
+   * alerts on the shortfall. A lost claim IS a decision — the winning tick made it — so without
+   * this the ONE genuinely expected race in the design raises the 🚨 "produced no decision" alarm
+   * every time it happens, and an alarm that fires on correct behaviour is one nobody reads.
+   */
+  lostClaim: number;
   /** Rules retired this tick because the slot just consumed was their last. */
   exhausted: number;
 }
@@ -223,6 +232,7 @@ async function fireExercise(
     console.warn(
       `[automations] ${row.id} lost the exercise dispatch claim — another tick got there first`,
     );
+    summary.exercise.lostClaim++;
     return;
   }
 
