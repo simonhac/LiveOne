@@ -41,7 +41,9 @@ Generator HTTP requests return a trial-mode refusal. The simulator-tested superv
 absolute deadlines, persists before starts, keeps ambiguous starts armed and retries failed stops
 every 15 seconds, including early/idle release failures recovered after restart. Extensions retain
 pending stop retries and command errors. Simulator probes and releases preserve poll observations.
-Production control activation is intentionally unavailable.
+Production control activation is intentionally unavailable. Shared TypeScript/Go simulator traces
+now pin the detailed run/probe contract and boot recovery. See [control.md](docs/control.md) for
+authentication, concurrency, deadline checks and the intentionally stricter failure behavior.
 
 ## Management APIs
 

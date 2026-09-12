@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http/httptest"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -156,7 +157,7 @@ func TestLatchedProbeReportsExtensionWithoutChangingObservation(t *testing.T) {
 	if w.Code != 200 || body["wouldStart"] != false || !strings.Contains(body["verdict"].(string), "extends the run") {
 		t.Errorf("probe=%s", w.Body.String())
 	}
-	if *s.observed != observed {
+	if !reflect.DeepEqual(*s.observed, observed) {
 		t.Error("probe mutated poll observation")
 	}
 	if target.starts != 1 || target.stops != 0 {
@@ -260,5 +261,34 @@ func TestSimulatorHTTPMethodsAndPasskeyParity(t *testing.T) {
 				t.Fatal("authentication/method check allowed write")
 			}
 		})
+	}
+}
+
+func TestSimulatorRichRequestAndProbeResponses(t *testing.T) {
+	target := &traceTarget{ownership: Ownership{Mode: 0, RemoteStartInput: "closed", Running: true, SCFMap: []int{0, 0, 0, 0, 0, 0, 0, 0}}}
+	s, err := OpenSupervisor(target, filepath.Join(t.TempDir(), "run.json"), 600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := s.SimulatorHandler("site", "secret")
+	for _, op := range []string{"run", "probe"} {
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, httptest.NewRequest("POST", "/api/usher/control/site/"+op, strings.NewReader(`{"passkey":"secret","runtimeSec":60,"overrideRemoteStart":true}`)))
+		var result map[string]any
+		if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
+			t.Fatal(err)
+		}
+		if op == "run" {
+			if w.Code != 409 || obj(result["ownership"])["mode"] != float64(0) || !strings.Contains(result["reason"].(string), "local lockout") {
+				t.Errorf("run: %s", w.Body.String())
+			}
+		} else {
+			if w.Code != 200 || obj(result["scfSupported"])["selectAuto"] != false || len(result["scfMap"].([]any)) != 8 || !strings.Contains(result["verdict"].(string), "Cancel Telemetry Start") {
+				t.Errorf("probe: %s", w.Body.String())
+			}
+		}
+	}
+	if target.starts != 0 || target.stops != 0 {
+		t.Fatal("refusal/probe wrote")
 	}
 }

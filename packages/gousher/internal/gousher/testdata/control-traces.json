@@ -1,0 +1,2454 @@
+[
+  {
+    "name": "start-extend-release",
+    "steps": [
+      {
+        "op": "probe",
+        "expected": {
+          "result": {
+            "ok": true,
+            "wouldStart": true,
+            "verdict": "Ready to start",
+            "mode": 1,
+            "modeName": "Auto",
+            "running": false,
+            "remoteStartInput": "open",
+            "engineState": null,
+            "engineStateName": null,
+            "scfSupported": {
+              "selectAuto": true,
+              "telemetryStart": true,
+              "telemetryCancel": true
+            },
+            "scfMap": [16384, 0, 49152, 0, 0, 0, 0, 0],
+            "latched": false,
+            "state": "idle",
+            "stopAt": null,
+            "remainingSec": null,
+            "requestedAt": null,
+            "lastCommandAt": null,
+            "lastError": null,
+            "maxRuntimeSec": 600
+          },
+          "status": {
+            "latched": false,
+            "state": "idle",
+            "stopAt": null,
+            "remainingSec": null,
+            "requestedAt": null,
+            "lastCommandAt": null,
+            "lastError": null,
+            "maxRuntimeSec": 600
+          },
+          "values": {
+            "controlRunActive": 0,
+            "controlInhibitActive": 0,
+            "controlStopAt": null,
+            "controlState": "idle",
+            "controlLastError": null,
+            "controlRunRequestMin": 0
+          },
+          "transition": false,
+          "starts": 0,
+          "stops": 0
+        }
+      },
+      {
+        "op": "request",
+        "runtimeSec": 60.4,
+        "expected": {
+          "result": {
+            "stopAt": "2026-09-12T00:01:00.400Z",
+            "remainingSec": 60,
+            "ok": true,
+            "status": 200,
+            "action": "started",
+            "ownership": {
+              "mode": 1,
+              "modeName": "Auto",
+              "running": false,
+              "remoteStartInput": "open",
+              "engineState": null,
+              "engineStateName": null
+            }
+          },
+          "status": {
+            "latched": true,
+            "state": "running:hub",
+            "stopAt": "2026-09-12T00:01:00.400Z",
+            "remainingSec": 60,
+            "requestedAt": "2026-09-12T00:00:00.000Z",
+            "lastCommandAt": "2026-09-12T00:00:00.000Z",
+            "lastError": null,
+            "maxRuntimeSec": 600
+          },
+          "values": {
+            "controlRunActive": 1,
+            "controlInhibitActive": 0,
+            "controlStopAt": 1789171260,
+            "controlState": "running:hub",
+            "controlLastError": null,
+            "controlRunRequestMin": 1
+          },
+          "transition": true,
+          "starts": 1,
+          "stops": 0
+        }
+      },
+      {
+        "op": "observe",
+        "advanceMs": 1000,
+        "ownership": {
+          "running": true
+        },
+        "expected": {
+          "result": null,
+          "status": {
+            "latched": true,
+            "state": "running:hub",
+            "stopAt": "2026-09-12T00:01:00.400Z",
+            "remainingSec": 59,
+            "requestedAt": "2026-09-12T00:00:00.000Z",
+            "lastCommandAt": "2026-09-12T00:00:00.000Z",
+            "lastError": null,
+            "maxRuntimeSec": 600
+          },
+          "values": {
+            "controlRunActive": 1,
+            "controlInhibitActive": 0,
+            "controlStopAt": 1789171260,
+            "controlState": "running:hub",
+            "controlLastError": null,
+            "controlRunRequestMin": 1
+          },
+          "transition": true,
+          "starts": 1,
+          "stops": 0
+        }
+      },
+      {
+        "op": "probe",
+        "expected": {
+          "result": {
+            "ok": true,
+            "wouldStart": false,
+            "verdict": "Running until 2026-09-12T00:01:00.400Z — starting again extends the run.",
+            "verdictMessage": {
+              "template": "Running until {stopAt, time, short} — starting again extends the run.",
+              "values": {
+                "stopAt": "2026-09-12T00:01:00.400Z"
+              }
+            },
+            "mode": 1,
+            "modeName": "Auto",
+            "running": true,
+            "remoteStartInput": "open",
+            "engineState": null,
+            "engineStateName": null,
+            "scfSupported": {
+              "selectAuto": true,
+              "telemetryStart": true,
+              "telemetryCancel": true
+            },
+            "scfMap": [16384, 0, 49152, 0, 0, 0, 0, 0],
+            "latched": true,
+            "state": "running:hub",
+            "stopAt": "2026-09-12T00:01:00.400Z",
+            "remainingSec": 59,
+            "requestedAt": "2026-09-12T00:00:00.000Z",
+            "lastCommandAt": "2026-09-12T00:00:00.000Z",
+            "lastError": null,
+            "maxRuntimeSec": 600
+          },
+          "status": {
+            "latched": true,
+            "state": "running:hub",
+            "stopAt": "2026-09-12T00:01:00.400Z",
+            "remainingSec": 59,
+            "requestedAt": "2026-09-12T00:00:00.000Z",
+            "lastCommandAt": "2026-09-12T00:00:00.000Z",
+            "lastError": null,
+            "maxRuntimeSec": 600
+          },
+          "values": {
+            "controlRunActive": 1,
+            "controlInhibitActive": 0,
+            "controlStopAt": 1789171260,
+            "controlState": "running:hub",
+            "controlLastError": null,
+            "controlRunRequestMin": 1
+          },
+          "transition": true,
+          "starts": 1,
+          "stops": 0
+        }
+      },
+      {
+        "op": "request",
+        "advanceMs": 1000,
+        "runtimeSec": 120,
+        "expected": {
+          "result": {
+            "stopAt": "2026-09-12T00:02:02.000Z",
+            "remainingSec": 120,
+            "ok": true,
+            "status": 200,
+            "action": "extended"
+          },
+          "status": {
+            "latched": true,
+            "state": "running:hub",
+            "stopAt": "2026-09-12T00:02:02.000Z",
+            "remainingSec": 120,
+            "requestedAt": "2026-09-12T00:00:02.000Z",
+            "lastCommandAt": "2026-09-12T00:00:00.000Z",
+            "lastError": null,
+            "maxRuntimeSec": 600
+          },
+          "values": {
+            "controlRunActive": 1,
+            "controlInhibitActive": 0,
+            "controlStopAt": 1789171322,
+            "controlState": "running:hub",
+            "controlLastError": null,
+            "controlRunRequestMin": 2
+          },
+          "transition": true,
+          "starts": 1,
+          "stops": 0
+        }
+      },
+      {
+        "op": "request",
+        "advanceMs": 1000,
+        "runtimeSec": 0,
+        "expected": {
+          "result": {
+            "stopAt": null,
+            "remainingSec": null,
+            "ok": true,
+            "status": 200,
+            "action": "released",
+            "released": true,
+            "stillRunning": "cool-down"
+          },
+          "status": {
+            "latched": false,
+            "state": "stopping",
+            "stopAt": null,
+            "remainingSec": null,
+            "requestedAt": null,
+            "lastCommandAt": "2026-09-12T00:00:03.000Z",
+            "lastError": null,
+            "maxRuntimeSec": 600
+          },
+          "values": {
+            "controlRunActive": 0,
+            "controlInhibitActive": 0,
+            "controlStopAt": null,
+            "controlState": "stopping",
+            "controlLastError": null,
+            "controlRunRequestMin": 0
+          },
+          "transition": true,
+          "starts": 1,
+          "stops": 1
+        }
+      },
+      {
+        "op": "probe",
+        "expected": {
+          "result": {
+            "ok": true,
+            "wouldStart": false,
+            "verdict": "A run would be refused: the engine is cooling down after the run that just stopped",
+            "mode": 1,
+            "modeName": "Auto",
+            "running": true,
+            "remoteStartInput": "open",
+            "engineState": null,
+            "engineStateName": null,
+            "scfSupported": {
+              "selectAuto": true,
+              "telemetryStart": true,
+              "telemetryCancel": true
+            },
+            "scfMap": [16384, 0, 49152, 0, 0, 0, 0, 0],
+            "latched": false,
+            "state": "stopping",
+            "stopAt": null,
+            "remainingSec": null,
+            "requestedAt": null,
+            "lastCommandAt": "2026-09-12T00:00:03.000Z",
+            "lastError": null,
+            "maxRuntimeSec": 600
+          },
+          "status": {
+            "latched": false,
+            "state": "stopping",
+            "stopAt": null,
+            "remainingSec": null,
+            "requestedAt": null,
+            "lastCommandAt": "2026-09-12T00:00:03.000Z",
+            "lastError": null,
+            "maxRuntimeSec": 600
+          },
+          "values": {
+            "controlRunActive": 0,
+            "controlInhibitActive": 0,
+            "controlStopAt": null,
+            "controlState": "stopping",
+            "controlLastError": null,
+            "controlRunRequestMin": 0
+          },
+          "transition": true,
+          "starts": 1,
+          "stops": 1
+        }
+      },
+      {
+        "op": "observe",
+        "ownership": {
+          "running": false
+        },
+        "expected": {
+          "result": null,
+          "status": {
+            "latched": false,
+            "state": "idle",
+            "stopAt": null,
+            "remainingSec": null,
+            "requestedAt": null,
+            "lastCommandAt": "2026-09-12T00:00:03.000Z",
+            "lastError": null,
+            "maxRuntimeSec": 600
+          },
+          "values": {
+            "controlRunActive": 0,
+            "controlInhibitActive": 0,
+            "controlStopAt": null,
+            "controlState": "idle",
+            "controlLastError": null,
+            "controlRunRequestMin": 0
+          },
+          "transition": true,
+          "starts": 1,
+          "stops": 1
+        }
+      },
+      {
+        "op": "probe",
+        "expected": {
+          "result": {
+            "ok": true,
+            "wouldStart": true,
+            "verdict": "Ready to start",
+            "mode": 1,
+            "modeName": "Auto",
+            "running": false,
+            "remoteStartInput": "open",
+            "engineState": null,
+            "engineStateName": null,
+            "scfSupported": {
+              "selectAuto": true,
+              "telemetryStart": true,
+              "telemetryCancel": true
+            },
+            "scfMap": [16384, 0, 49152, 0, 0, 0, 0, 0],
+            "latched": false,
+            "state": "idle",
+            "stopAt": null,
+            "remainingSec": null,
+            "requestedAt": null,
+            "lastCommandAt": "2026-09-12T00:00:03.000Z",
+            "lastError": null,
+            "maxRuntimeSec": 600
+          },
+          "status": {
+            "latched": false,
+            "state": "idle",
+            "stopAt": null,
+            "remainingSec": null,
+            "requestedAt": null,
+            "lastCommandAt": "2026-09-12T00:00:03.000Z",
+            "lastError": null,
+            "maxRuntimeSec": 600
+          },
+          "values": {
+            "controlRunActive": 0,
+            "controlInhibitActive": 0,
+            "controlStopAt": null,
+            "controlState": "idle",
+            "controlLastError": null,
+            "controlRunRequestMin": 0
+          },
+          "transition": true,
+          "starts": 1,
+          "stops": 1
+        }
+      }
+    ]
+  },
+  {
+    "name": "panel-lockout-0",
+    "steps": [
+      {
+        "op": "probe",
+        "ownership": {
+          "mode": 0,
+          "modeName": "Stop"
+        },
+        "expected": {
+          "result": {
+            "ok": true,
+            "wouldStart": false,
+            "verdict": "A run would be refused: the module is not in Auto (mode=Stop) — a possible local lockout at the panel, and not overridable remotely",
+            "mode": 0,
+            "modeName": "Stop",
+            "running": false,
+            "remoteStartInput": "open",
+            "engineState": null,
+            "engineStateName": null,
+            "scfSupported": {
+              "selectAuto": true,
+              "telemetryStart": true,
+              "telemetryCancel": true
+            },
+            "scfMap": [16384, 0, 49152, 0, 0, 0, 0, 0],
+            "latched": false,
+            "state": "idle",
+            "stopAt": null,
+            "remainingSec": null,
+            "requestedAt": null,
+            "lastCommandAt": null,
+            "lastError": null,
+            "maxRuntimeSec": 600
+          },
+          "status": {
+            "latched": false,
+            "state": "idle",
+            "stopAt": null,
+            "remainingSec": null,
+            "requestedAt": null,
+            "lastCommandAt": null,
+            "lastError": null,
+            "maxRuntimeSec": 600
+          },
+          "values": {
+            "controlRunActive": 0,
+            "controlInhibitActive": 0,
+            "controlStopAt": null,
+            "controlState": "idle",
+            "controlLastError": null,
+            "controlRunRequestMin": 0
+          },
+          "transition": false,
+          "starts": 0,
+          "stops": 0
+        }
+      },
+      {
+        "op": "request",
+        "runtimeSec": 60,
+        "override": true,
+        "expected": {
+          "result": {
+            "stopAt": null,
+            "remainingSec": null,
+            "ok": false,
+            "status": 409,
+            "reason": "the module is not in Auto (mode=Stop) — a possible local lockout at the panel, and not overridable remotely",
+            "ownership": {
+              "mode": 0,
+              "modeName": "Stop",
+              "running": false,
+              "remoteStartInput": "open",
+              "engineState": null,
+              "engineStateName": null
+            }
+          },
+          "status": {
+            "latched": false,
+            "state": "idle",
+            "stopAt": null,
+            "remainingSec": null,
+            "requestedAt": null,
+            "lastCommandAt": null,
+            "lastError": null,
+            "maxRuntimeSec": 600
+          },
+          "values": {
+            "controlRunActive": 0,
+            "controlInhibitActive": 0,
+            "controlStopAt": null,
+            "controlState": "idle",
+            "controlLastError": null,
+            "controlRunRequestMin": 0
+          },
+          "transition": false,
+          "starts": 0,
+          "stops": 0
+        }
+      }
+    ]
+  },
+  {
+    "name": "panel-lockout-2",
+    "steps": [
+      {
+        "op": "probe",
+        "ownership": {
+          "mode": 2,
+          "modeName": "Manual"
+        },
+        "expected": {
+          "result": {
+            "ok": true,
+            "wouldStart": false,
+            "verdict": "A run would be refused: the module is not in Auto (mode=Manual) — a possible local lockout at the panel, and not overridable remotely",
+            "mode": 2,
+            "modeName": "Manual",
+            "running": false,
+            "remoteStartInput": "open",
+            "engineState": null,
+            "engineStateName": null,
+            "scfSupported": {
+              "selectAuto": true,
+              "telemetryStart": true,
+              "telemetryCancel": true
+            },
+            "scfMap": [16384, 0, 49152, 0, 0, 0, 0, 0],
+            "latched": false,
+            "state": "idle",
+            "stopAt": null,
+            "remainingSec": null,
+            "requestedAt": null,
+            "lastCommandAt": null,
+            "lastError": null,
+            "maxRuntimeSec": 600
+          },
+          "status": {
+            "latched": false,
+            "state": "idle",
+            "stopAt": null,
+            "remainingSec": null,
+            "requestedAt": null,
+            "lastCommandAt": null,
+            "lastError": null,
+            "maxRuntimeSec": 600
+          },
+          "values": {
+            "controlRunActive": 0,
+            "controlInhibitActive": 0,
+            "controlStopAt": null,
+            "controlState": "idle",
+            "controlLastError": null,
+            "controlRunRequestMin": 0
+          },
+          "transition": false,
+          "starts": 0,
+          "stops": 0
+        }
+      },
+      {
+        "op": "request",
+        "runtimeSec": 60,
+        "override": true,
+        "expected": {
+          "result": {
+            "stopAt": null,
+            "remainingSec": null,
+            "ok": false,
+            "status": 409,
+            "reason": "the module is not in Auto (mode=Manual) — a possible local lockout at the panel, and not overridable remotely",
+            "ownership": {
+              "mode": 2,
+              "modeName": "Manual",
+              "running": false,
+              "remoteStartInput": "open",
+              "engineState": null,
+              "engineStateName": null
+            }
+          },
+          "status": {
+            "latched": false,
+            "state": "idle",
+            "stopAt": null,
+            "remainingSec": null,
+            "requestedAt": null,
+            "lastCommandAt": null,
+            "lastError": null,
+            "maxRuntimeSec": 600
+          },
+          "values": {
+            "controlRunActive": 0,
+            "controlInhibitActive": 0,
+            "controlStopAt": null,
+            "controlState": "idle",
+            "controlLastError": null,
+            "controlRunRequestMin": 0
+          },
+          "transition": false,
+          "starts": 0,
+          "stops": 0
+        }
+      }
+    ]
+  },
+  {
+    "name": "panel-lockout-null",
+    "steps": [
+      {
+        "op": "probe",
+        "ownership": {
+          "mode": null,
+          "modeName": null
+        },
+        "expected": {
+          "result": {
+            "ok": true,
+            "wouldStart": false,
+            "verdict": "A run would be refused: the module is not in Auto (mode=unreadable) — a possible local lockout at the panel, and not overridable remotely",
+            "mode": null,
+            "modeName": null,
+            "running": false,
+            "remoteStartInput": "open",
+            "engineState": null,
+            "engineStateName": null,
+            "scfSupported": {
+              "selectAuto": true,
+              "telemetryStart": true,
+              "telemetryCancel": true
+            },
+            "scfMap": [16384, 0, 49152, 0, 0, 0, 0, 0],
+            "latched": false,
+            "state": "idle",
+            "stopAt": null,
+            "remainingSec": null,
+            "requestedAt": null,
+            "lastCommandAt": null,
+            "lastError": null,
+            "maxRuntimeSec": 600
+          },
+          "status": {
+            "latched": false,
+            "state": "idle",
+            "stopAt": null,
+            "remainingSec": null,
+            "requestedAt": null,
+            "lastCommandAt": null,
+            "lastError": null,
+            "maxRuntimeSec": 600
+          },
+          "values": {
+            "controlRunActive": 0,
+            "controlInhibitActive": 0,
+            "controlStopAt": null,
+            "controlState": "idle",
+            "controlLastError": null,
+            "controlRunRequestMin": 0
+          },
+          "transition": false,
+          "starts": 0,
+          "stops": 0
+        }
+      },
+      {
+        "op": "request",
+        "runtimeSec": 60,
+        "override": true,
+        "expected": {
+          "result": {
+            "stopAt": null,
+            "remainingSec": null,
+            "ok": false,
+            "status": 409,
+            "reason": "the module is not in Auto (mode=unreadable) — a possible local lockout at the panel, and not overridable remotely",
+            "ownership": {
+              "mode": null,
+              "modeName": null,
+              "running": false,
+              "remoteStartInput": "open",
+              "engineState": null,
+              "engineStateName": null
+            }
+          },
+          "status": {
+            "latched": false,
+            "state": "idle",
+            "stopAt": null,
+            "remainingSec": null,
+            "requestedAt": null,
+            "lastCommandAt": null,
+            "lastError": null,
+            "maxRuntimeSec": 600
+          },
+          "values": {
+            "controlRunActive": 0,
+            "controlInhibitActive": 0,
+            "controlStopAt": null,
+            "controlState": "idle",
+            "controlLastError": null,
+            "controlRunRequestMin": 0
+          },
+          "transition": false,
+          "starts": 0,
+          "stops": 0
+        }
+      }
+    ]
+  },
+  {
+    "name": "external-closed",
+    "steps": [
+      {
+        "op": "observe",
+        "ownership": {
+          "running": true,
+          "remoteStartInput": "closed"
+        },
+        "expected": {
+          "result": null,
+          "status": {
+            "latched": false,
+            "state": "running:sp-pro",
+            "stopAt": null,
+            "remainingSec": null,
+            "requestedAt": null,
+            "lastCommandAt": null,
+            "lastError": null,
+            "maxRuntimeSec": 600
+          },
+          "values": {
+            "controlRunActive": 0,
+            "controlInhibitActive": 0,
+            "controlStopAt": null,
+            "controlState": "running:sp-pro",
+            "controlLastError": null,
+            "controlRunRequestMin": 0
+          },
+          "transition": false,
+          "starts": 0,
+          "stops": 0
+        }
+      },
+      {
+        "op": "probe",
+        "expected": {
+          "result": {
+            "ok": true,
+            "wouldStart": false,
+            "verdict": "A run would be refused: the engine is already running, commanded by the SP-PRO (remote-start input closed)",
+            "mode": 1,
+            "modeName": "Auto",
+            "running": true,
+            "remoteStartInput": "closed",
+            "engineState": null,
+            "engineStateName": null,
+            "scfSupported": {
+              "selectAuto": true,
+              "telemetryStart": true,
+              "telemetryCancel": true
+            },
+            "scfMap": [16384, 0, 49152, 0, 0, 0, 0, 0],
+            "latched": false,
+            "state": "running:sp-pro",
+            "stopAt": null,
+            "remainingSec": null,
+            "requestedAt": null,
+            "lastCommandAt": null,
+            "lastError": null,
+            "maxRuntimeSec": 600
+          },
+          "status": {
+            "latched": false,
+            "state": "running:sp-pro",
+            "stopAt": null,
+            "remainingSec": null,
+            "requestedAt": null,
+            "lastCommandAt": null,
+            "lastError": null,
+            "maxRuntimeSec": 600
+          },
+          "values": {
+            "controlRunActive": 0,
+            "controlInhibitActive": 0,
+            "controlStopAt": null,
+            "controlState": "running:sp-pro",
+            "controlLastError": null,
+            "controlRunRequestMin": 0
+          },
+          "transition": false,
+          "starts": 0,
+          "stops": 0
+        }
+      },
+      {
+        "op": "request",
+        "runtimeSec": 60,
+        "expected": {
+          "result": {
+            "stopAt": null,
+            "remainingSec": null,
+            "ok": false,
+            "status": 409,
+            "reason": "the engine is already running, commanded by the SP-PRO (remote-start input closed)",
+            "ownership": {
+              "mode": 1,
+              "modeName": "Auto",
+              "running": true,
+              "remoteStartInput": "closed",
+              "engineState": null,
+              "engineStateName": null
+            }
+          },
+          "status": {
+            "latched": false,
+            "state": "running:sp-pro",
+            "stopAt": null,
+            "remainingSec": null,
+            "requestedAt": null,
+            "lastCommandAt": null,
+            "lastError": null,
+            "maxRuntimeSec": 600
+          },
+          "values": {
+            "controlRunActive": 0,
+            "controlInhibitActive": 0,
+            "controlStopAt": null,
+            "controlState": "running:sp-pro",
+            "controlLastError": null,
+            "controlRunRequestMin": 0
+          },
+          "transition": false,
+          "starts": 0,
+          "stops": 0
+        }
+      },
+      {
+        "op": "request",
+        "runtimeSec": 60,
+        "override": true,
+        "expected": {
+          "result": {
+            "stopAt": "2026-09-12T00:01:00.000Z",
+            "remainingSec": 60,
+            "ok": true,
+            "status": 200,
+            "action": "started",
+            "ownership": {
+              "mode": 1,
+              "modeName": "Auto",
+              "running": true,
+              "remoteStartInput": "closed",
+              "engineState": null,
+              "engineStateName": null
+            }
+          },
+          "status": {
+            "latched": true,
+            "state": "running:hub",
+            "stopAt": "2026-09-12T00:01:00.000Z",
+            "remainingSec": 60,
+            "requestedAt": "2026-09-12T00:00:00.000Z",
+            "lastCommandAt": "2026-09-12T00:00:00.000Z",
+            "lastError": null,
+            "maxRuntimeSec": 600
+          },
+          "values": {
+            "controlRunActive": 1,
+            "controlInhibitActive": 0,
+            "controlStopAt": 1789171260,
+            "controlState": "running:hub",
+            "controlLastError": null,
+            "controlRunRequestMin": 1
+          },
+          "transition": true,
+          "starts": 1,
+          "stops": 0
+        }
+      },
+      {
+        "op": "request",
+        "runtimeSec": 0,
+        "expected": {
+          "result": {
+            "stopAt": null,
+            "remainingSec": null,
+            "ok": true,
+            "status": 200,
+            "action": "released",
+            "released": true,
+            "stillRunning": "remote-start-input"
+          },
+          "status": {
+            "latched": false,
+            "state": "stopping",
+            "stopAt": null,
+            "remainingSec": null,
+            "requestedAt": null,
+            "lastCommandAt": "2026-09-12T00:00:00.000Z",
+            "lastError": null,
+            "maxRuntimeSec": 600
+          },
+          "values": {
+            "controlRunActive": 0,
+            "controlInhibitActive": 0,
+            "controlStopAt": null,
+            "controlState": "stopping",
+            "controlLastError": null,
+            "controlRunRequestMin": 0
+          },
+          "transition": true,
+          "starts": 1,
+          "stops": 1
+        }
+      }
+    ]
+  },
+  {
+    "name": "external-open",
+    "steps": [
+      {
+        "op": "observe",
+        "ownership": {
+          "running": true,
+          "remoteStartInput": "open"
+        },
+        "expected": {
+          "result": null,
+          "status": {
+            "latched": false,
+            "state": "running:other",
+            "stopAt": null,
+            "remainingSec": null,
+            "requestedAt": null,
+            "lastCommandAt": null,
+            "lastError": null,
+            "maxRuntimeSec": 600
+          },
+          "values": {
+            "controlRunActive": 0,
+            "controlInhibitActive": 0,
+            "controlStopAt": null,
+            "controlState": "running:other",
+            "controlLastError": null,
+            "controlRunRequestMin": 0
+          },
+          "transition": false,
+          "starts": 0,
+          "stops": 0
+        }
+      },
+      {
+        "op": "probe",
+        "expected": {
+          "result": {
+            "ok": true,
+            "wouldStart": false,
+            "verdict": "A run would be refused: the engine is already running, commanded by an unknown source (remote-start input open)",
+            "mode": 1,
+            "modeName": "Auto",
+            "running": true,
+            "remoteStartInput": "open",
+            "engineState": null,
+            "engineStateName": null,
+            "scfSupported": {
+              "selectAuto": true,
+              "telemetryStart": true,
+              "telemetryCancel": true
+            },
+            "scfMap": [16384, 0, 49152, 0, 0, 0, 0, 0],
+            "latched": false,
+            "state": "running:other",
+            "stopAt": null,
+            "remainingSec": null,
+            "requestedAt": null,
+            "lastCommandAt": null,
+            "lastError": null,
+            "maxRuntimeSec": 600
+          },
+          "status": {
+            "latched": false,
+            "state": "running:other",
+            "stopAt": null,
+            "remainingSec": null,
+            "requestedAt": null,
+            "lastCommandAt": null,
+            "lastError": null,
+            "maxRuntimeSec": 600
+          },
+          "values": {
+            "controlRunActive": 0,
+            "controlInhibitActive": 0,
+            "controlStopAt": null,
+            "controlState": "running:other",
+            "controlLastError": null,
+            "controlRunRequestMin": 0
+          },
+          "transition": false,
+          "starts": 0,
+          "stops": 0
+        }
+      },
+      {
+        "op": "request",
+        "runtimeSec": 60,
+        "expected": {
+          "result": {
+            "stopAt": null,
+            "remainingSec": null,
+            "ok": false,
+            "status": 409,
+            "reason": "the engine is already running, commanded by an unknown source (remote-start input open)",
+            "ownership": {
+              "mode": 1,
+              "modeName": "Auto",
+              "running": true,
+              "remoteStartInput": "open",
+              "engineState": null,
+              "engineStateName": null
+            }
+          },
+          "status": {
+            "latched": false,
+            "state": "running:other",
+            "stopAt": null,
+            "remainingSec": null,
+            "requestedAt": null,
+            "lastCommandAt": null,
+            "lastError": null,
+            "maxRuntimeSec": 600
+          },
+          "values": {
+            "controlRunActive": 0,
+            "controlInhibitActive": 0,
+            "controlStopAt": null,
+            "controlState": "running:other",
+            "controlLastError": null,
+            "controlRunRequestMin": 0
+          },
+          "transition": false,
+          "starts": 0,
+          "stops": 0
+        }
+      },
+      {
+        "op": "request",
+        "runtimeSec": 60,
+        "override": true,
+        "expected": {
+          "result": {
+            "stopAt": "2026-09-12T00:01:00.000Z",
+            "remainingSec": 60,
+            "ok": true,
+            "status": 200,
+            "action": "started",
+            "ownership": {
+              "mode": 1,
+              "modeName": "Auto",
+              "running": true,
+              "remoteStartInput": "open",
+              "engineState": null,
+              "engineStateName": null
+            }
+          },
+          "status": {
+            "latched": true,
+            "state": "running:hub",
+            "stopAt": "2026-09-12T00:01:00.000Z",
+            "remainingSec": 60,
+            "requestedAt": "2026-09-12T00:00:00.000Z",
+            "lastCommandAt": "2026-09-12T00:00:00.000Z",
+            "lastError": null,
+            "maxRuntimeSec": 600
+          },
+          "values": {
+            "controlRunActive": 1,
+            "controlInhibitActive": 0,
+            "controlStopAt": 1789171260,
+            "controlState": "running:hub",
+            "controlLastError": null,
+            "controlRunRequestMin": 1
+          },
+          "transition": true,
+          "starts": 1,
+          "stops": 0
+        }
+      },
+      {
+        "op": "request",
+        "runtimeSec": 0,
+        "expected": {
+          "result": {
+            "stopAt": null,
+            "remainingSec": null,
+            "ok": true,
+            "status": 200,
+            "action": "released",
+            "released": true,
+            "stillRunning": "cool-down"
+          },
+          "status": {
+            "latched": false,
+            "state": "stopping",
+            "stopAt": null,
+            "remainingSec": null,
+            "requestedAt": null,
+            "lastCommandAt": "2026-09-12T00:00:00.000Z",
+            "lastError": null,
+            "maxRuntimeSec": 600
+          },
+          "values": {
+            "controlRunActive": 0,
+            "controlInhibitActive": 0,
+            "controlStopAt": null,
+            "controlState": "stopping",
+            "controlLastError": null,
+            "controlRunRequestMin": 0
+          },
+          "transition": true,
+          "starts": 1,
+          "stops": 1
+        }
+      }
+    ]
+  },
+  {
+    "name": "external-unknown",
+    "steps": [
+      {
+        "op": "observe",
+        "ownership": {
+          "running": true,
+          "remoteStartInput": "unknown"
+        },
+        "expected": {
+          "result": null,
+          "status": {
+            "latched": false,
+            "state": "running:other",
+            "stopAt": null,
+            "remainingSec": null,
+            "requestedAt": null,
+            "lastCommandAt": null,
+            "lastError": null,
+            "maxRuntimeSec": 600
+          },
+          "values": {
+            "controlRunActive": 0,
+            "controlInhibitActive": 0,
+            "controlStopAt": null,
+            "controlState": "running:other",
+            "controlLastError": null,
+            "controlRunRequestMin": 0
+          },
+          "transition": false,
+          "starts": 0,
+          "stops": 0
+        }
+      },
+      {
+        "op": "probe",
+        "expected": {
+          "result": {
+            "ok": true,
+            "wouldStart": false,
+            "verdict": "A run would be refused: the engine is already running, commanded by an unknown source (remote-start input open)",
+            "mode": 1,
+            "modeName": "Auto",
+            "running": true,
+            "remoteStartInput": "unknown",
+            "engineState": null,
+            "engineStateName": null,
+            "scfSupported": {
+              "selectAuto": true,
+              "telemetryStart": true,
+              "telemetryCancel": true
+            },
+            "scfMap": [16384, 0, 49152, 0, 0, 0, 0, 0],
+            "latched": false,
+            "state": "running:other",
+            "stopAt": null,
+            "remainingSec": null,
+            "requestedAt": null,
+            "lastCommandAt": null,
+            "lastError": null,
+            "maxRuntimeSec": 600
+          },
+          "status": {
+            "latched": false,
+            "state": "running:other",
+            "stopAt": null,
+            "remainingSec": null,
+            "requestedAt": null,
+            "lastCommandAt": null,
+            "lastError": null,
+            "maxRuntimeSec": 600
+          },
+          "values": {
+            "controlRunActive": 0,
+            "controlInhibitActive": 0,
+            "controlStopAt": null,
+            "controlState": "running:other",
+            "controlLastError": null,
+            "controlRunRequestMin": 0
+          },
+          "transition": false,
+          "starts": 0,
+          "stops": 0
+        }
+      },
+      {
+        "op": "request",
+        "runtimeSec": 60,
+        "expected": {
+          "result": {
+            "stopAt": null,
+            "remainingSec": null,
+            "ok": false,
+            "status": 409,
+            "reason": "the engine is already running, commanded by an unknown source (remote-start input open)",
+            "ownership": {
+              "mode": 1,
+              "modeName": "Auto",
+              "running": true,
+              "remoteStartInput": "unknown",
+              "engineState": null,
+              "engineStateName": null
+            }
+          },
+          "status": {
+            "latched": false,
+            "state": "running:other",
+            "stopAt": null,
+            "remainingSec": null,
+            "requestedAt": null,
+            "lastCommandAt": null,
+            "lastError": null,
+            "maxRuntimeSec": 600
+          },
+          "values": {
+            "controlRunActive": 0,
+            "controlInhibitActive": 0,
+            "controlStopAt": null,
+            "controlState": "running:other",
+            "controlLastError": null,
+            "controlRunRequestMin": 0
+          },
+          "transition": false,
+          "starts": 0,
+          "stops": 0
+        }
+      },
+      {
+        "op": "request",
+        "runtimeSec": 60,
+        "override": true,
+        "expected": {
+          "result": {
+            "stopAt": "2026-09-12T00:01:00.000Z",
+            "remainingSec": 60,
+            "ok": true,
+            "status": 200,
+            "action": "started",
+            "ownership": {
+              "mode": 1,
+              "modeName": "Auto",
+              "running": true,
+              "remoteStartInput": "unknown",
+              "engineState": null,
+              "engineStateName": null
+            }
+          },
+          "status": {
+            "latched": true,
+            "state": "running:hub",
+            "stopAt": "2026-09-12T00:01:00.000Z",
+            "remainingSec": 60,
+            "requestedAt": "2026-09-12T00:00:00.000Z",
+            "lastCommandAt": "2026-09-12T00:00:00.000Z",
+            "lastError": null,
+            "maxRuntimeSec": 600
+          },
+          "values": {
+            "controlRunActive": 1,
+            "controlInhibitActive": 0,
+            "controlStopAt": 1789171260,
+            "controlState": "running:hub",
+            "controlLastError": null,
+            "controlRunRequestMin": 1
+          },
+          "transition": true,
+          "starts": 1,
+          "stops": 0
+        }
+      },
+      {
+        "op": "request",
+        "runtimeSec": 0,
+        "expected": {
+          "result": {
+            "stopAt": null,
+            "remainingSec": null,
+            "ok": true,
+            "status": 200,
+            "action": "released",
+            "released": true,
+            "stillRunning": "unknown"
+          },
+          "status": {
+            "latched": false,
+            "state": "stopping",
+            "stopAt": null,
+            "remainingSec": null,
+            "requestedAt": null,
+            "lastCommandAt": "2026-09-12T00:00:00.000Z",
+            "lastError": null,
+            "maxRuntimeSec": 600
+          },
+          "values": {
+            "controlRunActive": 0,
+            "controlInhibitActive": 0,
+            "controlStopAt": null,
+            "controlState": "stopping",
+            "controlLastError": null,
+            "controlRunRequestMin": 0
+          },
+          "transition": true,
+          "starts": 1,
+          "stops": 1
+        }
+      }
+    ]
+  },
+  {
+    "name": "cooldown-4",
+    "steps": [
+      {
+        "op": "probe",
+        "ownership": {
+          "running": true,
+          "engineState": 4,
+          "engineStateName": "Cooling down"
+        },
+        "expected": {
+          "result": {
+            "ok": true,
+            "wouldStart": false,
+            "verdict": "A run would be refused: the engine is cooling down after its last run and will stop shortly",
+            "mode": 1,
+            "modeName": "Auto",
+            "running": true,
+            "remoteStartInput": "open",
+            "engineState": 4,
+            "engineStateName": "Cooling down",
+            "scfSupported": {
+              "selectAuto": true,
+              "telemetryStart": true,
+              "telemetryCancel": true
+            },
+            "scfMap": [16384, 0, 49152, 0, 0, 0, 0, 0],
+            "latched": false,
+            "state": "idle",
+            "stopAt": null,
+            "remainingSec": null,
+            "requestedAt": null,
+            "lastCommandAt": null,
+            "lastError": null,
+            "maxRuntimeSec": 600
+          },
+          "status": {
+            "latched": false,
+            "state": "idle",
+            "stopAt": null,
+            "remainingSec": null,
+            "requestedAt": null,
+            "lastCommandAt": null,
+            "lastError": null,
+            "maxRuntimeSec": 600
+          },
+          "values": {
+            "controlRunActive": 0,
+            "controlInhibitActive": 0,
+            "controlStopAt": null,
+            "controlState": "idle",
+            "controlLastError": null,
+            "controlRunRequestMin": 0
+          },
+          "transition": false,
+          "starts": 0,
+          "stops": 0
+        }
+      },
+      {
+        "op": "request",
+        "runtimeSec": 60,
+        "expected": {
+          "result": {
+            "stopAt": null,
+            "remainingSec": null,
+            "ok": false,
+            "status": 409,
+            "reason": "the engine is cooling down after its last run and will stop shortly",
+            "ownership": {
+              "mode": 1,
+              "modeName": "Auto",
+              "running": true,
+              "remoteStartInput": "open",
+              "engineState": 4,
+              "engineStateName": "Cooling down"
+            }
+          },
+          "status": {
+            "latched": false,
+            "state": "idle",
+            "stopAt": null,
+            "remainingSec": null,
+            "requestedAt": null,
+            "lastCommandAt": null,
+            "lastError": null,
+            "maxRuntimeSec": 600
+          },
+          "values": {
+            "controlRunActive": 0,
+            "controlInhibitActive": 0,
+            "controlStopAt": null,
+            "controlState": "idle",
+            "controlLastError": null,
+            "controlRunRequestMin": 0
+          },
+          "transition": false,
+          "starts": 0,
+          "stops": 0
+        }
+      }
+    ]
+  },
+  {
+    "name": "cooldown-6",
+    "steps": [
+      {
+        "op": "probe",
+        "ownership": {
+          "running": true,
+          "engineState": 6,
+          "engineStateName": "Post-run"
+        },
+        "expected": {
+          "result": {
+            "ok": true,
+            "wouldStart": false,
+            "verdict": "A run would be refused: the engine is cooling down after its last run and will stop shortly",
+            "mode": 1,
+            "modeName": "Auto",
+            "running": true,
+            "remoteStartInput": "open",
+            "engineState": 6,
+            "engineStateName": "Post-run",
+            "scfSupported": {
+              "selectAuto": true,
+              "telemetryStart": true,
+              "telemetryCancel": true
+            },
+            "scfMap": [16384, 0, 49152, 0, 0, 0, 0, 0],
+            "latched": false,
+            "state": "idle",
+            "stopAt": null,
+            "remainingSec": null,
+            "requestedAt": null,
+            "lastCommandAt": null,
+            "lastError": null,
+            "maxRuntimeSec": 600
+          },
+          "status": {
+            "latched": false,
+            "state": "idle",
+            "stopAt": null,
+            "remainingSec": null,
+            "requestedAt": null,
+            "lastCommandAt": null,
+            "lastError": null,
+            "maxRuntimeSec": 600
+          },
+          "values": {
+            "controlRunActive": 0,
+            "controlInhibitActive": 0,
+            "controlStopAt": null,
+            "controlState": "idle",
+            "controlLastError": null,
+            "controlRunRequestMin": 0
+          },
+          "transition": false,
+          "starts": 0,
+          "stops": 0
+        }
+      },
+      {
+        "op": "request",
+        "runtimeSec": 60,
+        "expected": {
+          "result": {
+            "stopAt": null,
+            "remainingSec": null,
+            "ok": false,
+            "status": 409,
+            "reason": "the engine is cooling down after its last run and will stop shortly",
+            "ownership": {
+              "mode": 1,
+              "modeName": "Auto",
+              "running": true,
+              "remoteStartInput": "open",
+              "engineState": 6,
+              "engineStateName": "Post-run"
+            }
+          },
+          "status": {
+            "latched": false,
+            "state": "idle",
+            "stopAt": null,
+            "remainingSec": null,
+            "requestedAt": null,
+            "lastCommandAt": null,
+            "lastError": null,
+            "maxRuntimeSec": 600
+          },
+          "values": {
+            "controlRunActive": 0,
+            "controlInhibitActive": 0,
+            "controlStopAt": null,
+            "controlState": "idle",
+            "controlLastError": null,
+            "controlRunRequestMin": 0
+          },
+          "transition": false,
+          "starts": 0,
+          "stops": 0
+        }
+      }
+    ]
+  },
+  {
+    "name": "missing-scf",
+    "steps": [
+      {
+        "op": "probe",
+        "scf": {
+          "selectAuto": false,
+          "telemetryStart": false,
+          "telemetryCancel": false
+        },
+        "expected": {
+          "result": {
+            "ok": true,
+            "wouldStart": false,
+            "verdict": "A run would be refused: the module does not advertise Telemetry Start (fn 32); the module does not advertise Cancel Telemetry Start (fn 33), so a run could not be stopped",
+            "mode": 1,
+            "modeName": "Auto",
+            "running": false,
+            "remoteStartInput": "open",
+            "engineState": null,
+            "engineStateName": null,
+            "scfSupported": {
+              "selectAuto": false,
+              "telemetryStart": false,
+              "telemetryCancel": false
+            },
+            "scfMap": [16384, 0, 49152, 0, 0, 0, 0, 0],
+            "latched": false,
+            "state": "idle",
+            "stopAt": null,
+            "remainingSec": null,
+            "requestedAt": null,
+            "lastCommandAt": null,
+            "lastError": null,
+            "maxRuntimeSec": 600
+          },
+          "status": {
+            "latched": false,
+            "state": "idle",
+            "stopAt": null,
+            "remainingSec": null,
+            "requestedAt": null,
+            "lastCommandAt": null,
+            "lastError": null,
+            "maxRuntimeSec": 600
+          },
+          "values": {
+            "controlRunActive": 0,
+            "controlInhibitActive": 0,
+            "controlStopAt": null,
+            "controlState": "idle",
+            "controlLastError": null,
+            "controlRunRequestMin": 0
+          },
+          "transition": false,
+          "starts": 0,
+          "stops": 0
+        }
+      }
+    ]
+  },
+  {
+    "name": "unreadable",
+    "steps": [
+      {
+        "op": "probe",
+        "failRead": true,
+        "expected": {
+          "result": {
+            "ok": false,
+            "verdict": "The hub could not read the controller: read timeout — a run would be refused too.",
+            "latched": false,
+            "state": "idle",
+            "stopAt": null,
+            "remainingSec": null,
+            "requestedAt": null,
+            "lastCommandAt": null,
+            "lastError": null,
+            "maxRuntimeSec": 600
+          },
+          "status": {
+            "latched": false,
+            "state": "idle",
+            "stopAt": null,
+            "remainingSec": null,
+            "requestedAt": null,
+            "lastCommandAt": null,
+            "lastError": null,
+            "maxRuntimeSec": 600
+          },
+          "values": {
+            "controlRunActive": 0,
+            "controlInhibitActive": 0,
+            "controlStopAt": null,
+            "controlState": "idle",
+            "controlLastError": null,
+            "controlRunRequestMin": 0
+          },
+          "transition": false,
+          "starts": 0,
+          "stops": 0
+        }
+      },
+      {
+        "op": "request",
+        "runtimeSec": 60,
+        "expected": {
+          "result": {
+            "stopAt": null,
+            "remainingSec": null,
+            "ok": false,
+            "status": 503,
+            "reason": "the controller could not be read (read timeout), so the hub refused to command it blind"
+          },
+          "status": {
+            "latched": false,
+            "state": "idle",
+            "stopAt": null,
+            "remainingSec": null,
+            "requestedAt": null,
+            "lastCommandAt": null,
+            "lastError": null,
+            "maxRuntimeSec": 600
+          },
+          "values": {
+            "controlRunActive": 0,
+            "controlInhibitActive": 0,
+            "controlStopAt": null,
+            "controlState": "idle",
+            "controlLastError": null,
+            "controlRunRequestMin": 0
+          },
+          "transition": false,
+          "starts": 0,
+          "stops": 0
+        }
+      }
+    ]
+  },
+  {
+    "name": "ambiguous-start",
+    "steps": [
+      {
+        "op": "request",
+        "runtimeSec": 60,
+        "failStart": true,
+        "expected": {
+          "result": {
+            "stopAt": "2026-09-12T00:01:00.000Z",
+            "remainingSec": 60,
+            "ok": false,
+            "status": 500,
+            "reason": "start may have taken effect (write failed after delivery was possible); a stop is scheduled for 2026-09-12T00:01:00.000Z",
+            "reasonMessage": {
+              "template": "start may have taken effect (write failed after delivery was possible); a stop is scheduled for {stopAt, time, short}",
+              "values": {
+                "stopAt": "2026-09-12T00:01:00.000Z"
+              }
+            },
+            "ownership": {
+              "mode": 1,
+              "modeName": "Auto",
+              "running": false,
+              "remoteStartInput": "open",
+              "engineState": null,
+              "engineStateName": null
+            }
+          },
+          "status": {
+            "latched": true,
+            "state": "running:hub",
+            "stopAt": "2026-09-12T00:01:00.000Z",
+            "remainingSec": 60,
+            "requestedAt": "2026-09-12T00:00:00.000Z",
+            "lastCommandAt": "2026-09-12T00:00:00.000Z",
+            "lastError": "start write failed (may still have taken effect): write timeout",
+            "maxRuntimeSec": 600
+          },
+          "values": {
+            "controlRunActive": 1,
+            "controlInhibitActive": 0,
+            "controlStopAt": 1789171260,
+            "controlState": "running:hub",
+            "controlLastError": "start write failed (may still have taken effect): write timeout",
+            "controlRunRequestMin": 1
+          },
+          "transition": true,
+          "starts": 1,
+          "stops": 0
+        }
+      },
+      {
+        "op": "request",
+        "runtimeSec": 120,
+        "advanceMs": 1000,
+        "expected": {
+          "result": {
+            "stopAt": "2026-09-12T00:02:01.000Z",
+            "remainingSec": 120,
+            "ok": true,
+            "status": 200,
+            "action": "extended"
+          },
+          "status": {
+            "latched": true,
+            "state": "running:hub",
+            "stopAt": "2026-09-12T00:02:01.000Z",
+            "remainingSec": 120,
+            "requestedAt": "2026-09-12T00:00:01.000Z",
+            "lastCommandAt": "2026-09-12T00:00:00.000Z",
+            "lastError": "start write failed (may still have taken effect): write timeout",
+            "maxRuntimeSec": 600
+          },
+          "values": {
+            "controlRunActive": 1,
+            "controlInhibitActive": 0,
+            "controlStopAt": 1789171321,
+            "controlState": "running:hub",
+            "controlLastError": "start write failed (may still have taken effect): write timeout",
+            "controlRunRequestMin": 2
+          },
+          "transition": true,
+          "starts": 1,
+          "stops": 0
+        }
+      },
+      {
+        "op": "reconcile",
+        "advanceMs": 120000,
+        "expected": {
+          "result": null,
+          "status": {
+            "latched": false,
+            "state": "idle",
+            "stopAt": null,
+            "remainingSec": null,
+            "requestedAt": null,
+            "lastCommandAt": "2026-09-12T00:02:01.000Z",
+            "lastError": null,
+            "maxRuntimeSec": 600
+          },
+          "values": {
+            "controlRunActive": 0,
+            "controlInhibitActive": 0,
+            "controlStopAt": null,
+            "controlState": "idle",
+            "controlLastError": null,
+            "controlRunRequestMin": 0
+          },
+          "transition": true,
+          "starts": 1,
+          "stops": 1
+        }
+      }
+    ]
+  },
+  {
+    "name": "failed-stop",
+    "steps": [
+      {
+        "op": "request",
+        "runtimeSec": 60,
+        "expected": {
+          "result": {
+            "stopAt": "2026-09-12T00:01:00.000Z",
+            "remainingSec": 60,
+            "ok": true,
+            "status": 200,
+            "action": "started",
+            "ownership": {
+              "mode": 1,
+              "modeName": "Auto",
+              "running": false,
+              "remoteStartInput": "open",
+              "engineState": null,
+              "engineStateName": null
+            }
+          },
+          "status": {
+            "latched": true,
+            "state": "running:hub",
+            "stopAt": "2026-09-12T00:01:00.000Z",
+            "remainingSec": 60,
+            "requestedAt": "2026-09-12T00:00:00.000Z",
+            "lastCommandAt": "2026-09-12T00:00:00.000Z",
+            "lastError": null,
+            "maxRuntimeSec": 600
+          },
+          "values": {
+            "controlRunActive": 1,
+            "controlInhibitActive": 0,
+            "controlStopAt": 1789171260,
+            "controlState": "running:hub",
+            "controlLastError": null,
+            "controlRunRequestMin": 1
+          },
+          "transition": true,
+          "starts": 1,
+          "stops": 0
+        }
+      },
+      {
+        "op": "request",
+        "runtimeSec": 0,
+        "failStop": true,
+        "expected": {
+          "result": {
+            "stopAt": "2026-09-12T00:01:00.000Z",
+            "remainingSec": 60,
+            "ok": false,
+            "status": 500,
+            "reason": "stop failed (write timeout) — retrying every 15s until confirmed",
+            "released": false
+          },
+          "status": {
+            "latched": true,
+            "state": "stop-failing",
+            "stopAt": "2026-09-12T00:01:00.000Z",
+            "remainingSec": 60,
+            "requestedAt": "2026-09-12T00:00:00.000Z",
+            "lastCommandAt": "2026-09-12T00:00:00.000Z",
+            "lastError": "stop write failed: write timeout",
+            "maxRuntimeSec": 600
+          },
+          "values": {
+            "controlRunActive": 1,
+            "controlInhibitActive": 0,
+            "controlStopAt": 1789171260,
+            "controlState": "stop-failing",
+            "controlLastError": "stop write failed: write timeout",
+            "controlRunRequestMin": 1
+          },
+          "transition": true,
+          "starts": 1,
+          "stops": 1
+        }
+      },
+      {
+        "op": "request",
+        "runtimeSec": 120,
+        "expected": {
+          "result": {
+            "stopAt": "2026-09-12T00:02:00.000Z",
+            "remainingSec": 120,
+            "ok": true,
+            "status": 200,
+            "action": "extended"
+          },
+          "status": {
+            "latched": true,
+            "state": "stop-failing",
+            "stopAt": "2026-09-12T00:02:00.000Z",
+            "remainingSec": 120,
+            "requestedAt": "2026-09-12T00:00:00.000Z",
+            "lastCommandAt": "2026-09-12T00:00:00.000Z",
+            "lastError": "stop write failed: write timeout",
+            "maxRuntimeSec": 600
+          },
+          "values": {
+            "controlRunActive": 1,
+            "controlInhibitActive": 0,
+            "controlStopAt": 1789171320,
+            "controlState": "stop-failing",
+            "controlLastError": "stop write failed: write timeout",
+            "controlRunRequestMin": 2
+          },
+          "transition": true,
+          "starts": 1,
+          "stops": 1
+        }
+      },
+      {
+        "op": "reconcile",
+        "advanceMs": 120000,
+        "failStop": false,
+        "expected": {
+          "result": null,
+          "status": {
+            "latched": false,
+            "state": "idle",
+            "stopAt": null,
+            "remainingSec": null,
+            "requestedAt": null,
+            "lastCommandAt": "2026-09-12T00:02:00.000Z",
+            "lastError": null,
+            "maxRuntimeSec": 600
+          },
+          "values": {
+            "controlRunActive": 0,
+            "controlInhibitActive": 0,
+            "controlStopAt": null,
+            "controlState": "idle",
+            "controlLastError": null,
+            "controlRunRequestMin": 0
+          },
+          "transition": true,
+          "starts": 1,
+          "stops": 2
+        }
+      }
+    ]
+  },
+  {
+    "name": "deadline",
+    "steps": [
+      {
+        "op": "request",
+        "runtimeSec": 60,
+        "expected": {
+          "result": {
+            "stopAt": "2026-09-12T00:01:00.000Z",
+            "remainingSec": 60,
+            "ok": true,
+            "status": 200,
+            "action": "started",
+            "ownership": {
+              "mode": 1,
+              "modeName": "Auto",
+              "running": false,
+              "remoteStartInput": "open",
+              "engineState": null,
+              "engineStateName": null
+            }
+          },
+          "status": {
+            "latched": true,
+            "state": "running:hub",
+            "stopAt": "2026-09-12T00:01:00.000Z",
+            "remainingSec": 60,
+            "requestedAt": "2026-09-12T00:00:00.000Z",
+            "lastCommandAt": "2026-09-12T00:00:00.000Z",
+            "lastError": null,
+            "maxRuntimeSec": 600
+          },
+          "values": {
+            "controlRunActive": 1,
+            "controlInhibitActive": 0,
+            "controlStopAt": 1789171260,
+            "controlState": "running:hub",
+            "controlLastError": null,
+            "controlRunRequestMin": 1
+          },
+          "transition": true,
+          "starts": 1,
+          "stops": 0
+        }
+      },
+      {
+        "op": "reconcile",
+        "advanceMs": 59999,
+        "expected": {
+          "result": null,
+          "status": {
+            "latched": true,
+            "state": "running:hub",
+            "stopAt": "2026-09-12T00:01:00.000Z",
+            "remainingSec": 0,
+            "requestedAt": "2026-09-12T00:00:00.000Z",
+            "lastCommandAt": "2026-09-12T00:00:00.000Z",
+            "lastError": null,
+            "maxRuntimeSec": 600
+          },
+          "values": {
+            "controlRunActive": 1,
+            "controlInhibitActive": 0,
+            "controlStopAt": 1789171260,
+            "controlState": "running:hub",
+            "controlLastError": null,
+            "controlRunRequestMin": 0
+          },
+          "transition": true,
+          "starts": 1,
+          "stops": 0
+        }
+      },
+      {
+        "op": "reconcile",
+        "advanceMs": 1,
+        "expected": {
+          "result": null,
+          "status": {
+            "latched": false,
+            "state": "idle",
+            "stopAt": null,
+            "remainingSec": null,
+            "requestedAt": null,
+            "lastCommandAt": "2026-09-12T00:01:00.000Z",
+            "lastError": null,
+            "maxRuntimeSec": 600
+          },
+          "values": {
+            "controlRunActive": 0,
+            "controlInhibitActive": 0,
+            "controlStopAt": null,
+            "controlState": "idle",
+            "controlLastError": null,
+            "controlRunRequestMin": 0
+          },
+          "transition": true,
+          "starts": 1,
+          "stops": 1
+        }
+      }
+    ]
+  },
+  {
+    "name": "invalid-runtime",
+    "steps": [
+      {
+        "op": "request",
+        "runtimeSec": -1,
+        "expected": {
+          "result": {
+            "stopAt": null,
+            "remainingSec": null,
+            "ok": false,
+            "status": 400,
+            "reason": "runtimeSec must be a non-negative number"
+          },
+          "status": {
+            "latched": false,
+            "state": "idle",
+            "stopAt": null,
+            "remainingSec": null,
+            "requestedAt": null,
+            "lastCommandAt": null,
+            "lastError": null,
+            "maxRuntimeSec": 600
+          },
+          "values": {
+            "controlRunActive": 0,
+            "controlInhibitActive": 0,
+            "controlStopAt": null,
+            "controlState": "idle",
+            "controlLastError": null,
+            "controlRunRequestMin": 0
+          },
+          "transition": false,
+          "starts": 0,
+          "stops": 0
+        }
+      },
+      {
+        "op": "request",
+        "runtimeSec": 601,
+        "expected": {
+          "result": {
+            "stopAt": null,
+            "remainingSec": null,
+            "ok": false,
+            "status": 400,
+            "reason": "a 601s run is longer than this generator's 600s limit"
+          },
+          "status": {
+            "latched": false,
+            "state": "idle",
+            "stopAt": null,
+            "remainingSec": null,
+            "requestedAt": null,
+            "lastCommandAt": null,
+            "lastError": null,
+            "maxRuntimeSec": 600
+          },
+          "values": {
+            "controlRunActive": 0,
+            "controlInhibitActive": 0,
+            "controlStopAt": null,
+            "controlState": "idle",
+            "controlLastError": null,
+            "controlRunRequestMin": 0
+          },
+          "transition": false,
+          "starts": 0,
+          "stops": 0
+        }
+      }
+    ]
+  },
+  {
+    "name": "restart-future",
+    "steps": [
+      {
+        "op": "request",
+        "runtimeSec": 60,
+        "expected": {
+          "result": {
+            "stopAt": "2026-09-12T00:01:00.000Z",
+            "remainingSec": 60,
+            "ok": true,
+            "status": 200,
+            "action": "started",
+            "ownership": {
+              "mode": 1,
+              "modeName": "Auto",
+              "running": false,
+              "remoteStartInput": "open",
+              "engineState": null,
+              "engineStateName": null
+            }
+          },
+          "status": {
+            "latched": true,
+            "state": "running:hub",
+            "stopAt": "2026-09-12T00:01:00.000Z",
+            "remainingSec": 60,
+            "requestedAt": "2026-09-12T00:00:00.000Z",
+            "lastCommandAt": "2026-09-12T00:00:00.000Z",
+            "lastError": null,
+            "maxRuntimeSec": 600
+          },
+          "values": {
+            "controlRunActive": 1,
+            "controlInhibitActive": 0,
+            "controlStopAt": 1789171260,
+            "controlState": "running:hub",
+            "controlLastError": null,
+            "controlRunRequestMin": 1
+          },
+          "transition": true,
+          "starts": 1,
+          "stops": 0
+        }
+      },
+      {
+        "op": "restart",
+        "advanceMs": 10000,
+        "expected": {
+          "result": null,
+          "status": {
+            "latched": true,
+            "state": "running:hub",
+            "stopAt": "2026-09-12T00:01:00.000Z",
+            "remainingSec": 50,
+            "requestedAt": "2026-09-12T00:00:00.000Z",
+            "lastCommandAt": null,
+            "lastError": null,
+            "maxRuntimeSec": 600
+          },
+          "values": {
+            "controlRunActive": 1,
+            "controlInhibitActive": 0,
+            "controlStopAt": 1789171260,
+            "controlState": "running:hub",
+            "controlLastError": null,
+            "controlRunRequestMin": 1
+          },
+          "transition": false,
+          "starts": 1,
+          "stops": 0
+        }
+      },
+      {
+        "op": "reconcile",
+        "advanceMs": 50000,
+        "expected": {
+          "result": null,
+          "status": {
+            "latched": false,
+            "state": "idle",
+            "stopAt": null,
+            "remainingSec": null,
+            "requestedAt": null,
+            "lastCommandAt": "2026-09-12T00:01:00.000Z",
+            "lastError": null,
+            "maxRuntimeSec": 600
+          },
+          "values": {
+            "controlRunActive": 0,
+            "controlInhibitActive": 0,
+            "controlStopAt": null,
+            "controlState": "idle",
+            "controlLastError": null,
+            "controlRunRequestMin": 0
+          },
+          "transition": true,
+          "starts": 1,
+          "stops": 1
+        }
+      }
+    ]
+  },
+  {
+    "name": "restart-overdue",
+    "steps": [
+      {
+        "op": "request",
+        "runtimeSec": 60,
+        "expected": {
+          "result": {
+            "stopAt": "2026-09-12T00:01:00.000Z",
+            "remainingSec": 60,
+            "ok": true,
+            "status": 200,
+            "action": "started",
+            "ownership": {
+              "mode": 1,
+              "modeName": "Auto",
+              "running": false,
+              "remoteStartInput": "open",
+              "engineState": null,
+              "engineStateName": null
+            }
+          },
+          "status": {
+            "latched": true,
+            "state": "running:hub",
+            "stopAt": "2026-09-12T00:01:00.000Z",
+            "remainingSec": 60,
+            "requestedAt": "2026-09-12T00:00:00.000Z",
+            "lastCommandAt": "2026-09-12T00:00:00.000Z",
+            "lastError": null,
+            "maxRuntimeSec": 600
+          },
+          "values": {
+            "controlRunActive": 1,
+            "controlInhibitActive": 0,
+            "controlStopAt": 1789171260,
+            "controlState": "running:hub",
+            "controlLastError": null,
+            "controlRunRequestMin": 1
+          },
+          "transition": true,
+          "starts": 1,
+          "stops": 0
+        }
+      },
+      {
+        "op": "restart",
+        "advanceMs": 61000,
+        "expected": {
+          "result": null,
+          "status": {
+            "latched": false,
+            "state": "idle",
+            "stopAt": null,
+            "remainingSec": null,
+            "requestedAt": null,
+            "lastCommandAt": "2026-09-12T00:01:01.000Z",
+            "lastError": null,
+            "maxRuntimeSec": 600
+          },
+          "values": {
+            "controlRunActive": 0,
+            "controlInhibitActive": 0,
+            "controlStopAt": null,
+            "controlState": "idle",
+            "controlLastError": null,
+            "controlRunRequestMin": 0
+          },
+          "transition": true,
+          "starts": 1,
+          "stops": 1
+        }
+      }
+    ]
+  },
+  {
+    "name": "defensive-boot-0",
+    "steps": [
+      {
+        "op": "restart",
+        "expected": {
+          "result": null,
+          "status": {
+            "latched": false,
+            "state": "idle",
+            "stopAt": null,
+            "remainingSec": null,
+            "requestedAt": null,
+            "lastCommandAt": null,
+            "lastError": null,
+            "maxRuntimeSec": 600
+          },
+          "values": {
+            "controlRunActive": 0,
+            "controlInhibitActive": 0,
+            "controlStopAt": null,
+            "controlState": "idle",
+            "controlLastError": null,
+            "controlRunRequestMin": 0
+          },
+          "transition": false,
+          "starts": 0,
+          "stops": 1
+        }
+      }
+    ]
+  },
+  {
+    "name": "defensive-boot-1",
+    "initialState": "not json",
+    "steps": [
+      {
+        "op": "restart",
+        "expected": {
+          "result": null,
+          "status": {
+            "latched": false,
+            "state": "idle",
+            "stopAt": null,
+            "remainingSec": null,
+            "requestedAt": null,
+            "lastCommandAt": null,
+            "lastError": null,
+            "maxRuntimeSec": 600
+          },
+          "values": {
+            "controlRunActive": 0,
+            "controlInhibitActive": 0,
+            "controlStopAt": null,
+            "controlState": "idle",
+            "controlLastError": null,
+            "controlRunRequestMin": 0
+          },
+          "transition": false,
+          "starts": 0,
+          "stops": 1
+        }
+      }
+    ]
+  },
+  {
+    "name": "defensive-boot-2",
+    "initialState": "{\"latched\":true,\"stopAt\":\"bad\"}",
+    "steps": [
+      {
+        "op": "restart",
+        "expected": {
+          "result": null,
+          "status": {
+            "latched": false,
+            "state": "idle",
+            "stopAt": null,
+            "remainingSec": null,
+            "requestedAt": null,
+            "lastCommandAt": null,
+            "lastError": null,
+            "maxRuntimeSec": 600
+          },
+          "values": {
+            "controlRunActive": 0,
+            "controlInhibitActive": 0,
+            "controlStopAt": null,
+            "controlState": "idle",
+            "controlLastError": null,
+            "controlRunRequestMin": 0
+          },
+          "transition": false,
+          "starts": 0,
+          "stops": 1
+        }
+      }
+    ]
+  },
+  {
+    "name": "defensive-panel-stop",
+    "steps": [
+      {
+        "op": "restart",
+        "ownership": {
+          "mode": 0,
+          "modeName": "Stop"
+        },
+        "expected": {
+          "result": null,
+          "status": {
+            "latched": false,
+            "state": "idle",
+            "stopAt": null,
+            "remainingSec": null,
+            "requestedAt": null,
+            "lastCommandAt": null,
+            "lastError": "module is in STOP mode at boot with no persisted reason — auto-start is DISABLED; check the panel (possible crash mid-inhibit)",
+            "maxRuntimeSec": 600
+          },
+          "values": {
+            "controlRunActive": 0,
+            "controlInhibitActive": 0,
+            "controlStopAt": null,
+            "controlState": "idle",
+            "controlLastError": "module is in STOP mode at boot with no persisted reason — auto-start is DISABLED; check the panel (possible crash mid-inhibit)",
+            "controlRunRequestMin": 0
+          },
+          "transition": false,
+          "starts": 0,
+          "stops": 1
+        }
+      }
+    ]
+  },
+  {
+    "name": "clean-boot",
+    "initialState": "{\"latched\":false,\"stopAt\":null}",
+    "steps": [
+      {
+        "op": "restart",
+        "expected": {
+          "result": null,
+          "status": {
+            "latched": false,
+            "state": "idle",
+            "stopAt": null,
+            "remainingSec": null,
+            "requestedAt": null,
+            "lastCommandAt": null,
+            "lastError": null,
+            "maxRuntimeSec": 600
+          },
+          "values": {
+            "controlRunActive": 0,
+            "controlInhibitActive": 0,
+            "controlStopAt": null,
+            "controlState": "idle",
+            "controlLastError": null,
+            "controlRunRequestMin": 0
+          },
+          "transition": false,
+          "starts": 0,
+          "stops": 0
+        }
+      }
+    ]
+  }
+]

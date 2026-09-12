@@ -85,3 +85,25 @@ Linux ARM64 build, and both existing TypeScript control suites (56 tests) pass. 
 database integration suites were not rerun for these Go-only behavior changes. These are simulator
 regressions checked against TypeScript source semantics; there is no shared cross-language control
 trace oracle yet. No live device writes or deployment occurred.
+
+After parity WIP commit `3028f015`, the remaining generator work used these red–green checks:
+
+| Regression | Observed red result | Implementation |
+| --- | --- | --- |
+| `TestSharedTypeScriptControlTraces` | Missing detailed request/probe/resume APIs and ownership fields | Full result maps and boot recovery match 22 production-TypeScript simulator traces |
+| `TestSimulatorRichRequestAndProbeResponses` | HTTP dropped ownership, returned the wrong refusal status, invented SCF support and discarded map words | Pass through supervisor results with an atomic status snapshot |
+| `TestControlAccess…` | Missing verifier dependency/API | Origin signature/issuer/audience validation with bounded, cached JWKS retrieval |
+| `TestControlMonotonicBackstopSurvivesBackwardWallStep` | Backward wall step extended the run | Independent process-local monotonic deadline |
+| `TestDefensiveBootPersistenceFailureRemainsRetryable` | Failed boot persistence abandoned the recovery retry | Retain a failed-release obligation until state is durable |
+| `TestSupervisorRunWakesForNewFractionalDeadline` | Fractional deadline waited for the one-second periodic tick | Wake on new/extended deadlines and derive the next timer from both clocks |
+
+Additional qualification passes for 24 concurrent HTTP starts, cancellation behind a blocked probe,
+reconciliation after a probe, failed defensive stops across restart, trial transport write rejection,
+JWT key rotation/coalescing/cancellation and invalid-token/key-server responses. Those checks qualify
+existing behavior as well as the new implementation; they are not all claimed as initially failing.
+See [control.md](control.md) for deliberately stricter Go behavior and the boundaries of this evidence.
+
+Final validation for this milestone passes **78 top-level Go tests** (including shared trace
+subtests), **304 TypeScript tests**, the Go race detector, vet, the root type-check, the dedicated
+control-trace type-check, knip and the stripped Linux ARM64 build. The database integration suite
+was not rerun because this milestone changes no management schema or ingestion behavior.

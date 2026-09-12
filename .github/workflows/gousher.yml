@@ -45,4 +45,6 @@ jobs:
           node-version: "22"
           cache: npm
       - run: npm ci
+      - run: npx tsc --noEmit -p packages/gousher/tsconfig.control.json
+      - run: npm test -- --runInBand packages/gousher/__tests__/control-traces.test.ts
       - run: packages/gousher/tools/integration.sh

@@ -6,14 +6,40 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"net/http"
-	"strconv"
-	"strings"
+	"os"
 	"time"
 )
 
 // SimulatorHandler exposes the Usher wire shape against an injected simulator.
 // It is deliberately not mounted by the shadow collector, whose control routes refuse writes.
 func (s *Supervisor) SimulatorHandler(siteID, passkey string) http.Handler {
+	team, audience := os.Getenv("CF_ACCESS_TEAM_DOMAIN"), os.Getenv("CF_ACCESS_AUD")
+	if team == "" && audience == "" {
+		return s.simulatorHandler(siteID, passkey)
+	}
+	verifier, err := NewAccessVerifier("https://"+team, audience, nil)
+	if err != nil {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			jsonResponse(w, 503, map[string]string{"error": "Access verification is not configured correctly"})
+		})
+	}
+	return s.SimulatorHandlerWithAccess(siteID, passkey, verifier)
+}
+func (s *Supervisor) SimulatorHandlerWithAccess(siteID, passkey string, verifier *AccessVerifier) http.Handler {
+	next := s.simulatorHandler(siteID, passkey)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if verifier == nil {
+			jsonResponse(w, 503, map[string]string{"error": "Access verification is not configured"})
+			return
+		}
+		if err := verifier.Verify(r.Context(), r.Header.Get("Cf-Access-Jwt-Assertion")); err != nil {
+			jsonResponse(w, 401, map[string]string{"error": "Access JWT rejected"})
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+func (s *Supervisor) simulatorHandler(siteID, passkey string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		base := "/api/usher/control/" + siteID + "/"
 		if r.URL.Path != base+"run" && r.URL.Path != base+"probe" {
@@ -24,25 +50,22 @@ func (s *Supervisor) SimulatorHandler(siteID, passkey string) http.Handler {
 			w.WriteHeader(405)
 			return
 		}
-		var input struct {
-			Passkey    *string  `json:"passkey"`
-			RuntimeSec *float64 `json:"runtimeSec"`
-			Override   bool     `json:"overrideRemoteStart"`
-		}
+		var input map[string]any
 		if r.Method == "POST" {
-			data, e := readLimited(r.Body, 8192)
-			if e != nil {
+			data, err := readLimited(r.Body, 8192)
+			if err != nil {
 				jsonResponse(w, 413, map[string]string{"error": "request too large"})
 				return
 			}
-			if len(data) > 0 && json.Unmarshal(data, &input) != nil {
+			if (len(data) == 0 && r.URL.Path == base+"run") || (len(data) > 0 && (json.Unmarshal(data, &input) != nil || input == nil)) {
 				jsonResponse(w, 400, map[string]string{"error": "malformed JSON body"})
 				return
 			}
 		}
+
 		supplied := ""
-		if input.Passkey != nil {
-			supplied = *input.Passkey
+		if key, ok := input["passkey"].(string); ok {
+			supplied = key
 		} else if r.Method == "GET" || r.URL.Path == base+"probe" {
 			supplied = r.Header.Get("x-usher-passkey")
 		}
@@ -59,69 +82,37 @@ func (s *Supervisor) SimulatorHandler(siteID, passkey string) http.Handler {
 		ctx, cancel := context.WithTimeout(r.Context(), 12*time.Second)
 		defer cancel()
 		now := time.Now()
-		view := s.View(now)
-		if strings.HasSuffix(r.URL.Path, "/probe") {
-			ownership, e := s.target.Preflight(ctx)
-			if e != nil {
-				view["ok"] = false
-				view["verdict"] = "The controller could not be read."
-				jsonResponse(w, 503, view)
-				return
+		if r.URL.Path == base+"probe" {
+			result := s.Probe(ctx, now)
+			code := 200
+			if result["ok"] != true {
+				code = 503
 			}
-			canStart := ownership.Mode == 1 && ownership.TelemetryStart && ownership.TelemetryCancel && !ownership.Running && view["latched"] == false
-			view["ok"] = true
-			view["wouldStart"] = canStart
-			view["verdict"] = "The simulator is ready for a supervised run."
-			if !canStart {
-				view["verdict"] = "A supervised run is not currently allowed."
-			}
-			if view["latched"] == true {
-				view["verdict"] = "Running until " + view["stopAt"].(*time.Time).UTC().Format("2006-01-02T15:04:05.000Z") + " — starting again extends the run."
-				view["verdictMessage"] = map[string]any{"template": "Running until {stopAt, time, short} — starting again extends the run.", "values": map[string]any{"stopAt": view["stopAt"]}}
-			}
-			view["mode"] = ownership.Mode
-			view["modeName"] = registerMap.Modes[strconv.Itoa(ownership.Mode)]
-			view["remoteStartInput"] = ownership.RemoteStartInput
-			view["running"] = ownership.Running
-			view["scfSupported"] = map[string]bool{"selectAuto": true, "telemetryStart": ownership.TelemetryStart, "telemetryCancel": ownership.TelemetryCancel}
-			view["scfMap"] = []int{}
-			jsonResponse(w, 200, view)
+			jsonResponse(w, code, result)
 			return
 		}
 		if r.Method == "GET" {
-			jsonResponse(w, 200, view)
+			jsonResponse(w, 200, s.View(now))
 			return
 		}
-		if input.RuntimeSec == nil || *input.RuntimeSec < 0 || *input.RuntimeSec > float64(s.maxSeconds) {
-			jsonResponse(w, 400, map[string]string{"error": "runtimeSec must be between zero and the generator limit"})
+		seconds, ok := input["runtimeSec"].(float64)
+		if !ok {
+			jsonResponse(w, 400, map[string]string{"error": "runtimeSec (number, seconds; 0 to stop) is required"})
 			return
 		}
-		before := s.Status()
-		e := s.Request(ctx, *input.RuntimeSec, input.Override, now)
-		view = s.View(time.Now())
-		result := map[string]any{"ok": e == nil, "status": view, "stopAt": view["stopAt"], "remainingSec": view["remainingSec"]}
-		if e != nil {
-			status := 500
-			switch e.Error() {
-			case "controller could not be read":
-				status = 503
-			case "module is not in Auto", "module does not support supervised telemetry control", "engine is already running":
-				status = 409
-			}
-			result["reason"] = e.Error()
-			jsonResponse(w, status, result)
+		override, _ := input["overrideRemoteStart"].(bool)
+		// The action, result and status all describe this serialized command. A later
+		// request must not turn this response into a snapshot of someone else's command.
+		if err := s.acquire(ctx); err != nil {
+			jsonResponse(w, 503, map[string]string{"error": "control operation cancelled"})
 			return
 		}
-		action := "started"
-		if before.Latched {
-			action = "extended"
-		}
-		if *input.RuntimeSec == 0 {
-			action = "released"
-			result["released"] = true
-			result["stillRunning"] = s.stillRunning()
-		}
-		result["action"] = action
-		jsonResponse(w, 200, result)
+		s.mu.Lock()
+		result := s.request(ctx, seconds, override, time.Now())
+		code := result["status"].(int)
+		result["status"] = s.view(time.Now())
+		s.mu.Unlock()
+		s.releaseOperation()
+		jsonResponse(w, code, result)
 	})
 }
