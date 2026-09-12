@@ -16,6 +16,7 @@
  */
 import { NextRequest, NextResponse } from "next/server";
 import ical, { ICalEventStatus } from "ical-generator";
+import { DateTime } from "luxon";
 import { getVtimezoneComponent } from "@touch4it/ical-timezones";
 import { Area } from "@/lib/ids";
 import { loadAreaForAuth } from "@/lib/areas/http";
@@ -76,7 +77,19 @@ export async function GET(
     const trigger = exerciseTrigger(row);
     if (!trigger) continue;
 
-    const startMs = wallClockToMs(trigger.schedule.start, timezone);
+    // 🛑 LUXON, not a `Date`, and this is not a style choice.
+    //
+    // `ical-generator` formats a plain `Date` against a TZID using `getHours()` — the NODE
+    // PROCESS's local timezone — and simply assumes the process is running in the event's zone.
+    // That is true on a Melbourne laptop and false on Vercel (UTC), so the first deploy of this
+    // route published every event at its UTC wall clock wearing a `TZID=Australia/Melbourne`
+    // label: ten hours out, in a feed whose entire job is to say when the generator runs. The
+    // unit tests passed, because they ran on the laptop.
+    //
+    // The luxon branch of `formatDate` calls `setZone()` and does a real conversion, which is why
+    // the library lists it as an optional peer. Proven identical under TZ=UTC, America/New_York,
+    // Asia/Kolkata and Australia/Melbourne.
+    const start = DateTime.fromISO(trigger.schedule.start, { zone: timezone });
     // The requested run LENGTH is the action's value — so the block in the calendar is how long
     // the engine is being asked to run for, not an arbitrary slot.
     const minutes =
@@ -88,8 +101,8 @@ export async function GET(
       // Stable across every edit, so a client updates the existing entry rather than accumulating
       // duplicates. `sequence` below is what tells it an update happened.
       id: `${row.id}@liveone.energy`,
-      start: new Date(startMs),
-      end: new Date(startMs + minutes * 60_000),
+      start,
+      end: start.plus({ minutes }),
       timezone,
       summary: row.enabled ? row.name : `${row.name} (disabled)`,
       description: describeRule(row, trigger, minutes),
@@ -140,43 +153,6 @@ function describeRule(
     `A missed start stays due for ${trigger.schedule.graceMinutes} minutes.`,
   );
   return lines.join("\n");
-}
-
-/**
- * "YYYY-MM-DDTHH:MM" in a zone → the instant.
- *
- * Two passes: read the wall clock as if it were UTC, ask what offset the zone was at that
- * approximate instant, then subtract it. The approximation only misreads the offset for a start
- * within an hour of a DST transition — and the 02:00–02:59 hour, the one that is genuinely
- * ambiguous, is refused by the parser before a schedule can ever hold it.
- */
-function wallClockToMs(wallClock: string, timezone: string): number {
-  const asUtc = Date.parse(`${wallClock}:00Z`);
-  return asUtc - offsetMsAt(asUtc, timezone);
-}
-
-function offsetMsAt(atMs: number, timezone: string): number {
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone: timezone,
-    hour12: false,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  }).formatToParts(new Date(atMs));
-  const get = (type: string) =>
-    Number(parts.find((p) => p.type === type)!.value);
-  const local = Date.UTC(
-    get("year"),
-    get("month") - 1,
-    get("day"),
-    get("hour") % 24,
-    get("minute"),
-    get("second"),
-  );
-  return local - atMs;
 }
 
 /** A filename-safe area name, so the downloaded file says which site it is. */
