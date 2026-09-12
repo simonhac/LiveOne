@@ -25,6 +25,9 @@
 #   SHEEPHOUSE_CONTROL_KEY   per-device passkey for the generator control route (usher.yaml
 #                            control.passkeyEnv). Resolved lazily per request — missing = the
 #                            control route 503s; the collector is unaffected.
+#   BETTERSTACK_SOURCE_TOKEN Better Stack source token for the metrics push (source "liveone-usher").
+#                            Pairs with the NON-secret BETTERSTACK_METRICS_ENDPOINT in [env] below —
+#                            without it metrics are a clean no-op, never an error.
 #   CF_ACCESS_TEAM_DOMAIN    (optional) e.g. "myteam.cloudflareaccess.com" — enables origin-side
 #   CF_ACCESS_AUD            verification of the Cf-Access-Jwt-Assertion on /api/usher/control/*
 app = "liveone-flyhub"
@@ -41,6 +44,12 @@ primary_region = "syd"
   KINKORA_PEER_WG_IP = "10.9.0.3/32"
   # On-disk store (blackbox journal + outage spool) on the persistent volume (see [mounts]).
   USHER_DATA_DIR = "/data/usher"
+  # Better Stack OTel metrics ingest. NOT a secret — the source token is, and is a Fly secret.
+  # This MUST be this source's OWN ingesting host. There is no shared ingest URL: the
+  # shared-looking https://in-otel.logs.betterstack.com/v1/metrics is REGION-PINNED and returns
+  # 401 for a token from another region (probed with both this token and clara's, 2026-09-12).
+  # Source "liveone-usher", id 2754099, region us-west-2a.
+  BETTERSTACK_METRICS_ENDPOINT = "https://s2754099.us-west-2a.betterstackdata.com/v1/metrics"
   # ── TEMPORARY: DeepSea diagnostics (debugging the Daylesford genset start trigger) ──────────────
   # Captures the FULL register dump (~100 regs: decoded value + raw words + sentinel reason) on EVERY
   # poll — idle included — to /data/usher/diag/YYYY-MM-DD.jsonl (gzipped on the day roll).
