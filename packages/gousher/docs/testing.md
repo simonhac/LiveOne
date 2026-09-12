@@ -166,3 +166,9 @@ Go race/vet/ARM64 checks and root/Usher/control type-checks. A full Next.js buil
 poller-list route export (helper's optional string argument was interpreted as route context); explicit
 request-only route wrappers fix that signature. Full build verification is recorded in the deployment
 record once complete.
+
+The full local Next.js build passes after the poller route wrapper fix. Deployment review also found
+that the cloud production-evidence route was absent from the exact middleware allow-list: a new test
+observed `false` where a self-authenticating route must bypass Clerk. Adding the exact production path
+fixes the regression; all 111 route-matcher/API tests pass, with collector bearer checks retained in
+handler. This does not broaden the admin-route allow-list.

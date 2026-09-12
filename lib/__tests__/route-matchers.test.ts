@@ -22,6 +22,7 @@ describe("isPublicRoute — middleware allow-list", () => {
     "/sign-in/factor-one",
     "/sign-up",
     "/.well-known/appspecific/com.tesla.3p.public-key.pem", // Tesla fetches the key unauthenticated
+    "/api/collectors/me/production",
     "/api/health",
     "/api/cron/db-stats",
     "/api/cron/monitor-observations",
