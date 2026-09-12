@@ -112,10 +112,26 @@ automations, built with `ical-generator` and carrying a real `VTIMEZONE` (withou
 places every event an hour out for half the year).
 
 **Scope.** One VEVENT per *exercise* rule — charge-session rules have no schedule. A disabled rule
-is shown `STATUS:CANCELLED` rather than dropped, because "it is not running this week" is
-information a subscriber wants and silently removing the event looks like a bug. `SEQUENCE` is the
-row's `updated_at` in epoch seconds, so clients pick up edits instead of accumulating duplicates.
-`X-PUBLISHED-TTL` is an hour.
+is still published, suffixed `(disabled)` in its summary, because "it is not running this week" is
+information a subscriber wants. 🛑 It is `STATUS:CONFIRMED`, **not** `STATUS:CANCELLED`: Apple
+Calendar and Google treat a cancelled event as withdrawn and render nothing at all, so the first
+version of this hid the very event it meant to show, and a week containing only a disabled rule
+looked like a broken feed. `SEQUENCE` is the row's `updated_at` in epoch seconds, so clients pick
+up edits instead of accumulating duplicates.
+
+🛑 **The feed carries no refresh hint**, and that is deliberate. `ical-generator` emits
+`REFRESH-INTERVAL`/`X-PUBLISHED-TTL` *after* the first component, and `icalbody` is calprops THEN
+components — so the hint is only obtainable in a form that makes the whole calendar malformed.
+iCloud fetched such a feed and refused to process it (`Last updated: Never` in Calendar.app's
+subscription info) while every property looked right to the naked eye. Clients poll on their own
+schedule; Apple uses the subscription's own Auto-refresh setting regardless.
+
+The same episode is why `DTSTAMP` must stay UTC: naming a calendar-level timezone makes
+`ical-generator` format the calendar's own properties in it, dropping the `Z` the RFC requires.
+The route sets `{name: null, generator}` so the VTIMEZONE is still built from each event's zone
+without the calendar adopting it. Both are pinned by tests that read the output structurally, and
+one that parses it with `ical.js` — three rounds of `toContain` assertions passed over feeds that
+were broken in production.
 
 **What is NOT in it:** any reading, any point value, any outcome. A subscriber learns when the site
 *intends* to run something, and nothing else.
