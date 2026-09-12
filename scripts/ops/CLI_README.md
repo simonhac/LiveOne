@@ -63,6 +63,10 @@ Data goes to stdout; all diagnostics go to stderr. Mutating commands are **dry b
     - [liveone device points](#liveone-device-points)
     - [liveone device latest](#liveone-device-latest)
     - [liveone device history](#liveone-device-history)
+    - [liveone device config](#liveone-device-config)
+      - [liveone device config show](#liveone-device-config-show)
+      - [liveone device config lint](#liveone-device-config-lint)
+      - [liveone device config clean](#liveone-device-config-clean)  _(writes)_
     - [liveone device recompute](#liveone-device-recompute)  _(writes)_
   - [liveone area](#liveone-area)
     - [liveone area list](#liveone-area-list)
@@ -79,6 +83,10 @@ Data goes to stdout; all diagnostics go to stderr. Mutating commands are **dry b
       - [liveone area role list](#liveone-area-role-list)
       - [liveone area role set](#liveone-area-role-set)  _(writes)_
       - [liveone area role clear](#liveone-area-role-clear)  _(writes)_
+    - [liveone area provenance](#liveone-area-provenance)
+    - [liveone area purge](#liveone-area-purge)
+      - [liveone area purge flows](#liveone-area-purge-flows)  _(writes)_
+      - [liveone area purge provenance](#liveone-area-purge-provenance)  _(writes)_
   - [liveone derivation](#liveone-derivation)
     - [liveone derivation list](#liveone-derivation-list)
     - [liveone derivation create](#liveone-derivation-create)  _(writes)_
@@ -2035,6 +2043,7 @@ Subcommands:
   points                 A device's point inventory: pt_… id, path, metric, unit.
   latest                 The device's current values, from the serving cache.
   history                Time series for a device, in the OpenNEM shape /api/history serves.
+  config                 The stored DeviceConfig blob — read it, audit it for rot, normalise it.
   recompute              Rebuild the rows derived FROM a device's readings, over a window of local days.  (writes)
 
 Run `liveone device <subcommand> --help` for a subcommand's own options.
@@ -2334,6 +2343,238 @@ Exit codes:
   130  interrupted
 ```
 
+#### liveone device config
+
+The stored DeviceConfig blob — read it, audit it for rot, normalise it.
+
+```
+The stored DeviceConfig blob — read it, audit it for rot, normalise it.
+
+When to use:
+  Reach for this when a config key has been DELETED from the code and you need the stored copies
+  swept, or after any change to the config shape, to prove nothing stale is left behind.
+  To CHANGE a setting, use the device configurator in the web app — these verbs normalise, they
+  do not edit.
+
+`devices.config` is a whitelist-parsed jsonb blob: a key the parser no longer names is dropped
+on the next save, so a deleted config key leaves rot in every stored copy until something
+rewrites them. `lint` finds that rot and `clean` evicts it, by round-tripping the blob through
+the current parser.
+
+`batteryProvenance` is MIRRORED into `areas.config` for every area where this device is the
+preferred battery/power binding, so the same rot sits in two places. `clean` fixes both and
+names the areas it touched — the mirror's resolution is hand-written SQL whose failure mode is
+silent under-resolution, so it reports rather than assumes.
+
+Usage:
+  liveone device config <subcommand> [options]
+
+  Read-only. This command changes nothing.
+
+Subcommands:
+  show                   The device's stored config blob, verbatim.
+  lint                   What the current parser would DROP from the stored config.
+  clean                  Re-parse the stored config and write back the normalised form.  (writes)
+
+Run `liveone device config <subcommand> --help` for a subcommand's own options.
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
+
+Exit codes:
+  0    success
+  1    completed, with findings or no results
+  2    usage error
+  3    authentication failure
+  5    upstream failure
+  130  interrupted
+```
+
+##### liveone device config show
+
+The device's stored config blob, verbatim.
+
+```
+The device's stored config blob, verbatim.
+
+When to use:
+  Use this to see exactly what is in the column, including keys the code no longer knows.
+
+Usage:
+  liveone device config show <device> [options]
+
+  Read-only. This command changes nothing.
+
+Arguments:
+  <device>               A device: its dv_… id, integer handle, slug, or name (omit only with --all)
+
+Options:
+  --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
+
+Examples:
+  liveone device config show kinkora-mondo
+  liveone device config show 6 --format json
+
+Exit codes:
+  0    success
+  1    completed, with findings or no results
+  2    usage error
+  3    authentication failure
+  5    upstream failure
+  130  interrupted
+```
+
+##### liveone device config lint
+
+What the current parser would DROP from the stored config.
+
+```
+What the current parser would DROP from the stored config.
+
+When to use:
+  Run this after deleting or renaming a config key, and after any change to `DeviceConfig`.
+  A clean result is the evidence that a code-side deletion was also a data-side one.
+
+Reports, per device: the dotted paths a save would drop, and their stored values. Also
+reports a stored blob the parser REJECTS — that is a different finding (something to fix,
+not something to drop) and it does not stop the sweep.
+
+Read-only, and it needs nothing of the server beyond the device aggregate, so it works
+against any deployment. Exit 1 when anything was found.
+
+Usage:
+  liveone device config lint [device] [options]
+
+  Read-only. This command changes nothing.
+
+Arguments:
+  [device]               A device: its dv_… id, integer handle, slug, or name (omit only with --all)
+
+Options:
+  --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
+  --all                      Every device you can read, instead of one named device
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
+
+Examples:
+  liveone device config lint --all
+  liveone device config lint --all --format json
+  liveone device config lint kinkora-mondo
+
+Exit codes:
+  0    success
+  1    at least one device has config the parser would drop or reject
+  2    usage error
+  3    authentication failure
+  5    upstream failure
+  130  interrupted
+```
+
+##### liveone device config clean
+
+Re-parse the stored config and write back the normalised form.
+
+```
+Re-parse the stored config and write back the normalised form.
+
+When to use:
+  Use this to evict what `lint` named. Run `lint` first — this verb's dry run shows the same
+  thing, but per device rather than across the fleet.
+
+🛑 LOSSY BY DESIGN, and there is no undo: `devices.config` has no revision history. The dry
+run prints every path it would drop WITH its stored value; nothing is written without
+--apply.
+
+A device whose config the parser REJECTS is reported and SKIPPED, never written — a
+rejection means the stored blob is malformed in a way the parser will not silently repair,
+and writing the parse of something that did not parse is how data gets lost.
+
+Also rewrites the `areas.config` mirror of `batteryProvenance`, and names the areas.
+
+Usage:
+  liveone device config clean [device] [options]
+
+  This command WRITES. It is dry by default: nothing changes without --apply.
+
+Arguments:
+  [device]               A device: its dv_… id, integer handle, slug, or name (omit only with --all)
+
+Options:
+  --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
+  --all                      Every device you can read, instead of one named device
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+  --apply                    Actually write. Without it nothing is changed.
+  --dry-run                  Report what would change and write nothing (the default)
+  --yes                      Skip the confirmation prompt. Required with --apply off a terminal.
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
+
+Examples:
+  liveone device config clean kinkora-mondo
+  liveone device config clean kinkora-mondo --apply
+  liveone device config clean --all --apply
+
+Exit codes:
+  0    success
+  1    a device was skipped because its stored config does not parse
+  2    usage error
+  3    authentication failure
+  5    upstream failure
+  130  interrupted
+```
+
 #### liveone device recompute
 
 Rebuild the rows derived FROM a device's readings, over a window of local days.
@@ -2438,6 +2679,8 @@ Subcommands:
   flows                  The rolled-up source×load energy-flow matrix (the Sankey) for a period.
   devices                Which devices an area is made of (writes: add, remove, set).
   role                   Which point fills an area's (role, metric) slot, and in what order (writes: set, clear).
+  provenance             What derived rows an area actually holds — the flow matrix and the battery fold.
+  purge                  Delete an area's derived rows — the flow matrix, or the battery fold.
 
 Run `liveone area <subcommand> --help` for a subcommand's own options.
 
@@ -3207,6 +3450,250 @@ Examples:
 Exit codes:
   0    success
   1    the server refused the change (the reason says why)
+  2    usage error
+  3    authentication failure
+  5    upstream failure
+  130  interrupted
+```
+
+#### liveone area provenance
+
+What derived rows an area actually holds — the flow matrix and the battery fold.
+
+```
+What derived rows an area actually holds — the flow matrix and the battery fold.
+
+When to use:
+  Use this before a `purge`, and to answer 'is this area still computing anything?' — an area
+  that has stopped being a site keeps its rows and keeps looking authoritative.
+
+Reports both layers: the flow matrix (rows, days, range — needs --start/--end) and the battery
+provenance (fold rows, the helper device, its blend readings and bindings).
+
+Read-only. This is the evidence a `purge` dry run is based on.
+
+Usage:
+  liveone area provenance <area> [options]
+
+  Read-only. This command changes nothing.
+
+Arguments:
+  <area>                 An area: its ar_… id, integer handle, or display name
+
+Options:
+  --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
+  --start <YYYY-MM-DD>       Window start (local days)
+  --end <YYYY-MM-DD>         Window end, inclusive (local days)
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
+
+Examples:
+  liveone area provenance kutis
+  liveone area provenance 13 --start=2026-07-06 --end=2026-09-12
+
+Exit codes:
+  0    success
+  1    completed, with findings or no results
+  2    usage error
+  3    authentication failure
+  5    upstream failure
+  130  interrupted
+```
+
+#### liveone area purge
+
+Delete an area's derived rows — the flow matrix, or the battery fold.
+
+```
+Delete an area's derived rows — the flow matrix, or the battery fold.
+
+When to use:
+  Reach for this when an area has STOPPED being a site — its bindings were cleared, or it was
+  superseded by a larger area — and its derived rows are frozen rather than merely stale. To
+  REBUILD rows that are stale, use `device recompute` or the recompute-provenance endpoint; this
+  verb is for rows that should no longer exist at all.
+
+🛑 Read `area provenance <area>` first — it reports exactly what these verbs would remove.
+
+The two sub-verbs are NOT equally safe. `flows` deletes the Sankey and is not recoverable by
+any cron; `provenance` deletes the battery fold, which the learn rebuilds from scratch. Both
+are dry-run by default.
+
+Usage:
+  liveone area purge <subcommand> [options]
+
+  Read-only. This command changes nothing.
+
+Subcommands:
+  flows                  Delete the area's flow/Sankey matrix over a window of local days.  (writes)
+  provenance             Delete the area's battery provenance: the fold, its blend series and their bindings.  (writes)
+
+Run `liveone area purge <subcommand> --help` for a subcommand's own options.
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
+
+Exit codes:
+  0    success
+  1    completed, with findings or no results
+  2    usage error
+  3    authentication failure
+  5    upstream failure
+  130  interrupted
+```
+
+##### liveone area purge flows
+
+Delete the area's flow/Sankey matrix over a window of local days.
+
+```
+Delete the area's flow/Sankey matrix over a window of local days.
+
+When to use:
+  Use this only for an area whose flow matrix should not exist — a retired area-of-one, or
+  one superseded by a larger area that now owns the interpretation.
+
+🛑 This is the SANKEY, not just 'provenance'. `point_readings_flow_attr_1d` holds the energy
+history of every complete area (`flow_1d` was retired into it) with the attributed
+emissions/renewable/cost/revenue legs over it. Deleting a row takes both.
+
+🛑 And NOTHING heals it. The nightly reheal reaches 96h back, and it finds work by reading
+this table — so a deleted day is not stale, it is absent, and the backlog will never look
+for it. Only an explicit recompute over the range restores it; the output names that
+command.
+
+--start and --end are REQUIRED. There is no unscoped form: the fleet-wide twin
+(`/api/cron/daily`) reads a missing date as ALL HISTORY, and a verb whose dangerous case is
+the one you get by typing less will eventually be typed less.
+
+Usage:
+  liveone area purge flows <area> [options]
+
+  This command WRITES. It is dry by default: nothing changes without --apply.
+
+Arguments:
+  <area>                 An area: its ar_… id, integer handle, or display name
+
+Options:
+  --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
+  --start <YYYY-MM-DD>       Window start (local days)
+  --end <YYYY-MM-DD>         Window end, inclusive (local days)
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+  --apply                    Actually write. Without it nothing is changed.
+  --dry-run                  Report what would change and write nothing (the default)
+  --yes                      Skip the confirmation prompt. Required with --apply off a terminal.
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
+
+Examples:
+  liveone area purge flows 13 --start=2026-07-06 --end=2026-09-12
+  liveone area purge flows 13 --start=2026-07-06 --end=2026-09-12 --apply
+
+Exit codes:
+  0    success
+  1    there was nothing in that window to delete
+  2    usage error
+  3    authentication failure
+  5    upstream failure
+  130  interrupted
+```
+
+##### liveone area purge provenance
+
+Delete the area's battery provenance: the fold, its blend series and their bindings.
+
+```
+Delete the area's battery provenance: the fold, its blend series and their bindings.
+
+When to use:
+  Use this for an area that should no longer carry a battery blend at all. To merely REBUILD
+  a wrong blend, recompute instead — this removes the rows, it does not refresh them.
+
+Removes three things that are one fact in three homes: the six `bidi.battery/*` blend series
+on the area's helper device (agg_5m + agg_1d), their `role=battery` bindings, and every
+`battery_provenance_daily` row — learn inputs, learned parameters AND the fold checkpoints.
+Then rebuilds the subscription registry so the frozen values leave the KV latest map, which
+no delete does on its own.
+
+Safe, unlike its sibling: the learn forces a full rebuild from its fixed anchor whenever the
+table is empty, so this is a supported operation rather than damage. No window needed.
+
+🛑 The helper DEVICE and its POINTS survive — they go inert and the next recompute refills
+the same `pt_` ids.
+
+Usage:
+  liveone area purge provenance <area> [options]
+
+  This command WRITES. It is dry by default: nothing changes without --apply.
+
+Arguments:
+  <area>                 An area: its ar_… id, integer handle, or display name
+
+Options:
+  --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+  --apply                    Actually write. Without it nothing is changed.
+  --dry-run                  Report what would change and write nothing (the default)
+  --yes                      Skip the confirmation prompt. Required with --apply off a terminal.
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
+
+Examples:
+  liveone area purge provenance 13
+  liveone area purge provenance 13 --apply
+
+Exit codes:
+  0    success
+  1    the area had no battery provenance to delete
   2    usage error
   3    authentication failure
   5    upstream failure

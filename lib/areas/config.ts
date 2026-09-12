@@ -2,7 +2,20 @@ import { eq, sql } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import { areas } from "@/lib/db/planetscale/schema";
 import type { BatteryProvenanceConfig } from "@/lib/capabilities/config";
+import { Area } from "@/lib/ids";
 import type { AreaConfig } from "./types";
+
+/**
+ * Which areas the mirror actually rewrote.
+ *
+ * 🛑 Returned rather than swallowed because the resolution below is hand-written `sql` whose failure
+ * mode is silent under-resolution — zero areas matched, no error. A caller that assumed it ran would
+ * report a `batteryProvenance` cleaned on the device and still rotten in `areas.config`, which is
+ * exactly the half-done cleanup `liveone device config clean` exists to prevent.
+ */
+export interface AreaConfigSyncResult {
+  areas: { id: string; name: string }[];
+}
 
 /**
  * Pre-cutover compatibility write: when the selected battery device's legacy settings are saved,
@@ -18,10 +31,10 @@ import type { AreaConfig } from "./types";
 export async function syncAreaBatteryConfigFromDevice(
   systemId: number,
   batteryProvenance: BatteryProvenanceConfig | undefined,
-): Promise<void> {
+): Promise<AreaConfigSyncResult> {
   const db = requirePlanetscaleDb();
   const rows = await db
-    .select({ id: areas.id, config: areas.config })
+    .select({ id: areas.id, name: areas.name, config: areas.config })
     .from(areas).where(sql`
       EXISTS (
         SELECT 1 FROM area_bindings ab
@@ -60,4 +73,7 @@ export async function syncAreaBatteryConfigFromDevice(
         .where(eq(areas.id, row.id));
     }
   });
+  return {
+    areas: rows.map((r) => ({ id: Area.encode(r.id), name: r.name })),
+  };
 }

@@ -35,6 +35,7 @@ import {
   usage,
 } from "../shared";
 import { DEVICES_SPEC, ROLE_SPEC, WIRING_HANDLERS } from "./wiring";
+import { PROVENANCE_SPEC, PURGE_SPEC, PURGE_HANDLERS } from "./purge";
 
 const AREA_ARG = {
   name: "area",
@@ -195,6 +196,8 @@ export const areaCommand = defineCommand({
     },
     devices: DEVICES_SPEC,
     role: ROLE_SPEC,
+    provenance: PROVENANCE_SPEC,
+    purge: PURGE_SPEC,
   },
 } satisfies CommandSpec);
 
@@ -440,8 +443,12 @@ const HANDLERS: Record<string, (ctx: Ctx) => Promise<number>> = {
  */
 export async function runArea(ctx: Ctx): Promise<number> {
   const path = ctx.subcommandPath.slice(1); // drop "area"
-  const handler =
-    WIRING_HANDLERS[path.join(".")] ?? HANDLERS[path[path.length - 1] ?? ""];
+  // 🛑 STRICTLY full-path. The last-element fallback that used to back this lookup became live ammunition
+  // the moment `purge flows` existed: `area purge flows` would have fallen through to the `flows` READ
+  // verb and printed a Sankey instead of deleting one — the failure mode this dispatcher's own comment
+  // warns about, arriving from the other direction.
+  const key = path.join(".");
+  const handler = WIRING_HANDLERS[key] ?? PURGE_HANDLERS[key] ?? HANDLERS[key];
   if (!handler)
     throw usage(
       `unknown area command "${path.join(" ")}"`,

@@ -80,6 +80,14 @@ export const TIERS: TierManifest = {
     // The read-only http domains — composed by liveone.ts, same rules as the dashboard module.
     "scripts/ops/device/cli.ts",
     "scripts/ops/area/cli.ts",
+    // `device config` — normalises the stored DeviceConfig jsonb, which is how a config key deleted
+    // from the code finally leaves the database. Split out of device/cli.ts because it carries its
+    // own parser-diff logic and a writer, not because the domain outgrew one file.
+    "scripts/ops/device/config.ts",
+    // `area provenance` + `area purge` — the RETIRE verbs. Split out because they are the only
+    // destructive thing in the area domain and the reasoning about which layer heals itself belongs
+    // next to the code that deletes it, not buried in a file of read verbs.
+    "scripts/ops/area/purge/index.ts",
     "scripts/ops/user/cli.ts",
     "scripts/ops/queue/cli.ts",
     // The `sync` verb — the only WRITER among the composed http modules, so it carries the

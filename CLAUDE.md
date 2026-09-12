@@ -208,9 +208,9 @@ terminal additionally requires `--yes`.
 and the HWS model: list, create, set, enable/disable, delete, recompute, intervals — addressed by
 `dx_`/name/role, never by an area; `create` names the DEVICE the detector is about), `sync` (re-fetch
 a window from a device's vendor), and `device` / `area` / `user` (list, show, latest values, history;
-`area flows` downloads the rolled-up Sankey matrix for a period — all read-only except
-`device recompute`). Run `-- <domain> --help` for verbs; the generated reference is
-`docs/cli-reference.md`, the architecture doc is `docs/cli.md`.
+`area flows` downloads the rolled-up Sankey matrix for a period — read-only except
+`device recompute`, `device config clean` and `area purge`). Run `-- <domain> --help` for verbs;
+the generated reference is `docs/cli-reference.md`, the architecture doc is `docs/cli.md`.
 
 - **First run:** `npm run liveone -- auth login` — a browser hand-off mints a `lo_cli_` token,
   stored per-origin in `~/.config/liveone/cli-auth.json` (0600). Prod, preview and localhost logins
@@ -245,6 +245,22 @@ a window from a device's vendor), and `device` / `area` / `user` (list, show, la
   so `liveone device recompute <device> --start --end` rebuilds `agg_1d` + the per-Area flow matrix,
   and `liveone derivation recompute <dx_> --date` rebuilds the run detectors. Each names its window;
   none has an unscoped form. The runbook is `docs/outage-catchup.md`.
+- **`device config` sweeps the stored `DeviceConfig` jsonb.** `parseDeviceConfig` is a WHITELIST
+  rebuild and the PATCH REPLACES the column, so a config key deleted from the code becomes
+  unreachable rot in every stored copy until something rewrites it — #481 deleted `exportTariff`
+  across 34 files and swept zero rows. `config lint [--all]` names every device whose blob no longer
+  round-trips (read-only, and it needs nothing of the server, so run it after ANY change to the
+  config shape); `config clean` evicts what it found, dry-run by default. `clean` also fixes the
+  `areas.config` mirror of `batteryProvenance` and names the areas it touched.
+- 🛑 **`area purge` deletes derived rows, and its two verbs are NOT equally safe.**
+  `area purge provenance` drops the battery fold, its blend series and their bindings — safe,
+  because the learn rebuilds from a fixed anchor whenever its table is empty. `area purge flows`
+  drops `point_readings_flow_attr_1d`, which is the **Sankey for every complete area**
+  (`flow_1d` was retired into it), and **nothing heals it**: `rehealStaleAttrDays` finds work by
+  SELECTING FROM that table, so a deleted day is absent rather than stale and the backlog never
+  looks for it. Only an explicit `recompute-provenance` over the range restores it, which is why the
+  verb requires `--start`/`--end` and prints the restore command. Read `area provenance <area>`
+  first — it reports exactly what each would remove.
 - 🛑 `device recompute` is scoped on purpose. Its fleet-wide twin, `POST /api/cron/daily`
   `{"action":"regenerate"}`, reads a **missing date as all available history** (`parseDateParams`),
   and also re-runs HWS, battery learning, run periods and two reheal passes out to *now* — measured
