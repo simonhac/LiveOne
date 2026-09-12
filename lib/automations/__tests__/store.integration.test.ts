@@ -49,10 +49,13 @@ const ACTION = {
   value: 30,
 } as unknown as AutomationAction;
 
+/** An arbitrary but fixed slot instant, whole milliseconds so the round trip is lossless. */
+const SLOT_MS = new Date("2026-09-10T09:00:00+10:00").getTime();
+
 const db = planetscaleDb;
 const maybe = db ? describe : describe.skip;
 
-maybe("claimExerciseDispatch against a real Postgres", () => {
+maybe("claimExerciseSlot against a real Postgres", () => {
   let id: string | null = null;
 
   beforeAll(async () => {
@@ -85,22 +88,32 @@ maybe("claimExerciseDispatch against a real Postgres", () => {
     expect(fraction.length).toBeLessThanOrEqual(3);
   });
 
-  it("claims a row whose revision came from the column default", async () => {
+  it("claims a row whose revision came from the column default, and consumes the slot", async () => {
     const row = await store.getById(id!);
     expect(row!.revision).toBe(1);
-    expect(await store.claimExerciseDispatch(id!, row!.revision)).toBe(true);
-    expect((await store.getById(id!))!.revision).toBe(2);
+    expect(row!.lastTriggeredRunStart).toBeNull();
+
+    const claim = await store.claimExerciseSlot(id!, row!.revision, SLOT_MS);
+    // 🛑 It returns the revision it TOOK, not a boolean: `recordExerciseOutcome` compares against
+    // this, and comparing against the row's pre-claim revision would refuse its own write.
+    expect(claim).toEqual({ revision: 2 });
+
+    const after = await store.getById(id!);
+    expect(after!.revision).toBe(2);
+    // 🛑 The consume is in the SAME statement as the claim. This is what closes the window a second
+    // tick used to dispatch through, and it is only true if the UPDATE really wrote both columns.
+    expect(after!.lastTriggeredRunStart).toEqual(new Date(SLOT_MS));
   });
 
   it("refuses a stale revision — the race the CAS exists for", async () => {
     const stale = (await store.getById(id!))!.revision;
-    expect(await store.claimExerciseDispatch(id!, stale)).toBe(true);
-    expect(await store.claimExerciseDispatch(id!, stale)).toBe(false);
+    expect(await store.claimExerciseSlot(id!, stale, SLOT_MS)).not.toBeNull();
+    expect(await store.claimExerciseSlot(id!, stale, SLOT_MS)).toBeNull();
   });
 
   it("claims again once the caller re-reads", async () => {
     const fresh = (await store.getById(id!))!.revision;
-    expect(await store.claimExerciseDispatch(id!, fresh)).toBe(true);
+    expect(await store.claimExerciseSlot(id!, fresh, SLOT_MS)).not.toBeNull();
   });
 
   it("🛑 every writer bumps the version, so an unrelated write invalidates a held claim", async () => {
@@ -111,6 +124,70 @@ maybe("claimExerciseDispatch against a real Postgres", () => {
     // Benign and deliberate: a rule PATCHed between `listEnabled()` and `fireExercise()` loses the
     // claim and retries on the next tick, well inside the grace window. Silently dispatching against
     // a definition that has since changed is the outcome worth avoiding.
-    expect(await store.claimExerciseDispatch(id!, before)).toBe(false);
+    expect(await store.claimExerciseSlot(id!, before, SLOT_MS)).toBeNull();
+  });
+
+  // ── the outcome write, which is now a CAS too ──────────────────────────────────────────────────
+
+  const context = (outcome: "fired" | "waiting") =>
+    ({ slotAt: SLOT_MS, outcome, decidedAt: Date.now() }) as never;
+
+  it("🛑 refuses an outcome whose expected revision has moved on", async () => {
+    const stale = (await store.getById(id!))!.revision;
+    await store.patch(id!, { name: `__test__ moved ${Date.now()}` });
+
+    const applied = await store.recordExerciseOutcome(id!, {
+      context: context("fired"),
+      runStart: new Date(SLOT_MS),
+      disable: true,
+      nowMs: Date.now(),
+      expectRevision: stale,
+    });
+
+    // 🛑 And critically the row is UNTOUCHED — this write carries `enabled: false`, so a stale
+    // decision applying here is how a rule that had just been given another occurrence went dark.
+    expect(applied).toBe(false);
+    expect((await store.getById(id!))!.enabled).toBe(false); // the fixture was created disabled
+    expect((await store.getById(id!))!.lastTriggeredAt).toBeNull();
+  });
+
+  it("applies an outcome against the current revision, and RELEASES the slot to a prior watermark", async () => {
+    const prior = new Date(SLOT_MS - 7 * 24 * 3_600_000);
+    await store.patch(id!, { lastTriggeredRunStart: prior });
+
+    const claim = await store.claimExerciseSlot(
+      id!,
+      (await store.getById(id!))!.revision,
+      SLOT_MS,
+    );
+    expect((await store.getById(id!))!.lastTriggeredRunStart).toEqual(
+      new Date(SLOT_MS),
+    );
+
+    // The hub declined: put the watermark back where it was, NOT to null. Nulling it would re-arm
+    // whatever earlier occurrence it was holding.
+    const applied = await store.recordExerciseOutcome(id!, {
+      context: context("waiting"),
+      runStart: prior,
+      nowMs: Date.now(),
+      expectRevision: claim!.revision,
+    });
+
+    expect(applied).toBe(true);
+    expect((await store.getById(id!))!.lastTriggeredRunStart).toEqual(prior);
+  });
+
+  it("leaves the watermark alone when no runStart is given", async () => {
+    const held = (await store.getById(id!))!.lastTriggeredRunStart;
+    expect(held).not.toBeNull();
+
+    const applied = await store.recordExerciseOutcome(id!, {
+      context: context("waiting"),
+      nowMs: Date.now(),
+      expectRevision: (await store.getById(id!))!.revision,
+    });
+
+    expect(applied).toBe(true);
+    expect((await store.getById(id!))!.lastTriggeredRunStart).toEqual(held);
   });
 });

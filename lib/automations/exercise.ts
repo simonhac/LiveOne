@@ -15,22 +15,50 @@ import type {
 import type { Slot } from "./recurrence";
 
 /**
- * Is this slot still ours to act on?
+ * Why a slot is not ours to act on — the two cases mean different things to the caller.
  *
- * Two ways it is not: we have already dealt with it (exact match — a slot instant is computed, not
- * observed, so it cannot drift the way a run's start_time does), or it predates the rule itself.
- * The second matters because `previousOccurrence` happily returns a slot from before the
- * automation was created, and reporting that as a missed exercise would be blaming the rule for a
- * week it did not exist.
+ * `dealt-with` is terminal for that slot, so it is the answer that may also retire a spent rule.
+ * `predates-rule` is not: the rule simply has not started yet, and disabling it there would kill a
+ * schedule for having been written before its own first occurrence.
+ */
+export type NotDueReason = "dealt-with" | "predates-rule";
+
+/**
+ * Is this slot still ours to act on, and if not, why?
+ *
+ * 🛑 `lastTriggeredRunStart` is a WATERMARK, not a record of one slot. It is a single timestamp
+ * column, so a watermark is the only thing it can express — and reading it as set membership (an
+ * exact `===`) is how removing a consumed occurrence re-armed an earlier one: two slots inside one
+ * grace window both get dealt with, the key holds the LATER one, and an EXDATE on that later slot
+ * makes `previousOccurrence` return the earlier slot, which no longer matches the key and is still
+ * inside grace. The engine then starts for an occurrence it had already handled.
+ *
+ * `<=` says what the column means: everything up to and including this instant is dealt with. Every
+ * terminal outcome consumes (`fired`, `satisfied`, `missed`, `missed-running`) and `waiting`
+ * deliberately does not, so the watermark advances exactly when the slot is genuinely closed out.
+ * What it gives up is an `rdate` added EARLIER than the last consumed slot ever firing, which is
+ * the right answer rather than a regression: that occurrence is in the past and already superseded.
+ *
+ * The slot instant is computed rather than observed, so it cannot drift the way a run's
+ * `start_time` does — the comparison stays exact arithmetic either way.
  */
 export function isDue(args: {
   slot: Slot;
   lastTriggeredRunStartMs: number | null;
   createdAtMs: number;
-}): boolean {
-  if (args.slot.atMs === args.lastTriggeredRunStartMs) return false;
-  if (args.slot.atMs < args.createdAtMs) return false;
-  return true;
+}): { due: true } | { due: false; reason: NotDueReason } {
+  // 🛑 The null guard is explicit and must stay that way. `slot.atMs <= null` coerces the null to 0
+  // in JS, so a bare `<=` would answer "not due" for EVERY slot on a rule that has never fired.
+  if (
+    args.lastTriggeredRunStartMs !== null &&
+    args.slot.atMs <= args.lastTriggeredRunStartMs
+  )
+    return { due: false, reason: "dealt-with" };
+  // `previousOccurrence` happily returns a slot from before the automation was created, and
+  // reporting that as a missed exercise would be blaming the rule for a week it did not exist.
+  if (args.slot.atMs < args.createdAtMs)
+    return { due: false, reason: "predates-rule" };
+  return { due: true };
 }
 
 /**

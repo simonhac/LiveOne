@@ -1,7 +1,7 @@
 /**
  * The claim's key, and the round trip that made the old one wrong.
  *
- * `claimExerciseDispatch` used to be a compare-and-set on `automations.updated_at`, a
+ * `claimExerciseSlot` used to be a compare-and-set on `automations.updated_at`, a
  * `timestamp(6) DEFAULT now()` column. For two days it matched NOTHING — every tick "lost" a claim
  * nobody held, `fireExercise` returned silently, and two live generator-exercise rules never fired
  * once, with no log line anywhere. The reason was entirely inside the driver's type codec.

@@ -99,7 +99,7 @@ describe("automations.revision", () => {
     expect(column?.getSQLType()).toBe("integer");
     expect(column?.notNull).toBe(true);
     // The value matters, not just the presence: rows that predate migration 0064 are backfilled with
-    // it, and `claimExerciseDispatch` compares against whatever `create()` left behind.
+    // it, and `claimExerciseSlot` compares against whatever `create()` left behind.
     expect(column?.default).toBe(1);
   });
 });
