@@ -1,5 +1,9 @@
 # Independent trial operations
 
+> **Fronius trial suspended:** the production capture/feed and hub-forwarding design
+> is superseded by [the isolated trial plan](isolated-trial.md). Do not activate
+> the former Fronius setup below. The implementation reference remains for review.
+
 `trial-ops` runs separately from the shadow collector. It polls production evidence every 30 seconds,
 posts incidents and completed 15-minute windows to the collector shutdown APIs, and compares each
 full UTC day after 02:00 UTC. Comparison work runs every ten minutes independently of monitoring.
