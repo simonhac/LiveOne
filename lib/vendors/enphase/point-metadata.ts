@@ -70,14 +70,3 @@ export const ENPHASE_POINTS: EnphasePointConfig[] = [
     },
   },
 ];
-
-/**
- * Helper to get metadata for a specific field
- *
- * @knipignore Per-vendor lookup convention with no production caller in ANY vendor — only tesla's is referenced, and only by its own test. Decide the seam once, for all four.
- */
-export function getPointMetadata(
-  field: keyof EnphaseInterval,
-): PointMetadata | undefined {
-  return ENPHASE_POINTS.find((p) => p.field === field)?.metadata;
-}

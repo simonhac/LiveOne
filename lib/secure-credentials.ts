@@ -189,27 +189,3 @@ export async function removeDeviceCredentials(
     };
   }
 }
-
-/**
- * Get all credentials for a user
- *
- * @knipignore No caller — a per-user credential sweep with no operator verb behind it yet.
- */
-export async function getAllUserCredentials(
-  userId: string,
-): Promise<VendorCredentials[]> {
-  try {
-    const client = await clerkClient();
-    const user = await client.users.getUser(userId);
-    const metadata = user.privateMetadata as unknown as CredentialsMetadataV11;
-
-    if (!metadata?.version || !metadata?.credentials) {
-      return [];
-    }
-
-    return metadata.credentials;
-  } catch (error) {
-    console.error("Failed to retrieve all credentials:", error);
-    return [];
-  }
-}

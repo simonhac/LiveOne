@@ -106,15 +106,19 @@ fine the moment a human can arrange cards: the first thing anyone asks for after
 honouring `size` on the 12-column grid, or the configurator ships explicitly width-less and `size`
 stays a documented forward seam. Pick one deliberately rather than discovering it in review.
 
-### Sub-item B — `TileFeature` has been inert through two model generations
+### Sub-item B — the tile-feature seam has been inert through two model generations
 
-[`lib/dashboard/card-types.ts:138-145`](../../lib/dashboard/card-types.ts) defines `tileFeatureSchema`
-— a discriminated union of `sparkline` / `breakdown` / `flow-direction` / `toggle` — and `:147-151`
-attaches it to every promoted tile type as `tileCardConfigSchema` (`{ features?: TileFeature[] }`),
-applied to all nine tiles at `:275-284`. A repo-wide search for `TileFeature`, `TileCardConfig` or
-`.features` finds **no reader**: every hit is inside `card-types.ts` itself, and the file's own
-comments say so twice ("the `TileFeature` forward-seam union (inert today)", "just the inert features
-list").
+[`lib/dashboard/card-types.ts`](../../lib/dashboard/card-types.ts) defines `tileFeatureSchema` — a
+discriminated union of `sparkline` / `breakdown` / `flow-direction` / `toggle` — and attaches it to
+every promoted tile type as `tileCardConfigSchema` (`{ features?: … }`), applied to all nine tiles. A
+repo-wide search for either schema or `.features` finds **no reader**: every hit is inside
+`card-types.ts` itself, and the file's own comments say so twice ("the tile-feature forward-seam
+union (inert today)", "just the inert features list").
+
+The two inferred type aliases this section used to cite, `TileFeature` and `TileCardConfig`, were
+deleted in the knip sweep — nothing named them, and deleting an inferred alias neither retires the
+seam nor changes what a stored document may contain. **The decision below is unchanged**: the
+schemas are still registered, still validated, and still read by nothing.
 
 The argument for shipping it inert was that it costs nothing to carry and saves a second migration
 later, and that argument has been **vindicated**: it round-tripped an entire model rewrite (v3

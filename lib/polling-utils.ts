@@ -1,6 +1,5 @@
 import { eq, sql } from "drizzle-orm";
 import { transformForStorage } from "@/lib/json";
-import { vendorUsesAppCredentials } from "@/lib/vendors/ownership";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import {
   devices as pgDevices,
@@ -193,71 +192,4 @@ async function writeDeviceStateErrorPg(
       }`,
     );
   }
-}
-
-/**
- * Common polling result interface
- */
-interface PollingResult {
-  systemId: number;
-  displayName?: string;
-  vendorType?: string;
-  status: "polled" | "skipped" | "error";
-  recordsUpserted?: number;
-  skipReason?: string;
-  error?: string;
-  durationMs?: number;
-  lastPoll?: string | null; // When the last successful poll occurred (AEST formatted)
-  nextPollTimeMs?: number; // When the next poll is scheduled (Unix timestamp in milliseconds)
-  rawResponse?: any; // Raw vendor response for debugging
-  data?: any; // Optional vendor-specific data
-}
-
-/**
- * Validate a device for polling
- * Returns a PollingResult with error if validation fails, or null if valid
- *
- * @knipignore No caller — pre-poll validation the adapters currently each do their own way.
- */
-export function validateDeviceForPolling(
-  device: any,
-  expectedVendorType?: string,
-): PollingResult | null {
-  // Check if device exists
-  if (!device) {
-    return {
-      systemId: 0,
-      status: "error",
-      error: "System not found",
-    };
-  }
-
-  // Check vendor type if specified
-  if (expectedVendorType && device.vendorType !== expectedVendorType) {
-    return {
-      systemId: device.id,
-      displayName: device.displayName || undefined,
-      vendorType: device.vendorType,
-      status: "error",
-      error: `Not a ${expectedVendorType} system (type: ${device.vendorType})`,
-    };
-  }
-
-  // Check if owner is configured. Public/ownerless devices are allowed when the vendor
-  // authenticates with an app-wide credential (e.g. openelectricity).
-  if (
-    !device.ownerClerkUserId &&
-    !vendorUsesAppCredentials(device.vendorType)
-  ) {
-    return {
-      systemId: device.id,
-      displayName: device.displayName || undefined,
-      vendorType: device.vendorType,
-      status: "error",
-      error: "No owner configured",
-    };
-  }
-
-  // Validation passed
-  return null;
 }

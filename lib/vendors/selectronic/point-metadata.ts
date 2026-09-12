@@ -246,14 +246,3 @@ export const SELECTRONIC_POINTS: SelectronicPointConfig[] = [
     },
   },
 ];
-
-/**
- * Helper to get metadata for a specific field
- *
- * @knipignore See the enphase copy — same convention, same absent caller.
- */
-export function getPointMetadata(
-  field: keyof import("./selectronic-client").SelectronicData,
-): PointMetadata | undefined {
-  return SELECTRONIC_POINTS.find((p) => p.field === field)?.metadata;
-}

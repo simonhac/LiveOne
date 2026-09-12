@@ -50,7 +50,6 @@ import type { DeviceConfig } from "@/lib/capabilities/config";
 import { Device, type DeviceId } from "@/lib/ids";
 import { getUserIdByUsername } from "@/lib/user-cache";
 import { DeviceRegistry } from "./device-registry";
-import type { DeviceRid } from "./registry-cache";
 
 /**
  * Operational polling state — a `device_state` row, verbatim.
@@ -181,16 +180,6 @@ function toRecord(row: JoinRow): DeviceRecord {
     commissionedOn: d.commissionedOn,
     pollingStatus: row.device_state,
   };
-}
-
-/**
- * The device's rid, as a branded seam key. `DeviceRecord.id` is a plain number so it stays a drop-in
- * for `DeviceWithPolling.id`; this is the typed accessor for anything crossing into the readings seam.
- *
- * @knipignore No caller, though the doc-comment calls it the typed accessor for anything crossing into the readings seam. Everything crosses without it: wire it or drop the claim.
- */
-export function ridOf(record: DeviceRecord): DeviceRid {
-  return record.id as DeviceRid;
 }
 
 // ---------------------------------------------------------------------------

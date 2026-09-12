@@ -51,34 +51,6 @@ export async function getGrant(
   return row ?? null;
 }
 
-/**
- * Add (or re-role) a member on a dashboard. Upserts on the (dashboardId, clerkUserId) unique index.
- *
- * @knipignore SUPERSEDED, not pending: `replaceDashboardGrants` is the live write path
- * (`PUT /api/v4/dashboards/{id}/grants` calls it at route.ts:197) and it adds, re-roles and
- * removes in one transaction. This single-row variant has no caller and no niche.
- */
-export async function createGrant(args: {
-  dashboardId: string;
-  clerkUserId: string;
-  role: DashboardGrantRole;
-}): Promise<void> {
-  const uuid = Dashboard.toUuidOrNull(args.dashboardId);
-  if (!uuid) return;
-  await requirePlanetscaleDb()
-    .insert(dashboardGrants)
-    .values({
-      dashboardId: uuid,
-      userId: args.clerkUserId,
-      role: args.role,
-      createdAt: new Date(),
-    })
-    .onConflictDoUpdate({
-      target: [dashboardGrants.dashboardId, dashboardGrants.userId],
-      set: { role: args.role },
-    });
-}
-
 /** All members of a dashboard, for the manage-members UI (caller decorates with email/username). */
 export async function listGrantsForDashboard(
   dashboardId: string,
@@ -89,29 +61,6 @@ export async function listGrantsForDashboard(
     .select()
     .from(dashboardGrants)
     .where(eq(dashboardGrants.dashboardId, uuid));
-}
-
-/**
- * Remove one membership. Returns true if a row was deleted.
- *
- * @knipignore SUPERSEDED — see {@link createGrant}; `replaceDashboardGrants` deletes too.
- */
-export async function revokeGrant(
-  dashboardId: string,
-  clerkUserId: string,
-): Promise<boolean> {
-  const uuid = Dashboard.toUuidOrNull(dashboardId);
-  if (!uuid) return false;
-  const result = await requirePlanetscaleDb()
-    .delete(dashboardGrants)
-    .where(
-      and(
-        eq(dashboardGrants.dashboardId, uuid),
-        eq(dashboardGrants.userId, clerkUserId),
-      ),
-    )
-    .returning();
-  return result.length > 0;
 }
 
 /** One member of the target state handed to {@link replaceDashboardGrants}. */

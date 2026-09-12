@@ -63,16 +63,6 @@ function cache(): Map<number, Entry> {
   return (g.__kvSubjectCache ??= new Map());
 }
 
-/**
- * Drop the memo — for tests, and for a write path that has just minted a handle's second leg.
- *
- * @knipignore No caller. Dead CACHE INVALIDATION, which is worth deciding about rather than deleting: either something should be calling it, or the cache does not need it.
- */
-export function invalidateKvSubjectCache(handle?: number): void {
-  if (handle == null) cache().clear();
-  else cache().delete(handle);
-}
-
 async function legsForHandle(handle: number): Promise<Legs> {
   const now = Date.now();
   const hit = cache().get(handle);
