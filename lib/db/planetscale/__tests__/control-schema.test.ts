@@ -83,6 +83,7 @@ const cases = [
       "armed_context",
       "created_at",
       "updated_at",
+      "revision", // migration 0064 — the integer CAS token; see `exerciseClaimWhere`
     ],
     nullable: [
       "armed_at",
@@ -171,6 +172,7 @@ describe("TS property -> SQL column mapping", () => {
       lastTriggeredAt: "last_triggered_at",
       lastTriggeredRunStart: "last_triggered_run_start",
       armedContext: "armed_context",
+      revision: "revision",
       createdAt: "created_at",
       updatedAt: "updated_at",
     });

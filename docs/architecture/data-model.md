@@ -134,6 +134,34 @@ These are load-bearing; don't violate them without updating
   from backfill).
 - Timezone, day offset and location resolve on the **Area**, never the device — see
   [Time: fixed-offset days](#time-fixed-offset-days) below.
+- 🛑 **Every timestamp column is `timestamp(3)`** — millisecond precision, declared through the
+  `tsMs` helper in `schema.ts`. A bare `timestamp()` is `timestamp(6)`, and a `DEFAULT now()` on one
+  writes a value **no JS `Date` can represent**: drizzle parses it with `new Date(…)` (truncating)
+  and writes it back with `toISOString()`, so `where(eq(col, rowFromTheDb.col))` compares
+  `…43.616884` against `…43.616` and matches nothing, silently. That is how two generator-exercise
+  automations never fired (#468). Migration 0064 narrowed every column except **nine**, on the four
+  tables the ingest path writes every minute and where a rewrite is not free (`point_readings`,
+  `point_readings_agg_5m`, `sessions`, `observations_outbox` — 601 MB on prod, 22× the dev mirror).
+  What makes the exceptions safe is not that nothing reads them — several are read for freshness and
+  sync watermarks — but that none is compared for **equality** against a JS round trip.
+  `lib/db/planetscale/__tests__/schema-shape.test.ts` names the nine and fails on a tenth.
+- 🛑 Narrowing is a **full table rewrite under `ACCESS EXCLUSIVE`**, and drizzle runs an entire
+  migration file in **one transaction** — so the slowest rewrite holds every lock the migration has
+  taken, not just its own. Measured on this infrastructure: ~28 MB/s narrowing, ~free widening. Size
+  the window before bundling one with anything else.
+
+### Optimistic concurrency
+
+🛑 **Use an integer `revision`, never a timestamp.** `dashboards.revision` is the idiom (bumped in
+the same transaction as the write, returned to the client as the `If-Match` token) and
+`automations.revision` follows it. A compare-and-set on `updated_at` is a comparison whose
+correctness depends on two serialisers agreeing about precision _and_ about the zone — node-postgres
+encodes a bare `Date` parameter in the **process's** local zone, and Postgres drops the offset
+coercing it to `timestamp without time zone`. `timestamp(3)` closes the precision half of that; an
+integer closes both, and reads the same in psql as it does in TypeScript.
+
+A lost claim must be **audible**: `claimExerciseDispatch` returning false is expected in a genuine
+race, but losing it every time looks exactly like having no work to do, which is why that path logs.
 
 ### Points: paths and metrics
 
