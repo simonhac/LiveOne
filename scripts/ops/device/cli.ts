@@ -10,6 +10,9 @@
  * readings (`agg_1d`, the per-Area flow matrix) for a window that has changed underneath them. It
  * lives here rather than in a domain of its own because its subject is a device and its window is
  * whatever a repair touched; `liveone sync` publishes the readings and points at it by name.
+ *
+ * The `config` sub-group (./config.ts) is the other writer: it normalises the stored `DeviceConfig`
+ * jsonb, which is how a config key deleted from the code finally leaves the database.
  */
 import {
   defineCommand,
@@ -30,6 +33,7 @@ import {
   usage,
   type WireDevice,
 } from "../shared";
+import { configSpec, CONFIG_HANDLERS } from "./config";
 
 const DEVICE_ARG = {
   name: "device",
@@ -156,6 +160,7 @@ export const deviceCommand = defineCommand({
         "liveone device history daylesford --interval=1d --start=2026-07-01 --end=2026-07-31",
       ],
     },
+    config: configSpec,
     recompute: {
       name: "recompute",
       summary:
@@ -440,13 +445,23 @@ const HANDLERS: Record<string, (ctx: Ctx) => Promise<number>> = {
   recompute: runRecompute,
 };
 
-/** Run whichever `device` verb was selected (the LAST path element under `liveone`). */
+/**
+ * Run whichever `device` verb was selected.
+ *
+ * 🛑 Keyed on the FULL path under `device`, not its last element. `device show` and
+ * `device config show` share a last element, and dispatching on it would silently route the second
+ * to the first — returning the device aggregate, looking like it worked, and never touching the
+ * config. That is not hypothetical: it is the same collision `runArea` carries its own 🛑 about
+ * (`area devices set` vs `area role set`), and this dispatcher was written the unsafe way before
+ * `config` existed to collide with it.
+ */
 export async function runDevice(ctx: Ctx): Promise<number> {
-  const verb = ctx.subcommandPath[ctx.subcommandPath.length - 1];
-  const handler = HANDLERS[verb];
+  const path = ctx.subcommandPath.slice(1); // drop "device"
+  const key = path.join(".");
+  const handler = CONFIG_HANDLERS[key] ?? HANDLERS[key];
   if (!handler)
     throw usage(
-      `unknown device command "${verb}"`,
+      `unknown device command "${path.join(" ")}"`,
       "this verb has no handler",
       "run `npm run liveone -- device --help`",
     );

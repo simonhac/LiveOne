@@ -77,6 +77,10 @@ Data goes to stdout; all diagnostics go to stderr. Mutating commands are **dry b
     - [liveone device points](../scripts/ops/CLI_README.md#liveone-device-points) — A device's point inventory: pt_… id, path, metric, unit.
     - [liveone device latest](../scripts/ops/CLI_README.md#liveone-device-latest) — The device's current values, from the serving cache.
     - [liveone device history](../scripts/ops/CLI_README.md#liveone-device-history) — Time series for a device, in the OpenNEM shape /api/history serves.
+    - [liveone device config](../scripts/ops/CLI_README.md#liveone-device-config) — The stored DeviceConfig blob — read it, audit it for rot, normalise it.
+      - [liveone device config show](../scripts/ops/CLI_README.md#liveone-device-config-show) — The device's stored config blob, verbatim.
+      - [liveone device config lint](../scripts/ops/CLI_README.md#liveone-device-config-lint) — What the current parser would DROP from the stored config.
+      - [liveone device config clean](../scripts/ops/CLI_README.md#liveone-device-config-clean) — Re-parse the stored config and write back the normalised form.  _(writes)_
     - [liveone device recompute](../scripts/ops/CLI_README.md#liveone-device-recompute) — Rebuild the rows derived FROM a device's readings, over a window of local days.  _(writes)_
   - [liveone area](../scripts/ops/CLI_README.md#liveone-area) — Inspect and WIRE areas — devices, role bindings, latest values, history, flows.
     - [liveone area list](../scripts/ops/CLI_README.md#liveone-area-list) — List the areas you can read: id, handle, name.
@@ -93,6 +97,10 @@ Data goes to stdout; all diagnostics go to stderr. Mutating commands are **dry b
       - [liveone area role list](../scripts/ops/CLI_README.md#liveone-area-role-list) — The area's role→point bindings, grouped by slot.
       - [liveone area role set](../scripts/ops/CLI_README.md#liveone-area-role-set) — Fill one (role, metric) slot — priority follows argument order.  _(writes)_
       - [liveone area role clear](../scripts/ops/CLI_README.md#liveone-area-role-clear) — Empty a (role, metric) slot, or every slot of a role.  _(writes)_
+    - [liveone area provenance](../scripts/ops/CLI_README.md#liveone-area-provenance) — What derived rows an area actually holds — the flow matrix and the battery fold.
+    - [liveone area purge](../scripts/ops/CLI_README.md#liveone-area-purge) — Delete an area's derived rows — the flow matrix, or the battery fold.
+      - [liveone area purge flows](../scripts/ops/CLI_README.md#liveone-area-purge-flows) — Delete the area's flow/Sankey matrix over a window of local days.  _(writes)_
+      - [liveone area purge provenance](../scripts/ops/CLI_README.md#liveone-area-purge-provenance) — Delete the area's battery provenance: the fold, its blend series and their bindings.  _(writes)_
   - [liveone derivation](../scripts/ops/CLI_README.md#liveone-derivation) — Derived signals — run detectors and the HWS model: list, create, enable, recompute, delete.
     - [liveone derivation list](../scripts/ops/CLI_README.md#liveone-derivation-list) — The derivations you can read: id, kind, role, enabled, devices, sources.
     - [liveone derivation create](../scripts/ops/CLI_README.md#liveone-derivation-create) — Add a derivation to a device.  _(writes)_
