@@ -138,3 +138,69 @@ it("preserves capture order when several records share the same wall-clock milli
     await fs.rm(dir, { recursive: true, force: true });
   }
 });
+
+it("scans retained captures once per writer and recovers the budget after restart", async () => {
+  const fs =
+    jest.requireActual<typeof import("node:fs/promises")>("node:fs/promises");
+  const os = await import("node:os");
+  const path = await import("node:path");
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "capture-inventory-"));
+  const scan = jest.spyOn(fs, "readdir");
+  const stat = jest.spyOn(fs, "stat");
+  try {
+    let capture = TrialCapture.onDisk(dir, { bytes: 200, reserveBytes: 0 });
+    for (let i = 0; i < 20; i++) {
+      capture.enqueue({ value: i });
+      await capture.flush();
+    }
+    expect(capture.dropped).toBe(0);
+    expect(scan).toHaveBeenCalledTimes(1);
+    expect(stat).not.toHaveBeenCalled();
+    capture = TrialCapture.onDisk(dir, { bytes: 200, reserveBytes: 0 });
+    capture.enqueue({ value: "after restart" });
+    await capture.flush();
+    expect(capture.dropped).toBe(0);
+    expect(scan).toHaveBeenCalledTimes(2);
+    const sizes = await Promise.all(
+      (await fs.readdir(dir)).map(
+        async (name) => (await fs.stat(path.join(dir, name))).size,
+      ),
+    );
+    expect(sizes.reduce((a, b) => a + b, 0)).toBeLessThanOrEqual(200);
+  } finally {
+    scan.mockRestore();
+    stat.mockRestore();
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+it("rebuilds its inventory after a failed commit and removes the pending file", async () => {
+  const fs =
+    jest.requireActual<typeof import("node:fs/promises")>("node:fs/promises");
+  const os = await import("node:os");
+  const path = await import("node:path");
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "capture-retry-"));
+  const rename = jest.spyOn(fs, "rename");
+  try {
+    const capture = TrialCapture.onDisk(dir, { bytes: 200, reserveBytes: 0 });
+    capture.enqueue({ value: 1 });
+    await capture.flush();
+    rename.mockRejectedValueOnce(new Error("disk error"));
+    capture.enqueue({ value: 2 });
+    await capture.flush();
+    expect(capture.dropped).toBe(1);
+    capture.enqueue({ value: 3 });
+    await capture.flush();
+    expect(capture.dropped).toBe(1);
+    const files = await fs.readdir(dir);
+    expect(files).toHaveLength(2);
+    expect(
+      files.every(
+        (name) => name.endsWith(".jsonl.gz") && !name.startsWith("."),
+      ),
+    ).toBe(true);
+  } finally {
+    rename.mockRestore();
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
