@@ -1,0 +1,41 @@
+name: typecheck
+
+# `npm run typecheck` is two compilations, and CI was running NEITHER.
+#
+# Vercel's `next build` typechecks the app — but tsconfig.json has `"exclude": ["scripts", ...]`,
+# so nothing anywhere compiled `scripts/**`. The dev server's watch pane uses the same app config
+# and is blind to it too. That is how 8 x TS18048 in scripts/archive/to-import-csv.ts landed on
+# main in #467 and sat there across three PRs with every check green.
+#
+# Like knip.yml this runs on the pull request and is deliberately NOT wired into `prebuild`: a
+# broken script should not stop a deploy. And like knip it only reports — `main` has no branch
+# protection, so a red x here is a signal to read, not a merge blocker.
+
+on:
+  pull_request:
+  workflow_dispatch: {}
+
+concurrency:
+  group: typecheck-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  typecheck:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - run: npm ci
+
+      # Both projects: tsconfig.json (app) then tsconfig.scripts.json (scripts/**). No `next build`
+      # first — `next-env.d.ts` is gitignored and the app half passes without it, verified against a
+      # clean checkout.
+      - run: npm run typecheck
