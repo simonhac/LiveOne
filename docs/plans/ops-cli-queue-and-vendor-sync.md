@@ -187,7 +187,8 @@ landing-page hazard `liveone dashboard delete` now warns about.
 history**. That is the one cascade worth pausing over: the history is not reconstructible from the
 derivation row, only by recompute from readings.
 
-The intended fix is a shared `assertNotReliedUpon(kind, id)` at the API boundary — 409 with the
+The intended fix is a shared dependency scan at the API boundary — shipped as
+`refuseIfReliedUpon` (`lib/integrity/http.ts`) over `findDependents` — 409 with the
 dependents NAMED, `?force=true` to override — because only the boundary can see the `jsonb` refs an
 FK cannot. It is the same shape as `transferOwnership`'s share-back check: refuse, and say exactly
 what would break.

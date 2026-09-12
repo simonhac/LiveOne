@@ -84,7 +84,7 @@ is the rule the sub-tree illustrates — the question is never "is this route re
 already trust", it is "what is the worst call this address can spell". `DELETE` is the newest
 admission and the first destructive verb here: admissible because it cannot be reached casually, the
 derivation having to be disabled first (409 `derivation-enabled`, which `?force=true` does not
-waive) before `assertNotReliedUpon` names the intervals, the output point and any automation that
+waive) before `refuseIfReliedUpon` names the intervals, the output point and any automation that
 would break.
 
 ## The generated reference

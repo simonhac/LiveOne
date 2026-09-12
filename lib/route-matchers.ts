@@ -167,7 +167,7 @@ const cliTokenRoutes = [
   //
   // 🛑 DELETE is admitted, and it is the first destructive verb on this domain. It is admissible
   // because it cannot be reached casually: the derivation must ALREADY be disabled (409
-  // `derivation-enabled`, and `?force=true` does not waive it), and `assertNotReliedUpon` then
+  // `derivation-enabled`, and `?force=true` does not waive it), and `refuseIfReliedUpon` then
   // names the intervals, the output point and any automation that would break. Two deliberate acts,
   // the first of which is reversible and observable.
   "/api/v4/derivations",

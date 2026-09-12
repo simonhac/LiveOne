@@ -640,7 +640,7 @@ export async function handlePatch(
  *    it. Disabling is one PATCH, it is reversible, and it makes the operator watch the thing stop
  *    before destroying it. A `--force` that skipped straight from "live" to "gone" would make the
  *    single most consequential operation in this domain the easiest one to typo.
- * 2. **Nothing may still rely on it** → 409 naming every dependent (`assertNotReliedUpon`): the
+ * 2. **Nothing may still rely on it** → 409 naming every dependent (`refuseIfReliedUpon`): the
  *    `derived_intervals` count and window, the hws model's output point, and any automation whose
  *    trigger names it. THAT one is waivable with `?force=true`, because an operator may legitimately
  *    accept the loss — and the success body then reports what was overridden, so "I forced it" and

@@ -571,7 +571,7 @@ function runSetEnabled(enabled: boolean): (ctx: Ctx) => Promise<number> {
  * run that cheerfully described destroying a LIVE detector, only for `--apply` to refuse, would be
  * a dry run that described something that cannot happen.
  *
- * What is deliberately NOT duplicated is the dependency scan: `assertNotReliedUpon` enumerates the
+ * What is deliberately NOT duplicated is the dependency scan: `refuseIfReliedUpon` enumerates the
  * intervals, the output point and any automation, and there is no read endpoint that answers the
  * same question. So the flow is: `--apply` → 409 naming what would break → `--force`. The refusal
  * IS the confirmation prompt, and it is written by the side that knows the answer.

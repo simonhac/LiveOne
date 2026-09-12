@@ -19,9 +19,13 @@
  * without the throw.
  *
  *   - `findDependents` — pure read, returns the list. What a dry run and `liveone doctor` call.
- *   - `assertNotReliedUpon` — the same, then throws `ReliedUponError`. What a writer calls.
  *   - `refuseIfReliedUpon` (`./http.ts`) — the route adapter, which parses `?force` so that no
- *     handler can forget to.
+ *     handler can forget to, and returns the 409 rather than throwing.
+ *
+ * There was a third, `assertNotReliedUpon`: `findDependents` then throw, "what a writer calls".
+ * Nothing ever called it — every delete route reaches for the adapter, which is the better shape
+ * (a route that forgets to catch turns a considered refusal into a 500). It is gone, and the
+ * references that named it as the interlock now name the adapter.
  *
  * `./ledger.ts` is the census that keeps this HONEST: every column in the schema that could hold a
  * reference must be classified there, and a test fails by name when one is not. Without it this
@@ -80,17 +84,6 @@ export interface Dependent {
   effect: Effect;
   /** One line, imperative: what the operator should do instead. */
   fix: string;
-}
-
-/** @knipignore Thrown only by assertNotReliedUpon, so it lives or dies with it. */
-export class ReliedUponError extends Error {
-  constructor(
-    message: string,
-    readonly dependents: Dependent[],
-  ) {
-    super(message);
-    this.name = "ReliedUponError";
-  }
 }
 
 /** Dashboards whose doc names `typeId` (`ar_…`), found by the raw-JSON walker so it fails OPEN. */
@@ -332,21 +325,4 @@ export async function findDependents(
       // one has an obviously wrong-looking empty case to fill in rather than a missing file.
       return [];
   }
-}
-
-/**
- * `findDependents`, then throw. The writer-side half.
- *
- * @knipignore No caller. Every route goes through refuseIfReliedUpon (integrity/http.ts) instead, yet eight comments and docs/cli.md name THIS as the interlock — resolve which one is the protection before deleting either.
- */
-export async function assertNotReliedUpon(
-  subject: Subject,
-  uuid: string,
-): Promise<void> {
-  const dependents = await findDependents(subject, uuid);
-  if (dependents.length === 0) return;
-  throw new ReliedUponError(
-    `${dependents.length} thing(s) still rely on this ${subject}`,
-    dependents,
-  );
 }
