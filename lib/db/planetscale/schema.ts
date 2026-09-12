@@ -606,6 +606,41 @@ export const shareTokens = pgTable("share_tokens", {
 });
 
 // ============================================================================
+// Area calendar tokens - subscribable .ics feeds of an area's scheduled automations.
+//
+// A SECOND token table rather than a reuse of `share_tokens`, because the two grant different
+// things and neither predicate would be right for the other: a share token grants read access to
+// the POINTS a dashboard exposes, resolved per request against that dashboard's contents; this
+// grants exactly one thing — "what is scheduled on this area" — and nothing else, forever, to
+// whoever holds the URL.
+// ============================================================================
+export const areaCalendarTokens = pgTable(
+  "area_calendar_tokens",
+  {
+    // 🛑 NOT the 3-word phrase `share_tokens` uses (~22 bits, guessable at leisure). A calendar
+    // URL is pasted into a client once and then fetched forever, by software, unattended — so it
+    // is long-lived by construction and nobody is watching the access log. 20 base32 chars is
+    // ~100 bits. Stored in clear, like `share_tokens`, so the feed URL can be re-shown.
+    token: text("token").primaryKey(),
+    areaId: uuid("area_id")
+      .notNull()
+      .references(() => areas.id, { onDelete: "cascade" }),
+    // Required, unlike `share_tokens.label`: an unlabelled long-lived URL is one nobody can decide
+    // whether to revoke.
+    label: text("label").notNull(),
+    createdAt: tsMs("created_at").notNull().defaultNow(),
+    expiresAt: tsMs("expires_at"),
+    revokedAt: tsMs("revoked_at"),
+    lastUsedAt: tsMs("last_used_at"),
+  },
+  (table) => ({
+    areaIdx: index("act_area_idx").on(table.areaId),
+  }),
+);
+
+export type AreaCalendarTokenRow = typeof areaCalendarTokens.$inferSelect;
+
+// ============================================================================
 // Observations outbox - the transactional "PG bin before the queue" (Phase 4).
 //
 // A poll's built QueueMessage(s) are recorded here durably; a relay
@@ -1403,27 +1438,32 @@ export interface ChargeSessionTrigger {
   afterKwh?: number;
 }
 
-/** The seven weekday keys, aligned to `Date.prototype.getUTCDay()` so index === value. */
-export const AUTOMATION_WEEKDAYS = [
-  "sun",
-  "mon",
-  "tue",
-  "wed",
-  "thu",
-  "fri",
-  "sat",
-] as const;
-export type AutomationWeekday = (typeof AUTOMATION_WEEKDAYS)[number];
-
 /**
- * When the exercise is due. `time` is LOCAL WALL CLOCK ("09:00") in the AREA's display_timezone —
- * there is deliberately no per-rule timezone column, because a generator's owner thinks in the
- * generator's local time and nothing else.
+ * When the exercise is due — an RFC 5545 subset, evaluated by `rrule-temporal`
+ * (`lib/automations/recurrence.ts` is the only module that knows the library exists).
+ *
+ * The predecessor was three fields (`weekdays`/`time`/`graceMinutes`) hand-evaluated over an 8-day
+ * lookback, which could say exactly one thing: "these weekdays, forever". It could not say a
+ * one-off, a fortnight, a first-Saturday, an end date or "skip next week" — and a rule NAMED
+ * "one-off Sat 12 Sep" was therefore a standing weekly rule, which is how this grammar got
+ * replaced.
+ *
+ * 🛑 Everything here is LOCAL WALL CLOCK in the AREA's `display_timezone`, and the zone is
+ * deliberately NOT stored: a generator's owner thinks in the generator's local time and nothing
+ * else. `DTSTART;TZID=<area tz>:<start>` is assembled at evaluation time, so moving an area's
+ * display timezone moves its rules with it, which is the behaviour an owner expects.
  */
 export interface ExerciseSchedule {
-  weekdays: AutomationWeekday[]; // non-empty
-  time: string; // "HH:MM", 24h
-  graceMinutes: number; // how long a missed slot stays due before it is written off
+  /** "YYYY-MM-DDTHH:MM" — the RFC's DTSTART, and on its own (no rrule) the whole of a one-off. */
+  start: string;
+  /** The RRULE VALUE only, canonical upper-case ("FREQ=WEEKLY;BYDAY=TH"). Absent = one-off. */
+  rrule?: string;
+  /** Instances REMOVED from the expansion, as local wall clock. Sorted and deduped when parsed. */
+  exdates?: string[];
+  /** Extra instances ADDED to the expansion, as local wall clock. Sorted and deduped when parsed. */
+  rdates?: string[];
+  /** How long a missed slot stays due before it is written off. */
+  graceMinutes: number;
 }
 
 /**
@@ -1513,6 +1553,13 @@ export interface ExerciseArmedContext {
     peakKw: number;
     endedAt: number;
   };
+  /**
+   * This slot was the schedule's LAST, so the rule was disabled as it was consumed.
+   *
+   * Without it a spent one-off is just a disabled row, and "did it run, or did someone turn it
+   * off?" has no answer on the record.
+   */
+  final?: boolean;
 }
 
 export type AutomationArmedContext = ChargeArmedContext | ExerciseArmedContext;

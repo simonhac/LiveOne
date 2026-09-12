@@ -8,6 +8,8 @@ import {
   isPublicRoute,
   isShareableRoute,
   hasAccessToken,
+  isCalendarFeedRoute,
+  hasFeedToken,
   isCliTokenRoute,
   hasCliBearer,
 } from "@/lib/route-matchers";
@@ -38,7 +40,16 @@ const clerk = clerkMiddleware(async (auth, request) => {
   // user credential and may legitimately write, whereas a share token never may.
   const cliRequest = isCliTokenRoute(request) && hasCliBearer(request);
 
-  if (!isPublicRoute(request) && !sharedRead && !cliRequest) {
+  // A `?token=…` calendar subscription, same fail-closed shape as the share link above and for the
+  // same reason: a calendar client has no session and no way to obtain one, so the only credential
+  // it can carry is in the URL. GET/HEAD only — a feed token must never reach a mutation — and
+  // bounded to the one `.ics` route.
+  const feedRequest =
+    (method === "GET" || method === "HEAD") &&
+    isCalendarFeedRoute(request) &&
+    hasFeedToken(request);
+
+  if (!isPublicRoute(request) && !sharedRead && !feedRequest && !cliRequest) {
     // AWAIT is load-bearing: an un-awaited protect() is a no-op — it throws a
     // floating NEXT_HTTP_ERROR_FALLBACK;404 (logged, never blocks) and the request
     // proceeds, leaving enforcement entirely to the route handlers. Awaiting makes

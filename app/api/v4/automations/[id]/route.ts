@@ -1,11 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { refuseIfReliedUpon } from "@/lib/integrity/http";
 import { requireAuth } from "@/lib/api-auth";
-import { loadAreaForAuth } from "@/lib/areas/http";
+import { loadAreaForAuth, type AreaAuthRow } from "@/lib/areas/http";
 import { Automation } from "@/lib/ids";
 import type {
   AutomationMode,
   AutomationRow,
+  AutomationTrigger,
 } from "@/lib/db/planetscale/schema";
 import * as store from "@/lib/automations/store";
 import {
@@ -14,6 +15,7 @@ import {
   triggerFromWire,
 } from "@/lib/automations/wire";
 import { checkReferences } from "@/lib/automations/references";
+import { refuseOnceExercise } from "@/lib/automations/types";
 
 /**
  * One charge-limit automation.
@@ -48,7 +50,9 @@ function notFound(): NextResponse {
 async function loadOwnedAutomation(
   request: NextRequest,
   id: string,
-): Promise<{ row: AutomationRow } | { error: NextResponse }> {
+): Promise<
+  { row: AutomationRow; area: AreaAuthRow } | { error: NextResponse }
+> {
   const auth = await requireAuth(request);
   if (auth instanceof NextResponse) return { error: auth };
 
@@ -69,7 +73,7 @@ async function loadOwnedAutomation(
   if (!area || !(auth.isAdmin || area.ownerClerkUserId === auth.userId))
     return { error: notFound() };
 
-  return { row };
+  return { row, area };
 }
 
 export async function PATCH(
@@ -131,14 +135,20 @@ export async function PATCH(
   if (body.trigger !== undefined) {
     // A baseline snapshotted against the OLD source is meaningless against the new one, and a
     // stale anchor could suppress the first fire outright.
-    //
-    // For an `exercise` trigger this also clears the consumed-slot key, so a rule edited inside a
-    // slot it has already dealt with can fire again for that same slot. That is the correct
-    // reading of "I changed the schedule" — the new schedule has never run — but it does mean
-    // editing a rule at 09:30 on exercise day can start the engine a second time.
     patch.armedAt = null;
     patch.armedContext = null;
-    patch.lastTriggeredRunStart = null;
+    // For an `exercise` trigger this also clears the consumed-slot key, so a rule edited inside a
+    // slot it has already dealt with can fire again for that same slot. That is the correct
+    // reading of "I changed WHEN this runs" — the new schedule has never run.
+    //
+    // 🛑 But it is the WRONG reading of "skip next week". `skip` adds an EXDATE, and the route is a
+    // whole-object replace, so it arrives here as a trigger patch like any other — and clearing
+    // the key would let a slot consumed at 09:00 this morning start the engine a SECOND time at
+    // 09:30, which is the exact opposite of what the owner asked for. So the key survives when the
+    // instants the rule generates are unchanged (same `start`, same `rrule`) and only the
+    // exceptions, the grace window or the `unless` terms moved.
+    if (!sameSlotSeries(row.trigger, patch.trigger))
+      patch.lastTriggeredRunStart = null;
   }
 
   if (body.enabled !== undefined) {
@@ -163,6 +173,9 @@ export async function PATCH(
       patch.armedContext = null;
     }
   }
+
+  const modeRefusal = refuseOnceExercise(patch.mode ?? row.mode, nextTrigger);
+  if (modeRefusal) return unprocessable(modeRefusal);
 
   // 🛑 EVERY patch clears the ownership firewall, not just one that replaces trigger/action.
   //
@@ -196,7 +209,33 @@ export async function PATCH(
 
   const updated = await store.patch(row.id, patch);
   if (!updated) return notFound();
-  return NextResponse.json({ automation: automationWire(updated) });
+  return NextResponse.json({
+    timezone: loaded.area.displayTimezone,
+    automation: automationWire(updated, {
+      timezone: loaded.area.displayTimezone,
+      nowMs: Date.now(),
+    }),
+  });
+}
+
+/**
+ * Do these two triggers generate the same series of slot INSTANTS?
+ *
+ * Only `start` and `rrule` decide that. EXDATE/RDATE change which of those instants survive but
+ * not where they fall, and a slot already consumed stays consumed either way; `graceMinutes` and
+ * `unless` are not about timing at all. Anything that is not an exercise trigger on both sides is
+ * "not the same", which is the safe answer — it clears the key.
+ */
+function sameSlotSeries(
+  before: AutomationTrigger,
+  after: AutomationTrigger | undefined,
+): boolean {
+  if (after === undefined) return true;
+  if (before.kind !== "exercise" || after.kind !== "exercise") return false;
+  return (
+    before.schedule.start === after.schedule.start &&
+    before.schedule.rrule === after.schedule.rrule
+  );
 }
 
 /**

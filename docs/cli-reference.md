@@ -109,9 +109,15 @@ Data goes to stdout; all diagnostics go to stderr. Mutating commands are **dry b
     - [liveone automation list](../scripts/ops/CLI_README.md#liveone-automation-list) — Every automation on an area, and what each one does.
     - [liveone automation show](../scripts/ops/CLI_README.md#liveone-automation-show) — One automation in full, including the last decision the evaluator made.
     - [liveone automation create-exercise](../scripts/ops/CLI_README.md#liveone-automation-create-exercise) — Schedule a generator exercise run — unless it has already run under load recently.  _(writes)_
+    - [liveone automation upcoming](../scripts/ops/CLI_README.md#liveone-automation-upcoming) — Every scheduled occurrence on an area, dated, for the next N days.
+    - [liveone automation skip](../scripts/ops/CLI_README.md#liveone-automation-skip) — Skip one occurrence of a repeating rule, leaving the rule itself alone.  _(writes)_
     - [liveone automation enable](../scripts/ops/CLI_README.md#liveone-automation-enable) — Re-enable a disabled automation.  _(writes)_
     - [liveone automation disable](../scripts/ops/CLI_README.md#liveone-automation-disable) — Stop an automation being evaluated, without deleting it.  _(writes)_
     - [liveone automation delete](../scripts/ops/CLI_README.md#liveone-automation-delete) — Delete an automation.  _(writes)_
+  - [liveone calendar](../scripts/ops/CLI_README.md#liveone-calendar) — Subscribe a calendar app to an area's scheduled automations.
+    - [liveone calendar list](../scripts/ops/CLI_README.md#liveone-calendar-list) — Every feed token ever minted for an area, and its subscription URL.
+    - [liveone calendar mint](../scripts/ops/CLI_README.md#liveone-calendar-mint) — Create a feed token and print the URL to subscribe a calendar app to.  _(writes)_
+    - [liveone calendar revoke](../scripts/ops/CLI_README.md#liveone-calendar-revoke) — Stop a feed token working.  _(writes)_
   - [liveone user](../scripts/ops/CLI_README.md#liveone-user) — The user directory — who exists, what they own. Admin-only.
     - [liveone user list](../scripts/ops/CLI_README.md#liveone-user-list) — List users: Clerk id, email, devices owned.
     - [liveone user show](../scripts/ops/CLI_README.md#liveone-user-show) — One user's directory entry, with their owned devices.

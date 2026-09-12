@@ -24,6 +24,7 @@
 | QStash signature | Upstash request signing                                                | `/api/observations/receive`                  |
 | Webhook key      | API key in the request body                                            | `/api/push/fusher`, `/api/gush`              |
 | Share token      | `?access=<3-word token>`, GET/HEAD only                                | The dashboard page + its read-only data APIs |
+| Calendar feed token | `?token=<20-char token>`, GET/HEAD only (`validateCalendarToken`)   | `/api/v4/areas/:id/calendar.ics` only        |
 | Dev bypass       | `x-claude: true` header (development only)                             | Local API testing — but see the trap below   |
 
 ⚠️ **`x-claude` only reaches routes the Clerk middleware lets past.** `requireAuth` honours the
@@ -76,6 +77,12 @@ These have consumers outside this codebase — treat as contracts, change carefu
   human-facing 3-word phrase and an unauthenticated capability, so the set of routes it can reach is
   bounded at the edge by `isShareableRoute` and validated in-handler by `requireDashboardAccess`.
   Adding a route to that list is a security decision — see [authentication.md](authentication.md).
+- **Calendar feeds** — `GET /api/v4/areas/:id/calendar.ics?token=<token>` is a subscribable `.ics`
+  of an area's scheduled automations. Same shape and the same deliberate security decision as a
+  share link: a calendar client fetches it unattended for years and has no way to sign in, so the
+  URL is the entire credential. Bounded at the edge by its OWN matcher (`isCalendarFeedRoute`, not
+  `isShareableRoute` — different table, different predicate) and validated in-handler, which also
+  checks the token belongs to the area in the path. See [automations.md](../automations.md).
 
 ## Route families
 

@@ -95,9 +95,15 @@ Data goes to stdout; all diagnostics go to stderr. Mutating commands are **dry b
     - [liveone automation list](#liveone-automation-list)
     - [liveone automation show](#liveone-automation-show)
     - [liveone automation create-exercise](#liveone-automation-create-exercise)  _(writes)_
+    - [liveone automation upcoming](#liveone-automation-upcoming)
+    - [liveone automation skip](#liveone-automation-skip)  _(writes)_
     - [liveone automation enable](#liveone-automation-enable)  _(writes)_
     - [liveone automation disable](#liveone-automation-disable)  _(writes)_
     - [liveone automation delete](#liveone-automation-delete)  _(writes)_
+  - [liveone calendar](#liveone-calendar)
+    - [liveone calendar list](#liveone-calendar-list)
+    - [liveone calendar mint](#liveone-calendar-mint)  _(writes)_
+    - [liveone calendar revoke](#liveone-calendar-revoke)  _(writes)_
   - [liveone user](#liveone-user)
     - [liveone user list](#liveone-user-list)
     - [liveone user show](#liveone-user-show)
@@ -151,6 +157,7 @@ Subcommands:
   derivation             Derived signals — run detectors and the HWS model: list, create, enable, recompute, delete.
   owner                  Who owns devices, areas and dashboards — and how to hand them over.
   automation             Scheduled and reactive rules — including the generator exercise run.
+  calendar               Subscribe a calendar app to an area's scheduled automations.
   user                   The user directory — who exists, what they own. Admin-only.
   queue                  The observations ingest path — per-lane status, and the levers to unblock it.
   sync                   Re-fetch a historical window from a device's vendor, on the backfill lane.  (writes)
@@ -4008,6 +4015,8 @@ Subcommands:
   list                   Every automation on an area, and what each one does.
   show                   One automation in full, including the last decision the evaluator made.
   create-exercise        Schedule a generator exercise run — unless it has already run under load recently.  (writes)
+  upcoming               Every scheduled occurrence on an area, dated, for the next N days.
+  skip                   Skip one occurrence of a repeating rule, leaving the rule itself alone.  (writes)
   enable                 Re-enable a disabled automation.  (writes)
   disable                Stop an automation being evaluated, without deleting it.  (writes)
   delete                 Delete an automation.  (writes)
@@ -4152,8 +4161,8 @@ Schedule a generator exercise run — unless it has already run under load recen
 
 When to use:
   Reach for this for anti-wet-stacking: a diesel that idles for weeks glazes its bores. The
-  rule fires on a weekly wall-clock slot and SKIPS itself when the engine has already done
-  real work, so a generator in normal use is never exercised unnecessarily.
+  rule fires on a wall-clock slot and SKIPS itself when the engine has already done real
+  work, so a generator in normal use is never exercised unnecessarily.
 
 🛑 This creates something that STARTS AN ENGINE, on a schedule, unattended. Dry-run is the
 default; read the printed rule before `--apply`.
@@ -4171,6 +4180,18 @@ the area, so the run-request point is routinely on a device that is not a member
 The rule never dispatches while a run is already in progress: a second request would
 recompute the hub's stop deadline from now and truncate the run someone else asked for.
 
+WHEN it runs is an RFC 5545 subset — --start is the first occurrence and, on its own, the
+whole of a one-off; --rrule repeats it:
+  --rrule='FREQ=WEEKLY;BYDAY=TH'                 every Thursday
+  --rrule='FREQ=WEEKLY;INTERVAL=2;BYDAY=TH'      every second Thursday
+  --rrule='FREQ=MONTHLY;BYDAY=1SA'               the first Saturday of each month
+  --rrule='FREQ=MONTHLY;BYMONTHDAY=-1'           the last day of each month
+Supported parts: FREQ (DAILY|WEEKLY|MONTHLY|YEARLY), INTERVAL, COUNT, UNTIL, BYDAY,
+BYMONTHDAY, BYMONTH, BYSETPOS, WKST. Anything else is refused rather than ignored.
+--until/--count are sugar folded into the rule, and are mutually exclusive.
+
+A rule that runs out of occurrences DISABLES itself as it consumes its last slot.
+
 Times are the AREA's local wall clock and stay that way across daylight saving.
 
 Usage:
@@ -4186,8 +4207,10 @@ Options:
   --derivation <dx_|role>    The run detector: dx_… id, its name, or its role (e.g. generator)  (required)
   --load-point <path|pt_>    Power point in W used to judge load (e.g. bidi.grid/power, or dev:bidi.grid/power)  (required)
   --action-point <path|pt_>  Writable run-request point, often on another device (e.g. generator:source.generator.control.request/duration)  (required)
-  --weekdays <thu>           Comma-separated: sun, mon, tue, wed, thu, fri, sat  (required)
-  --time <09:00>             24-hour local wall-clock start time (not 02:00–02:59)  (required)
+  --start <2026-09-17 09:00> First occurrence, local date + 24-hour time (not 02:00–02:59). Alone = a one-off  (required)
+  --rrule <FREQ=WEEKLY;BYDAY=TH> How it repeats, RFC 5545. Omit for a one-off
+  --until <2026-12-31>       Stop repeating after this date (needs --rrule; not with --count)
+  --count <6>                Stop after this many occurrences (needs --rrule; not with --until)
   --minutes <30>             How long to run for. Must be > 0 — 0 is a STOP, not a run  (required)
   --name <string>            Name (default: 'Generator exercise')
   --grace-minutes <number>   How long a missed slot stays due before it is written off (default 180)
@@ -4215,11 +4238,129 @@ External access:
             A missing, expired or revoked token is exit 3; an API failure is exit 5.
 
 Examples:
-  liveone automation create-exercise daylesford --derivation=generator --load-point=bidi.grid/power --action-point='Daylesford Generator':source.generator.control.request/duration --weekdays=thu --time=09:00 --minutes=30
+  liveone automation create-exercise daylesford --derivation=generator --load-point=bidi.grid/power --action-point='Daylesford Generator':source.generator.control.request/duration --start='2026-09-17 09:00' --rrule='FREQ=WEEKLY;BYDAY=TH' --minutes=30
+  liveone automation create-exercise daylesford --derivation=generator --load-point=bidi.grid/power --action-point=generator:source.generator.control.request/duration --start='2026-09-12 09:00' --minutes=30
 
 Exit codes:
   0    success
   1    the server refused the rule (422) — nothing was written
+  2    usage error
+  3    authentication failure
+  5    upstream failure
+  130  interrupted
+```
+
+#### liveone automation upcoming
+
+Every scheduled occurrence on an area, dated, for the next N days.
+
+```
+Every scheduled occurrence on an area, dated, for the next N days.
+
+When to use:
+  The verification tool when you have no calendar client to hand — and the direct way to
+  answer 'is this actually a one-off, or did I write a standing rule'. Read-only.
+
+Merges every enabled exercise rule on the area into one dated list, in the AREA's local
+time, with EXDATEs already removed and RDATEs already added — i.e. what will really happen,
+not what the rule says.
+
+Usage:
+  liveone automation upcoming <area> [options]
+
+  Read-only. This command changes nothing.
+
+Arguments:
+  <area>                 The area: ar_… id, legacy handle, slug or name
+
+Options:
+  --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
+  --days <30>                How far ahead to look (default 30)
+  --all                      Include DISABLED rules, marked as such
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
+
+Examples:
+  liveone automation upcoming daylesford --days=90
+
+Exit codes:
+  0    success
+  1    nothing is scheduled in the window
+  2    usage error
+  3    authentication failure
+  5    upstream failure
+  130  interrupted
+```
+
+#### liveone automation skip
+
+Skip one occurrence of a repeating rule, leaving the rule itself alone.
+
+```
+Skip one occurrence of a repeating rule, leaving the rule itself alone.
+
+When to use:
+  'Not next Thursday' — site work, someone on holiday, a generator already booked. The rule
+  keeps running afterwards; only that one instance is dropped.
+
+Adds an EXDATE for the named date's occurrence. `upcoming` lists the dates that have one,
+and running `skip` on a date that is already skipped is a no-op rather than an error.
+
+The route replaces the whole trigger, so this re-sends it — but a slot ALREADY dealt with
+today stays dealt with, because an exdate-only edit deliberately does not clear the
+consumed-slot key. Without that, skipping next week at 09:30 could start the engine a
+second time this morning.
+
+Usage:
+  liveone automation skip <area> <automation> [options]
+
+  This command WRITES. It is dry by default: nothing changes without --apply.
+
+Arguments:
+  <area>                 The area: ar_… id, legacy handle, slug or name
+  <automation>           The automation: au_… id or name
+
+Options:
+  --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
+  --date <2026-09-24>        The local date to skip — there must be an occurrence on it  (required)
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+  --apply                    Actually write. Without it nothing is changed.
+  --dry-run                  Report what would change and write nothing (the default)
+  --yes                      Skip the confirmation prompt. Required with --apply off a terminal.
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
+
+Examples:
+  liveone automation skip daylesford 'Generator exercise' --date=2026-09-24
+
+Exit codes:
+  0    success
+  1    there is no occurrence on that date
   2    usage error
   3    authentication failure
   5    upstream failure
@@ -4369,6 +4510,228 @@ External access:
 Exit codes:
   0    success
   1    completed, with findings or no results
+  2    usage error
+  3    authentication failure
+  5    upstream failure
+  130  interrupted
+```
+
+### liveone calendar
+
+Subscribe a calendar app to an area's scheduled automations.
+
+```
+Subscribe a calendar app to an area's scheduled automations.
+
+When to use:
+  Reach for this to SEE a schedule in a calendar. To change one use `automation`; for a
+  quick dated list with no calendar client at all, `automation upcoming` needs no token.
+
+Http-only, like `automation`: every verb calls the deployed API as you.
+
+🛑 A feed URL is a bearer credential with no expiry by default, handed to software that will
+re-fetch it for years. Mint one per subscriber, label it, and revoke rather than re-share.
+
+Usage:
+  liveone calendar <subcommand> [options]
+
+  Read-only. This command changes nothing.
+
+Subcommands:
+  list                   Every feed token ever minted for an area, and its subscription URL.
+  mint                   Create a feed token and print the URL to subscribe a calendar app to.  (writes)
+  revoke                 Stop a feed token working.  (writes)
+
+Run `liveone calendar <subcommand> --help` for a subcommand's own options.
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
+
+Exit codes:
+  0    success
+  1    completed, with findings or no results
+  2    usage error
+  3    authentication failure
+  5    upstream failure
+  130  interrupted
+```
+
+#### liveone calendar list
+
+Every feed token ever minted for an area, and its subscription URL.
+
+```
+Every feed token ever minted for an area, and its subscription URL.
+
+When to use:
+  The first call — and the one that answers 'is this subscription still live'. Revoked and
+  expired tokens are listed too, with the date each stopped working; a filtered list could
+  not answer that.
+
+`last used` is how a forgotten subscription is spotted: a token nothing has fetched in
+months is one nobody would miss, and is the safe thing to revoke.
+
+Usage:
+  liveone calendar list <area> [options]
+
+  Read-only. This command changes nothing.
+
+Arguments:
+  <area>                 The area: ar_… id, legacy handle, slug or name
+
+Options:
+  --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
+
+Examples:
+  liveone calendar list daylesford
+
+Exit codes:
+  0    success
+  1    the area has no calendar tokens
+  2    usage error
+  3    authentication failure
+  5    upstream failure
+  130  interrupted
+```
+
+#### liveone calendar mint
+
+Create a feed token and print the URL to subscribe a calendar app to.
+
+```
+Create a feed token and print the URL to subscribe a calendar app to.
+
+When to use:
+  One per subscriber, labelled, so revoking one person's access does not break everyone
+  else's. Reach for this rather than re-sharing an existing URL.
+
+🛑 The URL IS the credential. A calendar client fetches it unattended for years with no
+way to sign in, so there is nothing else to authenticate with — treat it exactly like a
+dashboard share link, and use --expires-days for anything temporary.
+
+The feed carries the area's scheduled automations — when the site INTENDS to run
+something — and no readings, no point values, and nothing about what actually happened.
+
+Two URLs are printed. `webcal://` makes a calendar app SUBSCRIBE (re-fetching hourly);
+the `https://` one is a one-time snapshot in most clients, and is what curl wants.
+
+Usage:
+  liveone calendar mint <area> [options]
+
+  This command WRITES. It is dry by default: nothing changes without --apply.
+
+Arguments:
+  <area>                 The area: ar_… id, legacy handle, slug or name
+
+Options:
+  --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
+  --label <simon's phone>    Who or what this URL is for — required, so it can be revoked knowingly  (required)
+  --expires-days <90>        Stop working after this many days (default: never)
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+  --apply                    Actually write. Without it nothing is changed.
+  --dry-run                  Report what would change and write nothing (the default)
+  --yes                      Skip the confirmation prompt. Required with --apply off a terminal.
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
+
+Examples:
+  liveone calendar mint daylesford --label='simon iphone' --apply
+
+Exit codes:
+  0    success
+  1    completed, with findings or no results
+  2    usage error
+  3    authentication failure
+  5    upstream failure
+  130  interrupted
+```
+
+#### liveone calendar revoke
+
+Stop a feed token working.
+
+```
+Stop a feed token working.
+
+When to use:
+  Immediate and permanent — there is no un-revoke, and the subscriber's calendar simply
+  stops updating (most clients say nothing). Mint a replacement rather than reviving one.
+
+Usage:
+  liveone calendar revoke <area> <token> [options]
+
+  This command WRITES. It is dry by default: nothing changes without --apply.
+
+Arguments:
+  <area>                 The area: ar_… id, legacy handle, slug or name
+  <token>                The token itself, or its label
+
+Options:
+  --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+  --apply                    Actually write. Without it nothing is changed.
+  --dry-run                  Report what would change and write nothing (the default)
+  --yes                      Skip the confirmation prompt. Required with --apply off a terminal.
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
+
+Examples:
+  liveone calendar revoke daylesford 'simon iphone' --apply
+
+Exit codes:
+  0    success
+  1    no live token matched
   2    usage error
   3    authentication failure
   5    upstream failure

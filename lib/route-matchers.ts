@@ -93,6 +93,30 @@ export function hasAccessToken(request: Request): boolean {
 }
 
 // ---------------------------------------------------------------------------
+// Calendar feed tokens
+// ---------------------------------------------------------------------------
+
+// The subscribable `.ics` feed, and ONLY it. A calendar client fetches this unattended for years
+// with no way to sign in, so the URL is the whole credential — the same deliberate security
+// decision as a share link, and bounded the same way: this list is the edge boundary, middleware
+// honours it for GET/HEAD only, and the handler validates the token AND checks it belongs to the
+// area in the path.
+//
+// 🛑 Deliberately NOT added to `shareableRoutes`. That list is documented as
+// "the handler authorizes with requireDashboardAccess", and this handler does not — it has its own
+// token table with its own predicate. Sharing the matcher would mean a dashboard share token could
+// try this route and a calendar token could try `/api/data`; each is refused downstream, but the
+// boundary would no longer say which credential belongs where.
+const calendarFeedRoutes = ["/api/v4/areas/(.*)/calendar.ics"];
+
+export const isCalendarFeedRoute = createRouteMatcher(calendarFeedRoutes);
+
+// Presence-only, like `hasAccessToken`. The token is validated by the handler.
+export function hasFeedToken(request: Request): boolean {
+  return new URL(request.url).searchParams.has("token");
+}
+
+// ---------------------------------------------------------------------------
 // CLI tokens
 // ---------------------------------------------------------------------------
 
@@ -243,6 +267,9 @@ const cliTokenRoutes = [
   "/api/history",
   "/api/cli-auth/tokens(.*)", // `auth list` / `auth revoke`, so a CLI can manage its own credential
   "/api/cli-auth/whoami", // the `target:` line — which deployment, as whom, against which database
+  // Minting and revoking an area's calendar feed tokens, for `liveone calendar`. Owner-or-admin in
+  // the handler (`loadAreaForOwner`); the FEED itself is not here, it has its own matcher above.
+  "/api/v4/areas/(.*)/calendar-tokens",
   // 🛑 Enumerated, NOT `/api/cli-auth(.*)`. A wildcard would sweep in `authorize`, and a CLI token
   // must not be able to mint its own successor without a fresh human approval in a browser.
 ];

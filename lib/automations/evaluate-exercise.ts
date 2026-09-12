@@ -25,15 +25,14 @@ import type {
 } from "@/lib/db/planetscale/schema";
 import * as store from "./store";
 import {
-  currentSlot,
   decideExercise,
   exerciseContext,
   isDue,
   longestLoadedStretch,
   type LoadedSample,
   type LoadedStretch,
-  type Slot,
 } from "./exercise";
+import { isExhausted, previousOccurrence, type Slot } from "./recurrence";
 
 export interface ExerciseSummary {
   /** Slots that were this rule's to act on this tick. */
@@ -42,6 +41,8 @@ export interface ExerciseSummary {
   satisfied: number;
   waiting: number;
   missed: number;
+  /** Rules retired this tick because the slot just consumed was their last. */
+  exhausted: number;
 }
 
 /** The slice of `AutomationsSummary` this module touches. */
@@ -83,7 +84,7 @@ export async function evaluateExercise(
     return;
   }
 
-  const slot = currentSlot(trigger.schedule, det.displayTimezone, nowMs);
+  const slot = previousOccurrence(trigger.schedule, det.displayTimezone, nowMs);
   if (!slot) return;
   if (
     !isDue({
@@ -116,6 +117,12 @@ export async function evaluateExercise(
     nowMs,
   );
 
+  // A rule whose last slot this is gets retired as it is consumed, so a spent schedule goes
+  // visibly dark instead of sitting enabled forever with nothing left to fire. Asked from the
+  // SLOT instant, not from `nowMs`: "is there anything after the one we just dealt with".
+  const retire = (consume: boolean): boolean =>
+    consume && isExhausted(trigger.schedule, det.displayTimezone, slot.atMs);
+
   if (decision.kind === "dispatch") {
     await fireExercise(
       row,
@@ -125,16 +132,21 @@ export async function evaluateExercise(
       evidence,
       nowMs,
       summary,
+      retire,
     );
     return;
   }
 
+  const consume = decision.kind === "consume";
+  const final = retire(consume);
   await store.recordExerciseOutcome(row.id, {
-    context: decision.context,
-    consume: decision.kind === "consume",
+    context: final ? { ...decision.context, final: true } : decision.context,
+    consume,
+    disable: final,
     nowMs,
   });
   countOutcome(summary, decision.context.outcome);
+  if (final) summary.exercise.exhausted++;
 }
 
 function countOutcome(summary: SummarySink, outcome: string): void {
@@ -197,6 +209,7 @@ async function fireExercise(
   evidence: LoadedStretch | null,
   nowMs: number,
   summary: SummarySink,
+  retire: (consume: boolean) => boolean,
 ): Promise<void> {
   // 🛑 `/api/cron/derivations` holds no lease, so two ticks CAN overlap. Claim the row first —
   // a compare-and-set on the integer `revision` — because the thing being guarded is starting an
@@ -245,12 +258,19 @@ async function fireExercise(
     consume: boolean,
     reason?: string,
   ) => {
+    const final = retire(consume);
     await store.recordExerciseOutcome(row.id, {
-      context: exerciseContext(slot, outcomeName, nowMs, { reason, evidence }),
+      context: exerciseContext(slot, outcomeName, nowMs, {
+        reason,
+        evidence,
+        final,
+      }),
       consume,
+      disable: final,
       nowMs,
     });
     countOutcome(summary, outcomeName);
+    if (final) summary.exercise.exhausted++;
   };
 
   switch (outcome.kind) {

@@ -8,80 +8,20 @@
  *
  * Type-only import from the schema, so this module stays cheap to import.
  */
-import { fromDate } from "@internationalized/date";
 import type {
-  AutomationWeekday,
   ExerciseArmedContext,
   ExerciseOutcome,
-  ExerciseSchedule,
 } from "@/lib/db/planetscale/schema";
-
-/** Aligned to `getUTCDay()`, so `WEEKDAY_AT[dow]` is the key for that day. */
-const WEEKDAY_AT: readonly AutomationWeekday[] = [
-  "sun",
-  "mon",
-  "tue",
-  "wed",
-  "thu",
-  "fri",
-  "sat",
-];
-
-/**
- * How far back `currentSlot` will look for the most recent slot.
- *
- * Eight days, not seven: a weekly schedule's previous occurrence is exactly seven days back, and
- * looking only seven would make finding it depend on whether today's slot time has passed yet.
- */
-const LOOKBACK_DAYS = 8;
-
-/** A scheduled occurrence, as an absolute instant. */
-export interface Slot {
-  atMs: number;
-}
-
-/**
- * The most recent scheduled slot at or before `nowMs`, or null if there is none in the lookback.
- *
- * 🛑 The schedule is LOCAL WALL CLOCK, so this walks back over local calendar days and only then
- * converts to an instant. Doing it the other way round (subtracting 24h from an instant) drifts by
- * an hour across a daylight-saving change, which is exactly when a weekly rule would silently move.
- */
-export function currentSlot(
-  schedule: ExerciseSchedule,
-  timezone: string,
-  nowMs: number,
-): Slot | null {
-  const [hour, minute] = schedule.time.split(":").map(Number);
-  const wanted = new Set(schedule.weekdays);
-  const today = fromDate(new Date(nowMs), timezone);
-
-  for (let back = 0; back < LOOKBACK_DAYS; back++) {
-    const day = back === 0 ? today : today.subtract({ days: back });
-    // Weekday from the already-zoned calendar date via UTC math — the `lib/date-utils.ts` idiom.
-    // NOT `getDayOfWeek`, which is locale-relative and would put the week's first day elsewhere.
-    const dow = new Date(
-      Date.UTC(day.year, day.month - 1, day.day),
-    ).getUTCDay();
-    if (!wanted.has(WEEKDAY_AT[dow])) continue;
-
-    const atMs = day
-      .set({ hour, minute, second: 0, millisecond: 0 })
-      .toDate()
-      .getTime();
-    if (atMs <= nowMs) return { atMs };
-  }
-  return null;
-}
+import type { Slot } from "./recurrence";
 
 /**
  * Is this slot still ours to act on?
  *
  * Two ways it is not: we have already dealt with it (exact match — a slot instant is computed, not
  * observed, so it cannot drift the way a run's start_time does), or it predates the rule itself.
- * The second matters because `currentSlot` happily returns a slot from before the automation was
- * created, and reporting that as a missed exercise would be blaming the rule for a week it did not
- * exist.
+ * The second matters because `previousOccurrence` happily returns a slot from before the
+ * automation was created, and reporting that as a missed exercise would be blaming the rule for a
+ * week it did not exist.
  */
 export function isDue(args: {
   slot: Slot;
@@ -212,7 +152,7 @@ export function exerciseContext(
   slot: Slot,
   outcome: ExerciseOutcome,
   nowMs: number,
-  extra?: { reason?: string; evidence?: LoadedStretch | null },
+  extra?: { reason?: string; evidence?: LoadedStretch | null; final?: boolean },
 ): ExerciseArmedContext {
   const ctx: ExerciseArmedContext = {
     kind: "exercise",
@@ -221,6 +161,7 @@ export function exerciseContext(
     at: nowMs,
   };
   if (extra?.reason) ctx.reason = extra.reason;
+  if (extra?.final) ctx.final = true;
   if (extra?.evidence)
     ctx.evidence = {
       minutes: extra.evidence.minutes,

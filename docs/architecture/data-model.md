@@ -41,7 +41,7 @@ truth for every column; these are roles, not schemas.
 | `area_bindings`     | Typed role→point **overrides**; absent means the area defaults to the union of its members' points.                                                 |
 | `derivations`       | Persisted derived series (run tracking, HWS model), generalizing the former per-feature tracker tables.                                             |
 | `derived_intervals` | Materialized run/interval records produced by a derivation, with per-interval statistics and provenance.                                            |
-| `automations`       | Charge/limit rules scoped to an area: `mode='once'` (self-disarming, this session) or `'standing'`, with a jsonb trigger/action pair. TypeID `au_`. |
+| `automations`       | Deferred-action rules scoped to an area, with a jsonb trigger/action pair: reactive `charge-session` (stops a charge) and scheduled `exercise` (starts a generator). TypeID `au_`. See [automations.md](../automations.md). |
 
 **Presentation**
 

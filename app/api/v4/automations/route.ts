@@ -8,6 +8,7 @@ import {
   automationWire,
   triggerFromWire,
 } from "@/lib/automations/wire";
+import { refuseOnceExercise } from "@/lib/automations/types";
 
 /**
  * Automations — "stop charging after x minutes and/or y kWh" (charge-session), and "run the
@@ -45,7 +46,14 @@ export async function GET(request: NextRequest) {
   if ("error" in authed) return authed.error;
 
   const rows = await store.listForArea(authed.area.id);
-  return NextResponse.json({ automations: rows.map(automationWire) });
+  const at = { timezone: authed.area.displayTimezone, nowMs: Date.now() };
+  // The zone is served alongside the rows because every schedule in them is a LOCAL WALL CLOCK in
+  // it and is stored without it (`ExerciseSchedule`). A client that renders "09:00" or expands a
+  // recurrence without knowing the zone is guessing, and the guess is wrong twice a year.
+  return NextResponse.json({
+    timezone: at.timezone,
+    automations: rows.map((row) => automationWire(row, at)),
+  });
 }
 
 export async function POST(request: NextRequest) {
@@ -67,6 +75,8 @@ export async function POST(request: NextRequest) {
 
   const trigger = triggerFromWire(body.trigger);
   if (!trigger.ok) return unprocessable(trigger.error);
+  const modeRefusal = refuseOnceExercise(mode, trigger.value);
+  if (modeRefusal) return unprocessable(modeRefusal);
   const action = actionFromWire(body.action);
   if (!action.ok) return unprocessable(action.error);
 
@@ -99,7 +109,13 @@ export async function POST(request: NextRequest) {
     enabled: body.enabled as boolean | undefined,
   });
   return NextResponse.json(
-    { automation: automationWire(row) },
+    {
+      timezone: authed.area.displayTimezone,
+      automation: automationWire(row, {
+        timezone: authed.area.displayTimezone,
+        nowMs: Date.now(),
+      }),
+    },
     { status: 201 },
   );
 }

@@ -161,13 +161,14 @@ const derivTrigger = {
 };
 const action = { kind: "point-action", pointId: ACT_PT, action: "turn_off" };
 
+const TZ = "Australia/Melbourne";
 const LOAD_PT = Point.generate();
 const LOAD_PT_UUID = Point.toUuid(LOAD_PT);
-/** A Thursday-09:00 exercise trigger, wire-shaped (TypeIDs, not uuids). */
+/** A weekly Thursday-09:00 exercise trigger, wire-shaped (TypeIDs, not uuids). */
 const exerciseTrigger = {
   kind: "exercise",
   source: { kind: "derivation", derivationId: DX },
-  schedule: { weekdays: ["thu"], time: "09:00" },
+  schedule: { start: "2026-09-17T09:00", rrule: "FREQ=WEEKLY;BYDAY=TH" },
   unless: { loadPointId: LOAD_PT },
 };
 const setValueAction = {
@@ -213,11 +214,12 @@ beforeEach(() => {
   mockAreaOwner.mockResolvedValue({
     userId: OWNER,
     isAdmin: false,
-    area: { id: AREA_UUID, ownerClerkUserId: OWNER },
+    area: { id: AREA_UUID, ownerClerkUserId: OWNER, displayTimezone: TZ },
   } as never);
   mockAreaAuth.mockResolvedValue({
     id: AREA_UUID,
     ownerClerkUserId: OWNER,
+    displayTimezone: TZ,
   } as never);
   mockDeviceAccess.mockResolvedValue({ canWrite: true } as never);
   mockLoadPoint.mockImplementation(
@@ -367,7 +369,11 @@ describe("POST /api/v4/automations", () => {
       trigger: {
         kind: "exercise",
         source: { kind: "derivation", derivationId: DX_UUID },
-        schedule: { weekdays: ["thu"], time: "09:00", graceMinutes: 180 },
+        schedule: {
+          start: "2026-09-17T09:00",
+          rrule: "FREQ=WEEKLY;BYDAY=TH",
+          graceMinutes: 180,
+        },
         // `loadPointId` lives under `unless`, not `source` — a decoder that only walked `source`
         // would store a raw pt_ string here.
         unless: {
@@ -437,13 +443,13 @@ describe("POST /api/v4/automations", () => {
     expect(mockStore.create).not.toHaveBeenCalled();
   });
 
-  it("422s a schedule time inside the daylight-saving gap hour", async () => {
+  it("422s a schedule start inside the daylight-saving gap hour", async () => {
     const res = await post({
       areaId: AREA,
       mode: "standing",
       trigger: {
         ...exerciseTrigger,
-        schedule: { weekdays: ["thu"], time: "02:30" },
+        schedule: { start: "2026-09-17T02:30", rrule: "FREQ=WEEKLY;BYDAY=TH" },
       },
       action: setValueAction,
     });
@@ -464,17 +470,47 @@ describe("POST /api/v4/automations", () => {
     expect((await res.json()).error).toContain("pt_ point id");
   });
 
-  it("422s an exercise trigger with an empty weekday list", async () => {
+  it("422s a recurrence rule outside the supported subset", async () => {
+    // BYHOUR is a second answer to "what time does this run"; DTSTART is the only one.
     const res = await post({
       areaId: AREA,
       mode: "standing",
       trigger: {
         ...exerciseTrigger,
-        schedule: { weekdays: [], time: "09:00" },
+        schedule: {
+          start: "2026-09-17T09:00",
+          rrule: "FREQ=WEEKLY;BYDAY=TH;BYHOUR=9",
+        },
       },
       action: setValueAction,
     });
     expect(res.status).toBe(422);
+    expect((await res.json()).error).toContain("BYHOUR is not supported");
+  });
+
+  it("422s the retired weekday grammar rather than guessing at it", async () => {
+    const res = await post({
+      areaId: AREA,
+      mode: "standing",
+      trigger: {
+        ...exerciseTrigger,
+        schedule: { weekdays: ["thu"], time: "09:00" },
+      },
+      action: setValueAction,
+    });
+    expect(res.status).toBe(422);
+    expect((await res.json()).error).toContain("trigger.schedule.start");
+  });
+
+  it("422s mode:'once' on an exercise trigger — a one-off is a schedule with no rrule", async () => {
+    const res = await post({
+      areaId: AREA,
+      mode: "once",
+      trigger: { ...exerciseTrigger, schedule: { start: "2026-09-17T09:00" } },
+      action: setValueAction,
+    });
+    expect(res.status).toBe(422);
+    expect((await res.json()).error).toContain("no rrule");
   });
 
   it("422s a derivation from another area", async () => {
@@ -584,6 +620,7 @@ describe("PATCH /api/v4/automations/{id}", () => {
     mockAreaAuth.mockResolvedValue({
       id: AREA_UUID,
       ownerClerkUserId: "user_someone_else",
+      displayTimezone: TZ,
     } as never);
     const res = await patch({ name: "x" });
     expect(res.status).toBe(404);
@@ -706,6 +743,7 @@ describe("PATCH — every patch clears the control gate (the re-enable gap)", ()
     mockAreaAuth.mockResolvedValue({
       id: AREA_UUID,
       ownerClerkUserId: OWNER,
+      displayTimezone: TZ,
     } as never);
     mockDeviceAccess.mockImplementation(adminNotOwner);
   }
@@ -781,6 +819,7 @@ describe("DELETE — administration, deliberately NOT owner-gated", () => {
     mockAreaAuth.mockResolvedValue({
       id: AREA_UUID,
       ownerClerkUserId: OWNER,
+      displayTimezone: TZ,
     } as never);
     mockDeviceAccess.mockImplementation(adminNotOwner);
     const res = await del();
