@@ -5,7 +5,7 @@
  * bare drizzle chains (a route test that asserts on a chain is asserting on drizzle, not on us).
  * Every write stamps `updatedAt`, like the derivations PATCH does.
  */
-import { and, asc, eq, gte, inArray, isNull, lte, or } from "drizzle-orm";
+import { and, asc, eq, gte, inArray, isNull, lte, or, sql } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import {
   areaMembers,
@@ -237,12 +237,48 @@ export async function recordExerciseOutcome(
 }
 
 /**
+ * The claim predicate, extracted ONLY so `store-claim.test.ts` can pin the SQL it generates without
+ * a database. Nothing else should call it.
+ *
+ * 🛑 The comparison is truncated to MILLISECONDS, and that is load-bearing rather than cosmetic.
+ * `updated_at` is `timestamp(6) DEFAULT now()` and `create()` above does not stamp it, so a row that
+ * has never been written from JS carries MICROSECONDS (`…:43.616884`). node-postgres hands drizzle
+ * the raw string, drizzle parses it with `new Date(…)` — which TRUNCATES to milliseconds — and sends
+ * it back as `toISOString()` (`…:43.616Z`). A plain `updated_at = $2` therefore matched NOTHING for
+ * any never-PATCHed row: every tick "lost" a claim nobody held and `fireExercise` returned silently,
+ * so two live exercise rules never fired once. Compare at the precision the round trip survives.
+ * Truncating (not rounding) is exactly right here because that is what V8 does on the way in.
+ *
+ * 🛑 `sql.param(…, automations.updatedAt)` is load-bearing too: it forces the COLUMN's own encoder,
+ * which is UTC `toISOString()`. A bare `${updatedAt}` hands the `Date` straight to node-postgres,
+ * which serialises it in the PROCESS's local zone (`…+10:00`); Postgres then drops the offset
+ * coercing to `timestamp without time zone` and the predicate is silently wrong by the UTC offset.
+ * `eq()` would not encode it either — its `bindIfParam` only does so when the left-hand side is a
+ * driver-value encoder, and a `SQL` expression is not.
+ *
+ * The general rule this is an instance of: **never compare a `defaultNow()`-populated `timestamp`
+ * for equality against a value that has round-tripped through JS.**
+ */
+export function exerciseClaimWhere(uuid: string, updatedAt: Date) {
+  return and(
+    eq(automations.id, uuid),
+    sql`date_trunc('milliseconds', ${automations.updatedAt}) = ${sql.param(updatedAt, automations.updatedAt)}`,
+  );
+}
+
+/**
  * Compare-and-set on `updatedAt`, taken immediately before dispatching a start.
  *
  * `/api/cron/derivations` holds no cron lease, so two invocations really can overlap. For a charge
  * limit a duplicate `turn_off` is harmless; here a duplicate dispatch re-extends a running engine's
  * stop deadline, so the race is worth one extra round trip. Returns false if another tick got
  * there first.
+ *
+ * Correct under READ COMMITTED: the losing tick blocks on the row lock, then re-evaluates its
+ * `WHERE` against the winner's committed row, whose `updated_at` is now a fresh JS millisecond value
+ * that its own stale parameter cannot match.
+ *
+ * See `exerciseClaimWhere` for why the comparison is not a plain `eq`.
  */
 export async function claimExerciseDispatch(
   uuid: string,
@@ -251,7 +287,7 @@ export async function claimExerciseDispatch(
   const rows = await requirePlanetscaleDb()
     .update(automations)
     .set({ updatedAt: new Date() })
-    .where(and(eq(automations.id, uuid), eq(automations.updatedAt, updatedAt)))
+    .where(exerciseClaimWhere(uuid, updatedAt))
     .returning({ id: automations.id });
   return rows.length > 0;
 }
