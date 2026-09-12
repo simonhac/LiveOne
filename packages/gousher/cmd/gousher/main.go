@@ -80,7 +80,7 @@ func main() {
 	}()
 	serverErrors := make(chan error, 1)
 	go func() {
-		if e := server.ListenAndServe(); e != nil && e != http.ErrServerClosed {
+		if e := gousher.ListenAndServe(server, os.Getenv("GOUSHER_TLS_CERT_FILE"), os.Getenv("GOUSHER_TLS_KEY_FILE")); e != nil && e != http.ErrServerClosed {
 			log.Printf("inspector stopped: %v", e)
 			serverErrors <- e
 			cancel()

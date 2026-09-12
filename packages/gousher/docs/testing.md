@@ -178,3 +178,9 @@ The ledger now classifies both managed-poller foreign keys, the vendor-owned sit
 strict JSON fields; the census explicitly accounts for collectors containing no external references.
 The existing failing audit now passes (15 tests). The full local unit suite passes **4,106 tests across
 313 suites**, with five existing skips. Both root and standalone Usher production builds pass.
+
+Private deployment preparation: observed red checks for operator CLI enrollment paths and the missing
+TLS server helper, followed by passing exact-route/admin-denial tests and Go TLS tests. TLS coverage
+verifies a trusted HTTPS connection and rejects partial certificate configuration. Both trial servers
+use the helper; existing loopback HTTP behavior is preserved. Enrollment helpers still require admin
+on every method, with unrelated admin routes remaining outside the CLI bypass.
