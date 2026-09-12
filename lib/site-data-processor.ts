@@ -30,7 +30,7 @@ export interface ProcessedSiteData {
    *
    * ⚠️ Signs are the vendor's, NOT normalised: `import` is positive when you pay, and `export` is
    * Amber's raw `feedIn.perKwh`, which is NEGATIVE when you are PAID. The engine normalises its own
-   * copy for the `revenue_c` leg (`resolveExportReceiptSeries`) but that never touches these raw
+   * copy for the `revenue_c` leg (`exportReceiptSeries`) but that never touches these raw
    * series, so the display flip lives at the render site — see `EnergyTable`.
    *
    * Forward-filled to the chart grid by {@link forwardFillRate}: Amber's rates are 30-min native, so

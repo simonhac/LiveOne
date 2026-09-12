@@ -277,11 +277,11 @@ component, ≥ 0 ("Battery Opportunity Cost"; a passthrough in `blendValue`,
 
 Price-sign semantics: negative **import** prices flow through unclamped (grid charge at a negative
 Amber rate books negative actual cost — `price` can legitimately go negative; `forgoneC` is untouched,
-grid charge forgoes nothing). The **feed-in**
-price is floored at 0 per interval (`compute.ts` `solarCostOpp`): under a negative export price the
-counterfactual to storing solar is curtailment, not paying to export, so nothing was forgone. Where the
-feed-in series comes from (Amber, a retailer schedule, nothing) is config — see
-[the export tariff](#opportunity-cost--the-export-tariff-config-detail) in Part 4.
+grid charge forgoes nothing). The **feed-in** price is floored at 0 per interval (`compute.ts`
+`solarCostOpp`) **in the receipts convention**: where you would have PAID to export, the counterfactual
+to storing solar is curtailment, so nothing was forgone. Where the
+feed-in series comes from is not config at all: it is the area's bound `bidi.grid.export/rate` point —
+see [the feed-in series](#opportunity-cost--the-feed-in-series) in Part 4.
 
 ### The learn — five reproducible parameters
 
@@ -632,51 +632,61 @@ endpoint.
 — `flow_1d` and the standalone route are both retired — so there is no `source` param and no legacy
 leg any more.)*
 
-### Opportunity cost & the export tariff (config detail)
+### Opportunity cost & the feed-in series
 
-The semantics are in [Part 2](#actual-vs-opportunity-cost); the pluggable source: the fold consumes
-only a per-interval `exportPrice[]` series — it never sees modes/schedules.
-`resolveExportPriceSeries` (`lib/battery-provenance/tariff.ts`) resolves it from
-`config.batteryProvenance.exportTariff`:
+The semantics are in [Part 2](#actual-vs-opportunity-cost). The SOURCE is the area's bound
+`bidi.grid.export/rate` point, and nothing else: the fold consumes a per-interval `exportPrice[]`
+series, and that series IS the bound one (`inputs.gridExportPrice`, read by
+`lib/battery-provenance/load.ts` like any other binding). An area with no export rate bound has no
+feed-in tariff — every interval null, `price-opportunity` 0, `revenue_c` null — and "do not credit our
+exports" is said by not binding the rate.
 
-- **`{ mode: "none" }`** (default) — no opportunity cost (`price-opportunity` reads 0).
-- **`{ mode: "amber" }`** — the measured `bidi.grid.export/rate` feed-in series.
-- **`{ mode: "schedule", plans }`** — a retailer schedule synthesised per interval. Plans are
-  **effective-dated** (`effectiveFrom`; newest ≤ the interval's local date wins) so a historical
-  re-fold prices each interval with the plan in force then. Flat rates today; the `tou` band shape is
-  schema-reserved (`ScheduleTariffProvider` throws until the evaluator lands). Set via the config
-  route.
+**This used to be config, and the config is gone.** `config.batteryProvenance.exportTariff` was
+`none | amber | schedule`, where `amber` carried no information whatsoever (it resolved to the very
+series the area already binds) and `schedule` was a second implementation of "a price over time",
+living in `devices.config` jsonb with its own effective-dated plan selector
+(`ScheduleTariffProvider`) and a time-of-use half that threw on use. Two representations of one fact,
+free to disagree. A site whose feed-in is **not measured** will publish it from a **tariff device** —
+a producer of an ordinary `bidi.grid.export/rate` point, bound like Amber's (see
+[block-model.md](../plans/block-model.md)) — which is the same drop-in the deleted design anticipated,
+minus the jsonb. Deferred until a residence needs one: no site had `mode: "schedule"`.
 
-Designed so a future **persisted tariff device** drops in with no fold change — it would materialise
-the same schedule (reusing `ScheduleTariffProvider`) into a `bidi.grid.export/rate` point the loader
-reads exactly like Amber. The per-day attribution rollup carries BOTH the actual cost (`cost_c`) and
-the feed-in income (`revenue_c`, see [the revenue leg](#the-revenue-leg)); opportunity cost still lives
-only in the battery fold / the Contents card.
+That also makes history immutable in a way config was not. A schedule was re-selected from *current*
+config on every recompute, so editing a plan silently re-priced the past; a stored series cannot.
 
-#### ⚠️ The two modes disagree about the sign of the feed-in price
+The per-day attribution rollup carries BOTH the actual cost (`cost_c`) and the feed-in income
+(`revenue_c`, see [the revenue leg](#the-revenue-leg)); opportunity cost still lives only in the
+battery fold / the Contents card.
 
-This has caused real bugs, so state it plainly. `resolveExportPriceSeries` returns each mode's series
-**verbatim**, and they use opposite conventions:
+#### ⚠️ One series, two readings — mind the sign
 
-| mode | source | sign when you are being PAID |
-| --- | --- | --- |
-| `amber` | `bidi.grid.export/rate` = Amber's raw feedIn `perKwh` | **negative** |
-| `schedule` | `ExportTariffPlan.cPerKwh` | **positive** |
+This has caused real bugs, so state it plainly. The measured `bidi.grid.export/rate` is Amber's raw
+feedIn `perKwh`, which is **negative when you are being PAID**, and the fold consumes it verbatim.
+Anything that presents feed-in money to a user must normalise first — use `exportReceiptSeries`
+(`lib/battery-provenance/tariff.ts`), which returns the receipts convention (**positive = money in**).
+That is what the `revenue_c` leg consumes; `AmberNow` and `BatteryContentsCard` apply the same flip for
+their own live displays.
 
-Anything that presents feed-in money to a user must normalise first — use
-`resolveExportReceiptSeries` (same file), which returns the receipts convention (**positive = money
-in**) for both modes. That is what the `revenue_c` leg consumes; `AmberNow` and `BatteryContentsCard`
-apply the same flip for their own live displays.
+(Until the `exportTariff` deletion there were TWO conventions — a schedule plan's `cPerKwh` was a
+positive receipt — and `mode` was the discriminator that reconciled them. One consequence of that was
+a real inconsistency: an `amber` site's solar opportunity cost floored to 0 while a `schedule` site got
+a non-zero one, for the same physical situation. With one source there is one convention.)
 
-Two known consequences of the un-normalised series, **not yet fixed**:
+**FIXED 2026-09-12 — `price-opportunity` was inverted, and this is what it was.** `solarCostOpp` in
+`compute.ts` floored the RAW series at 0 rather than the receipt, so `Math.max(0, raw)` kept exactly
+the intervals where raw was positive — in Amber's convention, the intervals where exporting would have
+*cost* money — and zeroed every interval where you would have been *paid*. So the number reported
+forgone revenue precisely when there was none to forgo, and 0 whenever there genuinely was some. The
+doc text above described the intent; the code did the opposite.
 
-- `solarCostOpp` in `compute.ts` floors the raw series at 0, so on an `amber` area it books forgone
-  revenue only in the intervals where exporting would have *cost* money, and zeroes it in exactly the
-  intervals where exporting would have *paid*. `price-opportunity` is therefore approximately inverted
-  for Amber areas. The doc text above ("floored at 0 … nothing was forgone") describes the intent, not
-  the observed behaviour.
-- Fixing it moves published `price-opportunity` values and needs its own backfill, so it is
-  deliberately out of scope of the change that introduced `revenue_c`.
+It stood for two years because the two tariff modes disagreed about the sign, so there was no single
+convention to floor in, and any fix moved published values. Deleting `exportTariff` left one
+convention, which is what made the fix a one-line change: the floor now applies to
+`exportReceiptPrice`. Two tests in `compute.test.ts` asserted the inverted behaviour and now assert on
+which way the money was flowing instead of on the sign of a number.
+
+🛑 Every `price-opportunity` value and `forgoneC` written before that date is wrong and is only
+corrected by a recompute of the affected range.
 
 ### Invariants
 
@@ -707,8 +717,8 @@ the learned/persisted values:
   (default 0.2) and the ignore-below deadband for SoC quantisation noise (default 0.2 kWh).
 - `recalSnapKwh` — BMS-recalibration snap threshold (default 2 kWh).
 
-The off-grid `generatorSource` triple and the `exportTariff` live on the battery system's
-`config.batteryProvenance` (above).
+The off-grid `generatorSource` triple lives on the battery system's `config.batteryProvenance`
+(above). The feed-in tariff does NOT: it is a bound point, not config.
 
 ### Operations
 
@@ -722,8 +732,8 @@ The off-grid `generatorSource` triple and the `exportTariff` live on the battery
      inherit its `i` sign flip).
   2. `PATCH /api/admin/devices/{batteryDeviceHandle}/config` — set `batteryProvenance.generatorSource`
      `{emissionsIntensity, pricePerKwh, renewableFraction}` (send the WHOLE config; PATCH **replaces**
-     the blob). For an on-grid site with feed-in, set `batteryProvenance.exportTariff` here too (e.g.
-     `{mode:"amber"}`).
+     the blob). Nothing to set for feed-in: an on-grid site's tariff is the `grid/rate` binding of
+     step 1 (`bidi.grid.export`).
   3. `POST /api/v4/areas/{areaId}/recompute-provenance` — bounded-batch materialise: learns params on the
      first batch, then recomputes blend + rollup, ensuring the helper device + points on demand. Loop
      on the returned `nextCursor` until `done` (body `{start?,end?,last?,cursor?,limit?}`, same

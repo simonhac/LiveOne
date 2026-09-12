@@ -126,25 +126,42 @@ describe("computeBatteryProvenance", () => {
     expect(Math.abs(residual)).toBeLessThan(1e-6);
   });
 
-  it("clamps the solar forgone term at 0 under a NEGATIVE feed-in price, while a negative import price flows through", () => {
-    // Negative export price ⇒ the counterfactual to storing solar is curtailment (nothing forgone),
-    // so the forgone pool must stay at 0. Negative IMPORT prices are real money and must NOT clamp —
-    // the actual cost basis goes negative from the grid-charge share.
+  /**
+   * 🛑 `gridExportPrice` is the MEASURED series in the RAW convention — Amber's feedIn `perKwh`, which
+   * is NEGATIVE when money comes IN. These two tests pin the sign down in the only way that cannot be
+   * misread: they assert on which direction the money was actually flowing, not on the sign of a
+   * number. Their expectations were the exact opposite of this until 2026-09, which is how
+   * `price-opportunity` stayed inverted for two years with a green suite.
+   */
+  it("accrues forgone export revenue when you WOULD HAVE BEEN PAID to export (raw negative)", () => {
+    // raw −3 ⇒ a receipt of +3 c/kWh: storing this solar gave up 3 c/kWh of real income, so the
+    // forgone pool must grow. Negative IMPORT prices are real money too and must NOT clamp — the
+    // actual cost basis goes negative from the grid-charge share, independently.
     const inputs = scenario();
-    inputs.exportTariff = { mode: "amber" };
     const n = inputs.timeline.length;
     inputs.gridExportPrice = new Array<number | null>(n).fill(-3);
     inputs.gridPrice = new Array<number | null>(n).fill(-10);
     const result = computeBatteryProvenance(warm(inputs), { efficiency: 1 });
-    expect(result.finalState.forgoneC).toBeCloseTo(0, 9);
+    expect(result.finalState.forgoneC).toBeGreaterThan(0);
     expect(result.finalState.costC).toBeLessThan(0);
   });
 
-  it("a POSITIVE feed-in price accrues forgone export revenue", () => {
-    const inputs = scenario(); // gridExportPrice = 5 c/kWh, solar in the charge mix
-    inputs.exportTariff = { mode: "amber" };
+  it("clamps the forgone term at 0 when exporting would have COST you money (raw positive)", () => {
+    // scenario() sets raw +5 ⇒ a receipt of −5 c/kWh: you would have PAID 5 c/kWh to export, so the
+    // counterfactual to storing solar is curtailment and nothing was forgone.
+    const inputs = scenario();
     const result = computeBatteryProvenance(warm(inputs), { efficiency: 1 });
-    expect(result.finalState.forgoneC).toBeGreaterThan(0);
+    expect(result.finalState.forgoneC).toBeCloseTo(0, 9);
+  });
+
+  it("keeps forgone at 0 where no export rate is bound at all (null series)", () => {
+    // No feed-in tariff is not a zero-revenue tariff, but for THIS accumulator they coincide: there
+    // is no knowable income to have forgone. `?? 0` in solarCostOpp is what makes it explicit.
+    const inputs = scenario();
+    const n = inputs.timeline.length;
+    inputs.gridExportPrice = new Array<number | null>(n).fill(null);
+    const result = computeBatteryProvenance(warm(inputs), { efficiency: 1 });
+    expect(result.finalState.forgoneC).toBeCloseTo(0, 9);
   });
 
   it("prefers an exact energy register over power integration when provided", () => {

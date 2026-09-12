@@ -64,6 +64,7 @@ import {
   dashboards,
   derivations,
   derivationSources,
+  derivedIntervalProvenance,
   derivedIntervals,
   deviceState,
   devices,
@@ -609,6 +610,28 @@ export const REFERENCE_LEDGER: LedgerEntry[] = [
   },
   {
     column: derivedIntervals.derivationId,
+    verdict: { protectedBy: "fk", onDelete: "cascade" },
+  },
+  {
+    column: derivedIntervalProvenance.derivationId,
+    // Half of the composite FK onto `derived_intervals(derivation_id, start_time)`, which is what
+    // makes a recompute's bounded delete take this table's rows with it.
+    verdict: { protectedBy: "fk", onDelete: "cascade" },
+  },
+  {
+    // The OTHER half, and a census candidate only because of it — a timestamp is not otherwise
+    // reference-shaped. It is here because rule 1 is "any column with a foreign key", which is
+    // exactly right: half a composite reference is still a reference, and leaving it undeclared
+    // would leave the pair half-described.
+    column: derivedIntervalProvenance.startTime,
+    verdict: { protectedBy: "fk", onDelete: "cascade" },
+  },
+  {
+    column: derivedIntervalProvenance.areaId,
+    // CASCADE, unlike `automations.area_id`'s no-action, and the difference is what the row MEANS:
+    // this is derived output ABOUT an area (what a run cost through its meters), fully reproducible
+    // by a recompute, so deleting the area should take its answers with it rather than block on them.
+    // An automation, by contrast, is configuration a user authored and would not expect to vanish.
     verdict: { protectedBy: "fk", onDelete: "cascade" },
   },
   {

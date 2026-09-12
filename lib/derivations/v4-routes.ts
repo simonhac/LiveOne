@@ -13,12 +13,14 @@
  * a listing and a default for the HWS create's device, never a grant.
  */
 import { NextRequest, NextResponse } from "next/server";
-import { and, desc, eq, gte, inArray, lte } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, lte } from "drizzle-orm";
 import { requireAuth } from "@/lib/api-auth";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import {
+  areas,
   derivations,
   derivationSources,
+  derivedIntervalProvenance,
   derivedIntervals,
   devices,
   points,
@@ -935,6 +937,45 @@ export async function handleIntervals(
   const hasMore = rows.length > limit;
   const page = hasMore ? rows.slice(0, limit) : rows;
 
+  // PER-AREA provenance for the page (migration 0066). This endpoint has no viewing area — it is
+  // asked of a derivation, by an operator — so it reports every area's answer rather than picking
+  // one. That is the whole point of the table: the same run costs 17.9c through the area that binds
+  // the tariff meter and is unpriceable through one that does not, and both are true. The flat
+  // `costC`/`emissionsG`/… fields below stay as the row's own columns, which the writer fills only
+  // when a single area could answer.
+  const provRows =
+    page.length === 0
+      ? []
+      : await requirePlanetscaleDb()
+          .select({
+            startTime: derivedIntervalProvenance.startTime,
+            areaId: derivedIntervalProvenance.areaId,
+            areaName: areas.name,
+            costC: derivedIntervalProvenance.costC,
+            emissionsG: derivedIntervalProvenance.emissionsG,
+            renewableKwh: derivedIntervalProvenance.renewableKwh,
+            estimatedKwh: derivedIntervalProvenance.estimatedKwh,
+          })
+          .from(derivedIntervalProvenance)
+          .innerJoin(areas, eq(areas.id, derivedIntervalProvenance.areaId))
+          .where(
+            and(
+              eq(derivedIntervalProvenance.derivationId, record.row.id),
+              inArray(
+                derivedIntervalProvenance.startTime,
+                page.map((r) => r.startTime),
+              ),
+            ),
+          )
+          .orderBy(asc(areas.name));
+  const provByStart = new Map<number, typeof provRows>();
+  for (const p of provRows) {
+    const key = p.startTime.getTime();
+    const list = provByStart.get(key) ?? [];
+    list.push(p);
+    provByStart.set(key, list);
+  }
+
   return NextResponse.json({
     derivation: derivationWire(record),
     window: range
@@ -964,6 +1005,21 @@ export async function handleIntervals(
       renewableKwh: r.renewableKwh,
       sampleCount: r.sampleCount,
       detectorVersion: r.detectorVersion,
+      /**
+       * What this run cost/emitted THROUGH EACH AREA that can price it. Empty = no area could, which
+       * is what the flat fields above spell as null. More than one entry is not a fault: it is a
+       * device that genuinely belongs to two sites with different meters behind them.
+       */
+      provenanceByArea: (provByStart.get(r.startTime.getTime()) ?? []).map(
+        (p) => ({
+          areaId: Area.encode(p.areaId),
+          areaName: p.areaName,
+          costC: p.costC,
+          emissionsG: p.emissionsG,
+          renewableKwh: p.renewableKwh,
+          estimatedKwh: p.estimatedKwh,
+        }),
+      ),
     })),
   });
 }

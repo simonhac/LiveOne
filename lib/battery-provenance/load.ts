@@ -32,7 +32,6 @@ import {
 } from "@/lib/aggregation/logical-system";
 import { nemRegionForLocation } from "@/lib/vendors/openelectricity/region";
 import type { AreaLocation } from "@/lib/areas/types";
-import type { ExportTariffConfig } from "@/lib/capabilities/config";
 import { resolveGeneratorIntensity } from "./generator-source";
 import { DEFAULT_RESERVE_PCT } from "./reserve-floor";
 import type { ProvenanceInputs, ProvenanceWindow } from "./types";
@@ -458,10 +457,7 @@ export async function loadProvenanceInputs(
   // statement that this site's grid port is a generator, so it wins even when the area is geolocated in a
   // NEM region (an off-grid site can still be in VIC without being on the VIC1 grid). (bidi.grid's own `i`
   // transform flips the Selectronic's raw sign so generator supply reads as positive import → source.grid.)
-  let exportTariff: ExportTariffConfig | undefined;
   if (batteryBind) {
-    // Solar opportunity-cost source (none/amber/schedule); resolved to a series in `compute`.
-    exportTariff = batConfig?.batteryProvenance?.exportTariff;
     // Shared with run-period provenance — see lib/battery-provenance/generator-source.ts.
     const gen = resolveGeneratorIntensity(
       batConfig?.batteryProvenance?.generatorSource,
@@ -527,7 +523,6 @@ export async function loadProvenanceInputs(
     gridPrice,
     gridPriceEstimated,
     gridExportPrice,
-    exportTariff,
     soc,
     estReservePct,
     reserveFloorPctSeries,

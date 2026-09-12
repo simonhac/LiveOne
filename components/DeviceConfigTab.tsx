@@ -28,8 +28,8 @@ const COMPOUND_CAPS = CAP_ENTRIES.filter((c) => c.tier === "compound");
 // omits is DELETED on save. This tab edits three of the five DeviceConfig fields; `spec` and
 // `batteryProvenance` have no editor here, and before they were carried through, pressing Save wiped
 // them. That was not theoretical: it would have deleted Kutis's `spec` (solarSizeKw 11.9,
-// batterySizeKwh 32.24) and Kinkora Mondo's `batteryProvenance.exportTariff: {mode:"amber"}`, which is
-// the entire source of that site's solar opportunity cost.
+// batterySizeKwh 32.24) and Daylesford's `batteryProvenance.generatorSource`, which is that off-grid
+// site's entire cost and emissions basis.
 //
 // Carry the FETCHED values verbatim rather than re-deriving them: this tab has no opinion about either
 // field, and a round-trip that re-serialises is a round-trip that can drift.

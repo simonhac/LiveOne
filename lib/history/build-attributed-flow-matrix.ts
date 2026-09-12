@@ -26,7 +26,7 @@ import {
 import { loadProvenanceInputs } from "@/lib/battery-provenance/load";
 import { loadFlowSeriesFromAgg5m } from "@/lib/aggregation/flow-series-pg";
 import { readPersistedBatteryBlend } from "@/lib/battery-provenance/persisted-blend";
-import { resolveExportReceiptSeries } from "@/lib/battery-provenance/tariff";
+import { exportReceiptSeries } from "@/lib/battery-provenance/tariff";
 import { loadWarmProvenanceInputs } from "@/lib/battery-provenance/warm-inputs";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import {
@@ -184,12 +184,7 @@ export async function buildAttributedFlowMatrix(
       steps: blend?.steps ?? [],
       solarCost: SOLAR_ACTUAL_COST,
     });
-    exportReceiptPrice = resolveExportReceiptSeries(
-      inputs.exportTariff,
-      inputs.timeline,
-      inputs.timezoneOffsetMin,
-      inputs.gridExportPrice,
-    );
+    exportReceiptPrice = exportReceiptSeries(inputs.gridExportPrice);
   } else {
     // No blend has ever been written for this battery Area — fold it, warmly, exactly as this
     // function used to. Loud, because it costs a lead-in read and reintroduces the divergence above.

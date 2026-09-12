@@ -58,8 +58,12 @@ const START = argOf("start");
 const END = argOf("end");
 const FLOOR = argOf("floor");
 const ETA = argOf("eta");
-// Opportunity-cost source override (else the DB config's exportTariff applies):
-//   --solar none | amber | flat:<c/kWh>   e.g. --solar flat:5
+// Feed-in series override (else the area's BOUND `bidi.grid.export/rate` series applies):
+//   --solar none | measured | flat:<c/kWh>   e.g. --solar flat:5
+// 🛑 `flat:5` means "as if the meter had measured a 5 c/kWh feed-in", so it is injected in the
+// MEASURED convention — negative when you are being paid (see lib/battery-provenance/tariff.ts).
+// It therefore behaves exactly like a real feed-in of that size, including flooring the fold's
+// opportunity cost to 0; it is not a way to synthesise an opportunity cost that no real site has.
 const SOLAR = argOf("solar");
 const NO_SOC = process.argv.includes("--no-soc");
 const NO_CAPACITY = process.argv.includes("--no-capacity");
@@ -135,7 +139,11 @@ function report(
     etaUsed,
     reserveUsed,
   } = result;
-  const solar = inputs.exportTariff?.mode ?? "none";
+  const feedInKnown = inputs.gridExportPrice.filter((v) => v !== null).length;
+  const solar =
+    feedInKnown === 0
+      ? "none"
+      : `measured (${feedInKnown}/${inputs.gridExportPrice.length})`;
   const etaLearned =
     config.efficiency === undefined || config.efficiency === "measured";
 
@@ -331,14 +339,13 @@ async function runReplay(handle: number) {
     return;
   }
 
-  // Optional CLI override of the export-tariff (opportunity-cost source); else use the DB config.
-  if (SOLAR === "none") inputs.exportTariff = { mode: "none" };
-  else if (SOLAR === "amber") inputs.exportTariff = { mode: "amber" };
-  else if (SOLAR?.startsWith("flat:"))
-    inputs.exportTariff = {
-      mode: "schedule",
-      plans: [{ rate: { kind: "flat", cPerKwh: Number(SOLAR.slice(5)) } }],
-    };
+  // Optional CLI override of the FEED-IN SERIES; else use the area's bound export rate as loaded.
+  if (SOLAR === "none")
+    inputs.gridExportPrice = inputs.gridExportPrice.map(() => null);
+  else if (SOLAR?.startsWith("flat:")) {
+    const c = Number(SOLAR.slice(5));
+    inputs.gridExportPrice = inputs.gridExportPrice.map(() => -c);
+  }
 
   const config: ProvenanceConfig = {
     reserveFloorPct: FLOOR ? Number(FLOOR) : undefined,

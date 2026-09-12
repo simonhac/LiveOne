@@ -85,14 +85,15 @@ device→area by `replaceBindings` (`create.ts:530-556`) and by
 `battery/power` binding therefore silently gets no config producer, while `/resolution` cheerfully
 reports `mode:"config"` for the same slot.
 
-**The `TariffProvider` generalization that never happened.**
+**The `TariffProvider` generalization that never happened — and is now moot.**
 [battery-provenance-merge-handoff.md](completed/battery-provenance-merge-handoff.md) promised
-`TariffProvider` would generalize into a `resolveInfoSources`-shaped seam. It did not.
-`lib/battery-provenance/tariff.ts` is still the narrow instance — `TariffProvider:19`,
-`ScheduleTariffProvider:43`, `resolveExportPriceSeries:97` — with exactly one caller,
-`lib/battery-provenance/compute.ts:286`. The `grid/export-price` slot exists in the catalog complete
-with its `exportTariff` config producer (`slots.ts:168-177`), but the fold never asks the resolver;
-`exportTariff` is read straight off device config at `load.ts:458-461`.
+`TariffProvider` would generalize into a `resolveInfoSources`-shaped seam. It did not, and in
+2026-09 it was deleted instead: `TariffProvider`, `ScheduleTariffProvider` and
+`resolveExportPriceSeries` are gone, along with the `exportTariff` device config they resolved. A
+feed-in tariff is now just the area's bound `bidi.grid.export/rate` point, read by `load.ts` like any
+other binding, so the `grid/export-price` slot has no rival config producer left to reconcile. The
+generalization was the wrong answer to the question: the seam that was missing was not a provider
+abstraction, it was a point.
 
 **A binding-save gotcha worth recording.** `replaceBindings` deletes every binding for the area and
 reinserts the payload (`create.ts:516-528`). The server-managed helper bindings at ordinal/priority
