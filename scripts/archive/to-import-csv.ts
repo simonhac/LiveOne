@@ -74,9 +74,13 @@ import {
 } from "./splink";
 
 class Refusal extends Error {}
-const refuse = (msg: string): never => {
+// A function DECLARATION, deliberately: TypeScript only narrows control flow past a
+// never-returning call when the callee is a declaration or an explicitly-typed const.
+// As `const refuse = (msg): never => …` the annotation sits on the arrow, not the name,
+// so every `if (x === undefined) refuse(…)` below left `x` possibly-undefined.
+function refuse(msg: string): never {
   throw new Refusal(msg);
-};
+}
 
 function flag(name: string, required: true): string;
 function flag(name: string, required?: false): string | undefined;
