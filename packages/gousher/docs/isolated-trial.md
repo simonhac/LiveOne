@@ -65,7 +65,7 @@ required, with tests for shifted timestamps, gaps, resets, unit/sign mismatches 
 
 ## Independent access and supervision
 
-Provision a dedicated trial route to Kinkora that does not traverse or require changes to
+Provision a dedicated trial route to the trial site that does not traverse or require changes to
 `liveone-flyhub`. A separately configured site VPN peer or site-side trial machine is a
 candidate, subject to actual network configuration and credentials. No route is qualified yet.
 Restrict destinations to the two Fronius HTTP endpoints; enforce read-only requests and budgets.
@@ -238,7 +238,7 @@ The per-read failure/p95 recorder is the disabled trial monitor. The source inve
 has not identified equivalent measurements in ordinary telemetry. A replacement gate
 needs review and a measured baseline; none has been selected or enabled here.
 
-The repository's existing Kinkora WireGuard route terminates on production flyhub.
+The existing production site WireGuard route terminates on production flyhub.
 Reusing it would violate the independent-path requirement. Site-side access details
 for a new peer or trial machine are still needed. No router, VPN, production setting,
 collector assignment or trial machine was changed by this preflight.
