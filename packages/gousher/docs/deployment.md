@@ -60,3 +60,40 @@ is provided at `deploy/trial-ops.service`. Follow [automation.md](automation.md)
 production feeds, measure a baseline, fill the example configuration and install an external health
 watchdog. The template is preparation only: no service or production feed has been enabled by this
 change. Existing coexistence and replay gates still apply before enabling shadow reads.
+
+## Deployment preflight and binary smoke test
+
+Run from the repository root:
+
+```sh
+python3 packages/gousher/tools/deployment-smoke.py
+flyctl config validate --strict -c packages/gousher/deploy/fly/fly.toml
+flyctl config validate --strict -c packages/gousher/deploy/fly/receiver.toml
+flyctl config validate --strict -c packages/gousher/deploy/fly/operations.toml
+```
+
+The smoke test builds all three binaries, replays all four vendors, sends batches to a compiled
+receiver on loopback, verifies authenticated export, removes captures while the receiver is stopped,
+and verifies identical retries and conflicting retries after restart. It uses disposable storage and
+random local credentials and cleans up its process and files. It does not contact vendor devices,
+LiveOne or Fly. This is deployment qualification, not an initially failing TDD regression.
+
+The receiver and operations manifests are separate app templates with no public ingress. Copy them
+and replace app names before provisioning. Each requires its own new volume; make `/data` writable
+by UID 10001 as described above. The receiver binds loopback and requires a separately provisioned
+authenticated HTTPS forwarder before remote collectors can reach it. These manifests do not install
+that forwarder or supply its credentials. Do not substitute a plaintext `.internal` URL: the clients
+require HTTPS for remote destinations.
+
+The operations manifest injects `/etc/gousher/trial-ops.json` from the base64-encoded app secret
+`GOUSHER_TRIAL_OPS_CONFIG`. Set its `dataDir` to `/data/operations` and supply the separate token
+environment variables named in that JSON. Follow the current [Fly configuration reference](https://fly.io/docs/reference/configuration/)
+for file injection and entrypoint/CMD overrides. The collector manifest retains replay mode through
+its bootstrap; prepare the managed collector identity and assignment before starting its management
+polling. Production feed activation and measured baselines are prerequisites for the operations runner.
+
+Read-only preflight found Fly authentication available and no existing trial apps on 2026-09-13.
+No app, volume, secret, route or production configuration was created or changed. Before provisioning,
+record the first trial site/vendor, LiveOne management origin, assigned poller and collector identity,
+and authenticated forwarding destinations. Local tests and manifest validation do not satisfy these
+operational gates or prove that a container can start on a newly provisioned volume.

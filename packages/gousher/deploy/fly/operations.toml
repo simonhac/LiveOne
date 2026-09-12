@@ -1,0 +1,29 @@
+# Copy and replace the app name before deployment. This worker has no ingress.
+app = "replace-with-gousher-trial-ops"
+primary_region = "syd"
+kill_signal = "SIGTERM"
+kill_timeout = "30s"
+
+[build]
+  dockerfile = "packages/gousher/deploy/fly/Dockerfile"
+
+[experimental]
+  entrypoint = ["trial-ops"]
+  cmd = ["-config", "/etc/gousher/trial-ops.json"]
+
+[[files]]
+  guest_path = "/etc/gousher/trial-ops.json"
+  secret_name = "GOUSHER_TRIAL_OPS_CONFIG"
+
+[mounts]
+  source = "gousher_trial_ops_data"
+  destination = "/data"
+
+[[vm]]
+  cpu_kind = "shared"
+  cpus = 1
+  memory = "512mb"
+
+# GOUSHER_TRIAL_OPS_CONFIG is base64-encoded JSON with dataDir=/data/operations.
+# Supply every token referenced in the config as an app secret.
+# Provision /data for UID 10001. External watchdog must check trial-ops -health.

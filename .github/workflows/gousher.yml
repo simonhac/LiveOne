@@ -6,6 +6,8 @@ on:
       - "packages/usher/**"
       - "lib/collectors/**"
       - "app/api/gush/**"
+      - "app/api/collectors/**"
+      - "lib/vendors/base-adapter.ts"
       - "lib/db/planetscale/**"
       - "drizzle-planetscale/**"
       - "lib/vendors/selectronic/**"
@@ -26,6 +28,7 @@ jobs:
           cache: false
       - run: go test -race ./...
         working-directory: packages/gousher
+      - run: python3 packages/gousher/tools/deployment-smoke.py
       - run: go vet ./...
         working-directory: packages/gousher
       - run: GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build ./cmd/...

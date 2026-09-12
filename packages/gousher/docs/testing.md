@@ -134,3 +134,12 @@ integration suite also passes **5 tests** covering managed CRUD and all four ven
 it does not specifically qualify the new cloud production evidence query against real session data.
 Cloud feed behavior has mocked API and evidence-unit coverage. No deployment, shared migration,
 live device writes, production feed activation or live soak occurred.
+
+Deployment preparation after `75a0076a`: the new `tools/deployment-smoke.py` passes against compiled
+binaries: four vendors, seven replay batches, authentication/export, receiver process restart,
+acknowledgement survival after capture removal, and conflict rejection. This is additional process
+qualification, not a claimed red–green implementation cycle. Both new Fly receiver/operations
+manifests pass `flyctl config validate --strict`. CI now runs the smoke test and triggers for changes
+to the collector API routes and shared vendor adapter. No application behavior changed, so the full
+unit/database suites were not rerun for this deployment-only continuation. No remote image build or
+live service deployment was performed; Docker is unavailable locally.
