@@ -6,6 +6,7 @@ import { derivedCapabilitiesForDevice } from "@/lib/capabilities/server";
 import { CAPABILITIES, type CapabilityId } from "@/lib/capabilities/registry";
 import type {
   DeviceConfig,
+  DeviceSpec,
   BatteryProvenanceConfig,
   ExportTariffConfig,
   ExportTariffPlan,
@@ -69,6 +70,35 @@ function parseExportTariff(
   return { value: { mode: "schedule", plans } };
 }
 
+// Validate a structured device `spec`. Every field is optional and independently omissible, and each
+// must be a POSITIVE finite number: `specFromLegacyText` (lib/capabilities/config.ts) collapses
+// non-positive and unparseable alike to `undefined` rather than 0, because an absent spec field has to
+// mean exactly what an unparseable free-text value meant — 0 would move the chart's y-axis hint. Take
+// the same rule here so a hand-written PATCH cannot introduce a `0` the legacy parse could never produce.
+const SPEC_FIELDS = [
+  "solarSizeKw",
+  "batterySizeKwh",
+  "inverterSizeKw",
+  "batteryVoltageV",
+] as const;
+
+function parseDeviceSpec(
+  raw: unknown,
+): { value: DeviceSpec | undefined } | { error: string } {
+  if (!isPlainObject(raw)) return { error: "`spec` must be an object" };
+  const spec: DeviceSpec = {};
+  for (const field of SPEC_FIELDS) {
+    const v = raw[field];
+    if (v === undefined || v === null) continue;
+    if (typeof v !== "number" || !Number.isFinite(v) || v <= 0)
+      return { error: `\`spec.${field}\` must be a positive number` };
+    spec[field] = v;
+  }
+  // All-absent → undefined, never `spec: {}` — same reason `parseDeviceConfig` returns null for an
+  // all-default config: an empty container is noise the reader then has to treat as absent anyway.
+  return { value: Object.keys(spec).length > 0 ? spec : undefined };
+}
+
 // Validate + clean an incoming DeviceConfig. Returns the cleaned config (all-default → null) or an error.
 function parseDeviceConfig(
   body: unknown,
@@ -96,6 +126,18 @@ function parseDeviceConfig(
     if (typeof v !== "number" || !Number.isFinite(v) || v <= 0)
       return { error: `\`${field}\` must be a positive number` };
     out[field] = v;
+  }
+
+  // 🛑 `spec` MUST be parsed here, because PATCH REPLACES the whole blob (see the module note above).
+  // A field this function does not carry through is a field the next save DESTROYS — and `spec`
+  // (solarSizeKw/batterySizeKwh, config-v4 slice K1's successor to the free-text `ratings` columns) is
+  // not editable anywhere in the UI, so nothing would ever put it back. Kutis carried
+  // `{solarSizeKw: 11.9, batterySizeKwh: 32.24}` and one press of Save in the Device Config tab would
+  // have erased it silently, taking that chart's y-axis hint (`maxPowerHintFromSpec`) with it.
+  if (body.spec !== undefined && body.spec !== null) {
+    const parsed = parseDeviceSpec(body.spec);
+    if ("error" in parsed) return { error: parsed.error };
+    if (parsed.value) out.spec = parsed.value;
   }
 
   // Battery-provenance config — currently the off-grid generator source intensity.

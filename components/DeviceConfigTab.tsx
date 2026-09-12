@@ -22,12 +22,28 @@ const COMPOUND_CAPS = CAP_ENTRIES.filter((c) => c.tier === "compound");
 
 // Build a cleaned DeviceConfig from the editor's local state (drops empty capabilities + blank/invalid
 // numbers), matching what the /config route persists.
+//
+// 🛑 `passthrough` is NOT optional decoration. The PATCH this feeds REPLACES `devices.config` wholesale
+// — that is how a capability toggle set back to "default" removes its key — so whatever this function
+// omits is DELETED on save. This tab edits three of the five DeviceConfig fields; `spec` and
+// `batteryProvenance` have no editor here, and before they were carried through, pressing Save wiped
+// them. That was not theoretical: it would have deleted Kutis's `spec` (solarSizeKw 11.9,
+// batterySizeKwh 32.24) and Kinkora Mondo's `batteryProvenance.exportTariff: {mode:"amber"}`, which is
+// the entire source of that site's solar opportunity cost.
+//
+// Carry the FETCHED values verbatim rather than re-deriving them: this tab has no opinion about either
+// field, and a round-trip that re-serialises is a round-trip that can drift.
 function buildConfig(
   caps: Partial<Record<CapabilityId, boolean>>,
   nameplateStr: string,
   cadenceStr: string,
+  passthrough: Pick<DeviceConfig, "spec" | "batteryProvenance">,
 ): DeviceConfig {
   const out: DeviceConfig = {};
+
+  if (passthrough.spec) out.spec = passthrough.spec;
+  if (passthrough.batteryProvenance)
+    out.batteryProvenance = passthrough.batteryProvenance;
 
   const cleanCaps = Object.fromEntries(
     Object.entries(caps).filter(([, v]) => typeof v === "boolean"),
@@ -62,6 +78,10 @@ export default function DeviceConfigTab({
   const [nameplateStr, setNameplateStr] = useState("");
   const [cadenceStr, setCadenceStr] = useState("");
   const [initialJson, setInitialJson] = useState("{}");
+  /** The DeviceConfig fields this tab does not edit, held so `buildConfig` can hand them back. */
+  const [passthrough, setPassthrough] = useState<
+    Pick<DeviceConfig, "spec" | "batteryProvenance">
+  >({});
   const [derived, setDerived] = useState<Set<CapabilityId>>(new Set());
 
   const configQuery = useQuery({
@@ -82,18 +102,27 @@ export default function DeviceConfigTab({
     const seededNp = cfg.nameplateKw != null ? String(cfg.nameplateKw) : "";
     const seededCad =
       cfg.updateCadenceSeconds != null ? String(cfg.updateCadenceSeconds) : "";
+    const seededPassthrough = {
+      ...(cfg.spec ? { spec: cfg.spec } : {}),
+      ...(cfg.batteryProvenance
+        ? { batteryProvenance: cfg.batteryProvenance }
+        : {}),
+    };
     setCaps(seededCaps);
     setNameplateStr(seededNp);
     setCadenceStr(seededCad);
+    setPassthrough(seededPassthrough);
     setInitialJson(
-      JSON.stringify(buildConfig(seededCaps, seededNp, seededCad)),
+      JSON.stringify(
+        buildConfig(seededCaps, seededNp, seededCad, seededPassthrough),
+      ),
     );
     setDerived(new Set((data.derived ?? []) as CapabilityId[]));
   }, [data]);
 
   const current = useMemo(
-    () => buildConfig(caps, nameplateStr, cadenceStr),
-    [caps, nameplateStr, cadenceStr],
+    () => buildConfig(caps, nameplateStr, cadenceStr, passthrough),
+    [caps, nameplateStr, cadenceStr, passthrough],
   );
   const isDirty = useMemo(
     () => JSON.stringify(current) !== initialJson,
