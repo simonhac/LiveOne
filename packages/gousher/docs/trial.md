@@ -3,6 +3,13 @@
 This change prepares a trial. It does not certify a 30-day soak or production control cutover.
 Keep replay qualification and independent live qualification separate for each vendor.
 
+## Current operational plan
+
+Follow [the isolated trial plan](isolated-trial.md). Production hub instrumentation
+and forwarding were disabled after production degradation; the Go collector and ops
+staging machines are stopped. Existing fixture-based automation is not yet suitable
+for independent readings comparisons. Historical gates below do not authorize reactivation.
+
 ## Known behavior pinned for review
 
 - Selectronic `Number()` coercion treats empty strings and booleans as numeric readings. The Go
@@ -36,9 +43,9 @@ required to resume it. The authenticated `/api/trial/windows` endpoint now enfor
 
 ## Outstanding acceptance work
 
-- Apply the migration to the intended LiveOne environment before deployment. Migration verification
-  and real gusher/point-minting/outbox integration pass against disposable PostgreSQL 18.3.
-  The downstream observations materializer is outside this integration suite.
+- Management migration 0067 and collector enrollment are deployed in LiveOne. Real
+  gusher/point-minting/outbox integration also passes against disposable PostgreSQL 18.3;
+  the downstream observations materializer remains outside that integration suite.
 - Qualify Fronius discovery responses on the trial devices and the dedicated outbound telemetry destination.
   The state envelope, default SSE messages, DSE diagnostics, Fronius power/SOC and 20-report history,
   stale health (including readers with no first sample), authenticated duration histograms and bounded outbound OTLP/HTTP JSON export are implemented. Background discovery now supplies inverter identity and battery/meter details through bounded read-only requests; failed discovery leaves metadata absent.
@@ -47,19 +54,15 @@ required to resume it. The authenticated `/api/trial/windows` endpoint now enfor
   origin JWT verification, serialized concurrent commands, monotonic deadline protection and fractional
   deadline wake-ups. See [control.md](control.md) for the tested scope and deliberate stricter behavior.
   Live control remains disabled; field qualification and any control cutover are separate operations.
-- Enable and qualify the optional asynchronous TypeScript DSE/Fronius input capture in production.
-  Hooks now preserve input order, integration timestamps, harvest boundaries, revisions and expected
-  readings, within a bounded gzip journal. They remain disabled unless explicitly configured.
-  Cloud baselines are available through the scoped API.
-- Deploy and qualify the implemented daily export/comparison runner and independent production
-  monitoring feeds. Configure measured baselines and an external stale-health watchdog using
-  [automation.md](automation.md). Local tests cover feed-to-shutdown and receiver-to-daily-report
-  behavior; live monitoring has not been enabled.
+- Replace production raw capture with a scoped LiveOne readings export and interval-based
+  comparison outside the hub, as specified in [the isolated trial plan](isolated-trial.md).
+- Qualify existing production telemetry/logs for independent supervision, explicitly resolve
+  unavailable per-read metrics, and verify an external stale-health watchdog and shutdown path.
 - Measure receiver receipt growth and backup/restore behavior in the trial environment. The bounded,
   non-expiring receipt journal now preserves acknowledgements beyond capture retention and refuses
   new IDs at capacity. Already-pruned captures from before this upgrade cannot be reconstructed.
 - Live credential refresh-token/session coexistence qualification and real failure injection.
-- Separate Fly machine/receiver/monitoring, authenticated hub forwarding, actual storage measurements
+- Separate Fly machine/receiver/monitoring, an independent site network path, actual storage measurements
   in week one, month-long soak and seven clean days on the final build.
 
 Do not call the full attached plan complete until these are checked. Extend the trial as needed.
@@ -70,7 +73,6 @@ control only while idle with no latch or deadline outstanding.
 
 Fronius at Kinkora is first (2026-09-13). See the [site preparation](../deploy/fronius-kinkora/README.md)
 for both inverters, replay bootstrap, operations template and remaining deployment prerequisites.
-Preflight found the production management configuration endpoint returning 404; production Usher's
-public evidence URL redirects to Access. Neither observation certifies readiness. The corrected
-production monitor measures actual background inverter attempts; deploy that build and obtain a new
-baseline before shadow activation. No live trial has begun.
+Management API deployment and enrollment are complete. The original production hub is back
+on its normal configuration. No live Go trial has begun; activation now depends on the isolated
+reference export, comparison, network and supervision gates above.

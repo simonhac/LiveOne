@@ -1,5 +1,9 @@
 # Isolated deployment recipes
 
+> **Fronius trial suspended:** the production capture/feed and hub-forwarding design
+> is superseded by [the isolated trial plan](isolated-trial.md). Do not activate
+> the former Fronius setup below. The implementation reference remains for review.
+
 The repository includes a container, Fly machine manifest and Pi systemd unit. No live deployment
 has been performed by this change. Set the actual LiveOne origin, private receiver origin and LAN
 forwarding addresses before deployment. Apply the generated LiveOne migration through the existing
