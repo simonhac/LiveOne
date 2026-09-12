@@ -18,7 +18,7 @@ with its entrypoint changed to `trial-receiver -data /data/receiver -listen :808
 The runtime itself knows nothing about Fly. The receiver must be reached over authenticated private
 HTTPS ingress; no public unauthenticated listener. Its bearer credential is distinct from the
 collector and production keys. Check the durable acknowledgement and replay a duplicate before
-enabling collection. Supply a dedicated trial monitor rather than a production heartbeat URL.
+enabling collection. Supply a dedicated trial monitor rather than a production heartbeat URL. Set `GOUSHER_METRICS_ENDPOINT` and `GOUSHER_METRICS_TOKEN` only for the new trial monitoring source; these optional settings export OTLP/HTTP JSON every minute with a five-second timeout. Do not copy production Usher monitoring variables.
 
 ## Authenticated LAN forwarding
 

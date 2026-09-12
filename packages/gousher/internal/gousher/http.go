@@ -44,6 +44,20 @@ func (r *Runtime) Handler() http.Handler {
 		var memory runtime.MemStats
 		runtime.ReadMemStats(&memory)
 		fmt.Fprintf(w, "gousher_spool_bytes %d\ngousher_blackbox_bytes %d\ngousher_pending_batches %d\ngousher_dropped_batches_total %d\ngousher_heap_bytes %d\ngousher_goroutines %d\n", sp.Bytes, bb.Bytes, sp.Count, sp.Lost.Count, memory.HeapAlloc, runtime.NumGoroutine())
+		fmt.Fprintln(w, "# TYPE gousher_read_duration_seconds histogram")
+		for poller, m := range r.readMetricsSnapshot() {
+			label := strconv.Quote(poller)
+			total := uint64(0)
+			for i, count := range m.Buckets {
+				total += count
+				bound := "+Inf"
+				if i < len(readBounds) {
+					bound = strconv.FormatFloat(readBounds[i], 'g', -1, 64)
+				}
+				fmt.Fprintf(w, "gousher_read_duration_seconds_bucket{poller=%s,le=%q} %d\n", label, bound, total)
+			}
+			fmt.Fprintf(w, "gousher_read_duration_seconds_count{poller=%s} %d\ngousher_read_duration_seconds_sum{poller=%s} %g\ngousher_read_failures_total{poller=%s} %d\n", label, m.Count, label, m.Seconds, label, m.Failed)
+		}
 		for _, h := range r.statuses() {
 			label := strconv.Quote(h.ID)
 			if h.CollectionAt != nil {
@@ -115,6 +129,7 @@ func (r *Runtime) snapshot() map[string]any {
 	hs := r.statuses()
 	r.mu.Lock()
 	err := r.configError
+	telemetryError := r.telemetryError
 	pollers := clone(r.cached.Config.Pollers)
 	inspector := clone(r.inspector)
 	r.mu.Unlock()
@@ -149,7 +164,7 @@ func (r *Runtime) snapshot() map[string]any {
 	sp := r.spool.Stats()
 	bb := r.blackbox.Stats()
 	store := map[string]any{"dataDir": r.b.DataDir, "spool": map[string]any{"files": sp.Count, "bytes": sp.Bytes}, "blackbox": map[string]any{"enabled": true, "files": bb.Count, "bytes": bb.Bytes}}
-	return map[string]any{"at": time.Now().UTC().Format(time.RFC3339Nano), "started": started, "sources": sources, "store": store, "mode": r.b.Mode, "pollers": hs, "configError": err, "spool": sp, "blackbox": bb}
+	return map[string]any{"at": time.Now().UTC().Format(time.RFC3339Nano), "started": started, "sources": sources, "store": store, "mode": r.b.Mode, "pollers": hs, "configError": err, "telemetryError": telemetryError, "spool": sp, "blackbox": bb}
 }
 
 // Receiver keeps acknowledgements and capture in the same fsynced record. Retries of

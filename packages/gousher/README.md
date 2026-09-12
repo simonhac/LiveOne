@@ -36,7 +36,7 @@ The inspector serves embedded assets at `/`. `/api/usher/state` and `/api/usher/
 inspector bearer token. The stream sends default SSE messages every two seconds. The JSON state exposes the Usher envelope,
 pollers, collection/delivery timestamps,
 configuration errors, storage accounting, DSE registers, and Fronius power/SOC, inverter details and
-the last 20 reports. Fronius discovery metadata and outbound telemetry remain qualification work.
+the last 20 reports. Fronius discovery metadata remains qualification work.
 Generator HTTP requests return a trial-mode refusal. The simulator-tested supervisor retains
 absolute deadlines, persists before starts, keeps ambiguous starts armed and retries failed stops.
 Production control activation is intentionally unavailable.
@@ -138,3 +138,23 @@ Replay can also stream computed, credential-free wire batches to a new JSONL fil
 cd packages/gousher
 go run ./cmd/gousher -replay internal/gousher/testdata/deepsea.jsonl -replay-batches /tmp/deepsea-batches.jsonl
 ```
+
+Optional outbound metrics use a **dedicated trial monitoring source**:
+
+- `GOUSHER_METRICS_ENDPOINT`: the source's complete OTLP/HTTP JSON metrics URL.
+- `GOUSHER_METRICS_TOKEN`: its bearer credential, separate from collector, receiver and inspector tokens.
+
+With both unset, export is disabled. With both configured, the process exports the newest snapshot
+every minute, independently of collection. Requests have a five-second deadline, redirects are
+refused, and response bodies are bounded. Export errors and partial rejections appear as a sanitized
+`telemetryError` in inspector state. A failed export does not add anything to the delivery spool.
+
+Metrics include heap/runtime memory, goroutines, pending/dropped batches, storage usage, collection
+and delivery timestamps, stale collection and read-duration histograms. Service identity is
+`liveone-gousher`, with a separate stable identifier for each process lifetime. The authenticated
+`/metrics` endpoint also exposes cumulative read-duration buckets and failed-read counts. These
+histograms support p95 latency queries; an average alone would hide slow reads. A reader without
+any successful sample becomes stale after twice its poll interval, with a one-minute minimum.
+
+The encoding follows the [OTLP/HTTP JSON specification](https://opentelemetry.io/docs/specs/otlp/#json-protobuf-encoding).
+Configure the trial monitoring source to accept JSON; production Usher monitoring variables are not read.

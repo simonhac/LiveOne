@@ -39,9 +39,9 @@ required to resume it. The authenticated `/api/trial/windows` endpoint now enfor
 - Apply the migration to the intended LiveOne environment before deployment. Migration verification
   and real gusher/point-minting/outbox integration pass against disposable PostgreSQL 18.3.
   The downstream observations materializer is outside this integration suite.
-- Complete Fronius discovery metadata and outbound telemetry parity, including read-latency watchdogs.
+- Complete Fronius discovery metadata and qualify the dedicated outbound telemetry destination.
   The state envelope, default SSE messages, DSE diagnostics, Fronius power/SOC and 20-report history,
-  stale health and authenticated metrics are implemented. Inverter serial numbers and hardware
+  stale health (including readers with no first sample), authenticated duration histograms and bounded outbound OTLP/HTTP JSON export are implemented. Inverter serial numbers and hardware
   discovery metadata are not fabricated from power-flow inputs.
 - Complete generator API/state parity beyond the simulator-tested deadline/latch kernel; the trial
   HTTP control routes intentionally refuse writes and are not a production replacement.

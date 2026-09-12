@@ -38,7 +38,7 @@ npm run type-check
 npm run knip
 ```
 
-The current runs pass 45 top-level Go tests (plus fixture subtests), 303 TypeScript unit tests and
+The current runs pass 51 top-level Go tests (plus fixture subtests), 303 TypeScript unit tests and
 five PostgreSQL integration tests. The integration suite verifies the real gusher handler, registry,
 point minting and durable outbox boundary using computed Go batches. Only external credential lookup,
 queue delivery and cache services are substituted. It does not exercise the downstream materializer
@@ -47,3 +47,10 @@ its initial failures were corrected harness assumptions.
 
 This evidence does not qualify live account/session coexistence, Fly deployment or the month-long
 soak. See [trial.md](trial.md) for the outstanding acceptance work.
+
+After WIP commit `0e862b6f`, outbound telemetry tests initially failed to compile because the export
+API did not exist. The implementation then passed tests for dedicated credentials, OTLP shape,
+partial rejection and cancellation. A read-duration regression failed because the histogram was
+missing; it now passes. A virtual-time watchdog test drove stale detection before the first sample.
+A process-identity test failed because separate collectors would share one metric identity; exports
+now carry a stable, distinct identifier for each process lifetime. All pass under the Go race detector.

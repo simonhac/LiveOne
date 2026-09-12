@@ -69,6 +69,15 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 	server := &http.Server{Addr: boot.Listen, Handler: r.Handler(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, IdleTimeout: 60 * time.Second}
+	telemetryDone := make(chan struct{})
+	go func() {
+		defer close(telemetryDone)
+		r.RunTelemetry(ctx, os.Getenv("GOUSHER_METRICS_ENDPOINT"), os.Getenv("GOUSHER_METRICS_TOKEN"), func(err error) {
+			if err != nil {
+				log.Print(err)
+			}
+		})
+	}()
 	serverErrors := make(chan error, 1)
 	go func() {
 		if e := server.ListenAndServe(); e != nil && e != http.ErrServerClosed {
@@ -81,6 +90,8 @@ func main() {
 		log.Print(e)
 		cancel()
 	}
+	cancel()
+	<-telemetryDone
 	shutdown, done := context.WithTimeout(context.Background(), 10*time.Second)
 	defer done()
 	_ = server.Shutdown(shutdown)

@@ -18,6 +18,7 @@ import (
 )
 
 type Health struct {
+	ReaderStartedAt time.Time      `json:"-"`
 	CollectionStale bool           `json:"collectionStale"`
 	CollectionError string         `json:"collectionError,omitempty"`
 	DeliveryError   string         `json:"deliveryError,omitempty"`
@@ -48,6 +49,9 @@ type inspectorState struct {
 	Count   int
 }
 type Runtime struct {
+	telemetryInstance                    string
+	readMetrics                          map[string]readMetrics
+	telemetryError                       string
 	trial                                map[string]trialState
 	readerCancels                        map[string]readerCancellation
 	inspector                            map[string]inspectorState
@@ -297,6 +301,7 @@ func (r *Runtime) apply(ctx context.Context, c Config, creds map[string]map[stri
 		}
 		h := r.health[p.ID]
 		h.ID = p.ID
+		h.ReaderStartedAt = time.Now()
 		h.AppliedRevision = p.Revision
 		h.Error = ""
 		disabled := r.trial[p.ID].Revision == p.Revision && r.trial[p.ID].Disabled
@@ -360,6 +365,7 @@ func (r *Runtime) collect(ctx context.Context, g *generation) {
 		if ctx.Err() != nil {
 			return
 		}
+		r.recordRead(p.ID, started, time.Since(started), e != nil)
 		if e != nil {
 			if errors.Is(e, ErrSessionEvicted) {
 				if e := r.disableReader(p.ID, p.Revision, "session-evicted"); e != nil {
@@ -514,21 +520,26 @@ func (r *Runtime) delivery(ctx context.Context) {
 		}
 	}
 }
-func (r *Runtime) statuses() []Health {
+func (r *Runtime) statuses() []Health { return r.statusesAt(time.Now()) }
+func (r *Runtime) statusesAt(now time.Time) []Health {
 	sp := r.spool.Stats()
 	bb := r.blackbox.Stats()
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	out := []Health{}
 	for _, h := range r.health {
-		if !h.Stopped && h.CollectionAt != nil {
+		last := h.ReaderStartedAt
+		if h.CollectionAt != nil {
+			last = *h.CollectionAt
+		}
+		if !h.Stopped && !last.IsZero() {
 			for _, p := range r.cached.Config.Pollers {
 				if p.ID == h.ID {
 					threshold := 2 * time.Duration(p.Settings.PollMS) * time.Millisecond
 					if threshold < time.Minute {
 						threshold = time.Minute
 					}
-					h.CollectionStale = time.Since(*h.CollectionAt) > threshold
+					h.CollectionStale = now.Sub(last) > threshold
 					break
 				}
 			}
