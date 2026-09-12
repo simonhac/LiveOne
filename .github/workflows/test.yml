@@ -1,0 +1,48 @@
+name: test
+
+# The unit suite was running NOWHERE but a developer's laptop.
+#
+# That is not merely a missing safety net, because a laptop is not a neutral place to run these.
+# `ical-generator` formats a date against a TZID using the NODE PROCESS's local zone, so the
+# calendar feed's DTSTART assertions passed in Australia/Melbourne and would have failed anywhere
+# else — and production is UTC. The feed shipped with every event ten hours out, green the whole
+# way. A GitHub runner is UTC, so this job would have caught it on the first push.
+#
+# `npm test` pins `TZ=UTC` itself now (see package.json), so this agrees with production rather
+# than with whoever ran it last. Keep both: the pin makes the result correct, and running it here
+# makes it observed.
+#
+# Unit tests only. `test:integration` talks to Postgres and KV, which would mean putting live
+# credentials on a workflow that runs against pull requests.
+#
+# Like knip.yml and typecheck.yml this runs on the pull request, is deliberately NOT wired into
+# `prebuild`, and only REPORTS — `main` has no branch protection, so a red x here is a signal to
+# read, not a merge blocker.
+
+on:
+  pull_request:
+  workflow_dispatch: {}
+
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - run: npm ci
+
+      # `--ci` so a missing snapshot fails rather than being written silently. No `--coverage`:
+      # nothing consumes the report, and it roughly doubles the runtime.
+      - run: npm test -- --ci

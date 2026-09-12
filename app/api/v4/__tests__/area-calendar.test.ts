@@ -169,6 +169,31 @@ describe("GET …/calendar.ics", () => {
     expect(body).toContain("X-PUBLISHED-TTL:PT1H");
   });
 
+  it("🛑 says so LOUDLY when the VTIMEZONE data cannot be resolved", async () => {
+    // The package reports a missing zone FILE and a missing zone as the same silent `null`, which
+    // is how a VTIMEZONE-less feed reached production twice. The feed still serves — most clients
+    // resolve a bare IANA TZID themselves — but it must not do so quietly.
+    const err = jest.spyOn(console, "error").mockImplementation(() => {});
+    mockAreaAuth.mockResolvedValue({
+      id: AREA_UUID,
+      displayName: "Daylesford",
+      displayTimezone: "Mars/Olympus_Mons",
+      ownerClerkUserId: "user_simon",
+    } as never);
+
+    const res = await feed(AREA, `?token=${TOKEN}`);
+    const body = await res.text();
+
+    // Degraded, not dead: a single misconfigured area must not 500 the whole subscription.
+    expect(res.status).toBe(200);
+    expect(body).toContain("BEGIN:VCALENDAR");
+    expect(body).not.toContain("BEGIN:VTIMEZONE");
+    const logged = err.mock.calls.flat().join(" ");
+    expect(logged).toContain("no VTIMEZONE");
+    expect(logged).toContain("omitting it from the feed");
+    err.mockRestore();
+  });
+
   it("carries the schedule and NOTHING about readings", async () => {
     const body = await (await feed(AREA, `?token=${TOKEN}`)).text();
     expect(body).toContain("Run for 30 minutes");
