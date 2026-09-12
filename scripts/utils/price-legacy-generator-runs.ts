@@ -18,7 +18,7 @@
  * nothing re-detected in its place (the script's own doc comment warns about exactly this).
  *
  * WHY AN IN-PLACE UPDATE IS EXACT, NOT AN APPROXIMATION. For `role === 'generator'`
- * `resolveIntensitySeries` returns a `constantIntensity` — the same factor at every instant — so
+ * `resolveIntensitySeriesByArea` returns a `constantIntensity` — the same factor at every instant — so
  * `provenanceFromAllocation`'s Σ over counter slices collapses to arithmetic on the row's stored
  * `energy_kwh`, and this writes byte-identical values to what a recompute would. That collapse is
  * ONLY valid for the generator: a load-priced role (`ev`) has a time-varying blend, so the script
@@ -62,9 +62,12 @@ dotenv.config({ path: ".env.local" });
 
 import { and, asc, eq, isNotNull, isNull } from "drizzle-orm";
 import { requirePlanetscaleDb } from "../../lib/db/planetscale";
-import { derivedIntervals } from "../../lib/db/planetscale/schema";
+import {
+  derivedIntervalProvenance,
+  derivedIntervals,
+} from "../../lib/db/planetscale/schema";
 import { listEnabledRunDetectors } from "../../lib/derivations/resolve";
-import { resolveIntensitySeries } from "../../lib/run-tracking/intensity";
+import { resolveIntensitySeriesByArea } from "../../lib/run-tracking/intensity";
 import { roundToThree } from "../../lib/history/format-opennem";
 
 const APPLY = process.argv.includes("--apply");
@@ -102,10 +105,25 @@ async function main() {
   }
 
   // The window is required by the signature and IGNORED by the generator leg (constants).
-  const series = await resolveIntensitySeries(db, det, {
+  //
+  // ONE site expected, and enforced rather than assumed. Provenance is per-area since migration
+  // 0066, so a detector whose device sits in two priceable areas has two different answers for the
+  // same run — and this script's whole premise is that it can write one number per row. Daylesford's
+  // generator has exactly one; anything else must go through a real recompute, which writes a row
+  // per area and needs no such assumption.
+  const sites = await resolveIntensitySeriesByArea(db, det, {
     startMs: 0,
     endMs: 0,
   });
+  if (sites.length > 1) {
+    fail(
+      `Detector ${derivationId} can be priced through ${sites.length} areas ` +
+        `(${sites.map((s) => s.areaId).join(", ")}). An in-place UPDATE cannot say which one a row ` +
+        `means; re-price it with a recompute instead.`,
+    );
+  }
+  const site = sites[0];
+  const series = site?.series;
   if (!series) {
     fail(
       `No generator intensity for handle ${det.legacyHandle}: the site's battery device has no ` +
@@ -203,6 +221,23 @@ async function main() {
             isNull(derivedIntervals.costC),
           ),
         );
+      // The same verdict in its per-area home (migration 0066). `onConflictDoNothing` keeps the
+      // script idempotent alongside the legacy gate above: a row a recompute has already written
+      // per-area is never overwritten by this flattening.
+      await tx
+        .insert(derivedIntervalProvenance)
+        .values({
+          derivationId: det.id,
+          startTime: r.startTime,
+          areaId: site!.areaId,
+          costC: roundToThree(kwh * f.priceC!),
+          emissionsG: roundToThree(f.gPerKwh == null ? null : kwh * f.gPerKwh),
+          renewableKwh: roundToThree(
+            f.renewable == null ? null : kwh * f.renewable,
+          ),
+          estimatedKwh: roundToThree(kwh * f.estimatedFraction),
+        })
+        .onConflictDoNothing();
       updated += 1;
     }
   });
