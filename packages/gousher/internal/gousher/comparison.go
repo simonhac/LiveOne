@@ -20,15 +20,50 @@ type ComparisonReport struct {
 // CompareIndependent uses the vendor site identity and nearest available timestamp
 // inside a stated sampling window. Unmatched samples never count as mismatches.
 func CompareIndependent(reference, actual []Batch, window time.Duration) ComparisonReport {
+	report, _ := CompareWithEvidence(reference, actual, window, 0)
+	return report
+}
+
+type ComparisonDifference struct {
+	Kind      string `json:"kind"`
+	Reference *Batch `json:"reference,omitempty"`
+	Actual    *Batch `json:"actual,omitempty"`
+}
+
+func CompareWithEvidence(reference, actual []Batch, window time.Duration, limit int) (ComparisonReport, []ComparisonDifference) {
 	report := ComparisonReport{}
+	evidence := []ComparisonDifference{}
+	retain := func(kind string, ref, got *Batch) {
+		if len(evidence) < limit {
+			evidence = append(evidence, ComparisonDifference{kind, ref, got})
+		}
+	}
+	groups := map[string][]int{}
+	for i, b := range actual {
+		groups[b.VendorSiteID] = append(groups[b.VendorSiteID], i)
+	}
+	for _, indices := range groups {
+		sort.SliceStable(indices, func(i, j int) bool {
+			return actual[indices[i]].MeasurementTime.Before(actual[indices[j]].MeasurementTime)
+		})
+	}
 	used := make([]bool, len(actual))
 	if window < 0 {
 		window = 0
 	}
-	for _, expected := range reference {
+	for ri := range reference {
+		expected := reference[ri]
 		best := -1
 		distance := window + 1
-		for i, candidate := range actual {
+		indices := groups[expected.VendorSiteID]
+		lower := sort.Search(len(indices), func(i int) bool {
+			return !actual[indices[i]].MeasurementTime.Before(expected.MeasurementTime.Add(-window))
+		})
+		for _, i := range indices[lower:] {
+			candidate := actual[i]
+			if candidate.MeasurementTime.After(expected.MeasurementTime.Add(window)) {
+				break
+			}
 			if used[i] || candidate.VendorSiteID != expected.VendorSiteID {
 				continue
 			}
@@ -43,6 +78,7 @@ func CompareIndependent(reference, actual []Batch, window time.Duration) Compari
 		}
 		if best < 0 {
 			report.UnmatchedReference++
+			retain("missing-trial", &reference[ri], nil)
 			continue
 		}
 		used[best] = true
@@ -58,14 +94,16 @@ func CompareIndependent(reference, actual []Batch, window time.Duration) Compari
 		sort.Slice(b, func(i, j int) bool { return less(b, i, j) })
 		if !Compare(a, b) {
 			report.Mismatches++
+			retain("mismatch", &reference[ri], &actual[best])
 		}
 	}
-	for _, matched := range used {
+	for i, matched := range used {
 		if !matched {
 			report.UnmatchedActual++
+			retain("extra-trial", nil, &actual[i])
 		}
 	}
-	return report
+	return report, evidence
 }
 
 type WindowMetrics struct {

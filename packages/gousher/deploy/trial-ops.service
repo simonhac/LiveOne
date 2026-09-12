@@ -1,0 +1,22 @@
+[Unit]
+Description=Independent Gousher trial comparisons and production monitor
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=gousher-trial-ops
+Group=gousher-trial-ops
+StateDirectory=gousher-trial-ops
+EnvironmentFile=/etc/gousher/trial-ops.env
+ExecStart=/usr/local/bin/trial-ops -config /etc/gousher/trial-ops.json
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=30
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

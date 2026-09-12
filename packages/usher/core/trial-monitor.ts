@@ -1,6 +1,6 @@
 /** Read-only production evidence for the independent trial supervisor. */
 import { createHash, timingSafeEqual } from "node:crypto";
-import { readdir, readFile } from "node:fs/promises";
+import { readdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { gunzip } from "node:zlib";
 import { promisify } from "node:util";
@@ -13,6 +13,7 @@ type Incident = {
 };
 export class ProductionTrialMonitor {
   private windows = new Map<string, Map<number, Window>>();
+  private incidentFloor = new Map<string, number>();
   private incidents = new Map<string, Incident[]>();
   constructor(readonly startedAt = Date.now()) {}
   record(
@@ -46,6 +47,11 @@ export class ProductionTrialMonitor {
     if (incident) {
       const events = this.incidents.get(site) ?? [];
       events.push({ at: new Date(at).toISOString(), reason: incident });
+      if (events.length > 1024)
+        this.incidentFloor.set(
+          site,
+          Date.parse(events[events.length - 1025].at) + 1,
+        );
       this.incidents.set(site, events.slice(-1024));
     }
   }
@@ -68,6 +74,11 @@ export class ProductionTrialMonitor {
     };
   }
   events(site: string, start: number, end: number) {
+    if (
+      !this.windows.has(site) ||
+      start < Math.max(this.startedAt, this.incidentFloor.get(site) ?? 0)
+    )
+      return null;
     return (this.incidents.get(site) ?? []).filter(
       (e) => Date.parse(e.at) >= start && Date.parse(e.at) < end,
     );
@@ -86,14 +97,18 @@ export function recordProductionRead(
   error?: unknown,
 ) {
   if (!process.env.USHER_TRIAL_MONITOR_TOKEN) return;
-  const e = error as { status?: number; code?: string } | undefined;
-  const incident =
-    e?.status === 401
-      ? "session-evicted"
-      : e?.code === "ECONNRESET" || e?.code === "ECONNREFUSED"
-        ? "connection-disruption"
-        : undefined;
-  monitor().record(site, Date.now(), duration, ok, incident);
+  try {
+    const e = error as { status?: number; code?: string } | undefined;
+    const incident =
+      e?.status === 401
+        ? "session-evicted"
+        : e?.code === "ECONNRESET" || e?.code === "ECONNREFUSED"
+          ? "connection-disruption"
+          : undefined;
+    monitor().record(site, Date.now(), duration, ok, incident);
+  } catch {
+    /* Diagnostic failure must never fail collection. */
+  }
 }
 export async function handleTrialExport(req: Request): Promise<Response> {
   const token = process.env.USHER_TRIAL_MONITOR_TOKEN;
@@ -142,7 +157,8 @@ export async function handleTrialExport(req: Request): Promise<Response> {
     );
   }
   if (q.get("kind") === "incidents") {
-    if (start < m.startedAt)
+    const events = m.events(site, start, end);
+    if (events === null)
       return Response.json(
         { error: "production incident coverage incomplete" },
         { status: 409 },
@@ -151,7 +167,7 @@ export async function handleTrialExport(req: Request): Promise<Response> {
       {
         role: "production",
         siteId: site,
-        incidents: m.events(site, start, end),
+        incidents: events,
       },
       { headers: { "Cache-Control": "no-store" } },
     );
@@ -169,13 +185,25 @@ export async function handleTrialExport(req: Request): Promise<Response> {
     let bytes = 0,
       last = q.get("cursor") ?? "",
       nextCursor = "";
+    const asOf = q.get("asOf") ? Date.parse(q.get("asOf")!) : Date.now();
+    if (!Number.isFinite(asOf) || asOf > Date.now() + 60000)
+      throw Error("invalid snapshot");
     for (const name of files) {
       if (name <= (q.get("cursor") ?? "")) continue;
+      const info = await stat(path.join(dir, name));
+      if (info.mtimeMs > asOf) continue;
       const data = await unzip(await readFile(path.join(dir, name)), {
         maxOutputLength: 4 * 1024 * 1024,
       });
       const f = JSON.parse(data.toString());
       const at = Date.parse(f.at);
+      if (
+        !Number.isFinite(at) ||
+        !Number.isInteger(f.revision) ||
+        f.revision < 1 ||
+        typeof f.pollerId !== "string"
+      )
+        throw Error("invalid capture identity");
       if (f.pollerId !== site || at < start || at >= end) continue;
       if (fixtures.length >= 100 || bytes + data.length > 4 * 1024 * 1024) {
         nextCursor = last;

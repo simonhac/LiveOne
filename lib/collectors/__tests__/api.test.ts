@@ -243,3 +243,47 @@ it("does not transfer a device to a different trial destination", async () => {
   expect(result.status).toBe(409);
   expect(db.insert).not.toHaveBeenCalled();
 });
+
+it("exports only scoped measured cloud read evidence", async () => {
+  process.env.LIVEONE_TRIAL_READ_EVIDENCE = "1";
+  process.env.LIVEONE_TRIAL_READ_EVIDENCE_SINCE = "2026-01-01T00:00:00Z";
+  queued([collector], [{ ...p, vendorSiteId: "site" }], [{ rid: 7 }]);
+  (db.select as jest.Mock).mockReturnValueOnce({
+    from: () => ({
+      where: () => ({
+        orderBy: () => ({
+          limit: () =>
+            Promise.resolve([
+              {
+                at: new Date("2026-01-02T00:01:00Z"),
+                response: {
+                  gousherTrialRead: {
+                    version: 1,
+                    source: "selectronic",
+                    durationMs: 42,
+                    ok: true,
+                  },
+                },
+              },
+            ]),
+        }),
+      }),
+    }),
+  });
+  const response = await collectorApi(
+    req(
+      "GET",
+      `production?pollerId=${pollerId}&revision=2&kind=window&start=2026-01-02T00:00:00Z&end=2026-01-02T00:15:00Z`,
+    ),
+    "production",
+  );
+  expect(response.status).toBe(200);
+  expect(await response.json()).toEqual({
+    role: "production",
+    siteId: "site",
+    windowEnd: "2026-01-02T00:15:00.000Z",
+    metrics: { samples: 1, failureRate: 0, p95ReadMs: 42 },
+  });
+  delete process.env.LIVEONE_TRIAL_READ_EVIDENCE;
+  delete process.env.LIVEONE_TRIAL_READ_EVIDENCE_SINCE;
+});

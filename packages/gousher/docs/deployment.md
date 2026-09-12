@@ -50,3 +50,13 @@ owned by that user. Install the sample service and create `/etc/gousher/bootstra
 root-readable `/etc/gousher/secrets` EnvironmentFile. Set bootstrap `dataDir` to `/var/lib/gousher`.
 Use the same private receiver and management APIs as the Fly build. Monitor service restarts,
 collection freshness, delivery lag and volume consumption independently.
+
+## Independent operations service
+
+The daily comparison and production-monitor runner is implemented as `cmd/trial-ops` and included
+in the container image. Use a separate process/machine and persistent volume, with the collector
+inspector and receiver export credentials supplied through environment variables. A systemd template
+is provided at `deploy/trial-ops.service`. Follow [automation.md](automation.md) to enable scoped
+production feeds, measure a baseline, fill the example configuration and install an external health
+watchdog. The template is preparation only: no service or production feed has been enabled by this
+change. Existing coexistence and replay gates still apply before enabling shadow reads.

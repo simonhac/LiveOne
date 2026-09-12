@@ -127,4 +127,31 @@ func TestReceiverExportRequiresAuthAndFiltersAssignment(t *testing.T) {
 			}
 		}
 	}
+	b.Readings = []Reading{{"value": 999}}
+	corrupted, _ := json.Marshal(b)
+	if err := os.WriteFile(filepath.Join(dir, b.ID+".json"), corrupted, 0600); err != nil {
+		t.Fatal(err)
+	}
+	req = httptest.NewRequest("GET", path, nil)
+	req.Header.Set("Authorization", "Bearer secret")
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != 503 {
+		t.Fatalf("corrupted capture exported: HTTP %d", w.Code)
+	}
+
+}
+
+func TestReceiverDoesNotRecreateMissingReceiptHistory(t *testing.T) {
+	dir := t.TempDir()
+	j, err := openReceipts(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(j.path); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := openReceipts(dir); err == nil {
+		t.Fatal("missing receipt history silently reset deduplication")
+	}
 }

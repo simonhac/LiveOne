@@ -1,3 +1,8 @@
+import {
+  measureProductionRead,
+  attachProductionEvidence,
+  type ProductionReadEvidence,
+} from "@/lib/collectors/production-evidence";
 import type {
   VendorAdapter,
   PollingResult,
@@ -273,15 +278,27 @@ export abstract class BaseVendorAdapter implements VendorAdapter {
       }
     };
 
+    let trialRead: ProductionReadEvidence | undefined;
+    const captureRead =
+      process.env.LIVEONE_TRIAL_READ_EVIDENCE === "1" &&
+      !dryRun &&
+      sessionCause === "CRON" &&
+      ["selectronic", "sigenergy"].includes(this.vendorType);
     try {
       // 3. Fetch data (vendor implementation) - track "fetch" stage with live updates
-      const result = await withProgress("fetch", () =>
+      const fetch = () =>
         this.fetchData(device, credentials, {
           startedAt,
           dryRun,
           session,
           collector,
-        }),
+        });
+      const result = await withProgress("fetch", () =>
+        captureRead
+          ? measureProductionRead(this.vendorType, fetch, (e) => {
+              trialRead = e;
+            })
+          : fetch(),
       );
 
       if (!result.success) {
@@ -291,6 +308,7 @@ export abstract class BaseVendorAdapter implements VendorAdapter {
           startedAt,
           result,
           collector,
+          trialRead,
         );
         return this.error(
           result.error || "Unknown error",
@@ -321,6 +339,7 @@ export abstract class BaseVendorAdapter implements VendorAdapter {
         recordsProcessed,
         result.rawResponse,
         collector,
+        trialRead,
       );
 
       return this.polled(
@@ -341,6 +360,7 @@ export abstract class BaseVendorAdapter implements VendorAdapter {
           error: errorMessage,
         },
         collector,
+        trialRead,
       );
       return this.error(errorMessage, undefined, stages);
     }
@@ -431,13 +451,14 @@ export abstract class BaseVendorAdapter implements VendorAdapter {
     numRows: number,
     rawResponse: any,
     collector: PollCollector,
+    trialRead?: ProductionReadEvidence,
   ): Promise<void> {
     await sessionManager.updateSessionResult(
       session.id,
       {
         duration: Date.now() - startedAt.getTime(),
         successful: true,
-        response: rawResponse,
+        response: attachProductionEvidence(rawResponse, trialRead),
         numRows,
       },
       collector,
@@ -457,6 +478,7 @@ export abstract class BaseVendorAdapter implements VendorAdapter {
     startedAt: Date,
     result: FetchResult,
     collector: PollCollector,
+    trialRead?: ProductionReadEvidence,
   ): Promise<void> {
     await sessionManager.updateSessionResult(
       session.id,
@@ -465,7 +487,7 @@ export abstract class BaseVendorAdapter implements VendorAdapter {
         successful: false,
         errorCode: result.errorCode || null,
         error: result.error || null,
-        response: result.rawResponse,
+        response: attachProductionEvidence(result.rawResponse, trialRead),
         numRows: 0,
       },
       collector,

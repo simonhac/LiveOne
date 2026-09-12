@@ -1,3 +1,4 @@
+import { summarizeProductionEvidence } from "./production-evidence";
 import { baselineFixture } from "./baseline";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { and, eq, gte, lte, desc } from "drizzle-orm";
@@ -279,7 +280,7 @@ export async function adminCollectors(req: NextRequest) {
 
 export async function collectorApi(
   req: NextRequest,
-  operation: "config" | "credentials" | "status" | "baseline",
+  operation: "config" | "credentials" | "status" | "baseline" | "production",
 ) {
   try {
     if (!db) throw new ApiError("Database unavailable", 503);
@@ -380,7 +381,10 @@ export async function collectorApi(
         if (typeof c?.[key] === "string") credentials[key] = c[key];
       return response({ revision: p.revision, credentials });
     }
-    if (operation === "baseline" && req.method === "GET") {
+    if (
+      (operation === "baseline" || operation === "production") &&
+      req.method === "GET"
+    ) {
       const pollerId = z
         .string()
         .uuid()
@@ -412,6 +416,70 @@ export async function collectorApi(
         .from(devices)
         .where(eq(devices.id, p.deviceId));
       if (!d) throw new ApiError("Device not found", 404);
+      if (operation === "production") {
+        const kind = req.nextUrl.searchParams.get("kind");
+        const since = Date.parse(
+          process.env.LIVEONE_TRIAL_READ_EVIDENCE_SINCE ?? "",
+        );
+        if (
+          process.env.LIVEONE_TRIAL_READ_EVIDENCE !== "1" ||
+          !Number.isFinite(since) ||
+          +start < since
+        )
+          throw new ApiError(
+            "Production read evidence coverage not configured",
+            409,
+          );
+        if (req.nextUrl.searchParams.get("revision") !== String(p.revision))
+          throw new ApiError("Stale poller revision", 409);
+        if (
+          !["window", "incidents"].includes(kind ?? "") ||
+          +end > Date.now() - 120000 ||
+          +end - +start > 3600000 ||
+          (kind === "window" &&
+            (+end - +start !== 900000 || +end % 900000 !== 0))
+        )
+          throw new ApiError(
+            "Expected a completed production evidence window with two-minute ingestion allowance",
+          );
+        const rows = await db
+          .select({ at: sessions.createdAt, response: sessions.response })
+          .from(sessions)
+          .where(
+            and(
+              eq(sessions.deviceRid, d.rid),
+              eq(sessions.cause, "CRON"),
+              gte(sessions.createdAt, start),
+              lte(sessions.createdAt, end),
+            ),
+          )
+          .orderBy(desc(sessions.createdAt))
+          .limit(501);
+        if (rows.length > 500)
+          throw new ApiError("Production evidence window too large", 413);
+        let evidence;
+        try {
+          evidence = summarizeProductionEvidence(
+            p.source,
+            rows,
+            start,
+            end,
+            kind === "incidents",
+          );
+        } catch {
+          throw new ApiError(
+            "Production evidence incomplete or unavailable",
+            409,
+          );
+        }
+        return response({
+          role: "production",
+          siteId: p.vendorSiteId,
+          ...(kind === "window"
+            ? { windowEnd: end.toISOString(), metrics: evidence.metrics }
+            : { incidents: evidence.incidents }),
+        });
+      }
       const rows = await db
         .select({
           id: sessions.id,

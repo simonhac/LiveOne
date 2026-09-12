@@ -1,6 +1,7 @@
 package gousher
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/json"
@@ -169,14 +170,19 @@ func (r *Runtime) snapshot() map[string]any {
 
 // Receiver retains a durable receipt independently of its bounded capture history.
 func Receiver(dir, token string, budget int64) (http.Handler, error) {
-	store, e := OpenStore(dir, budget, 64<<20)
-	if e != nil {
+	if e := os.MkdirAll(dir, 0700); e != nil {
 		return nil, e
 	}
 	unlock, e := lockInstance(filepath.Join(dir, ".receiver.lock"))
 	if e != nil {
 		return nil, e
 	}
+	store, e := OpenStore(dir, budget, 64<<20)
+	if e != nil {
+		unlock()
+		return nil, e
+	}
+
 	journal, e := openReceipts(dir)
 	if e == nil {
 		// Upgrade retained captures before any pruning can discard their acknowledgement.
@@ -250,7 +256,9 @@ func Receiver(dir, token string, budget int64) (http.Handler, error) {
 			return
 		}
 		var b Batch
-		if json.Unmarshal(data, &b) != nil || len(b.ID) != 32 || strings.Trim(b.ID, "0123456789abcdef") != "" || b.PollerID == "" || len(b.Readings) == 0 || b.MeasurementTime.IsZero() {
+		decoder := json.NewDecoder(bytes.NewReader(data))
+		decoder.DisallowUnknownFields()
+		if decoder.Decode(&b) != nil || len(b.ID) != 32 || strings.Trim(b.ID, "0123456789abcdef") != "" || b.PollerID == "" || len(b.Readings) == 0 || b.MeasurementTime.IsZero() {
 			w.WriteHeader(400)
 			return
 		}

@@ -75,8 +75,10 @@ under free-space pressure. Blackbox records have **no age expiry** and dropped d
 promised recoverable from it. Files are private (0600; directories 0700).
 
 The separate trial receiver uses 128 MiB / three-day capture retention. Its response acknowledges
-only fsynced captures. Retained duplicate IDs require identical content. Deduplication lasts for
-retained capture history, not indefinitely; this is an explicit trial limitation to review.
+durable captures and receipts. A separate 32 MiB append-only receipt journal preserves duplicate
+acknowledgements after captures expire; conflicting bytes are rejected. At the receipt limit, new
+IDs fail closed instead of evicting history. See [automation.md](docs/automation.md) for upgrade
+limits, independent production monitoring and daily comparison operations.
 
 Golden JSONL fixtures carry ordered vendor inputs, timestamps, revisions, harvest boundaries and
 expected readings. All four vendors replay without network access. From the repository root:

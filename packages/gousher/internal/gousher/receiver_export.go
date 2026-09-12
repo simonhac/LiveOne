@@ -1,6 +1,7 @@
 package gousher
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"net/http"
 	"os"
@@ -53,7 +54,7 @@ func receiverExport(w http.ResponseWriter, r *http.Request, dir string, j *recei
 			return
 		}
 		var b Batch
-		if json.Unmarshal(data, &b) != nil {
+		if sha256.Sum256(data) != receipt.Hash || json.Unmarshal(data, &b) != nil {
 			w.WriteHeader(503)
 			return
 		}

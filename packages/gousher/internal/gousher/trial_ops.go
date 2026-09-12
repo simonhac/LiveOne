@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"net/url"
 	"os"
@@ -21,6 +22,8 @@ type ProductionMetrics struct {
 	Samples int `json:"samples"`
 }
 type TrialOpsPoller struct {
+	EvidenceLagSec    int               `json:"evidenceLagSec"`
+	MinSamples        int               `json:"minSamples"`
 	ID                string            `json:"id"`
 	Revision          int               `json:"revision"`
 	Source            string            `json:"source"`
@@ -78,7 +81,7 @@ func NewTrialOps(cfg TrialOpsConfig) (*TrialOps, error) {
 	}
 	seen := map[string]bool{}
 	for _, p := range cfg.Pollers {
-		if p.ID == "" || seen[p.ID] || p.Revision < 1 || p.VendorSiteID == "" || p.ProductionSiteID == "" || p.From.IsZero() || !p.From.Equal(p.From.Truncate(15*time.Minute)) || p.BaselineEnd.IsZero() || p.BaselineEnd.After(p.From) || p.Baseline.Samples < 1 || p.Baseline.FailureRate < 0 || p.Baseline.FailureRate > 1 || p.Baseline.P95ReadMS <= 0 || p.WindowMS < 0 || p.WindowMS > 60000 {
+		if p.ID == "" || seen[p.ID] || p.Revision < 1 || p.VendorSiteID == "" || p.ProductionSiteID == "" || p.From.IsZero() || !p.From.Equal(p.From.Truncate(15*time.Minute)) || p.EvidenceLagSec < 0 || p.EvidenceLagSec > 900 || p.MinSamples < 0 || p.MinSamples > 1024 || !p.BaselineEnd.Equal(p.BaselineEnd.Truncate(15*time.Minute)) || math.IsNaN(p.Baseline.FailureRate) || math.IsInf(p.Baseline.FailureRate, 0) || math.IsNaN(p.Baseline.P95ReadMS) || math.IsInf(p.Baseline.P95ReadMS, 0) || p.BaselineEnd.IsZero() || p.BaselineEnd.After(p.From) || p.Baseline.Samples < 1 || p.Baseline.FailureRate < 0 || p.Baseline.FailureRate > 1 || p.Baseline.P95ReadMS <= 0 || p.WindowMS < 0 || p.WindowMS > 60000 {
 			return nil, errors.New("invalid assignment or measured production baseline")
 		}
 		if _, ok := manifests[p.Source]; !ok {
@@ -155,17 +158,25 @@ func (o *TrialOps) MonitorOnce(ctx context.Context, now time.Time) error {
 	defer unlock()
 	path := filepath.Join(o.cfg.DataDir, "monitor-state.json")
 	state := map[string]opsCursor{}
-	if data, err := os.ReadFile(path); err == nil {
-		if err = json.Unmarshal(data, &state); err != nil {
-			return err
-		}
-	} else if !os.IsNotExist(err) {
+	if err := loadOpsState(path, &state); err != nil {
 		return err
+	}
+	active := map[string]bool{}
+	for _, p := range o.cfg.Pollers {
+		active[opsKey(p)] = true
+	}
+	for key := range state {
+		if !active[key] {
+			delete(state, key)
+		}
 	}
 	save := func() error {
 		data, err := json.Marshal(state)
 		if err != nil {
 			return err
+		}
+		if len(data) > 1<<20 {
+			return errors.New("operations state too large")
 		}
 		return AtomicWrite(path, data)
 	}
@@ -181,14 +192,15 @@ func (o *TrialOps) MonitorOnce(ctx context.Context, now time.Time) error {
 			continue
 		}
 		err := func() error {
-			end := now
+			evidenceNow := now.Add(-time.Duration(p.EvidenceLagSec) * time.Second)
+			end := evidenceNow
 			if end.Sub(cursor.IncidentEnd) > time.Hour {
 				end = cursor.IncidentEnd.Add(time.Hour)
 			}
 			if end.After(cursor.IncidentEnd) {
 				var feed struct {
 					Role, SiteID string
-					Incidents    []struct {
+					Incidents    *[]struct {
 						At     time.Time
 						Reason string
 					}
@@ -196,10 +208,10 @@ func (o *TrialOps) MonitorOnce(ctx context.Context, now time.Time) error {
 				if err := o.fetch(ctx, "GET", p.MetricsURL, p.MetricsTokenEnv, opsQuery(p, cursor.IncidentEnd, end, "incidents"), nil, &feed); err != nil {
 					return err
 				}
-				if feed.Role != "production" || feed.SiteID != p.ProductionSiteID {
+				if feed.Role != "production" || feed.SiteID != p.ProductionSiteID || feed.Incidents == nil {
 					return errors.New("incident feed is not assigned production source")
 				}
-				for _, incident := range feed.Incidents {
+				for _, incident := range *feed.Incidents {
 					if incident.At.Before(cursor.IncidentEnd) || !incident.At.Before(end) || (incident.Reason != "session-evicted" && incident.Reason != "connection-disruption" && incident.Reason != "attempted-write") {
 						return errors.New("invalid production incident")
 					}
@@ -223,7 +235,7 @@ func (o *TrialOps) MonitorOnce(ctx context.Context, now time.Time) error {
 			// Limit catch-up per cycle so a backlog cannot monopolize incident monitoring.
 			for n := 0; n < 4; n++ {
 				end := cursor.WindowEnd.Add(15 * time.Minute)
-				if end.After(now.Truncate(15 * time.Minute)) {
+				if end.After(evidenceNow.Truncate(15 * time.Minute)) {
 					break
 				}
 				var feed struct {
@@ -235,17 +247,17 @@ func (o *TrialOps) MonitorOnce(ctx context.Context, now time.Time) error {
 					return err
 				}
 				m := feed.Metrics
-				if feed.Role != "production" || feed.SiteID != p.ProductionSiteID || !feed.WindowEnd.Equal(end) || m == nil || m.Samples < 1 || m.FailureRate < 0 || m.FailureRate > 1 || m.P95ReadMS < 0 {
+				if feed.Role != "production" || feed.SiteID != p.ProductionSiteID || !feed.WindowEnd.Equal(end) || m == nil || m.Samples < max(1, p.MinSamples) || m.FailureRate < 0 || m.FailureRate > 1 || m.P95ReadMS < 0 {
 					return errors.New("production window missing or invalid")
 				}
 				var ack struct {
 					Revision int
-					Disabled bool
+					Disabled *bool
 				}
 				if err := o.fetch(ctx, "POST", o.cfg.InspectorURL+"/api/trial/windows", o.cfg.InspectorTokenEnv, nil, trialWindow{PollerID: p.ID, Revision: p.Revision, WindowEnd: end, Baseline: &p.Baseline.WindowMetrics, Current: &m.WindowMetrics}, &ack); err != nil {
 					return err
 				}
-				if ack.Revision != p.Revision {
+				if ack.Revision != p.Revision || ack.Disabled == nil {
 					return errors.New("window acknowledgement revision mismatch")
 				}
 				cursor.WindowEnd = end
@@ -275,10 +287,12 @@ func (o *TrialOps) CompareDay(ctx context.Context, p TrialOpsPoller, day time.Ti
 	fixtures := []Fixture{}
 	unmatched := 0
 	totalBytes := 0
+	missingHours := 0
 	asOf := time.Now().UTC().Format(time.RFC3339Nano)
 	for hour := 0; hour < 24; hour++ {
 		start := day.Add(time.Duration(hour) * time.Hour)
 		end := start.Add(time.Hour)
+		beforeReference, beforeActual := len(references), len(actual)
 		for _, reference := range []bool{true, false} {
 			cursor := ""
 			seen := map[string]bool{}
@@ -352,12 +366,43 @@ func (o *TrialOps) CompareDay(ctx context.Context, p TrialOpsPoller, day time.Ti
 				cursor = feed.NextCursor
 			}
 		}
+		if len(references) == beforeReference || len(actual) == beforeActual {
+			missingHours++
+		}
 	}
-	report := CompareIndependent(references, actual, time.Duration(p.WindowMS)*time.Millisecond)
-	clean := report.Mismatches == 0 && report.UnmatchedReference == 0 && report.UnmatchedActual == 0 && unmatched == 0 && report.Matched > 0
+	report, differences := CompareWithEvidence(references, actual, time.Duration(p.WindowMS)*time.Millisecond, 20)
+	clean := missingHours == 0 && report.Mismatches == 0 && report.UnmatchedReference == 0 && report.UnmatchedActual == 0 && unmatched == 0 && report.Matched > 0
 	var evidenceErr error
+	selected := []map[string]any{}
+	selectedBytes := 0
 	if !clean {
-		evidence, _ := json.Marshal(map[string]any{"pollerId": p.ID, "revision": p.Revision, "day": day, "reference": references, "actual": actual, "rawFixtures": fixtures, "note": "Fronius replay may require preceding integration context; raw inputs here cover this UTC day only."})
+		for _, difference := range differences {
+			contextFixtures := []Fixture{}
+			if difference.Reference != nil {
+				at := difference.Reference.MeasurementTime
+				for _, f := range fixtures {
+					if len(contextFixtures) >= 200 {
+						break
+					}
+					if !f.At.Before(at.Add(-5*time.Minute)) && !f.At.After(at) {
+						contextFixtures = append(contextFixtures, f)
+					}
+				}
+			}
+			entry := map[string]any{"difference": difference, "rawFixtures": contextFixtures}
+			data, _ := json.Marshal(entry)
+			if selectedBytes+len(data) > 8<<20 {
+				delete(entry, "rawFixtures")
+				entry["contextOmitted"] = true
+				data, _ = json.Marshal(entry)
+			}
+			if selectedBytes+len(data) > 8<<20 {
+				break
+			}
+			selected = append(selected, entry)
+			selectedBytes += len(data)
+		}
+		evidence, _ := json.Marshal(map[string]any{"pollerId": p.ID, "revision": p.Revision, "day": day, "selected": selected, "comparison": report, "missingHours": missingHours, "note": "Selected discrepancies with up to five minutes of captured context. Fronius energy replay may need the preceding integration state; this is comparison evidence, not a guaranteed self-contained replay."})
 		sum := sha256.Sum256(evidence)
 		name := day.Format("2006-01-02") + "-" + hex.EncodeToString(sum[:16]) + ".json"
 		if old, err := os.ReadFile(filepath.Join(o.cfg.DataDir, "fixtures", name)); err == nil && bytes.Equal(old, evidence) {
@@ -365,7 +410,8 @@ func (o *TrialOps) CompareDay(ctx context.Context, p TrialOpsPoller, day time.Ti
 			evidenceErr = RetainFixture(o.cfg.DataDir, name, evidence)
 		}
 	}
-	summary := map[string]any{"day": day, "pollerId": p.ID, "revision": p.Revision, "comparison": report, "unmatchedBaseline": unmatched, "clean": clean, "referenceSamples": len(references), "actualSamples": len(actual)}
+
+	summary := map[string]any{"day": day, "pollerId": p.ID, "revision": p.Revision, "comparison": report, "unmatchedBaseline": unmatched, "clean": clean, "referenceSamples": len(references), "actualSamples": len(actual), "missingHours": missingHours, "selectedDifferences": len(selected), "unselectedDifferences": report.Mismatches + report.UnmatchedReference + report.UnmatchedActual - len(selected)}
 	if evidenceErr != nil {
 		summary["evidenceError"] = evidenceErr.Error()
 	}

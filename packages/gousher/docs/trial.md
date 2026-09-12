@@ -32,7 +32,7 @@ not evidence of live coexistence. Stop the affected shadow reader immediately af
 connection disruption or an attempted device write. Also stop it if production failure rate rises by
 more than one percentage point, or p95 read latency doubles, in two consecutive 15-minute windows.
 The current runtime stops a cloud reader on unexpected 401/session eviction; revision change is
-required to resume it. The authenticated `/api/trial/windows` endpoint now enforces consecutive windows, ignores duplicate windows, cancels an in-flight read on a breach, and persists the disabled revision across restarts. `/api/trial/incidents` handles immediate session, connection and write-attempt incidents. The independent production monitor still needs deployment and connection to these endpoints.
+required to resume it. The authenticated `/api/trial/windows` endpoint now enforces consecutive windows, ignores duplicate windows, cancels an in-flight read on a breach, and persists the disabled revision across restarts. `/api/trial/incidents` handles immediate session, connection and write-attempt incidents. The independent `trial-ops` runner connects production feeds to these endpoints; local end-to-end tests verify cancellation and persisted shutdown. Deployment and measured baseline configuration remain required.
 
 ## Outstanding acceptance work
 
@@ -51,10 +51,13 @@ required to resume it. The authenticated `/api/trial/windows` endpoint now enfor
   Hooks now preserve input order, integration timestamps, harvest boundaries, revisions and expected
   readings, within a bounded gzip journal. They remain disabled unless explicitly configured.
   Cloud baselines are available through the scoped API.
-- Schedule daily production/trial exports and comparisons, and connect the independent production
-  monitor to the tested window/incident endpoints. Automatic reader shutdown and restart inhibition
-  are implemented; production monitoring inputs have not been connected.
-- Receiver acknowledgement deduplication behavior beyond the three-day retained capture window.
+- Deploy and qualify the implemented daily export/comparison runner and independent production
+  monitoring feeds. Configure measured baselines and an external stale-health watchdog using
+  [automation.md](automation.md). Local tests cover feed-to-shutdown and receiver-to-daily-report
+  behavior; live monitoring has not been enabled.
+- Measure receiver receipt growth and backup/restore behavior in the trial environment. The bounded,
+  non-expiring receipt journal now preserves acknowledgements beyond capture retention and refuses
+  new IDs at capacity. Already-pruned captures from before this upgrade cannot be reconstructed.
 - Live credential refresh-token/session coexistence qualification and real failure injection.
 - Separate Fly machine/receiver/monitoring, authenticated hub forwarding, actual storage measurements
   in week one, month-long soak and seven clean days on the final build.

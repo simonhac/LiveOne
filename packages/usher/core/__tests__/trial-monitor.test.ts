@@ -37,3 +37,12 @@ describe("independent production trial feed", () => {
     }
   });
 });
+
+it("rejects incident ranges whose events were evicted", () => {
+  const start = Date.parse("2026-09-12T00:00:00Z"),
+    m = new ProductionTrialMonitor(start);
+  for (let i = 0; i < 1025; i++)
+    m.record("site", start + i, 10, false, "connection-disruption");
+  expect(m.events("site", start, start + 2000)).toBeNull();
+  expect(m.events("missing", start, start + 2000)).toBeNull();
+});

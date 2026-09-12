@@ -107,3 +107,30 @@ Final validation for this milestone passes **78 top-level Go tests** (including 
 subtests), **304 TypeScript tests**, the Go race detector, vet, the root type-check, the dedicated
 control-trace type-check, knip and the stripped Linux ARM64 build. The database integration suite
 was not rerun because this milestone changes no management schema or ingestion behavior.
+
+## Durable receipts and independent trial automation
+
+Following WIP `5ae409ee`, observed red–green checks covered:
+
+| Regression | Observed red result | Implementation |
+| --- | --- | --- |
+| Production fetch evidence | Missing measurement/summary module | Measure vendor fetch separately from total session duration; retain failures and typed incidents |
+| Daily scheduling and health | Missing scheduler, evidence-selection and health APIs | Durable daily cursors, bounded selected discrepancies, independent loops and stale-health checks |
+| Null scheduler checkpoint | JSON null accepted as empty state | Reject null persisted state |
+| Evicted production incidents | Lost incident coverage appeared complete | Refuse ranges before the retained incident floor |
+| Missing receipt history | Existing journal could be recreated empty | Fail closed when an existing receipt directory loses its journal |
+| Corrupted receiver export | Modified valid JSON was exported with HTTP 200 | Verify capture SHA-256 against its durable receipt before export |
+
+Additional qualification covers receipt retention/cap/torn-tail/checksum handling, authenticated
+exports, config fingerprints, feed validation and retry checkpoints. Local end-to-end tests connect
+production metrics to the actual runtime shutdown handler (including restart inhibition), and send
+24 hourly batches through the actual receiver to a clean, non-duplicated daily report. These are
+additional qualification, not all claimed as initially failing tests.
+
+Validation passes: **89 top-level Go tests**, race detector, vet, Linux ARM64 command builds,
+**311 TypeScript tests across 27 suites**, root/Usher/control type-checks and knip. After the final
+export integrity fix, the full Go race/vet/build checks passed again. The disposable PostgreSQL
+integration suite also passes **5 tests** covering managed CRUD and all four vendor ingestion paths;
+it does not specifically qualify the new cloud production evidence query against real session data.
+Cloud feed behavior has mocked API and evidence-unit coverage. No deployment, shared migration,
+live device writes, production feed activation or live soak occurred.

@@ -28,6 +28,11 @@ type receiptJournal struct {
 func openReceipts(dir string) (*receiptJournal, error) {
 	path := filepath.Join(dir, ".receipts", "journal")
 	if _, err := os.Stat(path); os.IsNotExist(err) {
+		if _, dirErr := os.Stat(filepath.Dir(path)); dirErr == nil {
+			return nil, errors.New("receipt history missing; restore it before accepting deliveries")
+		} else if !os.IsNotExist(dirErr) {
+			return nil, dirErr
+		}
 		if err := AtomicWrite(path, nil); err != nil {
 			return nil, err
 		}
