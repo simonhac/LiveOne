@@ -82,7 +82,7 @@ These have consumers outside this codebase — treat as contracts, change carefu
   share link: a calendar client fetches it unattended for years and has no way to sign in, so the
   URL is the entire credential. Bounded at the edge by its OWN matcher (`isCalendarFeedRoute`, not
   `isShareableRoute` — different table, different predicate) and validated in-handler, which also
-  checks the token belongs to the area in the path. See [automations.md](../automations.md).
+  checks the token belongs to the area in the path. See [calendar.md](../calendar.md).
 
 ## Route families
 

@@ -620,7 +620,8 @@ export const areaCalendarTokens = pgTable(
     // 🛑 NOT the 3-word phrase `share_tokens` uses (~22 bits, guessable at leisure). A calendar
     // URL is pasted into a client once and then fetched forever, by software, unattended — so it
     // is long-lived by construction and nobody is watching the access log. 20 base32 chars is
-    // ~100 bits. Stored in clear, like `share_tokens`, so the feed URL can be re-shown.
+    // ~98 bits (20 chars from a 30-symbol alphabet). Stored in clear, like `share_tokens`, so the
+    // feed URL can be re-shown.
     token: text("token").primaryKey(),
     areaId: uuid("area_id")
       .notNull()
