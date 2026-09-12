@@ -75,9 +75,15 @@ export async function GET(
     // With null the VTIMEZONE is still generated from each event's own zone, which is all we
     // wanted from it.
     timezone: { name: null, generator: vtimezoneOrComplain },
-    // An hour. The schedules change rarely, and a client that re-reads more often than this is
-    // spending our request budget to learn nothing.
-    ttl: 3600,
+    // 🛑 No `ttl`, deliberately. It is the ONLY remaining thing that emits calendar properties
+    // (REFRESH-INTERVAL, X-PUBLISHED-TTL) AFTER the first component, which is not legal
+    // iCalendar — `icalbody` is calprops THEN components — and iCloud fetched this feed and
+    // refused to process it ("Last updated: Never") while it was malformed. `calendar.x()` places
+    // custom properties in the same wrong spot, so there is no conformant way to keep the hint
+    // with this library.
+    //
+    // Little is lost: it was only ever a hint, Apple ignores it in favour of the subscription's
+    // own Auto-refresh setting, and a client that polls on its own schedule is the normal case.
     url: request.url,
   });
 

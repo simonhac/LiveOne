@@ -218,19 +218,28 @@ describe("GET …/calendar.ics", () => {
     const lines = (await (await feed(AREA, `?token=${TOKEN}`)).text()).split(
       "\r\n",
     );
-    const firstComponent = lines.findIndex((l) => l === "BEGIN:VTIMEZONE");
+    const firstComponent = lines.findIndex(
+      (l) => l.startsWith("BEGIN:V") && l !== "BEGIN:VCALENDAR",
+    );
     const strays = lines
       .slice(firstComponent)
-      .filter((l) => l.startsWith("TIMEZONE-ID") || l.startsWith("X-WR-"));
+      .filter((l) =>
+        /^(TIMEZONE-ID|X-WR-|REFRESH-INTERVAL|X-PUBLISHED-TTL|NAME:|URL:|PRODID|VERSION)/.test(
+          l,
+        ),
+      );
     expect(strays).toEqual([]);
   });
 
-  it("ships a real VTIMEZONE and a publish TTL", async () => {
+  it("ships a real VTIMEZONE", async () => {
     const body = await (await feed(AREA, `?token=${TOKEN}`)).text();
-    // Without the VTIMEZONE component Apple Calendar cannot resolve the TZID above.
+    // Without the VTIMEZONE component a client cannot resolve the TZID on every DTSTART above.
     expect(body).toContain("BEGIN:VTIMEZONE");
     expect(body).toContain(`TZID:${TZ}`);
-    expect(body).toContain("X-PUBLISHED-TTL:PT1H");
+    // 🛑 And NO refresh hint: it is the only thing that emits calendar properties after a
+    // component, which is not legal iCalendar. Clients poll on their own schedule.
+    expect(body).not.toContain("X-PUBLISHED-TTL");
+    expect(body).not.toContain("REFRESH-INTERVAL");
   });
 
   it("🛑 says so LOUDLY when a zone has no VTIMEZONE data", async () => {
