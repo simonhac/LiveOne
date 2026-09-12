@@ -6,7 +6,7 @@
     "packages/*"
   ],
   "scripts": {
-    "dev": "concurrently \"next dev\" \"tsc --noEmit --watch\"",
+    "dev": "concurrently \"next dev\" \"tsc --noEmit --watch --preserveWatchOutput\" \"tsc --noEmit --watch --preserveWatchOutput -p tsconfig.scripts.json\"",
     "dev:no-typecheck": "next dev",
     "check:routes": "node scripts/check-route-slugs.mjs",
     "check:readings": "node scripts/check-readings-boundary.mjs",

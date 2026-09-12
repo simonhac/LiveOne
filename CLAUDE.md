@@ -4,17 +4,22 @@
 
 **Never kill or restart the dev server just to check compilation!**
 
-- The dev server already runs `tsc --noEmit --watch` - it shows all TypeScript errors in real-time
-- Look for `[1]` prefixed lines in the dev server output for TypeScript compilation status
-- `[1] X:XX:XX pm - Found 0 errors` means TypeScript is happy
-- `[1] X:XX:XX pm - Found N errors` means there are TypeScript issues
+- The dev server already runs **two** `tsc --noEmit --watch` processes - they show all TypeScript
+  errors in real-time
+- Look for `[1]` and `[2]` prefixed lines in the dev server output for compilation status.
+  **`[1]` is the app** (`tsconfig.json`) and **`[2]` is `scripts/**`** (`tsconfig.scripts.json`) -
+  the app config `exclude`s `scripts`, so `[1]` alone is blind to every operator CLI and utility
+  script, which is how 8 errors once sat on `main` unnoticed across three PRs
+- `[N] X:XX:XX pm - Found 0 errors` means that project is happy; **both** must be at 0
 
 **Never run `npm run build` while the dev server is running** - it will interfere with the dev server.
 
 To check TypeScript compilation:
 
-1. **First choice**: Check the running dev server output (look for `[1]` lines)
-2. **Second choice**: Run `npm run type-check` in a separate terminal (doesn't build, just checks types)
+1. **First choice**: Check the running dev server output (look for `[1]` **and** `[2]` lines)
+2. **Second choice**: Run `npm run type-check` in a separate terminal (doesn't build, just checks
+   types) - this runs both projects, and `.github/workflows/typecheck.yml` runs the same command on
+   every PR (reporting only; it does not block a merge)
 3. **Never**: Kill the dev server just to restart it to check compilation
 4. **Never**: Run `npm run build` to check compilation
 
