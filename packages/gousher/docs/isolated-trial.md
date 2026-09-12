@@ -216,3 +216,29 @@ range so both interval boundaries are supported; for example compare 00:05–00:
 using 00:00–01:00 exports. The comparison tool never extrapolates a missing boundary.
 Exporting a whole hour and comparing its final boundary without following data will
 correctly leave that energy window unqualified.
+
+## Operational preflight — 2026-09-12 23:06 UTC
+
+Read-only Fly machine inventory found production `liveone-flyhub` started, and
+`liveone-gousher-trial` plus `liveone-gousher-ops` stopped. The existing inspector
+snapshot at 23:06:42 UTC reported an empty spool, zero consecutive tick errors for
+both sources, a successful Fronius upload and inverter samples less than one second
+old. This is a point observation, not a new sustained baseline or coexistence result.
+
+The existing source inventory provides:
+
+| Surface | Evidence available | Limitation |
+| --- | --- | --- |
+| Existing inspector state | Per-inverter last successful fetch, source tick errors, delivery result, spool | A tick is not every background inverter read; no read-latency distribution |
+| Existing runtime telemetry | Process CPU, event-loop delay/utilization, memory and GC | Process health does not measure individual device-read failures |
+| Existing spool telemetry | Delivery backlog, drops and disk availability | Delivery success does not prove uninterrupted sampling |
+| LiveOne readings export | Received readings, measurement/receipt times and coverage | Missing reads and their causes cannot be reconstructed from successful uploads |
+
+The per-read failure/p95 recorder is the disabled trial monitor. The source inventory
+has not identified equivalent measurements in ordinary telemetry. A replacement gate
+needs review and a measured baseline; none has been selected or enabled here.
+
+The repository's existing Kinkora WireGuard route terminates on production flyhub.
+Reusing it would violate the independent-path requirement. Site-side access details
+for a new peer or trial machine are still needed. No router, VPN, production setting,
+collector assignment or trial machine was changed by this preflight.

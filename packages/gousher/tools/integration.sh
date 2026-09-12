@@ -16,7 +16,7 @@ unset PGSSLROOTCERT PGHOST PGPORT PGDATABASE PGUSER PGPASSWORD PGSERVICE PGSERVI
 cleanup() { "$PG_BINDIR/pg_ctl" -D "$trial_dir/postgres" -m fast stop > /dev/null 2>&1 || true; }
 trap cleanup EXIT
 "$PG_BINDIR/initdb" -D "$trial_dir/postgres" -A trust --no-locale -E UTF8 > "$trial_dir/initdb.log"
-"$PG_BINDIR/pg_ctl" -D "$trial_dir/postgres" -l "$trial_dir/postgres.log" -o "-h 127.0.0.1 -p $trial_port -k /tmp" start
+"$PG_BINDIR/pg_ctl" -D "$trial_dir/postgres" -l "$trial_dir/postgres.log" -o "-h 127.0.0.1 -p $trial_port -k /tmp -c timezone=UTC" start
 "$PG_BINDIR/createdb" -h 127.0.0.1 -p "$trial_port" gousher_test
 export GOUSHER_TEST_DATABASE_URL="postgresql://$(id -un)@127.0.0.1:$trial_port/gousher_test?sslmode=disable"
 export GOUSHER_REPLAY_DIR="$trial_dir"
