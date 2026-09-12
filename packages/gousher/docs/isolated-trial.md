@@ -135,16 +135,19 @@ The input contains `start`, `end`, `windowMs`, `minimumCoverage`, `absoluteToler
 `relativeTolerance`, and `reference`/`trial` objects. Each series contains `deviceId`,
 `physicalPath`, `metricType`, `unit`, `transform`, `cadenceMs` and `samples`.
 Samples contain `timestamp`, numeric-or-null `value`, optional `receivedTime`,
-`sessionId`, `error` and `dataQuality`. Assemble reference samples from retained
+`sessionId`, `counterEpoch`, `error` and `dataQuality`. Assemble reference samples from retained
 pages and trial samples from the separate receiver; retain this input with the report.
-No automatic trial-receiver adapter or scheduled review is wired up yet.
+The retained-export adapter described below assembles this input; scheduled review is not wired up yet.
 
 Supported metrics are power (W), SOC (%) and cumulative energy (Wh, transform `d`).
 The two sides must declare matching unit/transform semantics. Power/SOC use the mean
 of occupied cadence-slot means in each UTC window. Coverage is occupied valid slots
 out of expected slots, so bursts cannot fill missing slots. Energy differences use
 common boundaries, linearly interpolated only across gaps of at most 1.5 cadences;
-startup extrapolation, falling counters and session changes invalidate the window.
+startup extrapolation, falling counters and explicit counter-epoch changes invalidate the window.
+Ingestion session IDs are per-upload identities and do not identify counter resets.
+The current exports have no counter epoch: a reset that catches up between samples
+cannot be detected from values alone. This remains a limitation of live energy evidence.
 Incremental energy is deliberately unsupported until its interval semantics are verified.
 Windows must be complete, UTC-aligned and divisible by both cadences. Duplicate
 millisecond timestamps invalidate qualification. Reports include arrival lag (unknown
@@ -156,3 +159,60 @@ before comparison. No default qualification thresholds are asserted. This offlin
 report does not establish coexistence, supervisor health, or permission to activate
 live reads. Independent networking, production baseline and supervision gates above
 remain outstanding.
+
+### Comparing retained reference and receiver exports
+
+The existing trial receiver `/export` supplies batches in receipt-file order, with
+an immutable cutoff across pages. Download using its separate receiver credential:
+
+```sh
+# Supply GOUSHER_RECEIVER_TOKEN through the runner's secret environment.
+# Use the same AS_OF cutoff saved in the reference export's complete.json.
+npx tsx scripts/gousher/export-trial.ts https://RECEIVER_HOST/export \
+  POLLER_UUID REVISION SITE_ID \
+  START END AS_OF .context/trial-hour
+npx tsx scripts/gousher/compare-exports.ts policy.json \
+  .context/reference-hour .context/trial-hour .context/comparison-hour
+```
+
+All output directories must be new. The comparison command requires complete
+manifests and validates page order, continuation markers, assignment, revision,
+point identity, physical paths, units, transform semantics and cutoff consistency.
+A missing trial point contributes null; ambiguous repeated paths are rejected.
+It writes `input.json`, `report.json` and `sources.json` with SHA-256 hashes of the
+policy, manifests and pages. Keep the original directories with these outputs.
+The receiver does not export per-batch receipt times, so trial arrival lag is
+unknown; export time is never substituted for arrival time.
+
+The policy JSON contains:
+
+```json
+{
+  "pollerId": "11111111-1111-4111-8111-111111111111",
+  "revision": 2,
+  "vendorSiteId": "REPLACE_WITH_ASSIGNED_SITE",
+  "deviceId": "22222222-2222-4222-8222-222222222222",
+  "pointId": "33333333-3333-4333-8333-333333333333",
+  "referencePath": "REPLACE_WITH_PRODUCTION_PHYSICAL_PATH",
+  "trialPath": "REPLACE_WITH_TRIAL_PHYSICAL_PATH",
+  "metricType": "power",
+  "unit": "W",
+  "transform": "n",
+  "start": "2026-09-13T00:05:00Z",
+  "end": "2026-09-13T00:55:00Z",
+  "windowMs": 300000,
+  "referenceCadenceMs": 60000,
+  "trialCadenceMs": 60000,
+  "minimumCoverage": 1,
+  "absoluteTolerance": 0,
+  "relativeTolerance": 0
+}
+```
+
+These zero-tolerance example values are placeholders, not qualified live thresholds.
+Set cadence to the exported **reporting** cadence, not the two-second device read
+cadence. For cumulative energy, export extra readings before and after the comparison
+range so both interval boundaries are supported; for example compare 00:05–00:55
+using 00:00–01:00 exports. The comparison tool never extrapolates a missing boundary.
+Exporting a whole hour and comparing its final boundary without following data will
+correctly leave that energy window unqualified.

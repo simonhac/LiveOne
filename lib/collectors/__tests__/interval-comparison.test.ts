@@ -87,12 +87,12 @@ describe("independent interval comparison", () => {
     q.trial.samples.shift();
     expect(compareIntervals(q).windows[0].trial.value).toBeNull();
   });
-  it("flags counter and session resets", () => {
+  it("flags counter decreases and explicit counter lifetime changes", () => {
     const q = input(0, "energy");
     q.trial.samples[3].value = 0;
     expect(compareIntervals(q).windows[0].trial.reset).toBe(true);
     const q2 = input(0, "energy");
-    q2.trial.samples[3].sessionId = "new-session";
+    Object.assign(q2.trial.samples[3], { counterEpoch: "new-run" });
     expect(compareIntervals(q2).passed).toBe(false);
   });
   it("rejects partial UTC windows and unverified energy increments", () => {
@@ -103,4 +103,15 @@ describe("independent interval comparison", () => {
     energy.reference.transform = energy.trial.transform = "n";
     expect(() => compareIntervals(energy)).toThrow(/semantics/);
   });
+});
+
+it("does not mistake per-upload session identity for a counter reset", () => {
+  const q = input(0, "energy");
+  q.trial.samples.forEach((p, i) => {
+    p.sessionId = `gousher/batch-${i}`;
+  });
+  q.reference.samples.forEach((p, i) => {
+    p.sessionId = `production-${i}`;
+  });
+  expect(compareIntervals(q).passed).toBe(true);
 });

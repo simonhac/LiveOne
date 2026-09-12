@@ -5,6 +5,8 @@ const sample = z.object({
   receivedTime: z.string().datetime().optional(),
   value: z.number().finite().nullable(),
   sessionId: z.string().nullable().optional(),
+  // Explicit counter lifetime only; ingestion sessions change on every upload.
+  counterEpoch: z.string().optional(),
   error: z.string().nullable().optional(),
   dataQuality: z.string().optional(),
 });
@@ -79,7 +81,7 @@ function summarize(s: Series, start: number, end: number) {
         !before ||
         !after ||
         after.time - before.time > s.cadenceMs * 1.5 ||
-        before.sessionId !== after.sessionId ||
+        before.counterEpoch !== after.counterEpoch ||
         after.value! < before.value!
       )
         return null;
@@ -99,7 +101,7 @@ function summarize(s: Series, start: number, end: number) {
       (p, i) =>
         i > 0 &&
         (p.value! < relevant[i - 1].value! ||
-          p.sessionId !== relevant[i - 1].sessionId),
+          p.counterEpoch !== relevant[i - 1].counterEpoch),
     );
     const first = at(start),
       last = at(end);
