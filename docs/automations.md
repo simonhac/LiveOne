@@ -107,6 +107,9 @@ So the key survives when the instants the rule generates are unchanged: same `st
 
 ## The subscribable calendar
 
+> Full detail — the published shape, the security model, and the four production failures it took
+> to render one event — is in [calendar.md](calendar.md). This section is the summary.
+
 `GET /api/v4/areas/:id/calendar.ics?token=…` is an iCalendar feed of an area's scheduled
 automations, built with `ical-generator` and carrying a real `VTIMEZONE` (without it Apple Calendar
 places every event an hour out for half the year).
