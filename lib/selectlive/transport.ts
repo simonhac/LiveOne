@@ -2,9 +2,9 @@ import tls from "node:tls";
 import type { Duplex } from "node:stream";
 import { SelectLiveError, protocolError } from "./errors";
 
-export const HOST = "select.live";
-export const PORT = 7528;
-export const TIMEOUT_MS = 15_000;
+const HOST = "select.live";
+const PORT = 7528;
+const TIMEOUT_MS = 15_000;
 
 /** One reader; retain excess bytes across both CRLF and binary protocol boundaries. */
 export class Channel {

@@ -6,4 +6,4 @@
  * module re-exports them so existing `@/lib/push/types` importers keep working.
  */
 
-export type { PushReading, GushRequestBody } from "@liveone/protocol";
+export type { GushRequestBody } from "@liveone/protocol";

@@ -12,7 +12,7 @@
 
 import type { TeslaCommandResult } from "./types";
 
-export interface TeslaCommandRequest {
+interface TeslaCommandRequest {
   /** Regional Fleet API base URL, e.g. https://fleet-api.prd.na.vn.cloud.tesla.com */
   baseUrl: string;
   accessToken: string;
@@ -43,7 +43,7 @@ export class TeslaCommandProtocolError extends Error {
  * Direct (unsigned) command transport over plain Fleet REST. Correct for
  * signing-exempt vehicles (pre-2021 Model S/X).
  */
-export class DirectCommandSigner implements TeslaCommandSigner {
+class DirectCommandSigner implements TeslaCommandSigner {
   async send(req: TeslaCommandRequest): Promise<TeslaCommandResult> {
     const url = `${req.baseUrl}/api/1/vehicles/${req.vehicleId}/command/${req.command}`;
 

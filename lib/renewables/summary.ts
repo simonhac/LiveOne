@@ -70,7 +70,7 @@ export interface RenewablesEdgeAgg {
   costKnownKwh: number;
 }
 
-export interface RenewablesMetrics {
+interface RenewablesMetrics {
   /** Metric 1 — renewable autarky (0..1); null when there was no consumption, or self-renewable was
    *  unknown on any consumption edge in the period (partial data — no silent fallback). */
   renewableAutarky: number | null;

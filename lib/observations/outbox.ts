@@ -213,7 +213,7 @@ export async function drainOutbox(limit = DEFAULT_BATCH): Promise<DrainResult> {
 // ---------------------------------------------------------------------------
 
 /** One row the relay could not publish, with the reason it recorded. */
-export interface OutboxFailure {
+interface OutboxFailure {
   id: number;
   deviceRid: number;
   createdAt: string;

@@ -167,7 +167,7 @@ export function reachableExitCodes(spec: CommandSpec): number[] {
 
 // ── spec types ───────────────────────────────────────────────────────────────
 
-export interface ArgSpec {
+interface ArgSpec {
   name: string;
   help: string;
   required?: boolean;
@@ -950,12 +950,12 @@ function writeStdout(s: string): void {
 }
 
 /** Resolves once everything written to stdout has actually been flushed. */
-export async function flushStdout(): Promise<void> {
+async function flushStdout(): Promise<void> {
   while (pendingWrites.length) await pendingWrites.shift();
 }
 
 /** The only path from a tool to stdout. */
-export function emit(
+function emit(
   model: unknown,
   human: (m: never) => string,
   csv?: (m: never) => string,
@@ -966,12 +966,12 @@ export function emit(
 }
 
 /** Progress and commentary. stderr, and silent under --quiet. */
-export function note(msg: string): void {
+function note(msg: string): void {
   if (!activeQuiet) process.stderr.write(msg + "\n");
 }
 
 /** A warning that is not fatal. Always stderr, never suppressed. */
-export function warn(msg: string): void {
+function warn(msg: string): void {
   process.stderr.write(msg + "\n");
 }
 
@@ -980,10 +980,7 @@ export function warn(msg: string): void {
  * this never blocks: parse() has already refused `--apply` without `--yes`, so reaching here
  * without a TTY means the caller passed `--yes`.
  */
-export async function confirm(
-  question: string,
-  yes: boolean,
-): Promise<boolean> {
+async function confirm(question: string, yes: boolean): Promise<boolean> {
   if (yes) return true;
   if (!process.stdin.isTTY || !process.stdout.isTTY) return false;
   const { createInterface } = await import("node:readline");

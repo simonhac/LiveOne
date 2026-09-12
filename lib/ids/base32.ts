@@ -9,7 +9,7 @@
  * Client-safe: no `node:crypto`, no `Buffer`. Pure bit math over `Uint8Array`.
  */
 
-export const BASE32_ALPHABET = "0123456789abcdefghjkmnpqrstvwxyz";
+const BASE32_ALPHABET = "0123456789abcdefghjkmnpqrstvwxyz";
 
 export type Base32ErrorReason = "bad-length" | "bad-char" | "overflow";
 

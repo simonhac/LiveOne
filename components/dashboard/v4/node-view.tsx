@@ -75,7 +75,7 @@ function areaUuidOf(id: AreaId): string | null {
 }
 
 /** Build a client-side ShellResolver from the SSR-authorized area and stable-device maps. */
-export function clientShellResolver(
+function clientShellResolver(
   areaById: Map<string, ReadableArea>,
   deviceById?: Map<string, ResolvedDevice>,
 ): ShellResolver {
@@ -408,7 +408,7 @@ function DeviceUnavailable() {
   );
 }
 
-export function NodeView({
+function NodeView({
   node,
   context,
   resolver,

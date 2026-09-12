@@ -267,7 +267,7 @@ export async function fetchEnphaseDay(
  * @param timezoneOffsetMin - Timezone offset in minutes
  * @returns true if we have at least 80% of evening intervals
  */
-export async function hasCompleteEveningData(
+async function hasCompleteEveningData(
   systemId: number,
   date: CalendarDate,
   timezoneOffsetMin: number,

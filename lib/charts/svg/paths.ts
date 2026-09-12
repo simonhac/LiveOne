@@ -26,8 +26,6 @@ import {
 } from "d3-shape";
 import type { ScaleLinear, ScaleTime } from "d3-scale";
 
-export type Scale = ScaleLinear<number, number> | ScaleTime<number, number>;
-
 /**
  * Interpolation between points.
  *

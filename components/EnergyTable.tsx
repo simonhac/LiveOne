@@ -35,7 +35,7 @@ import { formatPercent } from "@/lib/point/format-value";
  */
 export type EnergyTableMetric = "pct" | "cost" | "rate" | "emissions" | "ei";
 
-export const ENERGY_TABLE_METRICS: readonly EnergyTableMetric[] = [
+const ENERGY_TABLE_METRICS: readonly EnergyTableMetric[] = [
   "pct",
   "cost",
   "rate",

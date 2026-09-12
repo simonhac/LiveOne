@@ -27,14 +27,14 @@ export const TESLA_POLL_DEFAULTS: TeslaPollConfig = {
 
 // --- Fleet API cost model (rough, for the live estimate on the settings card) ---
 // Tesla pay-per-use rates and the per-account monthly credit.
-export const DATA_REQUEST_COST = 0.002; // getVehicles and getVehicleData each cost this
-export const WAKE_COST = 0.02; // wake_up command
+const DATA_REQUEST_COST = 0.002; // getVehicles and getVehicleData each cost this
+const WAKE_COST = 0.02; // wake_up command
 export const MONTHLY_CREDIT = 10;
-export const DAYS_PER_MONTH = 30;
+const DAYS_PER_MONTH = 30;
 // Assumption baked into the estimate: 2 h/day charging (car online), 22 h/day idle. We further
 // assume the car is asleep when idle (the costly case), so the wake toggle matters.
 export const CHARGING_HOURS = 2;
-export const IDLE_HOURS = 24 - CHARGING_HOURS;
+const IDLE_HOURS = 24 - CHARGING_HOURS;
 
 export interface PollEstimate {
   pollsPerDay: number;

@@ -40,7 +40,7 @@ import { DeviceRegistry } from "@/lib/registry/device-registry";
 import { areas as pgAreas } from "@/lib/db/planetscale/schema";
 import { Area, Device, type AreaId, type DeviceId } from "@/lib/ids";
 
-export type AreaRow = typeof pgAreas.$inferSelect;
+type AreaRow = typeof pgAreas.$inferSelect;
 
 /** Which leg to take when a handle names both an area and a device. */
 export type SubjectPreference = "device" | "area";
@@ -80,17 +80,8 @@ export function subjectDisplayTimezone(s: ServingSubject): string {
     : s.area.displayTimezone;
 }
 
-/** Owning Clerk user id, or null for an ownerless (public) subject. */
-export function subjectOwnerId(s: ServingSubject): string | null {
-  return s.kind === "device" ? s.device.ownerClerkUserId : s.area.ownerUserId;
-}
-
 export function subjectStatus(s: ServingSubject): string {
   return s.kind === "device" ? s.device.status : s.area.status;
-}
-
-export function subjectDisplayName(s: ServingSubject): string {
-  return s.kind === "device" ? s.device.displayName : s.area.name;
 }
 
 /**

@@ -20,8 +20,7 @@ import { pointIdOf } from "./point-ref";
 // --- the points ------------------------------------------------------------------------------
 
 /** Minutes remaining on a commanded run, and the ONLY writable point here (0 = stop). */
-export const GENERATOR_RUN_REQUEST_PATH =
-  "source.generator.control.request/duration";
+const GENERATOR_RUN_REQUEST_PATH = "source.generator.control.request/duration";
 /** `RunSupervisor.state()` as text — the state vocabulary below. */
 export const GENERATOR_STATUS_PATH = "source.generator.control.status/state";
 /** The commanded run's absolute deadline, epoch SECONDS. See `runMinutesLeft`. */

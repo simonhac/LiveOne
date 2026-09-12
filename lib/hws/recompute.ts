@@ -29,8 +29,8 @@ import {
 import { updateLatestPointValue } from "@/lib/kv-cache-manager";
 import { Point } from "@/lib/ids";
 
-export const WARMUP_MS = 2 * 24 * 60 * 60 * 1000; // model warmup lead-in (≈6× convergence time)
-export const DEFAULT_TRAILING_MS = 6 * 60 * 60 * 1000; // minutely-cron trailing window
+const WARMUP_MS = 2 * 24 * 60 * 60 * 1000; // model warmup lead-in (≈6× convergence time)
+const DEFAULT_TRAILING_MS = 6 * 60 * 60 * 1000; // minutely-cron trailing window
 const CHUNK_MS = 14 * 24 * 60 * 60 * 1000; // backfill chunk (≫ warmup)
 
 export interface HwsRecomputeSummary {

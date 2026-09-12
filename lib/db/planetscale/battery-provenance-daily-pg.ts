@@ -56,7 +56,7 @@ type PgDb = NonNullable<typeof planetscaleDb>;
 
 /** Learn everything causally from this stable anchor (the LiveOne birthdate) — matches the old
  *  ETA/CAPACITY/LOSSES_ANCHOR_MS, so params stay reproducible run-over-run. */
-export const LEARN_ANCHOR_MS = Date.parse("2025-08-16T00:00:00Z");
+const LEARN_ANCHOR_MS = Date.parse("2025-08-16T00:00:00Z");
 /** Fixed datasheet seed for the η EWMA — a CONSTANT (not window-measured) so η(day) is reproducible. */
 const ETA_SEED = 0.9;
 /** Fallback capacity seed (kWh) when the window's SoC swing is too thin to measure a slope. */
@@ -64,7 +64,7 @@ const CAPACITY_SEED = 15;
 /** Reduce-algorithm version. Bump when the reduction semantics change (daily.ts) — a mismatch on any
  *  cached row triggers a full input rebuild. Distinct from the CHECKPOINT model version, which lives
  *  inside fold_state.v. v3: charge_run_kwh (coulomb-floor input) added to the reduction. */
-export const BATTERY_DAILY_VERSION = 4;
+const BATTERY_DAILY_VERSION = 4;
 /** Always re-reduce this many trailing local days (absorbs late-arriving data near the tip). */
 const TRAILING_REREDUCE_DAYS = 3;
 /** agg_1d probe: a cached day is dirty when its stored register baseline moved by more than this. */

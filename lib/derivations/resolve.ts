@@ -84,7 +84,7 @@ export interface RunDetectorParams {
  * shape survives only because it is still the WIRE shape and still the stored column. It goes with
  * the column in 0064.
  */
-export interface RunDetectorSourcePoints {
+interface RunDetectorSourcePoints {
   signal: string;
   energy?: string | null;
   /**
@@ -95,7 +95,7 @@ export interface RunDetectorSourcePoints {
 }
 
 /** `derivations.params` for kind='hws-model'. Sparse overrides on the model constants. */
-export type HwsModelParams = Partial<HwsModelOptions>;
+type HwsModelParams = Partial<HwsModelOptions>;
 
 // ---------------------------------------------------------------------------
 // Resolved shapes
@@ -396,6 +396,8 @@ export async function listEnabledRunDetectors(
  *
  * "Owns", not "touches": the handle must be the detector's owner device. See
  * {@link resolveDeviceIdForHandle}.
+ *
+ * @knipignore No caller — handle+role lookup kept while derivations are still addressed by dx_/name/role.
  */
 export async function getRunDetectorForHandleRole(
   handle: number,
@@ -539,7 +541,7 @@ export interface EnsureRunDetectorInput {
   apply: boolean;
 }
 
-export type EnsureRunDetectorStatus =
+type EnsureRunDetectorStatus =
   | "created"
   | "exists"
   | "not-trackable"

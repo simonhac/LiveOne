@@ -198,7 +198,7 @@ async function writeDeviceStateErrorPg(
 /**
  * Common polling result interface
  */
-export interface PollingResult {
+interface PollingResult {
   systemId: number;
   displayName?: string;
   vendorType?: string;
@@ -216,6 +216,8 @@ export interface PollingResult {
 /**
  * Validate a device for polling
  * Returns a PollingResult with error if validation fails, or null if valid
+ *
+ * @knipignore No caller — pre-poll validation the adapters currently each do their own way.
  */
 export function validateDeviceForPolling(
   device: any,

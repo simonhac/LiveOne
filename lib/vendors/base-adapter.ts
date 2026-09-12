@@ -27,15 +27,6 @@ import {
  * Base adapter class that provides common functionality
  * Vendor-specific adapters can extend this class
  */
-/**
- * Result from evaluating the polling schedule
- */
-export interface ScheduleEvaluation {
-  shouldPoll: boolean;
-  reason: string;
-  nextPollTime: ZonedDateTime;
-}
-
 export abstract class BaseVendorAdapter implements VendorAdapter {
   abstract readonly vendorType: string;
   abstract readonly displayName: string;

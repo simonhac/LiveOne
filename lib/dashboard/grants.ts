@@ -51,7 +51,13 @@ export async function getGrant(
   return row ?? null;
 }
 
-/** Add (or re-role) a member on a dashboard. Upserts on the (dashboardId, clerkUserId) unique index. */
+/**
+ * Add (or re-role) a member on a dashboard. Upserts on the (dashboardId, clerkUserId) unique index.
+ *
+ * @knipignore SUPERSEDED, not pending: `replaceDashboardGrants` is the live write path
+ * (`PUT /api/v4/dashboards/{id}/grants` calls it at route.ts:197) and it adds, re-roles and
+ * removes in one transaction. This single-row variant has no caller and no niche.
+ */
 export async function createGrant(args: {
   dashboardId: string;
   clerkUserId: string;
@@ -85,7 +91,11 @@ export async function listGrantsForDashboard(
     .where(eq(dashboardGrants.dashboardId, uuid));
 }
 
-/** Remove one membership. Returns true if a row was deleted. */
+/**
+ * Remove one membership. Returns true if a row was deleted.
+ *
+ * @knipignore SUPERSEDED — see {@link createGrant}; `replaceDashboardGrants` deletes too.
+ */
 export async function revokeGrant(
   dashboardId: string,
   clerkUserId: string,

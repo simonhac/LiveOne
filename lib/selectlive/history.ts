@@ -6,7 +6,7 @@ import { type MemoryReader, type DeviceInfo, wordsFrom } from "./protocol";
 import { SelectLiveError, protocolError } from "./errors";
 
 export const EPOCH_MS = Date.UTC(2001, 0, 1);
-export interface Sector {
+interface Sector {
   start: number;
   end: number;
 }
@@ -128,7 +128,7 @@ export const supportedFormat = (version: number, words: number): boolean =>
 export function deviceTime(seconds: number): string {
   return new Date(EPOCH_MS + seconds * 1000).toISOString().slice(0, 19);
 }
-export function validateTimezone(timezone: string): void {
+function validateTimezone(timezone: string): void {
   try {
     new Intl.DateTimeFormat("en", { timeZone: timezone }).format();
   } catch {
@@ -448,7 +448,7 @@ export async function downloadHistory(
   return manifest;
 }
 
-export const CSV_COLUMNS = [
+const CSV_COLUMNS = [
   "device_seconds_since_2001",
   "device_time",
   "timestamp_utc",

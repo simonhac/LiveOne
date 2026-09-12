@@ -10,7 +10,7 @@ import { fetchJson } from "./fetcher";
  * `app/dashboard/[...slug]/page.tsx` writes this same shape into `MY_DASHBOARDS_KEY` and must be kept
  * in step — it hands the cache a `DashboardSummary` straight off the DAO, which spells them the old way.
  */
-export interface DashboardSummaryDTO {
+interface DashboardSummaryDTO {
   id: string; // opaque `db_…` dashboard id
   name: string | null;
   slug: string | null;

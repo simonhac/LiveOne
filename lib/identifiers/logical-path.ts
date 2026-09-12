@@ -15,7 +15,6 @@
  */
 
 // Validation patterns
-const SEGMENT_PATTERN = /^[A-Za-z0-9_-]+$/;
 const LOGICAL_PATH_STEM_PATTERN = /^[A-Za-z0-9_-]+(\.[A-Za-z0-9_-]+)*$/;
 
 /**
@@ -30,45 +29,6 @@ const LOGICAL_PATH_STEM_PATTERN = /^[A-Za-z0-9_-]+(\.[A-Za-z0-9_-]+)*$/;
  */
 export function isValidLogicalPathStem(stem: string): boolean {
   return LOGICAL_PATH_STEM_PATTERN.test(stem);
-}
-
-/**
- * Validate a metric type (single segment)
- *
- * @example
- * isValidMetricType("power") // true
- * isValidMetricType("energy") // true
- * isValidMetricType("soc") // true
- * isValidMetricType("") // false
- * isValidMetricType("foo.bar") // false
- */
-export function isValidMetricType(type: string): boolean {
-  return SEGMENT_PATTERN.test(type);
-}
-
-/**
- * Validate a full logical path (stem + "/" + metricType)
- *
- * @example
- * isValidLogicalPath("source.solar/power") // true
- * isValidLogicalPath("load/power") // true
- * isValidLogicalPath("power") // false (no slash)
- */
-export function isValidLogicalPath(path: string): boolean {
-  const slashIndex = path.indexOf("/");
-  if (slashIndex === -1 || slashIndex === 0 || slashIndex === path.length - 1) {
-    return false;
-  }
-
-  const stem = path.substring(0, slashIndex);
-  const metricType = path.substring(slashIndex + 1);
-
-  // Must have exactly one slash
-  if (metricType.includes("/")) {
-    return false;
-  }
-
-  return isValidLogicalPathStem(stem) && isValidMetricType(metricType);
 }
 
 /**
@@ -122,21 +82,6 @@ export function stemSplit(path: string | null | undefined): string[] {
   const stem = getLogicalPathStem(path);
   if (!stem) return [];
   return stem.split(".");
-}
-
-/**
- * Build a full logical path from stem and metric type
- *
- * @example
- * buildLogicalPath("source.solar", "power") // "source.solar/power"
- * buildLogicalPath(null, "power") // null
- */
-export function buildLogicalPath(
-  stem: string | null,
-  metricType: string,
-): string | null {
-  if (!stem) return null;
-  return `${stem}/${metricType}`;
 }
 
 /**

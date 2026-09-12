@@ -13,8 +13,6 @@ import { clerkClient } from "@clerk/nextjs/server";
 import {
   mintToken,
   revokeToken,
-  recordsOf,
-  shouldTouch,
   METADATA_KEY,
   type CliTokenRecord,
   type UserLike,
@@ -59,34 +57,4 @@ export async function revoke(
   // no-op write would still cost a Clerk round trip.
   if (revoked > 0) await writeRecords(userId, records);
   return revoked;
-}
-
-/**
- * Record that a token was used — throttled, and deliberately fire-and-forget.
- *
- * `lastUsedAt` is diagnostic. Awaiting a Clerk write on every authenticated CLI request would put
- * a network round trip on the request path to record something nobody reads at that resolution, so
- * this is called without `await` and swallows its own failures.
- */
-export function touchToken(
-  userId: string,
-  recordId: string,
-  now = new Date(),
-): void {
-  void (async () => {
-    try {
-      const user = await getUser(userId);
-      const records = recordsOf(user);
-      const hit = records.find((r) => r.id === recordId);
-      if (!hit || !shouldTouch(hit, now)) return;
-      await writeRecords(
-        userId,
-        records.map((r) =>
-          r.id === recordId ? { ...r, lastUsedAt: now.toISOString() } : r,
-        ),
-      );
-    } catch {
-      // A failed bookkeeping write must never affect the request that triggered it.
-    }
-  })();
 }

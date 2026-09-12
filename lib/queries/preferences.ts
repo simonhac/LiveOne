@@ -2,7 +2,7 @@ import { queryOptions } from "@tanstack/react-query";
 import { fetchJson } from "./fetcher";
 
 /** The subset of user preferences the client reads (`GET /api/user/preferences`). */
-export interface UserPreferencesDTO {
+interface UserPreferencesDTO {
   clerkUserId: string;
   defaultDashboardId: string | null; // opaque `db_…` dashboard id
 }

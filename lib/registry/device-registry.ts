@@ -26,7 +26,7 @@ export interface DeviceAddr {
   handle: number;
 }
 
-export class UnknownDeviceIdError extends Error {
+class UnknownDeviceIdError extends Error {
   constructor(
     public readonly kind: "device" | "device-handle",
     public readonly id: DeviceId | number,
@@ -169,7 +169,7 @@ async function ensureDeviceForHandle(
 }
 
 /** What an old integer handle names — either or both columns may be filled. */
-export interface HandleTargets {
+interface HandleTargets {
   /** `areas.id`, when this handle addresses an Area. */
   areaId?: string;
   /** The pre-minted device identity, when this handle addresses a physical device. */

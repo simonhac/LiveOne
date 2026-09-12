@@ -86,9 +86,6 @@ export interface MintedPointRow {
   updatedAt: Date | null;
 }
 
-/** @deprecated `point_info` is gone — use {@link MintedPointRow}. Kept so callers read unchanged. */
-export type PointInfoDbRow = MintedPointRow;
-
 /** The descriptive columns a caller supplies; identity (`id`/`rid`) is minted here. */
 export interface MintPointSpec {
   physicalPathTail: string;

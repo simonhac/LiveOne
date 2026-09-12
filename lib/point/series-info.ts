@@ -80,24 +80,3 @@ export function getSeriesPath(series: SeriesInfo): SeriesPath {
     series.aggregationField,
   );
 }
-
-/**
- * Get all SeriesInfo for a point (one per available aggregation)
- */
-export function getAllSeriesForPoint(
-  systemIdentifier: SystemIdentifier,
-  point: PointInfo,
-): SeriesInfo[] {
-  let aggregationFields: string[];
-
-  if (point.metricType === "energy") {
-    aggregationFields = ["delta"];
-  } else if (point.metricType === "soc") {
-    aggregationFields = ["last", "avg", "min", "max"];
-  } else {
-    // Power and other metrics
-    aggregationFields = ["avg", "min", "max", "last"];
-  }
-
-  return createSeriesInfos(systemIdentifier, point, aggregationFields);
-}

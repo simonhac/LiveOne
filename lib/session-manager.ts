@@ -26,7 +26,7 @@ export type SessionCause =
 /**
  * Input data for creating/recording a session
  */
-export interface SessionData {
+interface SessionData {
   sessionLabel?: string | null;
   systemId: number;
   cause: SessionCause;
@@ -48,7 +48,7 @@ export interface SessionData {
  * its `createdAt` holds the legacy store's `started` value, so `started`/`createdAt`
  * are both mapped from PG `createdAt`.
  */
-export interface SessionWithDevice {
+interface SessionWithDevice {
   id: string;
   sessionLabel: string | null;
   systemId: number;
@@ -69,7 +69,7 @@ export interface SessionWithDevice {
  * Session summary without response field (for list views)
  * Used by: querySessions
  */
-export type SessionSummary = Omit<SessionWithDevice, "response">;
+type SessionSummary = Omit<SessionWithDevice, "response">;
 
 /**
  * In-process registry of pending sessions. `createSession` stashes the session's
@@ -86,7 +86,7 @@ interface PendingSession {
 }
 const pendingSessions = new Map<string, PendingSession>();
 
-export class SessionManager {
+class SessionManager {
   private static instance: SessionManager | null = null;
 
   private constructor() {}

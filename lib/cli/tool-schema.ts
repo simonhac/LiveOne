@@ -366,7 +366,7 @@ export function descriptionFor(
 }
 
 /** The whole thing: exactly the three members Anthropic's format defines. */
-export function toAnthropicTool(
+function toAnthropicTool(
   cmd: FlatCommand,
   opts: { file: string },
 ): AnthropicTool {

@@ -280,7 +280,7 @@ export const FIELD_META = {
  * outside the categorical set (muted seam/quality series); amber is reserved for recal status
  * bands and never used as a series colour.
  */
-export const SERIES_PALETTE = {
+const SERIES_PALETTE = {
   blue: "rgb(59, 130, 246)", // blue-500
   green: "rgb(22, 163, 74)", // green-600
   violet: "rgb(139, 92, 246)", // violet-500
@@ -313,7 +313,7 @@ export interface ProvenanceSeriesDef {
   ) => number | null;
 }
 
-export interface ProvenanceAxisDef {
+interface ProvenanceAxisDef {
   /** Short unit tag rendered on the axis (top tick suffix). */
   unit: string;
   min?: number;

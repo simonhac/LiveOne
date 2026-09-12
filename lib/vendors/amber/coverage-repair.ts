@@ -21,12 +21,7 @@ import type { PollCollector } from "@/lib/observations/poll-collector";
 import type { CoverageRepairProvider, DayRepair } from "@/lib/coverage/types";
 
 /** Energy+cost on the E1 (import) and B1 (export) grid channels — the Amber points that gap. */
-export const AMBER_USAGE_TAILS = [
-  "E1/kwh",
-  "E1/cost",
-  "B1/kwh",
-  "B1/cost",
-] as const;
+const AMBER_USAGE_TAILS = ["E1/kwh", "E1/cost", "B1/kwh", "B1/cost"] as const;
 
 /**
  * Repair one Amber gap-day: UNCONDITIONALLY re-fetch `/usage` for that AEST day and store it through
@@ -38,7 +33,7 @@ export const AMBER_USAGE_TAILS = [
  * partially-present day. Coverage repair targets count-gaps, so we use the same unconditional
  * fetch→build→store path as the proven CSV/API backfill (`storeRecordsLocally` is idempotent).
  */
-export async function repairAmberDay(
+async function repairAmberDay(
   systemId: number,
   day: string,
   credentials: AmberCredentials,

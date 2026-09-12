@@ -19,10 +19,10 @@ import { DeviceRegistry } from "@/lib/registry";
 const FIVE_MIN_MS = 5 * 60 * 1000;
 
 export const DEFAULT_DELAY_SEC = 150; // initial guess (~2.5 min)
-export const MIN_DELAY_SEC = 60;
-export const MAX_DELAY_SEC = 300;
-export const EWMA_ALPHA = 0.3;
-export const MARGIN_SEC = 30; // poll a touch before the expected landing
+const MIN_DELAY_SEC = 60;
+const MAX_DELAY_SEC = 300;
+const EWMA_ALPHA = 0.3;
+const MARGIN_SEC = 30; // poll a touch before the expected landing
 export const MAX_POLLS_PER_INTERVAL = 4; // rate-limit guard within one 5-min window
 
 /** Live-poll lookback in steady state: re-pull the last 45 min (≈9 intervals) so the just-published
@@ -77,7 +77,7 @@ function isoOf(ms: number): string {
  * happened yet. Taking that as "captured" puts `lastSeenIntervalEndMs` in the future, which
  * `decidePoll` reads as "up to date" for the whole of the next window. Pure/testable.
  */
-export function newestClosedIntervalEndMs(
+function newestClosedIntervalEndMs(
   intervalEndMs: number,
   nowMs: number,
 ): number {

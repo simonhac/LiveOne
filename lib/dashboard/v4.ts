@@ -23,7 +23,7 @@
 import type { AreaId, DeviceId } from "@/lib/ids";
 import type { CardType } from "./card-types";
 
-export const DASHBOARD_DOC_VERSION = 4 as const;
+const DASHBOARD_DOC_VERSION = 4 as const;
 
 /** A node's local id — an opaque `n_…` string, NOT a scope-bearing TypeID (§8.3). Assigned by
  *  `normalizeDocV4` when absent (random 4-char base32; never recycled, never twinned across
@@ -32,7 +32,7 @@ export const DASHBOARD_DOC_VERSION = 4 as const;
 export type NodeId = string;
 
 /** Optional 12-column grid sizing hint. */
-export interface NodeSize {
+interface NodeSize {
   columns?: number; // 1–12
 }
 
@@ -78,14 +78,6 @@ export function emptyDashboardV4(): DashboardV4 {
     version: DASHBOARD_DOC_VERSION,
     root: { kind: "group", direction: "column", children: [] },
   };
-}
-
-/** Narrowing helpers. */
-export function isGroupNode(n: DashboardNode): n is GroupNode {
-  return n.kind === "group";
-}
-export function isCardNode(n: DashboardNode): n is CardNode {
-  return n.kind === "card";
 }
 
 /**

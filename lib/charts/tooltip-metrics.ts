@@ -68,7 +68,7 @@ export interface ProvenancePanels {
 }
 
 /** An average-power secondary value, from watts. */
-export function powerMetric(avgW: number): SankeyMetricValue {
+function powerMetric(avgW: number): SankeyMetricValue {
   const { value, unit } = formatValue(avgW, "W");
   return { value, unit };
 }

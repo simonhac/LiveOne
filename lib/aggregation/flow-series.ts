@@ -10,7 +10,7 @@ import { FlowSeries } from "./flow-matrix-core";
 import { classifyEnergyStem } from "@/lib/roles/registry";
 import { trustedByDeficit } from "./counter-deficit";
 
-export const SOLAR_PARENT_PATH = "source.solar";
+const SOLAR_PARENT_PATH = "source.solar";
 export const SOLAR_RESIDUAL_PATH = "source.solar.residual";
 /**
  * The load complement — consumption no sub-meter accounts for. Usually synthesised (master − Σ
@@ -18,20 +18,12 @@ export const SOLAR_RESIDUAL_PATH = "source.solar.residual";
  * case a point carries this stem and the synthesis is skipped. The load-side twin of
  * {@link SOLAR_RESIDUAL_PATH}.
  */
-export const REST_OF_HOUSE_PATH = "load.rest-of-house";
-/**
- * EV charging. A top-level load stem in its own right — NOT under `load.` — because the vendor's
- * house-load POWER figure excludes it; see the sibling-load handling in `buildFlowSeries`. Its
- * ENERGY register is the other way round (the meter counts everything), which `attachEnergyOverlays`
- * nets out.
- */
-export const EV_PATH = "ev.charge";
-
+const REST_OF_HOUSE_PATH = "load.rest-of-house";
 /**
  * Per-interval power below which a solar residual is treated as measurement noise rather than
  * real unmetered generation. Series power is in kW, so this is 20 W.
  */
-export const SOLAR_RESIDUAL_EPS_KW = 0.02;
+const SOLAR_RESIDUAL_EPS_KW = 0.02;
 
 /**
  * Resolve the canonical solar SOURCE series for the energy-flow matrix.

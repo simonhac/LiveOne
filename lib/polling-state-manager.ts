@@ -16,7 +16,7 @@ import type { PollStage } from "@/lib/vendors/types";
 import { iso8601Revivor } from "@/lib/json";
 
 // Status of an individual device during polling
-export type DevicePollingStatus =
+type DevicePollingStatus =
   | "pending"
   | "polling"
   | "completed"

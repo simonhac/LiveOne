@@ -1,0 +1,35 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema-jsonc.json",
+  "ignoreWorkspaces": ["packages/*"],
+
+  // `@knipignore <reason>` on an export means "dead by knip's measure, deliberately kept" — the
+  // reason is the point. Grep for it to find everything that is waiting on a decision.
+  "tags": ["-knipignore"],
+
+  "workspaces": {
+    ".": {
+      "entry": [
+        "config.ts",
+        "drizzle-planetscale.config.ts",
+        "lib/db/planetscale/schema.ts",
+        // Invoked by Conductor, not by a package.json script, so knip cannot infer them.
+        "env/*.mts",
+        "scripts/**/*.{ts,mjs,js}",
+        "tools/**/*.ts",
+        "e2e/**/*.spec.ts",
+        "**/__tests__/**/*.ts"
+      ],
+      "project": ["**/*.{ts,tsx,mts,mjs,js}"],
+      "ignore": ["scripts/perf/sydney-lambda/**"],
+      "ignoreDependencies": ["eslint", "eslint-config-next", "@liveone/protocol"]
+    }
+  },
+
+  "ignoreIssues": {
+    // Vendored shadcn/ui primitives. Their full export surface is upstream's, not ours; trimming it
+    // to what we happen to import today breaks the next copy-paste from the shadcn docs.
+    "components/ui/**": ["exports", "types"],
+    // Closed vocabularies consumed as string literals — see the comment on `MetricType`.
+    "lib/identifiers/enums.ts": ["enumMembers"]
+  }
+}

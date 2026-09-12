@@ -149,7 +149,7 @@ export function getFlowChevron(
  * Synthesize rest of house load point from master minus child loads
  * Creates a LatestPointValue with timestamp = max of master + all child loads
  */
-export function synthesizeRestOfHouse(
+function synthesizeRestOfHouse(
   latest: LatestPointValues,
 ): LatestPointValue | null {
   // Get master load
@@ -209,7 +209,7 @@ export function synthesizeRestOfHouse(
  * Synthesize master load point from energy balance if it doesn't exist
  * Creates a LatestPointValue with proper timestamp from source points
  */
-export function synthesizeMasterLoad(
+function synthesizeMasterLoad(
   latest: LatestPointValues,
 ): LatestPointValue | null {
   // Only synthesize if master load doesn't already exist

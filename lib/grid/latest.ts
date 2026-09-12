@@ -13,14 +13,14 @@
  * Display-unit conversion happens in the card.
  */
 
-export const GRID_LATEST_PATHS = {
+const GRID_LATEST_PATHS = {
   price: "grid.price/rate",
   emissionsIntensity: "grid.emissionsIntensity/intensity",
   renewables: "grid.renewables/proportion",
   demand: "grid.demand/power",
 } as const;
 
-export interface GridMetric {
+interface GridMetric {
   value: number;
   /** ISO-8601 measurement time (interval end). */
   measurementTime: string;

@@ -46,11 +46,6 @@ export function satisfies(caps: CapabilitySet, req: CapReq): boolean {
   return req.any.some((c) => caps.has(c));
 }
 
-/** Whether a capability requirement references at least one capability at all (non-empty). */
-export function isSatisfiable(req: CapReq): boolean {
-  return ("all" in req ? req.all : req.any).length > 0;
-}
-
 export interface NodeCatalogEntry {
   id: KnownCardType;
   label: string;

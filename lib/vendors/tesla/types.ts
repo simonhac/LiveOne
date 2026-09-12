@@ -44,7 +44,7 @@ export interface TeslaChargeState {
 }
 
 // Drive state from vehicle_data
-export interface TeslaDriveState {
+interface TeslaDriveState {
   latitude: number;
   longitude: number;
   speed: number | null; // mph, null when parked
@@ -53,7 +53,7 @@ export interface TeslaDriveState {
 }
 
 // Vehicle state from vehicle_data
-export interface TeslaVehicleState {
+interface TeslaVehicleState {
   odometer: number;
   locked: boolean;
   car_version: string;
@@ -105,13 +105,6 @@ export interface TeslaRegion {
   region: string; // e.g. "na", "eu"
   fleet_api_base_url: string;
 }
-
-// Charge-control commands supported on the Fleet API.
-export type TeslaChargeCommand =
-  | "charge_start"
-  | "charge_stop"
-  | "set_charge_limit"
-  | "set_charging_amps";
 
 // Parsed result of a Tesla command POST ({ response: { result, reason } }).
 export interface TeslaCommandResult {

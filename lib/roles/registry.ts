@@ -39,7 +39,7 @@
 export type RoleId = "solar" | "battery" | "load" | "grid" | "ev" | "generator";
 
 /** Energy-flow side. `bidi` roles (battery, grid) split into a source half and a load half. */
-export type RoleCategory = "source" | "load" | "bidi";
+type RoleCategory = "source" | "load" | "bidi";
 
 export interface RoleDef {
   id: RoleId;

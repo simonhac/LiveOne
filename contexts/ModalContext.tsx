@@ -53,23 +53,3 @@ export function useModalContext() {
   }
   return context;
 }
-
-/**
- * Hook to register a modal with the global modal context
- * Usage: useModalRegistration('my-modal-id', isOpen)
- */
-export function useModalRegistration(modalId: string, isOpen: boolean) {
-  const { registerModal, unregisterModal } = useModalContext();
-
-  // Register/unregister based on isOpen state
-  if (isOpen) {
-    registerModal(modalId);
-  } else {
-    unregisterModal(modalId);
-  }
-
-  // Cleanup on unmount
-  return () => {
-    unregisterModal(modalId);
-  };
-}

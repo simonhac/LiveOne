@@ -13,7 +13,7 @@
 import { parseDate } from "@internationalized/date";
 
 /** Earliest data (when point data collection began) — clamps every backfill range. */
-export const LIVEONE_BIRTHDATE_MS = Date.parse("2025-08-16T00:00:00Z");
+const LIVEONE_BIRTHDATE_MS = Date.parse("2025-08-16T00:00:00Z");
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 

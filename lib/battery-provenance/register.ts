@@ -68,22 +68,30 @@ export const BLEND_POINTS: BlendPointSpec[] = [
  * soc-meter monitor read the table, so these points are never created or written anymore. The specs are
  * kept ONLY as the canonical record of the legacy surface — the cleanup script
  * The completed legacy-param cleanup keyed its deletions on these metricTypes.
+ *
+ * @knipignore RETIRED, not pending — see above: the learn writes these into
+ * `battery_provenance_daily` and the points are never created. Kept only as the canonical record
+ * of the legacy surface the cleanup script keyed its deletions on. Delete once that is no longer
+ * worth having in the tree.
  */
 export const EFFICIENCY_POINT: BlendPointSpec = {
   metricType: "round-trip-efficiency",
   metricUnit: "%",
   displayName: "Battery Round-trip Efficiency",
 };
+/** @knipignore RETIRED legacy param-point spec — see {@link EFFICIENCY_POINT}. */
 export const CAPACITY_POINT: BlendPointSpec = {
   metricType: "usable-capacity",
   metricUnit: "kWh",
   displayName: "Battery Usable Capacity",
 };
+/** @knipignore RETIRED legacy param-point spec — see {@link EFFICIENCY_POINT}. */
 export const CHARGE_EFFICIENCY_POINT: BlendPointSpec = {
   metricType: "charge-efficiency",
   metricUnit: "%",
   displayName: "Battery Charge Efficiency",
 };
+/** @knipignore RETIRED legacy param-point spec — see {@link EFFICIENCY_POINT}. */
 export const IDLE_LOSS_POINT: BlendPointSpec = {
   metricType: "idle-loss",
   metricUnit: "kWh/day",

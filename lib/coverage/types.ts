@@ -39,7 +39,7 @@ export interface CoverageGapDay {
   points: PointShortfall[]; // only points that are short
 }
 
-export type RepairStatus = "repaired" | "unsettled" | "error" | "would-repair";
+type RepairStatus = "repaired" | "unsettled" | "error" | "would-repair";
 
 /** Outcome of attempting to backfill one gap-day. */
 export interface DayRepair {

@@ -96,7 +96,7 @@ export const DEFAULT_DELAY_OFF_CADENCE_MULTIPLE = 3;
  */
 const MIN_ON_INTERVALS_FOR_CADENCE = 4;
 
-export type CloseReason = "gap" | "boundary" | null;
+type CloseReason = "gap" | "boundary" | null;
 
 export interface DetectedPeriod {
   startMs: number;

@@ -37,20 +37,6 @@ export function isProduction(): boolean {
 }
 
 /**
- * Check if running in development
- */
-export function isDevelopment(): boolean {
-  return getEnvironment() === "dev";
-}
-
-/**
- * Check if running in test mode
- */
-export function isTest(): boolean {
-  return getEnvironment() === "test";
-}
-
-/**
  * Environment label for outbound alert/webhook messages.
  *
  * POLICY (2026-07-16): the OBSERVATIONS_ALERT_WEBHOOK_URL Slack webhook is shared

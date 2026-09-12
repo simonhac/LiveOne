@@ -17,7 +17,7 @@
  */
 
 /** A run of consecutive drawable points, as an SVG `points` string. */
-export type SparklineSegment = string;
+type SparklineSegment = string;
 
 export interface SparklineGeometry {
   /** One entry per contiguous run of non-null values; empty when nothing is drawable. */

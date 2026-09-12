@@ -68,7 +68,7 @@ interface SubjectBlockCommon {
   pollingStatus: PollingStatusBlock;
 }
 
-export interface DeviceBlock extends SubjectBlockCommon {
+interface DeviceBlock extends SubjectBlockCommon {
   deviceId: DeviceId;
   vendorType: string;
   vendorSiteId: string;
@@ -88,7 +88,7 @@ export interface DeviceBlock extends SubjectBlockCommon {
  * seven nulls. An Area has no vendor connection and no hardware, so it has nothing to say about any of
  * them.
  */
-export interface AreaBlock extends SubjectBlockCommon {
+interface AreaBlock extends SubjectBlockCommon {
   areaId: AreaId;
   /**
    * `areas.day_offset_min` — the CANONICAL day-bucketing key, and not interchangeable with

@@ -8,8 +8,6 @@ import {
   type DevicePollingState,
 } from "@/lib/polling-state-manager";
 
-export type { PollingSessionState, DevicePollingState };
-
 interface UsePollingStateOptions {
   /** Use a shared singleton instance (default: true) */
   shared?: boolean;
@@ -120,44 +118,5 @@ export function usePollingState(
     disconnect,
     reset,
     getDevice,
-  };
-}
-
-/**
- * Hook for polling a single device
- * Convenience wrapper that extracts just the relevant device's state
- */
-export function useSingleDevicePolling(systemId: number | null) {
-  const { state, startPolling, disconnect, reset, getDevice } =
-    usePollingState();
-
-  const deviceState = useMemo(() => {
-    if (systemId === null) return null;
-    return getDevice(systemId) || null;
-  }, [systemId, getDevice]);
-
-  const startSinglePoll = useCallback(
-    (force = false, dryRun = false) => {
-      if (systemId === null) return;
-      const params = new URLSearchParams({
-        realTime: "true",
-        systemId: String(systemId),
-      });
-      if (force) params.set("force", "true");
-      if (dryRun) params.set("dryRun", "true");
-      startPolling(`/api/cron/minutely?${params}`);
-    },
-    [systemId, startPolling],
-  );
-
-  return {
-    sessionState: state,
-    deviceState,
-    isConnected: state.isConnected,
-    isComplete: state.isComplete,
-    error: state.error || deviceState?.error,
-    startPolling: startSinglePoll,
-    disconnect,
-    reset,
   };
 }

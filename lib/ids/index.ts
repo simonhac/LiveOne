@@ -11,36 +11,16 @@
  *   Point.toUuid(Device.generate());        // compile error — brands are distinct
  */
 export {
-  type TypeId,
   type DeviceId,
   type PointId,
   type AreaId,
-  type DashboardId,
-  type DerivationId,
-  type BindingId,
   type AutomationId,
-  type ParseError,
-  type ParseOk,
-  type ParseResult,
-  type ParseErrorCode,
   ID_PREFIX,
 } from "./types";
 
-export {
-  encodeTypeId,
-  decodeTypeId,
-  makeEntityCodec,
-  type EntityCodec,
-} from "./typeid";
+export { encodeTypeId, decodeTypeId, type EntityCodec } from "./typeid";
 
 export { newUuidV7, isCanonicalUuid } from "./uuid";
-export {
-  encodeBase32,
-  decodeBase32,
-  Base32Error,
-  BASE32_ALPHABET,
-} from "./base32";
-
 import type { EntityCodec } from "./typeid";
 import { makeEntityCodec } from "./typeid";
 

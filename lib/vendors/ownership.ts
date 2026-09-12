@@ -11,7 +11,7 @@
  * Note: a missing `credentialFields` is NOT a reliable signal — Enphase declares none yet still
  * needs an owner (OAuth). Hence this explicit allow-list.
  */
-export const APP_CREDENTIAL_VENDOR_TYPES: ReadonlySet<string> = new Set([
+const APP_CREDENTIAL_VENDOR_TYPES: ReadonlySet<string> = new Set([
   "openelectricity",
 ]);
 

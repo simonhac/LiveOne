@@ -41,7 +41,7 @@ function generateIntervalEndTimes(
 /**
  * Abbreviates quality string to single character for overview
  */
-export function abbreviateQuality(quality: string | null | undefined): string {
+function abbreviateQuality(quality: string | null | undefined): string {
   if (!quality) return ".";
   return quality.charAt(0).toLowerCase();
 }

@@ -50,7 +50,7 @@ const MINUTE_MS = 60_000;
  * with. The cap that stops a DOWN vendor being hammered is {@link BREAKER_AFTER_ERRORS}, which is
  * keyed on evidence of failure rather than on the clock.
  */
-export const RETRY_WINDOW_MINUTES = 2;
+const RETRY_WINDOW_MINUTES = 2;
 
 /**
  * Consecutive failed polls after which the retry window closes entirely (first attempt per slot

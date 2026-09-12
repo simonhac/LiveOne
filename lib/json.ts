@@ -27,27 +27,12 @@ const ISO8601_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+-]\d{2}:\d{2}$/;
  * const text = await response.text();
  * const data = JSON.parse(text, iso8601Revivor);
  * ```
- *
- * Or use the parseJsonWithDates helper:
- * ```typescript
- * const response = await fetch('/api/data');
- * const data = await parseJsonWithDates(response);
- * ```
  */
 export function iso8601Revivor(_key: string, value: any): any {
   if (typeof value === "string" && ISO8601_PATTERN.test(value)) {
     return new Date(value);
   }
   return value;
-}
-
-/**
- * Helper to parse JSON response with automatic date conversion
- * Use this instead of response.json() to get Date objects for ISO8601 timestamps
- */
-export async function parseJsonWithDates(response: Response): Promise<any> {
-  const text = await response.text();
-  return JSON.parse(text, iso8601Revivor);
 }
 
 // ============================================================================

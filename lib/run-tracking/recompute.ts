@@ -22,7 +22,7 @@ import { resolveIntensityInputPoints } from "@/lib/run-tracking/intensity";
 import { REHEAL_TRAILING_MS } from "@/lib/battery-provenance/recompute";
 import { ReadingsDao } from "@/lib/readings";
 
-export const DEFAULT_TRAILING_MS = 6 * 60 * 60 * 1000; // 6h trailing window for the minutely cron
+const DEFAULT_TRAILING_MS = 6 * 60 * 60 * 1000; // 6h trailing window for the minutely cron
 
 // Backfill chunk size. Each chunk is one bounded read + delete-and-reinsert transaction, so a
 // multi-month backfill never loads the whole history at once. Must comfortably exceed the longest
@@ -76,7 +76,7 @@ export interface RecomputeSummary {
   runsSplitByDataGap: number;
 }
 
-export interface RecomputeRetryOptions extends TransientPostgresRetryOptions {
+interface RecomputeRetryOptions extends TransientPostgresRetryOptions {
   /** Surface exhausted tracker failures after processing the remaining trackers. */
   failOnError?: boolean;
 }

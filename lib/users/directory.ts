@@ -20,7 +20,7 @@ import {
   type DeviceRecord,
 } from "@/lib/registry/device-config";
 
-export interface UserDeviceAccess {
+interface UserDeviceAccess {
   systemId: number;
   vendorType: string;
   vendorSiteId: string;

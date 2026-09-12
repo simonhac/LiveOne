@@ -113,7 +113,7 @@ export interface TemporalRange {
 }
 
 /** One URL param that was ignored, kept verbatim so the toast can quote what the user pasted. */
-export interface DroppedParam {
+interface DroppedParam {
   param: "start" | "end" | "offset";
   value: string;
 }

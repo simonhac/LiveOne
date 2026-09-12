@@ -412,6 +412,8 @@ export async function recompute5mForRawObservationsBestEffort(
 /**
  * 1d cron hook: recompute a device/day's 1d aggregates in PG from PG 5m. Best-effort.
  * No-op if PG isn't configured.
+ *
+ * @knipignore No caller — the best-effort variant of a recompute every current path does strictly.
  */
 export async function recompute1dForDayBestEffort(
   device: DeviceForDailyAgg,

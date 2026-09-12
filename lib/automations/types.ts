@@ -61,7 +61,16 @@ type _OutcomesAreComplete =
   Exclude<ExerciseOutcome, (typeof OUTCOMES)[number]> extends never
     ? true
     : never;
-// Referenced so `noUnusedLocals` keeps the checks above honest.
+/**
+ * 🛑 THIS ASSERTS NOTHING. It was meant to fail the build when a weekday or outcome is missing
+ * from the arrays above, but a missing member only makes the corresponding branch `never`, and
+ * `[never, true]` is a perfectly legal tuple type — nothing errors. The `satisfies` clauses on
+ * WEEKDAYS/OUTCOMES check that every listed value is valid, NOT that every valid value is listed,
+ * so the completeness check this was standing in for does not currently exist.
+ *
+ * @knipignore Kept only so the inert check stays visible until it is either made real (an
+ * assignment that fails on `never`) or removed along with the two conditional types.
+ */
 export type AutomationVocabularyIsInStep = [
   _WeekdaysAreComplete,
   _OutcomesAreComplete,

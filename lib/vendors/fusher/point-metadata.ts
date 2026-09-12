@@ -248,6 +248,8 @@ export const FUSHER_POINTS: FusherPointConfig[] = [
 
 /**
  * Helper to get metadata for a specific field
+ *
+ * @knipignore See the enphase copy — same convention, same absent caller.
  */
 export function getPointMetadata(
   field: keyof import("../../../app/api/push/fusher/route").FusherPushData,

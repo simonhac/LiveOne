@@ -56,7 +56,7 @@ export interface AreaBinding {
 }
 
 /** One member device of the area — `GET /api/v4/areas/{id}`'s `members[]`. */
-export interface AreaMember {
+interface AreaMember {
   /** The member's `dv_` TypeID — the currency `PUT …/members` speaks. */
   id: DeviceId;
   /** Its integer handle. Present even for a member `GET /api/v4/devices` filters out (inactive). */
@@ -85,7 +85,7 @@ export interface MemberChip {
  * v4 vocabulary: `displayName`→`name`, `alias`→`slug`, and `timezoneOffsetMin`→`dayOffsetMin` (a
  * rename — §7 makes the fixed day offset canonical and one number still writes both columns).
  */
-export interface AreaEditMeta {
+interface AreaEditMeta {
   /** The opaque `ar_` TypeID. */
   id: string;
   name: string;

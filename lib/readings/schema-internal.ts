@@ -20,10 +20,4 @@ export {
   pointReadings,
   pointReadingsAgg5m,
   pointReadingsAgg1d,
-  type PointReading,
-  type NewPointReading,
-  type PointReadingAgg5m,
-  type NewPointReadingAgg5m,
-  type PointReadingAgg1d,
-  type NewPointReadingAgg1d,
 } from "@/lib/db/planetscale/schema";

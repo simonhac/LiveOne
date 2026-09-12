@@ -688,7 +688,7 @@ export type SeededReconcileOutcome =
  * the unchanged 12h+7d warm-up fallback — this path must NEVER be less safe than the old one.
  * Writes blend agg_5m + KV latest only (no rollup, no checkpoints).
  */
-export async function reconcileBatteryProvenanceFromCheckpoint(
+async function reconcileBatteryProvenanceFromCheckpoint(
   db: PgDb,
   handle: number,
   nowMs: number,

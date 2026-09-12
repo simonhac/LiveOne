@@ -24,7 +24,7 @@
  */
 
 /** Vendor types that emit pre-aggregated 5-minute data directly (no raw `point_readings`). */
-export const FIVE_MIN_NATIVE_VENDOR_TYPES: ReadonlySet<string> = new Set([
+const FIVE_MIN_NATIVE_VENDOR_TYPES: ReadonlySet<string> = new Set([
   "amber",
   "enphase",
   "openelectricity",

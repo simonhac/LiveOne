@@ -39,7 +39,7 @@ export interface VendorCredentials {
 }
 
 // v1.1 metadata structure
-export interface CredentialsMetadataV11 {
+interface CredentialsMetadataV11 {
   version: string; // "1.1"
   credentials: Array<VendorCredentials>;
 }
@@ -192,6 +192,8 @@ export async function removeDeviceCredentials(
 
 /**
  * Get all credentials for a user
+ *
+ * @knipignore No caller — a per-user credential sweep with no operator verb behind it yet.
  */
 export async function getAllUserCredentials(
   userId: string,

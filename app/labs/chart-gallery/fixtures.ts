@@ -31,7 +31,7 @@ import type { ProvenanceBand } from "@/components/battery-provenance/ProvenanceC
  * winter). Chosen so the D window straddles a midnight, the W/M windows contain both weekend and
  * weekday shading bands, and the solar curve is a short winter day rather than a flat-topped one.
  */
-export const FIXED_NOW = new Date("2026-06-15T14:30:00+10:00");
+const FIXED_NOW = new Date("2026-06-15T14:30:00+10:00");
 
 /** Deterministic [0,1) noise — a plain LCG, so a case always renders identically. */
 function rng(seed: number): () => number {

@@ -82,11 +82,6 @@ const DERIVATION_INPUTS: ReadonlyMap<string, readonly string[]> = new Map([
   [REST_OF_HOUSE_PATH, [MASTER_LOAD_PATH]],
 ]);
 
-/** Paths the display layer can derive. Membership alone does NOT mean "withhold" — see below. */
-export const DISPLAY_DERIVED_PATHS: ReadonlySet<string> = new Set(
-  DERIVATION_INPUTS.keys(),
-);
-
 /**
  * Should the mechanical serving leg withhold `path` from an Area whose BOUND set covers
  * `boundPaths`?

@@ -12,9 +12,9 @@ import { getAreaMemberDeviceIds } from "./members";
 import { RESOLUTION_SLOTS } from "./slots";
 import type { AreaConfig } from "./types";
 
-export type ResolutionMode = "explicit" | "auto" | "config" | "absent";
-export type ResolutionReason = "ambiguous" | "inactive" | "missing";
-export type ResolutionProducer =
+type ResolutionMode = "explicit" | "auto" | "config" | "absent";
+type ResolutionReason = "ambiguous" | "inactive" | "missing";
+type ResolutionProducer =
   | { kind: "point"; id: PointId }
   | { kind: "config"; key: string }
   | null;

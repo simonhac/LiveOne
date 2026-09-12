@@ -8,7 +8,7 @@ import { clerkClient } from "@clerk/nextjs/server";
 /**
  * Username cache entry
  */
-export interface UsernameCacheEntry {
+interface UsernameCacheEntry {
   clerkId: string; // Clerk user ID
   lastUpdatedTimeMs: number; // Unix timestamp in milliseconds when cache was last updated
 }
@@ -98,7 +98,7 @@ export async function getUserIdByEmail(email: string): Promise<string | null> {
  * @param username - Username
  * @param clerkId - Clerk user ID
  */
-export async function cacheUsernameMapping(
+async function cacheUsernameMapping(
   username: string,
   clerkId: string,
 ): Promise<void> {
@@ -115,7 +115,7 @@ export async function cacheUsernameMapping(
  *
  * @param username - Old username to invalidate
  */
-export async function invalidateUsernameCache(username: string): Promise<void> {
+async function invalidateUsernameCache(username: string): Promise<void> {
   await kv.del(kvKey(`username:${username}`));
 }
 
@@ -126,6 +126,8 @@ export async function invalidateUsernameCache(username: string): Promise<void> {
  * @param oldUsername - Previous username (to invalidate)
  * @param newUsername - New username (to cache)
  * @param clerkId - Clerk user ID
+ *
+ * @knipignore No caller, but documented as live in docs/architecture/kv-store.md:178 — resolve the doc and the code together.
  */
 export async function updateUsernameCache(
   oldUsername: string | null,

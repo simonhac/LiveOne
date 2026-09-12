@@ -35,7 +35,7 @@ export const DEFAULT_MARGIN: ChartMargin = {
   left: 44,
 };
 
-export interface PlotBox {
+interface PlotBox {
   /** Inner drawing area, excluding the margins. */
   width: number;
   height: number;

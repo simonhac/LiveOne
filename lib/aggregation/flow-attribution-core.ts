@@ -5,7 +5,4 @@
  * attribution entry point (`computeFlowAttribution` = `computeFlowAccounting` with intensities supplied).
  */
 export { computeFlowAccounting as computeFlowAttribution } from "./flow-matrix-core";
-export type {
-  SourceIntensity,
-  FlowAccountingResult as FlowAttributionResult,
-} from "./flow-matrix-core";
+export type { SourceIntensity } from "./flow-matrix-core";

@@ -103,15 +103,6 @@ export function capabilitiesFromLatest(
   return caps;
 }
 
-/** Union of capability sets (an area over its members). Compound caps are merged in by the resolver. */
-export function unionCapabilities(
-  sets: Iterable<CapabilitySet>,
-): Set<CapabilityId> {
-  const out = new Set<CapabilityId>();
-  for (const s of sets) for (const c of s) out.add(c);
-  return out;
-}
-
 /**
  * Whether a set of logical paths warrants the AGGREGATE (stacked-area site) chart layout rather than a
  * single lines chart — the vendor-free replacement for `getLayout(vendorType) === "site"`.

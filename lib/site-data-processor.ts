@@ -55,7 +55,7 @@ export interface ProcessedSiteData {
 /**
  * Series data from the history API with parsed path
  */
-export interface ParsedSeries {
+interface ParsedSeries {
   id: string;
   type: string;
   units: string;

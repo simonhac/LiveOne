@@ -69,7 +69,7 @@ export function mintCode(
   return `${body}.${sign(body, opts.secret)}`;
 }
 
-export type CodeFailure =
+type CodeFailure =
   | "malformed"
   | "bad-signature"
   | "expired"
