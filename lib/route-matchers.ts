@@ -223,6 +223,24 @@ const cliTokenRoutes = [
   // report. Admitted with the two writers because it is how an operator CHECKS a write landed —
   // separating them would leave the CLI able to change resolution and unable to see the result.
   "/api/v4/areas/:id/resolution",
+  // The two RETIRE addresses — `liveone area purge`. Both authorize through `loadAreaForOwner`
+  // (owner-or-admin, `requireAuth` underneath), and the area is a PATH SEGMENT, so there is no
+  // unscoped form to reach — the property that made `derivations/:dxid/recompute` admissible.
+  //
+  // 🛑 Admitted HERE and deliberately NOT added to `publicRoutes`, which is where their materialising
+  // sibling `recompute-provenance` lives so a headless `CRON_SECRET` can drive it. A verb that
+  // DESTROYS does not need that door: `publicRoutes` admits anything holding the cron secret, while
+  // this bypass is presence-only and still resolves to a real user the area must be owned by.
+  //
+  // 🛑 `flows` is the one to weigh, and it is worse than its neighbour. `point_readings_flow_attr_1d`
+  // is the Sankey for EVERY complete area (`flow_1d` was retired into it), and deleting from it is
+  // not cron-recoverable: `rehealStaleAttrDays` finds work by selecting FROM that table, so a deleted
+  // day is not stale, it is absent, and only an explicit `recompute-provenance` over the range brings
+  // it back. The route therefore REQUIRES `start`+`end` and returns the restore command it owes you.
+  // `provenance` is the safe one by comparison — the learn rebuilds from a fixed anchor whenever its
+  // table is empty, so deletion there is a supported operation rather than damage.
+  "/api/v4/areas/:id/flows",
+  "/api/v4/areas/:id/provenance",
   // The observations queue — `liveone queue`. A SEPARATE address from
   // `/api/admin/observations/info` precisely so this bypass does not have to widen to
   // `/api/admin`; the handler is `requireAdmin`, so a non-admin token 403s here.

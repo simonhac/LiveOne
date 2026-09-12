@@ -1614,6 +1614,57 @@ async function delete1dRange(
 }
 
 /**
+ * Delete every aggregate row belonging to a given set of POINTS, across both twins.
+ *
+ * POINT-scoped, unlike `delete1dRange` next door, which is day-keyed and fleet-wide. This is the
+ * retire path for DERIVED series: the battery-provenance fold writes six `bidi.battery/*` points
+ * onto an Area's helper device, and when that Area stops being a site nothing refreshes them and
+ * nothing removes them — they freeze and keep answering. `lib/areas/purge-provenance.ts` is the
+ * caller.
+ *
+ * 🛑 Lives here rather than in the caller because `point_readings_agg_5m` / `_agg_1d` are hot tables
+ * behind the readings seam (`scripts/check-readings-boundary.mjs` is the prebuild gate that enforces
+ * it). The caller resolves WHICH points; this decides how they are deleted.
+ *
+ * Deliberately has no "all points" form — an empty `pointRids` deletes nothing and returns zero,
+ * rather than degenerating into an unfiltered delete of both aggregate tables.
+ */
+async function deleteAggsForPoints(
+  pointRids: number[],
+  exec?: ReadingsExec,
+): Promise<{ deleted5m: number; deleted1d: number }> {
+  if (pointRids.length === 0) return { deleted5m: 0, deleted1d: 0 };
+  const db = exec ?? requirePlanetscaleDb();
+  const r5 = await db
+    .delete(pointReadingsAgg5m)
+    .where(inArray(pointReadingsAgg5m.pointRid, pointRids))
+    .returning({ pointRid: pointReadingsAgg5m.pointRid });
+  const r1 = await db
+    .delete(pointReadingsAgg1d)
+    .where(inArray(pointReadingsAgg1d.pointRid, pointRids))
+    .returning({ pointRid: pointReadingsAgg1d.pointRid });
+  return { deleted5m: r5.length, deleted1d: r1.length };
+}
+
+/** Count the aggregate rows `deleteAggsForPoints` would remove, without removing them. */
+async function countAggsForPoints(
+  pointRids: number[],
+  exec?: ReadingsExec,
+): Promise<{ agg5m: number; agg1d: number }> {
+  if (pointRids.length === 0) return { agg5m: 0, agg1d: 0 };
+  const db = exec ?? requirePlanetscaleDb();
+  const [c5] = await db
+    .select({ n: sql<number>`count(*)::int` })
+    .from(pointReadingsAgg5m)
+    .where(inArray(pointReadingsAgg5m.pointRid, pointRids));
+  const [c1] = await db
+    .select({ n: sql<number>`count(*)::int` })
+    .from(pointReadingsAgg1d)
+    .where(inArray(pointReadingsAgg1d.pointRid, pointRids));
+  return { agg5m: c5?.n ?? 0, agg1d: c1?.n ?? 0 };
+}
+
+/**
  * Overwrite the `value` of existing raw readings, keyed on the real PK (point rid, measurement_time).
  *
  * REPAIR-ONLY. The ingest pipeline never needs this — it inserts. This exists so a vendor-semantics
@@ -2016,6 +2067,8 @@ export const ReadingsDao = {
   upsert1d,
   updateRawValues,
   earliestAgg5mMs,
+  deleteAggsForPoints,
+  countAggsForPoints,
   deviceIdsWithAgg5mSince,
   latestAgg5mIntervalMsForDevice,
   countByCreatedAtSince,
