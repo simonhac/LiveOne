@@ -28,7 +28,7 @@ const reading = z.object({
   transform: z.string().nullable().optional(),
   value: z.unknown(),
 });
-export const trialPage = z.object({
+const trialPage = z.object({
   asOf: timestamp,
   nextCursor: z.string(),
   batches: z
@@ -85,7 +85,7 @@ const referencePage = z.object({
   nextCursor: timestamp.nullable(),
 });
 // A policy binds the reference identity and trial physical path explicitly. No name-based joins.
-export const artifactPolicy = comparisonInput
+const artifactPolicy = comparisonInput
   .omit({ reference: true, trial: true })
   .extend({
     pollerId: z.string().uuid(),
