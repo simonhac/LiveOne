@@ -3,7 +3,7 @@
  *
  * Routes and the evaluator go through here so their tests mock THIS module rather than stubbing
  * bare drizzle chains (a route test that asserts on a chain is asserting on drizzle, not on us).
- * Every write stamps `updatedAt`, like the derivations PATCH does.
+ * Every write stamps `updatedAt` and bumps `revision` (see `stamped()` below).
  */
 import { and, asc, eq, gte, inArray, isNull, lte, or, sql } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
@@ -71,6 +71,18 @@ export async function create(values: {
   return row;
 }
 
+/**
+ * What every write stamps: `updated_at` for humans, `revision` for the CAS.
+ *
+ * 🛑 Bumping `revision` here — in EVERY writer, not just the claim — is what makes it a row version
+ * rather than a dispatch counter. A writer that forgot to bump it would leave a stale `revision`
+ * looking fresh to `claimExerciseDispatch`, which is the whole thing the token exists to prevent.
+ */
+const stamped = () => ({
+  updatedAt: new Date(),
+  revision: sql`${automations.revision} + 1`,
+});
+
 export type AutomationPatch = Partial<
   Pick<
     AutomationRow,
@@ -92,7 +104,7 @@ export async function patch(
 ): Promise<AutomationRow | null> {
   const [row] = await requirePlanetscaleDb()
     .update(automations)
-    .set({ ...fields, updatedAt: new Date() })
+    .set({ ...fields, ...stamped() })
     .where(eq(automations.id, uuid))
     .returning();
   return row ?? null;
@@ -122,7 +134,7 @@ export async function armAutomation(
 ): Promise<void> {
   await requirePlanetscaleDb()
     .update(automations)
-    .set({ armedAt, armedContext, updatedAt: new Date() })
+    .set({ armedAt, armedContext, ...stamped() })
     .where(eq(automations.id, uuid));
 }
 
@@ -136,7 +148,7 @@ export async function disarmAutomation(
       armedAt: null,
       armedContext: null,
       ...(opts.disable ? { enabled: false } : {}),
-      updatedAt: new Date(),
+      ...stamped(),
     })
     .where(eq(automations.id, uuid));
 }
@@ -160,7 +172,7 @@ export async function recordFired(
       lastTriggeredAt: opts.firedAt,
       lastTriggeredRunStart: new Date(opts.anchorMs),
       ...(opts.disable ? { enabled: false } : {}),
-      updatedAt: new Date(),
+      ...stamped(),
     })
     .where(eq(automations.id, uuid));
 }
@@ -169,7 +181,7 @@ export async function recordFired(
 export async function disableAutomation(uuid: string): Promise<void> {
   await requirePlanetscaleDb()
     .update(automations)
-    .set({ enabled: false, updatedAt: new Date() })
+    .set({ enabled: false, ...stamped() })
     .where(eq(automations.id, uuid));
 }
 
@@ -231,7 +243,7 @@ export async function recordExerciseOutcome(
         ? { lastTriggeredRunStart: new Date(opts.context.slotAt) }
         : {}),
       ...(opts.context.outcome === "fired" ? { lastTriggeredAt: now } : {}),
-      updatedAt: new Date(),
+      ...stamped(),
     })
     .where(eq(automations.id, uuid));
 }
@@ -240,34 +252,29 @@ export async function recordExerciseOutcome(
  * The claim predicate, extracted ONLY so `store-claim.test.ts` can pin the SQL it generates without
  * a database. Nothing else should call it.
  *
- * 🛑 The comparison is truncated to MILLISECONDS, and that is load-bearing rather than cosmetic.
- * `updated_at` is `timestamp(6) DEFAULT now()` and `create()` above does not stamp it, so a row that
- * has never been written from JS carries MICROSECONDS (`…:43.616884`). node-postgres hands drizzle
- * the raw string, drizzle parses it with `new Date(…)` — which TRUNCATES to milliseconds — and sends
- * it back as `toISOString()` (`…:43.616Z`). A plain `updated_at = $2` therefore matched NOTHING for
- * any never-PATCHed row: every tick "lost" a claim nobody held and `fireExercise` returned silently,
- * so two live exercise rules never fired once. Compare at the precision the round trip survives.
- * Truncating (not rounding) is exactly right here because that is what V8 does on the way in.
+ * 🛑 The CAS key is the integer `revision`, and it is a timestamp no longer ON PURPOSE. Until #468
+ * this compared `updated_at`, a `timestamp(6) DEFAULT now()` column that `create()` above does not
+ * stamp — so a row that had never been written from JS carried MICROSECONDS (`…:43.616884`), which
+ * drizzle parses with `new Date(…)` (TRUNCATING to milliseconds) and sends back as `…:43.616Z`.
+ * `updated_at = $2` therefore matched NOTHING: every tick "lost" a claim nobody held, `fireExercise`
+ * returned silently, and two live generator-exercise rules never fired once.
  *
- * 🛑 `sql.param(…, automations.updatedAt)` is load-bearing too: it forces the COLUMN's own encoder,
- * which is UTC `toISOString()`. A bare `${updatedAt}` hands the `Date` straight to node-postgres,
- * which serialises it in the PROCESS's local zone (`…+10:00`); Postgres then drops the offset
- * coercing to `timestamp without time zone` and the predicate is silently wrong by the UTC offset.
- * `eq()` would not encode it either — its `bindIfParam` only does so when the left-hand side is a
- * driver-value encoder, and a `SQL` expression is not.
+ * Migration 0064 made every such column `timestamp(3)` so that class of mismatch cannot recur, but
+ * the deeper point is that an equality on a TIME is a comparison whose correctness depends on two
+ * serialisers agreeing about precision AND about the zone (a bare `${date}` parameter is encoded by
+ * node-postgres in the PROCESS's local zone, and Postgres silently drops the offset coercing to
+ * `timestamp without time zone`). An integer has neither failure mode, and it is the idiom this
+ * codebase already uses for optimistic concurrency — `dashboards.revision`.
  *
- * The general rule this is an instance of: **never compare a `defaultNow()`-populated `timestamp`
- * for equality against a value that has round-tripped through JS.**
+ * The house rule, recorded in `docs/architecture/data-model.md`: **optimistic concurrency uses an
+ * integer `revision`, never a timestamp.**
  */
-export function exerciseClaimWhere(uuid: string, updatedAt: Date) {
-  return and(
-    eq(automations.id, uuid),
-    sql`date_trunc('milliseconds', ${automations.updatedAt}) = ${sql.param(updatedAt, automations.updatedAt)}`,
-  );
+export function exerciseClaimWhere(uuid: string, revision: number) {
+  return and(eq(automations.id, uuid), eq(automations.revision, revision));
 }
 
 /**
- * Compare-and-set on `updatedAt`, taken immediately before dispatching a start.
+ * Compare-and-set on `revision`, taken immediately before dispatching a start.
  *
  * `/api/cron/derivations` holds no cron lease, so two invocations really can overlap. For a charge
  * limit a duplicate `turn_off` is harmless; here a duplicate dispatch re-extends a running engine's
@@ -275,19 +282,30 @@ export function exerciseClaimWhere(uuid: string, updatedAt: Date) {
  * there first.
  *
  * Correct under READ COMMITTED: the losing tick blocks on the row lock, then re-evaluates its
- * `WHERE` against the winner's committed row, whose `updated_at` is now a fresh JS millisecond value
- * that its own stale parameter cannot match.
+ * `WHERE` against the winner's committed row, whose `revision` has moved on past the value it read.
  *
- * See `exerciseClaimWhere` for why the comparison is not a plain `eq`.
+ * 🛑 What this does NOT do, and never did as an `updated_at` CAS either: it protects ticks that read
+ * the SAME revision, not ticks that read in sequence. A tick that lists the rule AFTER a previous
+ * tick's claim commits but BEFORE that tick reaches `recordExerciseOutcome` (the slot is consumed
+ * only once the dispatch returns) reads the bumped revision and claims it legitimately, and both
+ * dispatch. The window is the length of one dispatch — an HTTP round trip to the hub — against a
+ * minutely cron, so it needs a dispatch to outlive its own tick. Closing it properly means consuming
+ * the slot before dispatching, or a durable per-slot lease; both change what a crash mid-dispatch
+ * costs, so neither is a drive-by.
+ *
+ * The bump goes through `stamped()` like every other write, so it is `revision + 1` computed IN SQL
+ * rather than from the caller's arithmetic — the counter follows what the row actually holds.
+ *
+ * See `exerciseClaimWhere` for why the key is an integer and not `updated_at`.
  */
 export async function claimExerciseDispatch(
   uuid: string,
-  updatedAt: Date,
+  revision: number,
 ): Promise<boolean> {
   const rows = await requirePlanetscaleDb()
     .update(automations)
-    .set({ updatedAt: new Date() })
-    .where(exerciseClaimWhere(uuid, updatedAt))
+    .set(stamped())
+    .where(exerciseClaimWhere(uuid, revision))
     .returning({ id: automations.id });
   return rows.length > 0;
 }

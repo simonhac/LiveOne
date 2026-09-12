@@ -258,6 +258,7 @@ describe("wire codecs", () => {
       armedContext: { baselineKwh: 42.5, baselineAt: 1234 },
       createdAt: new Date(0),
       updatedAt: new Date(0),
+      revision: 1,
       ...over,
     }) as AutomationRow;
 

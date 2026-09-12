@@ -19,7 +19,9 @@
  * ## Key Differences
  *
  * 1. **Timestamps**: SQLite stores as unix epoch (seconds/ms), PG uses native timestamp.
- *    - All timestamps use `timestamp()` without timezone (data stored in UTC)
+ *    - All timestamps are `timestamp` WITHOUT timezone, holding UTC — declared through the `tsMs`
+ *      helper below, which pins the house precision at milliseconds. Read its doc comment before
+ *      adding a timestamp column; a bare `timestamp()` is a schema-shape test failure.
  *    - Time-series tables use native timestamps for optimal query performance
  *    - Migration: Convert epoch ms → `new Date(ms)` on insert
  *
@@ -59,6 +61,36 @@ import type { AreaLocation } from "@/lib/areas/types";
 import type { DeviceConfig } from "@/lib/capabilities/config";
 import type { AreaConfig } from "@/lib/areas/types";
 
+/**
+ * The house timestamp: UTC, no timezone, **millisecond** precision.
+ *
+ * 🛑 Use this — not bare `timestamp()` — for every new column. Bare `timestamp()` is
+ * `timestamp(6)`, which can hold a value JavaScript cannot represent, and a `DEFAULT now()` on such
+ * a column produces one on every insert. The round trip is lossy in one direction only: node-postgres
+ * hands drizzle the raw string, drizzle parses it with `new Date(…)` — which TRUNCATES to
+ * milliseconds — and writes it back as `toISOString()`. So `where(eq(col, rowFromTheDb.col))`
+ * compares `…43.616884` against `…43.616` and matches NOTHING, silently.
+ *
+ * That is not hypothetical: it is why two generator-exercise automations never fired (#468). At
+ * precision 3 Postgres rounds the `now()` default at write time, the stored value is exactly
+ * representable as a JS `Date`, and the equality simply works.
+ *
+ * NINE columns are deliberately still `timestamp(6)`; `__tests__/schema-shape.test.ts` names them and
+ * fails on a tenth. They are the ones where narrowing means a full table rewrite under
+ * `ACCESS EXCLUSIVE` on a table the ingest path writes every minute: `point_readings` (15.4M rows /
+ * 2.5 GB), `point_readings_agg_5m` (7.6M / 1.7 GB), `sessions` (1.3M / 1.4 GB) and
+ * `observations_outbox` (601 MB on prod — measured, and 22× its size on the dev mirror).
+ *
+ * What makes that safe is narrower than "nothing reads them" — those columns ARE read, for freshness
+ * probes, ingestion-health queries and the prod→dev sync watermarks. The property that matters is
+ * that **none of them is compared for EQUALITY against a value that has round-tripped through JS**:
+ * the ones used as keys (`measurement_time`, `received_time`, `interval_end`) have no DB-side default
+ * and every writer passes a JS `Date`, so they already hold whole milliseconds (0 of 5000 recent rows
+ * carry sub-ms digits on the dev mirror), and the `now()`-defaulted stamps beside them are only ever
+ * read with range comparisons.
+ */
+const tsMs = (name: string) => timestamp(name, { precision: 3 });
+
 // ============================================================================
 // `systems` — DROPPED by migration 0051 (config-v4 Phase 12, the terminal window).
 //
@@ -95,8 +127,8 @@ export const users = pgTable(
       () => dashboards.id,
       { onDelete: "set null" },
     ),
-    createdAt: timestamp("created_at").notNull().defaultNow(),
-    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+    createdAt: tsMs("created_at").notNull().defaultNow(),
+    updatedAt: tsMs("updated_at").notNull().defaultNow(),
   },
   (table) => ({
     defaultDashboardIdx: index("users_default_dashboard_idx").on(
@@ -135,6 +167,7 @@ export const sessions = pgTable(
     response: jsonb("response"),
     numRows: integer("num_rows").notNull(),
     // Migration: import from the legacy store's sessions.started
+    // 🛑 bare `timestamp(6)`, not `tsMs` — a deliberate exception; see `tsMs` and schema-shape.test.ts.
     createdAt: timestamp("created_at").notNull(),
   },
   (table) => ({
@@ -188,6 +221,7 @@ export const pointReadings = pgTable(
     sessionId: text("session_id").references(() => sessions.id),
 
     // Timestamps (UTC)
+    // 🛑 bare `timestamp(6)`, not `tsMs` — a deliberate exception; see `tsMs` and schema-shape.test.ts.
     measurementTime: timestamp("measurement_time").notNull(),
     receivedTime: timestamp("received_time").notNull(),
 
@@ -200,6 +234,7 @@ export const pointReadings = pgTable(
     dataQuality: text("data_quality").notNull().default("good"),
 
     // When this row was ingested into Postgres (defaultNow); distinct from measurement/received time.
+    // 🛑 bare `timestamp(6)`, not `tsMs` — a deliberate exception; see `tsMs` and schema-shape.test.ts.
     createdAt: timestamp("created_at").notNull().defaultNow(),
   },
   (table) => ({
@@ -224,6 +259,7 @@ export const pointReadingsAgg5m = pgTable(
     pointRid: integer("point_rid")
       .notNull()
       .references(() => points.rid),
+    // 🛑 bare `timestamp(6)`, not `tsMs` — a deliberate exception; see `tsMs` and schema-shape.test.ts.
     intervalEnd: timestamp("interval_end").notNull(),
 
     // Optional session tracking (text: UUIDv7 / stringified-int historical). No FK on the 5m twin.
@@ -241,6 +277,7 @@ export const pointReadingsAgg5m = pgTable(
     sampleCount: integer("sample_count").notNull(),
     errorCount: integer("error_count").notNull(),
     dataQuality: text("data_quality"),
+    // 🛑 bare `timestamp(6)`, not `tsMs` — a deliberate exception; see `tsMs` and schema-shape.test.ts.
     createdAt: timestamp("created_at").notNull().defaultNow(),
     updatedAt: timestamp("updated_at").notNull().defaultNow(),
   },
@@ -278,8 +315,8 @@ export const pointReadingsAgg1d = pgTable(
     // Sampling metadata
     sampleCount: integer("sample_count").notNull(),
     errorCount: integer("error_count").notNull(),
-    createdAt: timestamp("created_at").notNull().defaultNow(),
-    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+    createdAt: tsMs("created_at").notNull().defaultNow(),
+    updatedAt: tsMs("updated_at").notNull().defaultNow(),
   },
   (table) => ({
     pk: primaryKey({
@@ -347,10 +384,10 @@ export const pointReadingsFlowAttr1d = pgTable(
 
     sampleCount: integer("sample_count").notNull(), // # of 5m intervals that contributed
     version: integer("version").notNull().default(1), // algorithm version → backfill can detect stale rows
-    finalizedAt: timestamp("finalized_at"), // set once the day is past the estimated→final cutoff
+    finalizedAt: tsMs("finalized_at"), // set once the day is past the estimated→final cutoff
 
-    createdAt: timestamp("created_at").notNull().defaultNow(),
-    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+    createdAt: tsMs("created_at").notNull().defaultNow(),
+    updatedAt: tsMs("updated_at").notNull().defaultNow(),
   },
   (table) => ({
     pk: primaryKey({
@@ -384,7 +421,7 @@ export const batteryProvenanceDaily = pgTable(
 
     // Timeline anchor + shape. NULL first_interval_end = row not yet filled by the learn (e.g. a
     // checkpoint-only insert); the param read-back anchors each day's step at this timestamp.
-    firstIntervalEnd: timestamp("first_interval_end"),
+    firstIntervalEnd: tsMs("first_interval_end"),
     intervalCount: integer("interval_count").notNull().default(0),
 
     // Learn INPUTS (per-day reductions from agg_5m)
@@ -424,8 +461,8 @@ export const batteryProvenanceDaily = pgTable(
     foldState: jsonb("fold_state"),
 
     version: integer("version").notNull().default(1), // reduce-algorithm version (BATTERY_DAILY_VERSION)
-    createdAt: timestamp("created_at").notNull().defaultNow(),
-    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+    createdAt: tsMs("created_at").notNull().defaultNow(),
+    updatedAt: tsMs("updated_at").notNull().defaultNow(),
   },
   (table) => ({
     pk: primaryKey({ columns: [table.areaId, table.day] }),
@@ -486,9 +523,9 @@ export const amberForecastHistory = pgTable(
     // 'site' for the spot/renewables row kind; else the Amber channelType.
     channel: text("channel").notNull(),
     // Target interval end (nemTime), naive UTC — joins agg_5m.interval_end.
-    intervalEnd: timestamp("interval_end").notNull(),
+    intervalEnd: tsMs("interval_end").notNull(),
     // When this forecast revision was observed (one value per poll).
-    observedAt: timestamp("observed_at").notNull(),
+    observedAt: tsMs("observed_at").notNull(),
 
     // 'f' ForecastInterval | 'c' CurrentInterval (the interval now underway).
     intervalType: text("interval_type").notNull(),
@@ -508,7 +545,7 @@ export const amberForecastHistory = pgTable(
     spotPerKwh: doublePrecision("spot_per_kwh"), // wholesale spot, c/kWh
     renewables: doublePrecision("renewables"), // grid renewables, %
 
-    createdAt: timestamp("created_at").notNull().defaultNow(),
+    createdAt: tsMs("created_at").notNull().defaultNow(),
   },
   (table) => ({
     // Column ORDER is load-bearing, uniqueness is not: the hot path is the
@@ -562,10 +599,10 @@ export const shareTokens = pgTable("share_tokens", {
     .notNull()
     .references(() => dashboards.id, { onDelete: "cascade" }),
   label: text("label"),
-  createdAt: timestamp("created_at"),
-  expiresAt: timestamp("expires_at"),
-  revokedAt: timestamp("revoked_at"),
-  lastUsedAt: timestamp("last_used_at"),
+  createdAt: tsMs("created_at"),
+  expiresAt: tsMs("expires_at"),
+  revokedAt: tsMs("revoked_at"),
+  lastUsedAt: tsMs("last_used_at"),
 });
 
 // ============================================================================
@@ -593,6 +630,7 @@ export const observationsOutbox = pgTable(
     // The full QueueMessage (env, systemId, batchTime, observations?, session?),
     // republished verbatim by the relay.
     payload: jsonb("payload").notNull(),
+    // 🛑 bare `timestamp(6)`, not `tsMs` — a deliberate exception; see `tsMs` and schema-shape.test.ts.
     createdAt: timestamp("created_at").notNull().defaultNow(),
     // NULL until the relay enqueues it to QStash and QStash accepts it.
     publishedAt: timestamp("published_at"),
@@ -642,8 +680,8 @@ export const dashboards = pgTable(
     doc: jsonb("doc").notNull(),
     // Whole-doc revision counter; bumped by the /api/v4 PUT. DEFAULT 1.
     revision: integer("revision").notNull().default(1),
-    createdAt: timestamp("created_at").notNull().defaultNow(),
-    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+    createdAt: tsMs("created_at").notNull().defaultNow(),
+    updatedAt: tsMs("updated_at").notNull().defaultNow(),
   },
   (table) => ({
     // (owner_user_id, slug) unique — owner-scoped shortname (NULL slugs distinct). Index NAMES are
@@ -678,7 +716,7 @@ export const dashboardGrants = pgTable(
       .references(() => dashboards.id, { onDelete: "cascade" }),
     userId: text("user_id").notNull(),
     role: text("role").notNull(), // 'admin' | 'viewer'
-    createdAt: timestamp("created_at").notNull(),
+    createdAt: tsMs("created_at").notNull(),
   },
   (table) => ({
     pk: primaryKey({
@@ -753,8 +791,8 @@ export const areas = pgTable(
     // region directly. See docs/architecture/areas-and-dashboards.md.
     location: jsonb("location").$type<AreaLocation>(),
     status: text("status").notNull().default("active"),
-    createdAt: timestamp("created_at").notNull().defaultNow(),
-    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+    createdAt: tsMs("created_at").notNull().defaultNow(),
+    updatedAt: tsMs("updated_at").notNull().defaultNow(),
   },
   (table) => ({
     // The INDEX NAME stays `areas_owner_alias_unique`: a column rename carries its indexes along
@@ -814,7 +852,7 @@ export const areaBindings = pgTable(
     // priority is scoped to one (area, role, metric) slot and survives cutover. Lowest wins.
     priority: integer("priority").notNull().default(0),
     transform: text("transform"), // per-binding override; null = inherit point_info.transform
-    createdAt: timestamp("created_at").notNull().defaultNow(),
+    createdAt: tsMs("created_at").notNull().defaultNow(),
   },
   (table) => ({
     // Re-based onto the uuid by 0047. Fully enforcing because `point_uid` is NOT NULL — had the
@@ -884,8 +922,8 @@ export const derivations = pgTable(
     params: jsonb("params").notNull(), // typed per kind: thresholds/hysteresis/delays | model constants
     sourcePoints: jsonb("source_points").notNull(), // typed point refs (signal, energy, …) by uuid
     detectorVersion: integer("detector_version").notNull().default(1),
-    createdAt: timestamp("created_at").notNull().defaultNow(),
-    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+    createdAt: tsMs("created_at").notNull().defaultNow(),
+    updatedAt: tsMs("updated_at").notNull().defaultNow(),
   },
   (table) => ({
     roleCheck: check(
@@ -1019,8 +1057,8 @@ export const derivedIntervals = pgTable(
     derivationId: uuid("derivation_id")
       .notNull()
       .references(() => derivations.id, { onDelete: "cascade" }),
-    startTime: timestamp("start_time").notNull(), // UTC; immutable identity
-    endTime: timestamp("end_time"), // UTC; NULL = OPEN (running now)
+    startTime: tsMs("start_time").notNull(), // UTC; immutable identity
+    endTime: tsMs("end_time"), // UTC; NULL = OPEN (running now)
     durationSeconds: integer("duration_seconds"), // null while open
     energyKwh: doublePrecision("energy_kwh"),
     // Statistics of the SIGNAL SERIES the detector follows — whatever that series measures — in
@@ -1063,8 +1101,8 @@ export const derivedIntervals = pgTable(
     estimatedKwh: doublePrecision("estimated_kwh"), // kWh — Σ sliceKwh × estimatedFraction(t)
     sampleCount: integer("sample_count").notNull().default(0),
     detectorVersion: integer("detector_version").notNull().default(1),
-    createdAt: timestamp("created_at").notNull().defaultNow(),
-    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+    createdAt: tsMs("created_at").notNull().defaultNow(),
+    updatedAt: tsMs("updated_at").notNull().defaultNow(),
   },
   (table) => ({
     pk: primaryKey({ columns: [table.derivationId, table.startTime] }),
@@ -1103,7 +1141,7 @@ export const dashboardRevisions = pgTable(
     revision: integer("revision").notNull(),
     doc: jsonb("doc").notNull(),
     savedBy: text("saved_by").notNull(), // clerk user id
-    savedAt: timestamp("saved_at").notNull(),
+    savedAt: tsMs("saved_at").notNull(),
   },
   (table) => ({
     pk: primaryKey({ columns: [table.dashboardId, table.revision] }),
@@ -1175,8 +1213,8 @@ export const devices = pgTable(
     config: jsonb("config").$type<DeviceConfig>(),
     adapterState: jsonb("adapter_state"), // ← systems.metadata
     commissionedOn: date("commissioned_on"),
-    createdAt: timestamp("created_at").notNull().defaultNow(),
-    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+    createdAt: tsMs("created_at").notNull().defaultNow(),
+    updatedAt: tsMs("updated_at").notNull().defaultNow(),
   },
   (table) => ({
     ridUnique: uniqueIndex("devices_rid_unique").on(table.rid),
@@ -1252,8 +1290,8 @@ export const points = pgTable(
     // additive — NULL means what the absence of the column meant: a read-only sensor.
     control: jsonb("control").$type<PointControl>(),
     active: boolean("active").notNull().default(true),
-    createdAt: timestamp("created_at").notNull().defaultNow(),
-    updatedAt: timestamp("updated_at"),
+    createdAt: tsMs("created_at").notNull().defaultNow(),
+    updatedAt: tsMs("updated_at"),
   },
   (table) => ({
     ridUnique: uniqueIndex("points_rid_unique").on(table.rid),
@@ -1315,15 +1353,15 @@ export const deviceState = pgTable("device_state", {
   deviceId: uuid("device_id")
     .primaryKey()
     .references(() => devices.id, { onDelete: "cascade" }),
-  lastPollTime: timestamp("last_poll_time"),
-  lastSuccessTime: timestamp("last_success_time"),
-  lastErrorTime: timestamp("last_error_time"),
+  lastPollTime: tsMs("last_poll_time"),
+  lastSuccessTime: tsMs("last_success_time"),
+  lastErrorTime: tsMs("last_error_time"),
   lastError: text("last_error"),
   lastResponse: jsonb("last_response"),
   consecutiveErrors: integer("consecutive_errors").notNull().default(0),
   totalPolls: integer("total_polls").notNull().default(0),
   successfulPolls: integer("successful_polls").notNull().default(0),
-  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  updatedAt: tsMs("updated_at").notNull().defaultNow(),
 });
 
 // ============================================================================
@@ -1501,8 +1539,8 @@ export const pointCommands = pgTable(
     status: text("status").notNull().default("pending"),
     vendorResult: jsonb("vendor_result"), // raw vendor response envelope (benign result:false lands here)
     error: text("error"),
-    requestedAt: timestamp("requested_at").notNull().defaultNow(),
-    completedAt: timestamp("completed_at"), // NULL while pending
+    requestedAt: tsMs("requested_at").notNull().defaultNow(),
+    completedAt: tsMs("completed_at"), // NULL while pending
   },
   (table) => ({
     statusCheck: check(
@@ -1537,8 +1575,8 @@ export const automations = pgTable(
     action: jsonb("action").notNull().$type<AutomationAction>(), // v1 closed vocabulary
     // charge-session: set while the trigger source is live (charging); cleared when not.
     // exercise: always null — a scheduled rule has nothing to arm against.
-    armedAt: timestamp("armed_at"),
-    lastTriggeredAt: timestamp("last_triggered_at"),
+    armedAt: tsMs("armed_at"),
+    lastTriggeredAt: tsMs("last_triggered_at"),
     // Idempotence anchor. What it anchors depends on the trigger kind:
     //
     //  charge-session: the derived run's start_time when this automation last fired. Compared with
@@ -1549,7 +1587,7 @@ export const automations = pgTable(
     //    Compared for EXACT equality, and that is safe precisely because a slot is computed from
     //    the schedule and the clock rather than observed from data, so it cannot drift. A consumed
     //    slot never re-fires.
-    lastTriggeredRunStart: timestamp("last_triggered_run_start"),
+    lastTriggeredRunStart: tsMs("last_triggered_run_start"),
     // Per-arming STATE, not config. `charge_energy_added` (the Tesla counter a kWh limit follows)
     // is energy-above-plug-in-baseline and resets per CABLE session, not per charge leg — a car
     // re-entering `Charging` on an overnight top-up already reads ~42 kWh, so an absolute kWh
@@ -1558,8 +1596,16 @@ export const automations = pgTable(
     // For an `exercise` trigger this column holds the last DECISION instead (see
     // `ExerciseArmedContext`) — same "per-decision state that fits nowhere else" role.
     armedContext: jsonb("armed_context").$type<AutomationArmedContext | null>(),
-    createdAt: timestamp("created_at").notNull().defaultNow(),
-    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+    createdAt: tsMs("created_at").notNull().defaultNow(),
+    updatedAt: tsMs("updated_at").notNull().defaultNow(),
+    // 🛑 The optimistic-concurrency token, and the ONLY thing `claimExerciseDispatch` compares.
+    // House rule (see `docs/architecture/data-model.md`): optimistic concurrency uses an integer
+    // `revision`, NEVER a timestamp. `updated_at` was the CAS key until #468 and it was the wrong
+    // one twice over — its DB-side `now()` default put it outside what a JS `Date` can echo back,
+    // and even at millisecond precision an equality on a *time* is a comparison whose correctness
+    // depends on two serialisers agreeing. An integer has neither failure mode. Bumped by every
+    // writer in `lib/automations/store.ts`, so it is a true row version.
+    revision: integer("revision").notNull().default(1),
   },
   (table) => ({
     modeCheck: check(

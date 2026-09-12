@@ -115,6 +115,7 @@ function row(over: Partial<AutomationRow> = {}): AutomationRow {
     lastTriggeredRunStart: null,
     createdAt: new Date(0),
     updatedAt: new Date(0),
+    revision: 3, // not 1: the claim must pass the ROW's version, not a constant
     ...over,
   } as AutomationRow;
 }
@@ -884,6 +885,10 @@ describe("evaluateExercise", () => {
         context: expect.objectContaining({ outcome: "fired", slotAt: EX_SLOT }),
       }),
     );
+    // 🛑 The claim is a compare-and-set, so it is only a claim if it carries the version THIS row
+    // was read at. Passing anything else (a constant, or the old `updatedAt`) makes it either
+    // unconditional or unsatisfiable, and both look identical from here — see #468.
+    expect(mockStore.claimExerciseDispatch).toHaveBeenCalledWith(AU_UUID, 3);
   });
 
   it("does nothing at all when the slot has already been consumed", async () => {

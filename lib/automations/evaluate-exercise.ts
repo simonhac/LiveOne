@@ -199,8 +199,10 @@ async function fireExercise(
   summary: SummarySink,
 ): Promise<void> {
   // 🛑 `/api/cron/derivations` holds no lease, so two ticks CAN overlap. Claim the row first —
-  // a compare-and-set on updated_at — because the thing being guarded is starting an engine.
-  const claimed = await store.claimExerciseDispatch(row.id, row.updatedAt);
+  // a compare-and-set on the integer `revision` — because the thing being guarded is starting an
+  // engine. (It was a CAS on `updated_at` until #468, where a microsecond the round trip could not
+  // carry made it match nothing; `store.exerciseClaimWhere` has the whole story.)
+  const claimed = await store.claimExerciseDispatch(row.id, row.revision);
   if (!claimed) {
     // Expected and rare in a genuine two-tick race — but it is ALSO what a broken CAS looked like,
     // and losing EVERY tick is indistinguishable from having nothing to do unless it says so. This
