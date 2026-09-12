@@ -14,7 +14,9 @@ export const GENERATOR_RUN_REQUEST_ADDRESS =
 /**
  * Every Tesla charge-control address, for the copy layers' "is this a car" test.
  *
- * @knipignore Tesla Phase 2 surface: charge commands need the signing proxy before anything reads this.
+ * @knipignore The ADDRESSES are live — `lib/vendors/tesla/control.ts:47` switches on all three
+ * today. It is this ARRAY that has no reader; the "is this a car" test it was written for was
+ * never wired up. Delete it, or find the copy layer that should have been using it.
  */
 export const TESLA_CHARGE_ADDRESSES = [
   "ev.charge/active",

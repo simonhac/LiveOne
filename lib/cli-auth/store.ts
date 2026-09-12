@@ -13,8 +13,6 @@ import { clerkClient } from "@clerk/nextjs/server";
 import {
   mintToken,
   revokeToken,
-  recordsOf,
-  shouldTouch,
   METADATA_KEY,
   type CliTokenRecord,
   type UserLike,

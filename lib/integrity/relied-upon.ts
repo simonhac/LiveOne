@@ -50,7 +50,9 @@ export type Subject = "area" | "dashboard" | "automation" | "derivation";
  * What happens to a dependent if the delete goes ahead anyway. This is the field that decides
  * whether `--force` is reasonable, so it describes the CONSEQUENCE, not the mechanism.
  *
- * @knipignore The type of Dependent.effect, which is exported — a consumer cannot name the field's type without it.
+ * @knipignore Only used as the type of `Dependent.effect`. A consumer CAN name it without this
+ * alias (`Dependent["effect"]`), so exporting it is API style, not necessity — un-export it if
+ * the named form is not wanted.
  */
 export type Effect =
   /** The reference stays in place and resolves to nothing; the renderer skips it, silently. */
