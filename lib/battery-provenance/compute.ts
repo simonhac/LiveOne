@@ -27,7 +27,7 @@ import {
   INITIAL_FOLD_STATE,
 } from "./fold";
 import { buildLoadPrices } from "@/lib/aggregation/flow-node-meta";
-import { resolveExportPriceSeries, resolveExportReceiptSeries } from "./tariff";
+import { exportReceiptSeries } from "./tariff";
 import type {
   ProvenanceConfig,
   ProvenanceResult,
@@ -296,32 +296,23 @@ export function computeBatteryProvenance(
 
   // Solar cost basis (both signals computed every run — forgone revenue is first-class, not a toggle):
   //   • ACTUAL  — solar is out-of-pocket free (0). Feeds `costC` → `batteryPrice`.
-  //   • FORGONE — the feed-in revenue given up by storing solar, from the resolved export tariff. Feeds
-  //               the independent delta accumulator `forgoneC` → `batteryPriceForgone`, which the WRITTEN
-  //               `price-opportunity` point carries directly (see blendValue). The tariff SOURCE
-  //               (none/amber/schedule) is resolved here into a single exportPrice[] series; the fold
-  //               never sees modes/schedules.
-  const exportPrice = resolveExportPriceSeries(
-    inputs.exportTariff,
-    timeline,
-    inputs.timezoneOffsetMin,
-    inputs.gridExportPrice,
-  );
+  //   • FORGONE — the feed-in revenue given up by storing solar, read from the area's BOUND feed-in
+  //               series (`bidi.grid.export/rate`). Feeds the independent delta accumulator
+  //               `forgoneC` → `batteryPriceForgone`, which the WRITTEN `price-opportunity` point
+  //               carries directly (see blendValue). An area with no export rate bound has no
+  //               feed-in tariff, and the series is all null — which is what an unmeasured tariff
+  //               means until a tariff device publishes one for it.
+  const exportPrice = inputs.gridExportPrice;
   // Floor the forgone feed-in at 0 (deliberate, per-interval): under a NEGATIVE export price the
   // counterfactual to storing solar is curtailment, not paying to export — so nothing was forgone.
   // (This floor + solarCost≡0 is what keeps `forgoneC` ≥ 0.) Negative IMPORT prices are a different
   // matter and are NOT clamped anywhere: grid charge at a negative rate books negative ACTUAL cost
   // (the fold's gridM → costC); `forgoneC` is untouched — grid charge forgoes no export revenue.
   const solarCostOpp = (i: number) => Math.max(0, exportPrice[i] ?? 0);
-  // The same tariff in the RECEIPTS convention (positive = money in) — the SELL price of `load.grid`,
+  // The same series in the RECEIPTS convention (positive = money in) — the SELL price of `load.grid`,
   // and the only thing the `revenueC` leg consumes. Kept separate from `exportPrice` above so the
-  // fold's arithmetic is untouched; see `resolveExportReceiptSeries` for why the two differ.
-  const exportReceiptPrice = resolveExportReceiptSeries(
-    inputs.exportTariff,
-    timeline,
-    inputs.timezoneOffsetMin,
-    inputs.gridExportPrice,
-  );
+  // fold's arithmetic is untouched; see `exportReceiptSeries` for why the two differ in sign.
+  const exportReceiptPrice = exportReceiptSeries(inputs.gridExportPrice);
 
   const foldConfig: FoldConfig = {
     reserveFloorPct: reserveUsed,

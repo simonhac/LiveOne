@@ -8,8 +8,6 @@ import type {
   DeviceConfig,
   DeviceSpec,
   BatteryProvenanceConfig,
-  ExportTariffConfig,
-  ExportTariffPlan,
 } from "@/lib/capabilities/config";
 import { syncAreaBatteryConfigFromDevice } from "@/lib/areas/config";
 
@@ -26,48 +24,6 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
 
 function isCapabilityId(key: string): key is CapabilityId {
   return Object.prototype.hasOwnProperty.call(CAPABILITIES, key);
-}
-
-// Validate an export-tariff config (opportunity-cost source). `none`/`amber` are trivial; a `schedule`
-// currently accepts flat plans only (TOU is schema-reserved but the evaluator isn't built — reject early).
-function parseExportTariff(
-  raw: unknown,
-): { value: ExportTariffConfig } | { error: string } {
-  if (!isPlainObject(raw)) return { error: "`exportTariff` must be an object" };
-  const mode = raw.mode;
-  if (mode === "none" || mode === "amber") return { value: { mode } };
-  if (mode !== "schedule")
-    return {
-      error: '`exportTariff.mode` must be "none", "amber" or "schedule"',
-    };
-  if (!Array.isArray(raw.plans) || raw.plans.length === 0)
-    return { error: "`exportTariff.plans` must be a non-empty array" };
-  const plans: ExportTariffPlan[] = [];
-  for (const p of raw.plans) {
-    if (!isPlainObject(p))
-      return { error: "each export-tariff plan must be an object" };
-    if (
-      p.effectiveFrom !== undefined &&
-      (typeof p.effectiveFrom !== "string" ||
-        !/^\d{4}-\d{2}-\d{2}$/.test(p.effectiveFrom))
-    )
-      return { error: "`plan.effectiveFrom` must be a YYYY-MM-DD date" };
-    if (!isPlainObject(p.rate))
-      return { error: "`plan.rate` must be an object" };
-    if (p.rate.kind === "tou")
-      return { error: "time-of-use export tariffs are not supported yet" };
-    if (p.rate.kind !== "flat")
-      return { error: '`plan.rate.kind` must be "flat"' };
-    if (typeof p.rate.cPerKwh !== "number" || !Number.isFinite(p.rate.cPerKwh))
-      return { error: "`flat.cPerKwh` must be a number (c/kWh)" };
-    plans.push({
-      ...(p.effectiveFrom !== undefined
-        ? { effectiveFrom: p.effectiveFrom }
-        : {}),
-      rate: { kind: "flat", cPerKwh: p.rate.cPerKwh },
-    });
-  }
-  return { value: { mode: "schedule", plans } };
 }
 
 // Validate a structured device `spec`. Every field is optional and independently omissible, and each
@@ -181,11 +137,16 @@ function parseDeviceConfig(
         renewableFraction: frac,
       };
     }
-    const et = body.batteryProvenance.exportTariff;
-    if (et !== undefined && et !== null) {
-      const parsed = parseExportTariff(et);
-      if ("error" in parsed) return { error: parsed.error };
-      bp.exportTariff = parsed.value;
+    // The reserve-floor PRIOR. Unset on every device today, which is exactly why it was missing from
+    // this parser and why nothing noticed: a field nobody has set cannot yet be destroyed by a save.
+    // Caught by the total round-trip test rather than by use — the same defect class as `spec`.
+    const rf = body.batteryProvenance.reserveFloorMaxPct;
+    if (rf !== undefined && rf !== null) {
+      if (typeof rf !== "number" || !Number.isFinite(rf) || rf < 0 || rf > 100)
+        return {
+          error: "`batteryProvenance.reserveFloorMaxPct` must be 0..100",
+        };
+      bp.reserveFloorMaxPct = rf;
     }
     if (Object.keys(bp).length > 0) out.batteryProvenance = bp;
   }

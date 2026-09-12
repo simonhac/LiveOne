@@ -48,19 +48,6 @@ const nonNegativeFinite = (value: unknown): value is number =>
   typeof value === "number" && Number.isFinite(value) && value >= 0;
 const fraction = (value: unknown): value is number =>
   nonNegativeFinite(value) && value <= 1;
-const hasValidatedExportTariff = (config: AreaConfig | null): boolean => {
-  const tariff = config?.batteryProvenance?.exportTariff;
-  if (tariff?.mode === "none") return true;
-  return (
-    tariff?.mode === "schedule" &&
-    Array.isArray(tariff.plans) &&
-    tariff.plans.length > 0 &&
-    tariff.plans.every(
-      (plan) => plan.rate.kind === "flat" && Number.isFinite(plan.rate.cPerKwh),
-    )
-  );
-};
-
 export const RESOLUTION_SLOTS: readonly ResolutionSlotDef[] = [
   {
     slot: "solar/power",
@@ -169,11 +156,10 @@ export const RESOLUTION_SLOTS: readonly ResolutionSlotDef[] = [
     slot: "grid/export-price",
     role: "grid",
     metricType: "export-price",
+    // NO `config` alternative, unlike the slots below it: a feed-in tariff has exactly one source,
+    // the bound point. `batteryProvenance.exportTariff` used to stand here as a rival — config that
+    // restated what a binding already said, and could disagree with it.
     matches: exact("bidi.grid.export", "rate"),
-    config: {
-      key: "batteryProvenance.exportTariff",
-      available: hasValidatedExportTariff,
-    },
   },
   {
     slot: "grid/emissions-intensity",

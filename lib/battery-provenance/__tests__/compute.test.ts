@@ -131,7 +131,6 @@ describe("computeBatteryProvenance", () => {
     // so the forgone pool must stay at 0. Negative IMPORT prices are real money and must NOT clamp —
     // the actual cost basis goes negative from the grid-charge share.
     const inputs = scenario();
-    inputs.exportTariff = { mode: "amber" };
     const n = inputs.timeline.length;
     inputs.gridExportPrice = new Array<number | null>(n).fill(-3);
     inputs.gridPrice = new Array<number | null>(n).fill(-10);
@@ -142,7 +141,6 @@ describe("computeBatteryProvenance", () => {
 
   it("a POSITIVE feed-in price accrues forgone export revenue", () => {
     const inputs = scenario(); // gridExportPrice = 5 c/kWh, solar in the charge mix
-    inputs.exportTariff = { mode: "amber" };
     const result = computeBatteryProvenance(warm(inputs), { efficiency: 1 });
     expect(result.finalState.forgoneC).toBeGreaterThan(0);
   });

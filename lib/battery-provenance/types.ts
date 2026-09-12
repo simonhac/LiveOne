@@ -14,7 +14,6 @@ import type {
 import type { FoldStep, FoldState } from "./fold";
 import type { EtaDayDiag } from "./eta";
 import type { LossesDayDiag } from "./losses";
-import type { ExportTariffConfig } from "@/lib/capabilities/config";
 
 export interface ProvenanceWindow {
   startMs: number;
@@ -89,16 +88,14 @@ export interface ProvenanceInputs {
   gridRenewable: (number | null)[]; // fraction 0..1
   gridPrice: (number | null)[]; // c/kWh (Amber import), may be < 0
   gridPriceEstimated: boolean[];
-  gridExportPrice: (number | null)[]; // c/kWh MEASURED Amber feed-in (source for the "amber" tariff mode)
-
   /**
-   * Export (feed-in) tariff selecting the SOLAR OPPORTUNITY-COST source: `none` (default), `amber` (the
-   * measured `gridExportPrice` above), or a `schedule` synthesised per interval. `compute` resolves this to
-   * a single exportPrice[] series (see `lib/battery-provenance/tariff.ts`); the fold consumes only that.
-   * Undefined ⇒ no opportunity cost (the written `price-opportunity` point reads 0). The loader reads it
-   * from the battery device's `config.batteryProvenance.exportTariff`.
+   * c/kWh MEASURED feed-in — the area's bound `bidi.grid.export/rate` series, and the ONLY source of a
+   * feed-in tariff. All null where the area binds no export rate, which is what "this site's tariff is
+   * not measured" means until a tariff device publishes one for it (docs/plans/block-model.md). It is
+   * both the solar opportunity-cost basis and, negated, the `revenueC` sell price — see
+   * `lib/battery-provenance/tariff.ts` for why one series reads two ways.
    */
-  exportTariff?: ExportTariffConfig;
+  gridExportPrice: (number | null)[];
 
   // Battery SoC (optional; may be all-null = SoC-blind) + the derived reserve floor.
   soc: (number | null)[];
@@ -177,11 +174,11 @@ export interface ProvenanceResult {
   /** The per-source intensity series (index-aligned to inputs.sources) — for re-running per-day accounting. */
   sourceIntensities: (SourceIntensity | null)[];
   /**
-   * The resolved feed-in series in the RECEIPTS convention (positive c/kWh = money in; null = no export
-   * tariff at that interval), index-aligned to `inputs.timeline` — `resolveExportReceiptSeries` applied
-   * to `inputs.exportTariff`. Surfaced so the per-day re-runs of `computeFlowAccounting` can price the
+   * The feed-in series in the RECEIPTS convention (positive c/kWh = money in; null = no export tariff
+   * at that interval), index-aligned to `inputs.timeline` — `exportReceiptSeries` applied to
+   * `inputs.gridExportPrice`. Surfaced so the per-day re-runs of `computeFlowAccounting` can price the
    * `load.grid` sink identically to the window run. NOT the series the fold's opportunity cost uses:
-   * that one keeps each mode's raw sign (see `lib/battery-provenance/tariff.ts`).
+   * that one keeps the measured raw sign (see `lib/battery-provenance/tariff.ts`).
    */
   exportReceiptPrice: (number | null)[];
   /** The η actually used: a throughput-weighted summary of the learned η(t), or the configured scalar. */
