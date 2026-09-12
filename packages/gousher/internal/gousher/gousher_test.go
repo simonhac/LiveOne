@@ -274,7 +274,13 @@ func TestReceiverDurableDedupAndAuth(t *testing.T) {
 		t.Fatal("ID conflict accepted")
 	}
 	es, _ := os.ReadDir(dir)
-	if len(es) != 1 {
+	captures := 0
+	for _, entry := range es {
+		if strings.HasSuffix(entry.Name(), ".json") && entry.Name() != "loss.json" {
+			captures++
+		}
+	}
+	if captures != 1 {
 		t.Fatal("duplicate capture")
 	}
 }

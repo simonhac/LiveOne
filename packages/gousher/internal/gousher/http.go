@@ -167,23 +167,74 @@ func (r *Runtime) snapshot() map[string]any {
 	return map[string]any{"at": time.Now().UTC().Format(time.RFC3339Nano), "started": started, "sources": sources, "store": store, "mode": r.b.Mode, "pollers": hs, "configError": err, "telemetryError": telemetryError, "spool": sp, "blackbox": bb}
 }
 
-// Receiver keeps acknowledgements and capture in the same fsynced record. Retries of
-// a retained ID are acknowledged only when their bytes match. No credential is stored.
+// Receiver retains a durable receipt independently of its bounded capture history.
 func Receiver(dir, token string, budget int64) (http.Handler, error) {
 	store, e := OpenStore(dir, budget, 64<<20)
 	if e != nil {
 		return nil, e
 	}
+	unlock, e := lockInstance(filepath.Join(dir, ".receiver.lock"))
+	if e != nil {
+		return nil, e
+	}
+	journal, e := openReceipts(dir)
+	if e == nil {
+		// Upgrade retained captures before any pruning can discard their acknowledgement.
+		entries, err := os.ReadDir(dir)
+		e = err
+		for _, entry := range entries {
+			if e != nil {
+				break
+			}
+			name := entry.Name()
+			if len(name) != 37 || !strings.HasSuffix(name, ".json") {
+				continue
+			}
+			data, err := os.ReadFile(filepath.Join(dir, name))
+			if err != nil {
+				e = err
+				break
+			}
+			info, err := entry.Info()
+			if err != nil {
+				e = err
+				break
+			}
+			e = journal.append(strings.TrimSuffix(name, ".json"), sha256.Sum256(data), info.ModTime())
+		}
+	}
+	unlock()
+	if e != nil {
+		return nil, e
+	}
+
 	var mu sync.Mutex
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != "POST" {
-			w.WriteHeader(405)
-			return
-		}
 		if !authorized(r, token) {
 			w.WriteHeader(401)
 			return
 		}
+		if r.Method == "GET" && r.URL.Path == "/export" {
+			mu.Lock()
+			defer mu.Unlock()
+			unlock, err := lockInstance(filepath.Join(dir, ".receiver.lock"))
+			if err != nil {
+				w.WriteHeader(503)
+				return
+			}
+			defer unlock()
+			if err := journal.refresh(false); err != nil {
+				w.WriteHeader(503)
+				return
+			}
+			receiverExport(w, r, dir, journal)
+			return
+		}
+		if r.Method != "POST" {
+			w.WriteHeader(405)
+			return
+		}
+
 		data, e := readLimited(r.Body, 2<<20)
 		if e != nil {
 			w.WriteHeader(413)
@@ -205,12 +256,39 @@ func Receiver(dir, token string, budget int64) (http.Handler, error) {
 		}
 		mu.Lock()
 		defer mu.Unlock()
+		unlock, e := lockInstance(filepath.Join(dir, ".receiver.lock"))
+		if e != nil {
+			w.WriteHeader(503)
+			return
+		}
+		defer unlock()
+		if e := journal.refresh(false); e != nil {
+			w.WriteHeader(503)
+			return
+		}
+		if old, ok := journal.entries[b.ID]; ok {
+			if old.Hash != sha256.Sum256(data) {
+				w.WriteHeader(409)
+				return
+			}
+			_, err := os.Stat(filepath.Join(dir, b.ID+".json"))
+			jsonResponse(w, 200, map[string]any{"id": b.ID, "durable": true, "duplicate": true, "captureRetained": err == nil})
+			return
+		}
+		if journal.offset+receiptSize > journal.budget {
+			jsonResponse(w, 503, map[string]string{"error": "receipt budget exhausted"})
+			return
+		}
 		name := b.ID + ".json"
 		path := filepath.Join(dir, name)
 		old, e := os.ReadFile(path)
 		if e == nil {
 			if sha256.Sum256(old) != sha256.Sum256(data) {
 				w.WriteHeader(409)
+				return
+			}
+			if e := journal.append(b.ID, sha256.Sum256(data), time.Now()); e != nil {
+				w.WriteHeader(503)
 				return
 			}
 			jsonResponse(w, 200, map[string]any{"id": b.ID, "durable": true})
@@ -238,6 +316,10 @@ func Receiver(dir, token string, budget int64) (http.Handler, error) {
 			}
 		}
 		if e = store.Put(name, data, false); e != nil {
+			w.WriteHeader(503)
+			return
+		}
+		if e := journal.append(b.ID, sha256.Sum256(data), time.Now()); e != nil {
 			w.WriteHeader(503)
 			return
 		}
