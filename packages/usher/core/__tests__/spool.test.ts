@@ -129,6 +129,61 @@ describe("Spool", () => {
     expect(logs.join(" ")).toMatch(/DROPPED oldest/);
   });
 
+  // The onDrop hook is the ONLY data-loss signal this fleet has (core/spool-metrics.ts). Every
+  // other metric anywhere describes an observability gap; if these three sites stop firing,
+  // readings that were collected are destroyed and nothing reports it.
+  it("reports every destroyed batch through onDrop, with its reason", async () => {
+    let clock = 1000;
+    const reasons: string[] = [];
+    const tiny = async (): Promise<DiskSpace | null> => ({
+      capacityBytes: 10_000,
+      freeBytes: 9_000,
+      freeFrac: 0.9,
+    });
+    const spool = (await Spool.create(tmp, {
+      now: () => clock++,
+      diskSpaceFn: tiny,
+      maxDiskFrac: 0.05, // cap = 500 bytes → holds ~2 batches
+      onDrop: (reason) => reasons.push(reason),
+    }))!;
+
+    await spool.enqueue(batch("s1", "first"));
+    await spool.enqueue(batch("s1", "second"));
+    await spool.enqueue(batch("s1", "third")); // evicts "first"
+    expect(reasons).toEqual(["disk_cap"]);
+
+    // A 4xx from the receiver: permanently rejected, deleted, and gone.
+    await spool.drain("s1", async () => "rejected");
+    expect(reasons.filter((r) => r === "rejected").length).toBeGreaterThan(0);
+
+    // A corrupt file is deleted too, and that is data loss just the same.
+    await fs.writeFile(path.join(tmp, "9999-0-s1.json"), "{not json");
+    await spool.drain("s1", async () => "ok");
+    expect(reasons).toContain("unreadable");
+  });
+
+  it("never lets a throwing onDrop reach the collector", async () => {
+    // Metrics are best-effort; losing a batch must not also mean crashing the loop that would have
+    // logged it.
+    let clock = 1000;
+    const tiny = async (): Promise<DiskSpace | null> => ({
+      capacityBytes: 10_000,
+      freeBytes: 9_000,
+      freeFrac: 0.9,
+    });
+    const spool = (await Spool.create(tmp, {
+      now: () => clock++,
+      diskSpaceFn: tiny,
+      maxDiskFrac: 0.05,
+      onDrop: () => {
+        throw new Error("exporter is down");
+      },
+    }))!;
+    await spool.enqueue(batch("s1", "first"));
+    await spool.enqueue(batch("s1", "second"));
+    await expect(spool.enqueue(batch("s1", "third"))).resolves.toBe(true);
+  });
+
   it("is re-entrancy guarded per site (no double-send from overlapping drains)", async () => {
     let clock = 1000;
     const spool = (await Spool.create(tmp, {
