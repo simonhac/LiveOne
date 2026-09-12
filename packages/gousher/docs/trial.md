@@ -65,3 +65,12 @@ required to resume it. The authenticated `/api/trial/windows` endpoint now enfor
 Do not call the full attached plan complete until these are checked. Extend the trial as needed.
 Cutover is a separate operation: stop the old owner, exclude shadow backlog, and transfer generator
 control only while idle with no latch or deadline outstanding.
+
+## First vendor selected
+
+Fronius at Kinkora is first (2026-09-13). See the [site preparation](../deploy/fronius-kinkora/README.md)
+for both inverters, replay bootstrap, operations template and remaining deployment prerequisites.
+Preflight found the production management configuration endpoint returning 404; production Usher's
+public evidence URL redirects to Access. Neither observation certifies readiness. The corrected
+production monitor measures actual background inverter attempts; deploy that build and obtain a new
+baseline before shadow activation. No live trial has begun.

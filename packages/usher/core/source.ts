@@ -89,6 +89,8 @@ export interface SourceControl {
 
 /** A device source. Tiny by design: name + siteId + manifest + read(). */
 export interface Source {
+  /** Real reads report their own metrics; read() only harvests cached data. */
+  productionReadsInBackground?: boolean;
   /** short label for logs/sessions, e.g. "musher" */
   name: string;
   /** gusher vendorSiteId (identifies the LiveOne device) */

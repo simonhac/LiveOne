@@ -44,3 +44,67 @@ describe("production Fronius trial capture", () => {
     expect(harvest).toHaveBeenCalledWith("2026-09-12T00:00:00Z", []);
   });
 });
+
+it("reports actual background read failures and excludes report harvests", async () => {
+  const inverter = new Inverter("192.0.2.1", "test", true, {
+    manufacturer: "Fronius",
+    model: "test",
+    pvPowerW: 0,
+    customName: "test",
+    serialNumber: "test",
+  });
+  const record = jest.fn();
+  Object.assign(inverter, { onProductionRead: record });
+  const failure = Object.assign(new Error("reset"), { code: "ECONNRESET" });
+  const get = jest.spyOn(axios, "get").mockRejectedValue(failure);
+  const log = jest.spyOn(console, "error").mockImplementation(() => {});
+  try {
+    expect(await inverter.fetchPowerFlow()).toBeNull();
+    expect(record).toHaveBeenCalledWith(expect.any(Number), false, failure);
+    const source = createFusher({ siteId: "kinkora", inverters: [] });
+    expect(source).toMatchObject({ productionReadsInBackground: true });
+  } finally {
+    get.mockRestore();
+    log.mockRestore();
+  }
+});
+
+it("records valid and malformed power-flow responses without diagnostic failures escaping", async () => {
+  const inverter = new Inverter("192.0.2.1", "test", true, {
+    manufacturer: "Fronius",
+    model: "test",
+    pvPowerW: 0,
+    customName: "test",
+    serialNumber: "test",
+  });
+  const record = jest.fn();
+  Object.assign(inverter, { onProductionRead: record });
+  const get = jest
+    .spyOn(axios, "get")
+    .mockResolvedValueOnce({
+      data: { Body: { Data: { Site: { P_PV: 100 } } } },
+    })
+    .mockResolvedValue({ data: {} });
+  try {
+    expect((await inverter.fetchPowerFlow())?.solarW).toBe(100);
+    expect(record).toHaveBeenLastCalledWith(
+      expect.any(Number),
+      true,
+      undefined,
+    );
+    expect(await inverter.fetchPowerFlow()).toBeNull();
+    expect(record).toHaveBeenLastCalledWith(
+      expect.any(Number),
+      false,
+      undefined,
+    );
+    Object.assign(inverter, {
+      onProductionRead: () => {
+        throw new Error("diagnostic failure");
+      },
+    });
+    expect(await inverter.fetchPowerFlow()).toBeNull();
+  } finally {
+    get.mockRestore();
+  }
+});

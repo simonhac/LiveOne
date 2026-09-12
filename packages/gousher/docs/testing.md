@@ -143,3 +143,14 @@ manifests pass `flyctl config validate --strict`. CI now runs the smoke test and
 to the collector API routes and shared vendor adapter. No application behavior changed, so the full
 unit/database suites were not rerun for this deployment-only continuation. No remote image build or
 live service deployment was performed; Docker is unavailable locally.
+
+## Fronius-first monitoring correction
+
+Preparing Kinkora exposed that `source.read()` only harvests cached Fronius data. The new regression
+initially failed with zero production-read callback calls after a simulated inverter connection reset.
+The inverter now reports actual background power-flow attempts (success, malformed response or caught
+failure), and the site connects them to the production monitor. The run loop excludes cached harvests.
+Additional tests verify successful/malformed responses, diagnostic callback isolation and suppression
+of harvest metrics. All **195 Usher tests across 21 suites**, root and Usher type-checks pass.
+No Go behavior changed; Go/database suites were not rerun. This corrects the metric definition before
+baseline collection; earlier harvest timings must not be used as a Fronius production baseline.

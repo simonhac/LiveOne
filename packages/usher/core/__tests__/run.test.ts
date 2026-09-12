@@ -704,3 +704,16 @@ it("a failed trial capture hook does not fail a production tick", async () => {
   expect(result.error).toBeUndefined();
   expect(captured.readings).toHaveLength(1);
 });
+
+it("does not count a background source's harvest as a production device read", async () => {
+  const monitor = await import("../trial-monitor");
+  const record = jest.spyOn(monitor, "recordProductionRead");
+  const { entry } = makeEntry(async () => ({ x: 1 }));
+  entry.source.productionReadsInBackground = true;
+  try {
+    await tickOnce(entry, () => {});
+    expect(record).not.toHaveBeenCalled();
+  } finally {
+    record.mockRestore();
+  }
+});

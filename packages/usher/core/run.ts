@@ -249,20 +249,22 @@ export async function tickOnce(
       `tick exceeded ${timeoutMs}ms (hung read)`,
     ).then(
       (values) => {
-        recordProductionRead(
-          source.siteId,
-          performance.now() - readStarted,
-          true,
-        );
+        if (!source.productionReadsInBackground)
+          recordProductionRead(
+            source.siteId,
+            performance.now() - readStarted,
+            true,
+          );
         return values;
       },
       (error) => {
-        recordProductionRead(
-          source.siteId,
-          performance.now() - readStarted,
-          false,
-          error,
-        );
+        if (!source.productionReadsInBackground)
+          recordProductionRead(
+            source.siteId,
+            performance.now() - readStarted,
+            false,
+            error,
+          );
         throw error;
       },
     );

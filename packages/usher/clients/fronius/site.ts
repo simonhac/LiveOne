@@ -1,3 +1,4 @@
+import { recordProductionRead } from "../../core/trial-monitor";
 import { captureTrial } from "../../core/trial-capture";
 import type { PushReading } from "../../core/source";
 import EventEmitter from "events";
@@ -322,6 +323,8 @@ export class Site extends EventEmitter {
           batteryInfo,
           meterInfo,
         );
+        inverter.onProductionRead = (duration, ok, error) =>
+          recordProductionRead(this.name, duration, ok, error);
         inverter.onTrialSample = (at, raw) =>
           captureTrial({
             source: "fronius",

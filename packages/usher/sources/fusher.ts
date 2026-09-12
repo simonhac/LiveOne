@@ -189,6 +189,7 @@ export function createFusher(opts: FusherOptions): Source {
 
   return {
     name: "fusher",
+    productionReadsInBackground: true,
     siteId: opts.siteId,
     manifest: FUSHER_MANIFEST,
     async read(): Promise<Values> {
