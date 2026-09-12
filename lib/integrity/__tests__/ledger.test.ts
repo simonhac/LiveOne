@@ -152,8 +152,8 @@ describe("the verdicts hold up", () => {
     const jsonb = referenceCandidates().filter(
       (c) => c.columnType === "PgJsonb",
     );
-    // 17 today. Pinned so that a new jsonb column cannot slip through as "not a reference column".
-    expect(jsonb.length).toBe(17);
+    // 19 today. Pinned so that a new jsonb column cannot slip through as "not a reference column".
+    expect(jsonb.length).toBe(19);
     for (const c of jsonb) {
       const k = key(c.table, c.column);
       const e = ledgerByKey.get(k);
@@ -241,7 +241,8 @@ describe("the census sees every table in the schema", () => {
     // Not every table HAS a reference column, so this is a sanity check on the walk rather than a
     // completeness claim: the tables with no candidate at all should be a short, boring list.
     const withNone = tables.filter((t) => !censused.has(t)).sort();
-    expect(withNone).toEqual([]);
+    // Collectors carry only their own primary key, token hash, name, destination and timestamps.
+    expect(withNone).toEqual(["collectors"]);
   });
 });
 

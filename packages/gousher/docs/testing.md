@@ -172,3 +172,9 @@ that the cloud production-evidence route was absent from the exact middleware al
 observed `false` where a self-authenticating route must bypass Clerk. Adding the exact production path
 fixes the regression; all 111 route-matcher/API tests pass, with collector bearer checks retained in
 handler. This does not broaden the admin-route allow-list.
+
+The first repository-wide CI run found three reference-ledger failures introduced by the new schema.
+The ledger now classifies both managed-poller foreign keys, the vendor-owned site identity and both
+strict JSON fields; the census explicitly accounts for collectors containing no external references.
+The existing failing audit now passes (15 tests). The full local unit suite passes **4,106 tests across
+313 suites**, with five existing skips. Both root and standalone Usher production builds pass.
