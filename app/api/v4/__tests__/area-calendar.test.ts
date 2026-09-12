@@ -13,6 +13,12 @@
  *     to run something. No reading, no point value, no outcome.
  *  4. **Minting is session-authorized, not token-authorized** — a credential that could mint its
  *     own successor could never be fully revoked.
+ *
+ * 🛑 The DTSTART assertions below only mean anything because `npm test` pins `TZ=UTC`. The first
+ * deploy of this route published every event ten hours out — `ical-generator` formats a plain
+ * `Date` against a TZID using the NODE PROCESS's local zone — and these tests stayed green,
+ * because they ran on a laptop in Australia/Melbourne where that happens to give the right answer.
+ * Do not run this suite with a bare `jest`, and do not "simplify" the pin out of package.json.
  */
 import { describe, it, expect, beforeEach, jest } from "@jest/globals";
 import { NextRequest, NextResponse } from "next/server";
@@ -147,8 +153,8 @@ describe("GET …/calendar.ics", () => {
     expect(body).toContain("NAME:Daylesford automations");
     expect(body).toContain(`UID:${AU_UUID}@liveone.energy`);
     expect(body).toContain("SUMMARY:Generator exercise");
-    // Local wall clock, TZID-qualified — a floating or UTC DTSTART would put the run an hour out
-    // for half the year in every subscriber's client.
+    // 🛑 The regression assertion. Local wall clock, TZID-qualified. Under TZ=UTC the pre-luxon
+    // code emitted `20260916T230000` here — the UTC wall clock wearing a Melbourne label.
     expect(body).toContain(`DTSTART;TZID=${TZ}:20260917T090000`);
     expect(body).toContain(`DTEND;TZID=${TZ}:20260917T093000`);
     expect(body).toContain("RRULE:FREQ=WEEKLY;BYDAY=TH");
