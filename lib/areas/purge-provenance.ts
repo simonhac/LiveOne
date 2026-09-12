@@ -55,6 +55,7 @@ import {
   points,
 } from "@/lib/db/planetscale/schema";
 import { ReadingsDao } from "@/lib/readings/dao";
+import { Device } from "@/lib/ids";
 import { BLEND_POINTS } from "@/lib/battery-provenance/register";
 import { buildSubscriptionRegistry } from "@/lib/kv-cache-manager";
 
@@ -110,7 +111,9 @@ async function helperFor(areaUuid: string) {
       ),
     );
   return {
-    deviceId: helper.id,
+    // `dv_…`, not the raw uuid this row carries: the id/TypeID seam keeps raw uuids in the data layer
+    // and hands opaque TypeIDs to everything above it, and this value is printed by the CLI.
+    deviceId: Device.encode(helper.id),
     name: helper.name,
     pointRids: rows.map((r) => r.rid),
   };
