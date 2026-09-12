@@ -277,9 +277,9 @@ component, ≥ 0 ("Battery Opportunity Cost"; a passthrough in `blendValue`,
 
 Price-sign semantics: negative **import** prices flow through unclamped (grid charge at a negative
 Amber rate books negative actual cost — `price` can legitimately go negative; `forgoneC` is untouched,
-grid charge forgoes nothing). The **feed-in**
-price is floored at 0 per interval (`compute.ts` `solarCostOpp`): under a negative export price the
-counterfactual to storing solar is curtailment, not paying to export, so nothing was forgone. Where the
+grid charge forgoes nothing). The **feed-in** price is floored at 0 per interval (`compute.ts`
+`solarCostOpp`) **in the receipts convention**: where you would have PAID to export, the counterfactual
+to storing solar is curtailment, so nothing was forgone. Where the
 feed-in series comes from is not config at all: it is the area's bound `bidi.grid.export/rate` point —
 see [the feed-in series](#opportunity-cost--the-feed-in-series) in Part 4.
 
@@ -672,16 +672,21 @@ positive receipt — and `mode` was the discriminator that reconciled them. One 
 a real inconsistency: an `amber` site's solar opportunity cost floored to 0 while a `schedule` site got
 a non-zero one, for the same physical situation. With one source there is one convention.)
 
-Two known consequences of the un-normalised series, **not yet fixed**:
+**FIXED 2026-09-12 — `price-opportunity` was inverted, and this is what it was.** `solarCostOpp` in
+`compute.ts` floored the RAW series at 0 rather than the receipt, so `Math.max(0, raw)` kept exactly
+the intervals where raw was positive — in Amber's convention, the intervals where exporting would have
+*cost* money — and zeroed every interval where you would have been *paid*. So the number reported
+forgone revenue precisely when there was none to forgo, and 0 whenever there genuinely was some. The
+doc text above described the intent; the code did the opposite.
 
-- `solarCostOpp` in `compute.ts` floors the raw series at 0, so it books forgone revenue only in the
-  intervals where exporting would have *cost* money, and zeroes it in exactly the intervals where
-  exporting would have *paid*. `price-opportunity` is therefore approximately inverted. The doc text
-  above ("floored at 0 … nothing was forgone") describes the intent, not the observed behaviour. This
-  now applies to EVERY area rather than only the `amber` ones — not because the behaviour changed (it
-  did not) but because there is no longer a second convention for a site to be on.
-- Fixing it moves published `price-opportunity` values and needs its own backfill, so it is
-  deliberately out of scope of the change that introduced `revenue_c`.
+It stood for two years because the two tariff modes disagreed about the sign, so there was no single
+convention to floor in, and any fix moved published values. Deleting `exportTariff` left one
+convention, which is what made the fix a one-line change: the floor now applies to
+`exportReceiptPrice`. Two tests in `compute.test.ts` asserted the inverted behaviour and now assert on
+which way the money was flowing instead of on the sign of a number.
+
+🛑 Every `price-opportunity` value and `forgoneC` written before that date is wrong and is only
+corrected by a recompute of the affected range.
 
 ### Invariants
 

@@ -302,17 +302,27 @@ export function computeBatteryProvenance(
   //               carries directly (see blendValue). An area with no export rate bound has no
   //               feed-in tariff, and the series is all null — which is what an unmeasured tariff
   //               means until a tariff device publishes one for it.
-  const exportPrice = inputs.gridExportPrice;
-  // Floor the forgone feed-in at 0 (deliberate, per-interval): under a NEGATIVE export price the
-  // counterfactual to storing solar is curtailment, not paying to export — so nothing was forgone.
-  // (This floor + solarCost≡0 is what keeps `forgoneC` ≥ 0.) Negative IMPORT prices are a different
-  // matter and are NOT clamped anywhere: grid charge at a negative rate books negative ACTUAL cost
-  // (the fold's gridM → costC); `forgoneC` is untouched — grid charge forgoes no export revenue.
-  const solarCostOpp = (i: number) => Math.max(0, exportPrice[i] ?? 0);
-  // The same series in the RECEIPTS convention (positive = money in) — the SELL price of `load.grid`,
-  // and the only thing the `revenueC` leg consumes. Kept separate from `exportPrice` above so the
-  // fold's arithmetic is untouched; see `exportReceiptSeries` for why the two differ in sign.
+  // The measured series in the RECEIPTS convention (positive = money IN) — `exportReceiptSeries`
+  // negates the raw `bidi.grid.export/rate`, which is negative when you are being paid. BOTH legs
+  // below read this one series: the `revenueC` sell price of `load.grid`, and the forgone-revenue
+  // basis for stored solar. See `exportReceiptSeries` for why the raw and receipt readings differ.
   const exportReceiptPrice = exportReceiptSeries(inputs.gridExportPrice);
+  // Floor the forgone feed-in at 0 (deliberate, per-interval): where the RECEIPT is negative you would
+  // have PAID to export, so the counterfactual to storing solar is curtailment and nothing was
+  // forgone. (This floor + solarCost≡0 is what keeps `forgoneC` ≥ 0.)
+  //
+  // 🛑 THE FLOOR GOES ON THE RECEIPT, NOT THE RAW SERIES, and getting that wrong inverted this
+  // number for two years. Floored raw, `Math.max(0, raw)` kept the intervals where raw was POSITIVE —
+  // which in Amber's convention is precisely when exporting would have COST you money — and zeroed
+  // every interval where you would have been paid. So `price-opportunity` reported forgone revenue
+  // exactly when there was none to forgo, and 0 whenever there genuinely was some. It was documented
+  // as a known defect rather than fixed because the two tariff modes disagreed about the sign, so
+  // there was no single convention to floor in; with the config gone there is one, and this is it.
+  //
+  // Negative IMPORT prices are a different matter and are NOT clamped anywhere: grid charge at a
+  // negative rate books negative ACTUAL cost (the fold's gridM → costC); `forgoneC` is untouched —
+  // grid charge forgoes no export revenue.
+  const solarCostOpp = (i: number) => Math.max(0, exportReceiptPrice[i] ?? 0);
 
   const foldConfig: FoldConfig = {
     reserveFloorPct: reserveUsed,
