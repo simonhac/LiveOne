@@ -112,3 +112,8 @@ requested binary as UID/GID 10001. Fly command overrides must use `cmd` only so 
 The CA private key stays outside deployed machines; each server receives only its own key. Record
 certificate expiry and renew before the trial outlives its certificate. Default loopback deployments
 without TLS environment variables retain HTTP support.
+
+The Kinkora container can maintain its two local SSH forwards when `GOUSHER_HUB_HOST` is set.
+Supply `GOUSHER_SSH_KEY_FILE` and `GOUSHER_SSH_KNOWN_HOSTS_FILE`; unknown/changed host keys fail,
+and the tunnel reconnects after failure. The server-side key is restricted to the same two inverter
+HTTP destinations. Keep replay mode and the paused assignment until baseline/coexistence gates pass.

@@ -3,6 +3,7 @@ set -eu
 # Opt-in only. The original production server and its Access ingress stay on loopback.
 [ "${USHER_TRIAL_FORWARDING:-}" = 1 ] || exit 0
 trial_dir=/etc/usher/trial
+chmod 755 "$trial_dir"
 for required_file in client.pub feed.crt feed.key; do
   test -s "$trial_dir/$required_file"
 done
