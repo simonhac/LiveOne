@@ -89,12 +89,16 @@ export interface SourceControl {
 
 /** A device source. Tiny by design: name + siteId + manifest + read(). */
 export interface Source {
+  /** Real reads report their own metrics; read() only harvests cached data. */
+  productionReadsInBackground?: boolean;
   /** short label for logs/sessions, e.g. "musher" */
   name: string;
   /** gusher vendorSiteId (identifies the LiveOne device) */
   siteId: string;
   manifest: Manifest;
   read(): Promise<Values>;
+  /** Optional synchronous enqueue hook; diagnostic storage must never delay a tick. */
+  capture?(measurementTime: string, readings: PushReading[]): void;
   /**
    * Optional: is the device "active" (e.g. a generator that's running)? Drives the run loop's
    * faster cadence. Given the just-read values; return false when unknown.

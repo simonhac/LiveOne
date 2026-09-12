@@ -469,53 +469,7 @@ export class SelectronicFetchClient {
       // that is indistinguishable downstream from a real reading: a dropped `grid_w` would read as
       // "no grid/generator import" and a dropped `battery_soc` as a flat battery. (Same defect class
       // as the run-detector's inability to tell "no data" from "below threshold".)
-      const numOrNull = (v: unknown): number | null => {
-        if (v === null || v === undefined) return null;
-        const n = Number(v);
-        return Number.isFinite(n) ? n : null;
-      };
-      const roundOrNull = (v: unknown): number | null => {
-        const n = numOrNull(v);
-        return n === null ? null : Math.round(n);
-      };
-
-      const solarInverterW = numOrNull(data.items?.solarinverter_w);
-      const shuntW = numOrNull(data.items?.shunt_w);
-
-      const transformed: SelectronicData = {
-        solarW:
-          solarInverterW !== null && shuntW !== null
-            ? Math.round(solarInverterW + shuntW)
-            : null, // Total solar = remote + local
-        solarInverterW:
-          solarInverterW !== null ? Math.round(solarInverterW) : null, // Remote solar
-        shuntW: shuntW !== null ? Math.round(shuntW) : null, // Local solar
-        loadW: roundOrNull(data.items?.load_w),
-        batterySOC: numOrNull(data.items?.battery_soc),
-        batteryW: roundOrNull(data.items?.battery_w),
-        gridW: roundOrNull(data.items?.grid_w),
-        faultCode: numOrNull(data.items?.fault_code),
-        faultTimestamp: numOrNull(data.items?.fault_ts),
-        generatorStatus: numOrNull(data.items?.gen_status),
-        // Energy totals (API returns these as kWh despite _wh_ naming)
-        solarKwhTotal: numOrNull(data.items?.solar_wh_total),
-        loadKwhTotal: numOrNull(data.items?.load_wh_total),
-        batteryInKwhTotal: numOrNull(data.items?.battery_in_wh_total),
-        batteryOutKwhTotal: numOrNull(data.items?.battery_out_wh_total),
-        gridInKwhTotal: numOrNull(data.items?.grid_in_wh_total),
-        gridOutKwhTotal: numOrNull(data.items?.grid_out_wh_total),
-        // Daily energy (API returns these as kWh despite _wh_ naming)
-        solarKwhToday: numOrNull(data.items?.solar_wh_today),
-        loadKwhToday: numOrNull(data.items?.load_wh_today),
-        batteryInKwhToday: numOrNull(data.items?.battery_in_wh_today),
-        batteryOutKwhToday: numOrNull(data.items?.battery_out_wh_today),
-        gridInKwhToday: numOrNull(data.items?.grid_in_wh_today),
-        gridOutKwhToday: numOrNull(data.items?.grid_out_wh_today),
-        timestamp: data.items?.timestamp
-          ? new Date(data.items.timestamp * 1000)
-          : new Date(),
-        raw: data,
-      };
+      const transformed = transformSelectronicData(data);
 
       // Log the actual data timestamp vs current time
       if (data.items?.timestamp) {
@@ -544,4 +498,59 @@ export class SelectronicFetchClient {
       };
     }
   }
+}
+
+/** The same pure decoder is used for production reads and scoped trial baseline exports. */
+export function transformSelectronicData(
+  data: Record<string, any>,
+  fallbackTime = new Date(),
+): SelectronicData {
+  const numOrNull = (v: unknown): number | null => {
+    if (v === null || v === undefined) return null;
+    const n = Number(v);
+    return Number.isFinite(n) ? n : null;
+  };
+  const roundOrNull = (v: unknown): number | null => {
+    const n = numOrNull(v);
+    return n === null ? null : Math.round(n);
+  };
+
+  const solarInverterW = numOrNull(data.items?.solarinverter_w);
+  const shuntW = numOrNull(data.items?.shunt_w);
+
+  const transformed: SelectronicData = {
+    solarW:
+      solarInverterW !== null && shuntW !== null
+        ? Math.round(solarInverterW + shuntW)
+        : null, // Total solar = remote + local
+    solarInverterW: solarInverterW !== null ? Math.round(solarInverterW) : null, // Remote solar
+    shuntW: shuntW !== null ? Math.round(shuntW) : null, // Local solar
+    loadW: roundOrNull(data.items?.load_w),
+    batterySOC: numOrNull(data.items?.battery_soc),
+    batteryW: roundOrNull(data.items?.battery_w),
+    gridW: roundOrNull(data.items?.grid_w),
+    faultCode: numOrNull(data.items?.fault_code),
+    faultTimestamp: numOrNull(data.items?.fault_ts),
+    generatorStatus: numOrNull(data.items?.gen_status),
+    // Energy totals (API returns these as kWh despite _wh_ naming)
+    solarKwhTotal: numOrNull(data.items?.solar_wh_total),
+    loadKwhTotal: numOrNull(data.items?.load_wh_total),
+    batteryInKwhTotal: numOrNull(data.items?.battery_in_wh_total),
+    batteryOutKwhTotal: numOrNull(data.items?.battery_out_wh_total),
+    gridInKwhTotal: numOrNull(data.items?.grid_in_wh_total),
+    gridOutKwhTotal: numOrNull(data.items?.grid_out_wh_total),
+    // Daily energy (API returns these as kWh despite _wh_ naming)
+    solarKwhToday: numOrNull(data.items?.solar_wh_today),
+    loadKwhToday: numOrNull(data.items?.load_wh_today),
+    batteryInKwhToday: numOrNull(data.items?.battery_in_wh_today),
+    batteryOutKwhToday: numOrNull(data.items?.battery_out_wh_today),
+    gridInKwhToday: numOrNull(data.items?.grid_in_wh_today),
+    gridOutKwhToday: numOrNull(data.items?.grid_out_wh_today),
+    timestamp: data.items?.timestamp
+      ? new Date(data.items.timestamp * 1000)
+      : fallbackTime,
+    raw: data,
+  };
+
+  return transformed;
 }

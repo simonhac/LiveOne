@@ -1,0 +1,25 @@
+# Copy and replace the app name before deployment. No public service is declared.
+app = "replace-with-gousher-trial-receiver"
+primary_region = "syd"
+kill_signal = "SIGTERM"
+kill_timeout = "30s"
+
+[build]
+  dockerfile = "packages/gousher/deploy/fly/Dockerfile"
+
+[experimental]
+  entrypoint = ["trial-receiver"]
+  cmd = ["-data", "/data/receiver", "-listen", "127.0.0.1:8081"]
+
+[mounts]
+  source = "gousher_trial_receiver_data"
+  destination = "/data"
+
+[[vm]]
+  cpu_kind = "shared"
+  cpus = 1
+  memory = "256mb"
+
+# Supply GOUSHER_RECEIVER_TOKEN through this app's secrets.
+# Provision /data for UID 10001 before starting the receiver.
+# Provision authenticated HTTPS forwarding to loopback before connecting clients.

@@ -1,0 +1,16 @@
+# Choose a NEW app name. Never use the existing production Usher app/machine.
+app = "replace-with-gousher-trial"
+primary_region = "syd"
+kill_signal = "SIGTERM"
+kill_timeout = "30s"
+[build]
+  dockerfile = "packages/gousher/deploy/fly/Dockerfile"
+[mounts]
+  source = "gousher_trial_data"
+  destination = "/data"
+[[vm]]
+  cpu_kind = "shared"
+  cpus = 1
+  memory = "256mb"
+# Inspector is private; use an authenticated tunnel to its loopback listener.
+# Receiver is deployed as a separate app/volume, with its own private ingress.

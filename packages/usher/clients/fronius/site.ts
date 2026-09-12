@@ -1,3 +1,6 @@
+import { recordProductionRead } from "../../core/trial-monitor";
+import { captureTrial } from "../../core/trial-capture";
+import type { PushReading } from "../../core/source";
 import EventEmitter from "events";
 import crypto from "crypto";
 import axios from "axios";
@@ -320,6 +323,19 @@ export class Site extends EventEmitter {
           batteryInfo,
           meterInfo,
         );
+        inverter.onProductionRead = (duration, ok, error) =>
+          recordProductionRead(this.name, duration, ok, error);
+        inverter.onTrialSample = (at, raw) =>
+          captureTrial({
+            source: "fronius",
+            pollerId: this.name,
+            vendorSiteId: this.name,
+            at: at.toISOString(),
+            raw: { [host]: raw },
+            harvest: false,
+            expected: [],
+            settings: this.captureSettings(),
+          });
         this.inverters.set(serialNumber, inverter);
 
         this.log(
@@ -533,6 +549,32 @@ export class Site extends EventEmitter {
       gridOutWh: hasGrid ? totals.gridOutWh : null,
       loadWh: hasLoad ? totals.loadWh : null,
     };
+  }
+
+  private captureSettings() {
+    return {
+      pollMs: 2000,
+      pushMs: 60000,
+      inverters: Array.from(this.inverters.values()).map((i) => ({
+        host: i.getIp(),
+        master: i.getIsMaster(),
+        battery: !!i.getBattery(),
+      })),
+    };
+  }
+
+  captureHarvest(at: string, expected: PushReading[]) {
+    captureTrial({
+      source: "fronius",
+      pollerId: this.name,
+      vendorSiteId: this.name,
+      at,
+      expectedAt: at,
+      raw: {},
+      harvest: true,
+      expected,
+      settings: this.captureSettings(),
+    });
   }
 
   // Get site data for frontend

@@ -46,7 +46,7 @@
  *
  * No census can see inside jsonb, so every jsonb column must additionally supply either `extract`
  * (pull the raw ids out of a stored value) or `holdsNoRefs` (a reason it holds none). Bounded and
- * enumerable — there are 17 of them.
+ * enumerable — there are 19 of them.
  */
 import { getTableName, is } from "drizzle-orm";
 import { PgTable, getTableConfig, type AnyPgColumn } from "drizzle-orm/pg-core";
@@ -69,6 +69,7 @@ import {
   deviceState,
   devices,
   legacyHandles,
+  managedPollers,
   observationsOutbox,
   pointCommands,
   pointReadings,
@@ -253,6 +254,42 @@ export const REFERENCE_LEDGER: LedgerEntry[] = [
     verdict: {
       protectedBy: "deliberately-unprotected",
       reason: "buffer contents, republished verbatim.",
+    },
+  },
+  {
+    column: managedPollers.collectorId,
+    verdict: { protectedBy: "fk", onDelete: "no action" },
+  },
+  {
+    column: managedPollers.deviceId,
+    verdict: { protectedBy: "fk", onDelete: "no action" },
+  },
+  {
+    column: managedPollers.vendorSiteId,
+    verdict: {
+      protectedBy: "deliberately-unprotected",
+      reason:
+        "Vendor-owned delivery identity copied from the FK-protected device at assignment creation, not a reference to a separate LiveOne row.",
+    },
+  },
+  {
+    column: managedPollers.settings,
+    holdsNoRefs:
+      "Strict collector settings contain network hosts, inverter flags, region/auth enums and timing values; no LiveOne row identifiers are accepted.",
+    verdict: {
+      protectedBy: "deliberately-unprotected",
+      reason:
+        "Device connection and cadence configuration, with device ownership carried by the separate device_id foreign key.",
+    },
+  },
+  {
+    column: managedPollers.status,
+    holdsNoRefs:
+      "Strict status snapshots contain counters, timestamps, flags and error enums. Their id repeats the owning poller's identity, checked on ingestion; the stored id is never resolved as a dependent reference.",
+    verdict: {
+      protectedBy: "deliberately-unprotected",
+      reason:
+        "Latest diagnostic snapshot of this poller, retained on deletion for shutdown acknowledgement.",
     },
   },
   {

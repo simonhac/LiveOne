@@ -9,6 +9,7 @@
  * we wake — each reading is stamped with its ACTUAL read time, never snapped back to the boundary.
  */
 
+import { recordProductionRead } from "./trial-monitor";
 import { buildReadings } from "./build";
 import type { Source } from "./source";
 import type { Pusher, PushOutcome } from "./pusher";
@@ -241,10 +242,31 @@ export async function tickOnce(
   let deliveryActive = false;
   let readError: string | undefined;
   try {
+    const readStarted = performance.now();
     const values = await withTimeout(
       source.read(),
       timeoutMs,
       `tick exceeded ${timeoutMs}ms (hung read)`,
+    ).then(
+      (values) => {
+        if (!source.productionReadsInBackground)
+          recordProductionRead(
+            source.siteId,
+            performance.now() - readStarted,
+            true,
+          );
+        return values;
+      },
+      (error) => {
+        if (!source.productionReadsInBackground)
+          recordProductionRead(
+            source.siteId,
+            performance.now() - readStarted,
+            false,
+            error,
+          );
+        throw error;
+      },
     );
     // The supervisor learns the engine's ACTUAL state from the poll (fn 33 clears only our latch —
     // input A can keep the engine running; only observation tells the two apart).
@@ -252,6 +274,11 @@ export async function tickOnce(
     active = source.isRunning?.(values) ?? false;
     deliveryActive = source.isDeliveryActive?.(values) ?? active;
     readings = buildReadings(source.manifest, values);
+    try {
+      source.capture?.(measurementTime, readings);
+    } catch {
+      log("trial capture unavailable");
+    }
   } catch (e) {
     readError = e instanceof Error ? e.message : String(e);
     log(`[${source.name}] tick error: ${readError}`);

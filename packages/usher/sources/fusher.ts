@@ -189,6 +189,7 @@ export function createFusher(opts: FusherOptions): Source {
 
   return {
     name: "fusher",
+    productionReadsInBackground: true,
     siteId: opts.siteId,
     manifest: FUSHER_MANIFEST,
     async read(): Promise<Values> {
@@ -214,6 +215,9 @@ export function createFusher(opts: FusherOptions): Source {
         gridInWhInterval: m.gridInWhInterval,
         gridOutWhInterval: m.gridOutWhInterval,
       };
+    },
+    capture(at, expected) {
+      site.captureHarvest(at, expected);
     },
     // Live detail for the inspector (2 s power flow + per-inverter state + minutely history).
     snapshot() {

@@ -1791,3 +1791,56 @@ export type PointCommandRow = typeof pointCommands.$inferSelect;
 export type NewPointCommandRow = typeof pointCommands.$inferInsert;
 export type AutomationRow = typeof automations.$inferSelect;
 export type NewAutomationRow = typeof automations.$inferInsert;
+
+// Gousher control plane. No collector has direct database credentials.
+export const collectors = pgTable("collectors", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  name: text("name").notNull(),
+  tokenHash: text("token_hash").notNull(),
+  destination: text("destination").notNull(),
+  disabled: boolean("disabled").notNull().default(false),
+  lastSeenAt: tsMs("last_seen_at"),
+  createdAt: tsMs("created_at").notNull().defaultNow(),
+});
+
+export const managedPollers = pgTable(
+  "managed_pollers",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    collectorId: uuid("collector_id")
+      .notNull()
+      .references(() => collectors.id),
+    deviceId: uuid("device_id")
+      .notNull()
+      .references(() => devices.id),
+    source: text("source").notNull(),
+    vendorSiteId: text("vendor_site_id").notNull(),
+    settings: jsonb("settings")
+      .notNull()
+      .$type<import("@/lib/collectors/contracts").PollerSettings>(),
+    revision: integer("revision").notNull().default(1),
+    appliedRevision: integer("applied_revision").notNull().default(0),
+    paused: boolean("paused").notNull().default(true),
+    deleted: boolean("deleted").notNull().default(false),
+    status:
+      jsonb("status").$type<
+        import("@/lib/collectors/contracts").PollerStatus
+      >(),
+    updatedAt: tsMs("updated_at").notNull().defaultNow(),
+  },
+  (t) => ({
+    collectorIdx: index("managed_pollers_collector_idx").on(t.collectorId),
+    deviceIdx: index("managed_pollers_device_idx").on(t.deviceId),
+    activeUnique: uniqueIndex("managed_pollers_active_unique")
+      .on(t.deviceId, t.source)
+      .where(sql`NOT ${t.deleted}`),
+    revisionCheck: check(
+      "managed_pollers_revision_check",
+      sql`${t.revision} > 0 AND ${t.appliedRevision} >= 0 AND ${t.appliedRevision} <= ${t.revision}`,
+    ),
+    sourceCheck: check(
+      "managed_pollers_source_check",
+      sql`${t.source} IN ('deepsea','fronius','selectronic','sigenergy')`,
+    ),
+  }),
+);

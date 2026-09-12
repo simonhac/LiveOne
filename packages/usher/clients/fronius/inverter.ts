@@ -51,6 +51,8 @@ export class Inverter {
 
   // Latest data
   private lastPowerData?: PowerData;
+  onProductionRead?: (durationMs: number, ok: boolean, error?: unknown) => void;
+  onTrialSample?: (at: Date, raw: unknown) => void;
   private lastApiResponse?: any;
   private lastDataFetch?: Date;
   private faultCode?: string | number;
@@ -143,6 +145,9 @@ export class Inverter {
 
   // Fetch power flow data from the inverter
   public async fetchPowerFlow(): Promise<PowerData | null> {
+    const started = performance.now();
+    let succeeded = false;
+    let readError: unknown;
     try {
       const response = await axios.get(
         `http://${this.ip}/solar_api/v1/GetPowerFlowRealtimeData.fcgi`,
@@ -207,11 +212,18 @@ export class Inverter {
           this.faultTimestamp = undefined;
         }
 
+        try {
+          this.onTrialSample?.(now, data);
+        } catch {
+          /* Recording cannot fail a device read. */
+        }
+        succeeded = true;
         return powerData;
       }
 
       return null;
     } catch (error: any) {
+      readError = error;
       // Extract just the error code for cleaner logging
       if (error.code === "ECONNABORTED") {
         console.error(
@@ -228,6 +240,16 @@ export class Inverter {
         );
       }
       return null;
+    } finally {
+      try {
+        this.onProductionRead?.(
+          performance.now() - started,
+          succeeded,
+          readError,
+        );
+      } catch {
+        /* Diagnostics cannot fail production polling. */
+      }
     }
   }
 

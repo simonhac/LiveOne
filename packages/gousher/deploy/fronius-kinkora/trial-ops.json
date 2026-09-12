@@ -1,0 +1,30 @@
+{
+  "dataDir": "/data/operations",
+  "receiverUrl": "https://trial-receiver.example/export",
+  "receiverTokenEnv": "GOUSHER_RECEIVER_TOKEN",
+  "inspectorUrl": "https://trial-collector.example",
+  "inspectorTokenEnv": "GOUSHER_INSPECTOR_TOKEN",
+  "pollers": [
+    {
+      "id": "REPLACE_WITH_MANAGED_POLLER_ID",
+      "revision": 1,
+      "source": "fronius",
+      "vendorSiteId": "kinkora",
+      "productionSiteId": "kinkora",
+      "referenceUrl": "https://REPLACE_WITH_PRIVATE_PRODUCTION_FEED/api/usher/trial",
+      "referenceTokenEnv": "USHER_TRIAL_MONITOR_TOKEN",
+      "metricsUrl": "https://REPLACE_WITH_PRIVATE_PRODUCTION_FEED/api/usher/trial",
+      "metricsTokenEnv": "USHER_TRIAL_MONITOR_TOKEN",
+      "from": "2026-09-15T00:00:00Z",
+      "baselineEnd": "2026-09-14T23:45:00Z",
+      "baseline": {
+        "samples": 0,
+        "failureRate": 0,
+        "p95ReadMs": 0
+      },
+      "minSamples": 800,
+      "evidenceLagSec": 2,
+      "windowMs": 2000
+    }
+  ]
+}
