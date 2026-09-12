@@ -112,10 +112,12 @@ automations, built with `ical-generator` and carrying a real `VTIMEZONE` (withou
 places every event an hour out for half the year).
 
 **Scope.** One VEVENT per *exercise* rule — charge-session rules have no schedule. A disabled rule
-is shown `STATUS:CANCELLED` rather than dropped, because "it is not running this week" is
-information a subscriber wants and silently removing the event looks like a bug. `SEQUENCE` is the
-row's `updated_at` in epoch seconds, so clients pick up edits instead of accumulating duplicates.
-`X-PUBLISHED-TTL` is an hour.
+is still published, suffixed `(disabled)` in its summary, because "it is not running this week" is
+information a subscriber wants. 🛑 It is `STATUS:CONFIRMED`, **not** `STATUS:CANCELLED`: Apple
+Calendar and Google treat a cancelled event as withdrawn and render nothing at all, so the first
+version of this hid the very event it meant to show, and a week containing only a disabled rule
+looked like a broken feed. `SEQUENCE` is the row's `updated_at` in epoch seconds, so clients pick
+up edits instead of accumulating duplicates. `X-PUBLISHED-TTL` is an hour.
 
 **What is NOT in it:** any reading, any point value, any outcome. A subscriber learns when the site
 *intends* to run something, and nothing else.

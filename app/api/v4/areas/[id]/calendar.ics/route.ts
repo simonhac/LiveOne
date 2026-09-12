@@ -64,9 +64,17 @@ export async function GET(
     name: `${area.displayName} automations`,
     description: `Scheduled automations for ${area.displayName}, from LiveOne.`,
     prodId: { company: "LiveOne", product: "automations", language: "EN" },
-    // A real VTIMEZONE component, not just a TZID string: Apple Calendar will otherwise place
-    // every event at the wrong hour for half the year.
-    timezone: { name: timezone, generator: vtimezoneOrComplain },
+    // A real VTIMEZONE component, not just a TZID string: without it a client cannot resolve the
+    // `TZID=` that every DTSTART here carries.
+    //
+    // 🛑 `name: null` — the generator WITHOUT a calendar-level timezone. Naming the zone here
+    // instead makes ical-generator format the calendar's own properties in it, and two things go
+    // wrong: `DTSTAMP` loses its `Z` (RFC 5545 requires it in UTC, so the stamp becomes invalid),
+    // and `TIMEZONE-ID`/`X-WR-TIMEZONE` get emitted AFTER `END:VTIMEZONE`, i.e. calendar
+    // properties trailing a component. Both are things a strict client is entitled to reject.
+    // With null the VTIMEZONE is still generated from each event's own zone, which is all we
+    // wanted from it.
+    timezone: { name: null, generator: vtimezoneOrComplain },
     // An hour. The schedules change rarely, and a client that re-reads more often than this is
     // spending our request budget to learn nothing.
     ttl: 3600,
@@ -116,11 +124,13 @@ export async function GET(
       timezone,
       summary: row.enabled ? row.name : `${row.name} (disabled)`,
       description: describeRule(row, trigger, minutes),
-      // A disabled rule is shown CANCELLED rather than dropped: "it is not running this week" is
-      // information a subscriber wants, and silently removing the event looks like a bug.
-      status: row.enabled
-        ? ICalEventStatus.CONFIRMED
-        : ICalEventStatus.CANCELLED,
+      // 🛑 A disabled rule is marked in the SUMMARY and left CONFIRMED. It is NOT `CANCELLED`.
+      //
+      // That was the first attempt, and it did the exact thing it was written to avoid: Apple
+      // Calendar (and Google) treat `STATUS:CANCELLED` as withdrawn and render nothing at all, so
+      // a feed whose only event that week was a disabled rule looked empty and broken. "It is not
+      // running this week" is information a subscriber wants; hiding the event is how you lose it.
+      status: ICalEventStatus.CONFIRMED,
       // Monotonic per edit. Epoch SECONDS because SEQUENCE is a 32-bit integer in practice and
       // epoch-ms overflows it.
       sequence: Math.floor(row.updatedAt.getTime() / 1000),

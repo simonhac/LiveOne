@@ -21,6 +21,7 @@
  * Do not run this suite with a bare `jest`, and do not "simplify" the pin out of package.json.
  */
 import { describe, it, expect, beforeEach, jest } from "@jest/globals";
+import ICAL from "ical.js";
 import { NextRequest, NextResponse } from "next/server";
 import { Area, Automation, Derivation, Point } from "@/lib/ids";
 
@@ -115,6 +116,14 @@ const exerciseRow = (over: Partial<AutomationRow> = {}): AutomationRow =>
     ...over,
   }) as AutomationRow;
 
+/**
+ * Undo RFC 5545 line folding.
+ *
+ * A long DESCRIPTION is wrapped at 75 octets with a leading space on the continuation, so a naive
+ * `toContain` on any sentence in it fails for reasons that have nothing to do with the content.
+ */
+const unfold = (ics: string) => ics.replace(/\r\n /g, "");
+
 const feed = (areaId: string, query: string) =>
   FEED(
     new NextRequest(
@@ -161,6 +170,61 @@ describe("GET …/calendar.ics", () => {
     expect(body).toContain(`EXDATE;TZID=${TZ}:20260924T090000`);
   });
 
+  // 🛑 The assertions above are `toContain` on a string, which is how three broken feeds reached
+  // production looking fine. These hand the output to a REFERENCE PARSER (ical.js, Thunderbird's)
+  // and ask what it actually sees — the question a subscriber's client is really asking.
+  it("parses as valid iCalendar, on the right instants", async () => {
+    const raw = await (await feed(AREA, `?token=${TOKEN}`)).text();
+    const comp = new ICAL.Component(ICAL.parse(raw));
+    const events = comp
+      .getAllSubcomponents("vevent")
+      .map((ve) => new ICAL.Event(ve));
+
+    expect(events).toHaveLength(1);
+    const weekly = events[0];
+    expect(weekly.summary).toBe("Generator exercise");
+    expect(weekly.startDate.zone.tzid).toBe(TZ);
+    expect(weekly.startDate.toString()).toBe("2026-09-17T09:00:00");
+    expect(weekly.isRecurring()).toBe(true);
+
+    // Expanded by the parser, which is the only way to know a CLIENT will land where we meant.
+    // Two things are pinned here and neither is visible in the raw text:
+    //   - 24 Sep is absent. That is the fixture's EXDATE actually removing an instance.
+    //   - 8 Oct is 22:00Z, not 23:00Z. The 4 Oct DST change moves the ABSOLUTE instant while
+    //     09:00 local stands still, so consecutive occurrences are 167 hours apart there, not
+    //     168. An event that merely looked right in September would silently drift.
+    const iter = weekly.iterator();
+    const occ: string[] = [];
+    for (let i = 0; i < 4; i++) occ.push(iter.next().toJSDate().toISOString());
+    expect(occ).toEqual([
+      "2026-09-16T23:00:00.000Z", // Thu 17 Sep 09:00 AEST
+      "2026-09-30T23:00:00.000Z", // Thu  1 Oct 09:00 AEST (24 Sep excluded)
+      "2026-10-07T22:00:00.000Z", // Thu  8 Oct 09:00 AEDT
+      "2026-10-14T22:00:00.000Z", // Thu 15 Oct 09:00 AEDT
+    ]);
+  });
+
+  it("stamps DTSTAMP in UTC, as the RFC requires", async () => {
+    // A calendar-level `timezone` makes ical-generator drop the `Z` here, which is invalid and is
+    // exactly the kind of thing a strict client may reject the event over.
+    const raw = await (await feed(AREA, `?token=${TOKEN}`)).text();
+    for (const line of raw.split("\r\n").filter((l) => l.startsWith("DTSTAMP")))
+      expect(line).toMatch(/^DTSTAMP:\d{8}T\d{6}Z$/);
+  });
+
+  it("puts every calendar property BEFORE the first component", async () => {
+    // Properties trailing a component is not legal iCalendar. Naming the calendar timezone
+    // emitted TIMEZONE-ID and X-WR-TIMEZONE after END:VTIMEZONE.
+    const lines = (await (await feed(AREA, `?token=${TOKEN}`)).text()).split(
+      "\r\n",
+    );
+    const firstComponent = lines.findIndex((l) => l === "BEGIN:VTIMEZONE");
+    const strays = lines
+      .slice(firstComponent)
+      .filter((l) => l.startsWith("TIMEZONE-ID") || l.startsWith("X-WR-"));
+    expect(strays).toEqual([]);
+  });
+
   it("ships a real VTIMEZONE and a publish TTL", async () => {
     const body = await (await feed(AREA, `?token=${TOKEN}`)).text();
     // Without the VTIMEZONE component Apple Calendar cannot resolve the TZID above.
@@ -169,10 +233,34 @@ describe("GET …/calendar.ics", () => {
     expect(body).toContain("X-PUBLISHED-TTL:PT1H");
   });
 
-  it("🛑 says so LOUDLY when the VTIMEZONE data cannot be resolved", async () => {
-    // The package reports a missing zone FILE and a missing zone as the same silent `null`, which
-    // is how a VTIMEZONE-less feed reached production twice. The feed still serves — most clients
-    // resolve a bare IANA TZID themselves — but it must not do so quietly.
+  it("🛑 says so LOUDLY when a zone has no VTIMEZONE data", async () => {
+    // Not hypothetical: the package's zone list predates the Kiev→Kyiv rename, so luxon places
+    // the event happily and the package has nothing to describe the zone with. It reports that
+    // and a missing data FILE as the same silent null, which is how a VTIMEZONE-less feed shipped
+    // twice without a word.
+    const err = jest.spyOn(console, "error").mockImplementation(() => {});
+    mockAreaAuth.mockResolvedValue({
+      id: AREA_UUID,
+      displayName: "Daylesford",
+      displayTimezone: "Europe/Kyiv",
+      ownerClerkUserId: "user_simon",
+    } as never);
+
+    const res = await feed(AREA, `?token=${TOKEN}`);
+    const body = await res.text();
+
+    // Degraded, not dead: most clients resolve a bare IANA TZID from their own database, and
+    // failing the whole subscription would be worse for the subscriber than a loud log is for us.
+    expect(res.status).toBe(200);
+    expect(body).toContain("BEGIN:VEVENT");
+    expect(body).not.toContain("BEGIN:VTIMEZONE");
+    expect(err.mock.calls.flat().join(" ")).toContain("no VTIMEZONE");
+    err.mockRestore();
+  });
+
+  it("omits an event whose zone cannot place it, rather than 500ing the feed", async () => {
+    // An area with a nonsense display_timezone yields an invalid DateTime, and `createEvent`
+    // THROWS on one — so a single misconfigured row would take out the whole subscription.
     const err = jest.spyOn(console, "error").mockImplementation(() => {});
     mockAreaAuth.mockResolvedValue({
       id: AREA_UUID,
@@ -184,13 +272,12 @@ describe("GET …/calendar.ics", () => {
     const res = await feed(AREA, `?token=${TOKEN}`);
     const body = await res.text();
 
-    // Degraded, not dead: a single misconfigured area must not 500 the whole subscription.
     expect(res.status).toBe(200);
     expect(body).toContain("BEGIN:VCALENDAR");
-    expect(body).not.toContain("BEGIN:VTIMEZONE");
-    const logged = err.mock.calls.flat().join(" ");
-    expect(logged).toContain("no VTIMEZONE");
-    expect(logged).toContain("omitting it from the feed");
+    expect(body).not.toContain("BEGIN:VEVENT");
+    expect(err.mock.calls.flat().join(" ")).toContain(
+      "omitting it from the feed",
+    );
     err.mockRestore();
   });
 
@@ -201,11 +288,16 @@ describe("GET …/calendar.ics", () => {
     expect(body).not.toContain(ACT_PT_UUID);
   });
 
-  it("shows a disabled rule as CANCELLED rather than dropping it", async () => {
+  it("🛑 marks a disabled rule in the SUMMARY and leaves it CONFIRMED, never CANCELLED", async () => {
+    // Apple Calendar and Google treat STATUS:CANCELLED as withdrawn and render NOTHING. Emitting
+    // it for a disabled rule made a week whose only event was one look empty and broken — the
+    // precise outcome showing the event was meant to prevent.
     mockStore.listForArea.mockResolvedValue([exerciseRow({ enabled: false })]);
-    const body = await (await feed(AREA, `?token=${TOKEN}`)).text();
-    expect(body).toContain("STATUS:CANCELLED");
+    const body = unfold(await (await feed(AREA, `?token=${TOKEN}`)).text());
+    expect(body).not.toContain("STATUS:CANCELLED");
+    expect(body).toContain("STATUS:CONFIRMED");
     expect(body).toContain("SUMMARY:Generator exercise (disabled)");
+    expect(body).toContain("This rule is currently DISABLED.");
   });
 
   it("emits an unrepeated VEVENT for a one-off", async () => {
