@@ -38,7 +38,9 @@ pollers, collection/delivery timestamps,
 configuration errors, storage accounting, DSE registers, and Fronius power/SOC, inverter details and
 the last 20 reports. Fronius hardware identity, battery and meter details are discovered in the background.
 Generator HTTP requests return a trial-mode refusal. The simulator-tested supervisor retains
-absolute deadlines, persists before starts, keeps ambiguous starts armed and retries failed stops.
+absolute deadlines, persists before starts, keeps ambiguous starts armed and retries failed stops
+every 15 seconds, including early/idle release failures recovered after restart. Extensions retain
+pending stop retries and command errors. Simulator probes and releases preserve poll observations.
 Production control activation is intentionally unavailable.
 
 ## Management APIs

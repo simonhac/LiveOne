@@ -38,7 +38,7 @@ npm run type-check
 npm run knip
 ```
 
-The current runs pass 56 top-level Go tests (plus fixture subtests), 303 TypeScript unit tests and
+The preceding Fronius milestone passed 56 top-level Go tests (plus fixture subtests), 303 TypeScript unit tests and
 five PostgreSQL integration tests. The integration suite verifies the real gusher handler, registry,
 point minting and durable outbox boundary using computed Go batches. Only external credential lookup,
 queue delivery and cache services are substituted. It does not exercise the downstream materializer
@@ -62,3 +62,26 @@ then failed: lexical sorting selected device `10` before `2`, unlike TypeScript 
 Both metadata and power parsing now use numeric device-ID order and pass under the race detector.
 
 `TestFroniusCollectionStopCancelsDiscovery` then failed because a disabled reader left its metadata request running. Collection now joins background shutdown before reporting completion; the test and race suite pass.
+
+After Fronius commit `8c462528`, generator simulator parity used two observed red–green cycles:
+
+| Regression test | Observed red result | Fix |
+| --- | --- | --- |
+| `TestFailedEarlyReleaseRetriesBeforeDeadlineAndAfterRestart` | Failed early stop was not retried, with either idle or armed persisted state | Retry persisted stop failures independently of the run deadline |
+| `TestExtensionPreservesCommandAndFailureEvidence` | Extension erased the ambiguous-start error and changed the last write timestamp | Preserve command/error fields when only extending the deadline |
+| `TestReleaseClearsRequestAndRecordsFailedCommand` | Failed stop had an old timestamp and no new transition window; release retained the request | Record attempted stops and clear the released request |
+| `TestRemainingTimeMatchesTypeScriptRounding` | 60.4 seconds displayed as 61 seconds / 2 minutes | Round seconds first, then derive remaining minutes |
+| `TestFirstObservationExtendsActiveTransitionOnly` | First post-command observation failed to extend the transition window | Refresh an existing command window on the first observation |
+| `TestLatchedProbeReportsExtensionWithoutChangingObservation` | Probe advertised a fresh start and overwrote the poll observation | Report extension with the structured verdict and keep polling state unchanged |
+| `TestSimulatorReleaseUsesLastPollWithoutAnotherRead` | Release performed another read and lost still-running attribution | Use the cached poll, including explicit unknown attribution |
+| `TestSimulatorHTTPMethodsAndPasskeyParity` | Missing configuration returned 401, GET probe succeeded, run accepted header-only auth, empty probe key fell back to header | Match the TypeScript route's method and passkey behavior |
+
+`TestFailedReleaseRetryCadenceSurvivesExtension` additionally verifies the 15-second retry cadence
+and that extension cannot cancel a pending release retry. The existing ambiguous-start restart test
+now advances virtual time by that retry interval before expecting the second stop.
+
+Validation for this continuation: 65 top-level Go tests, `go test -race ./...`, `go vet ./...`,
+Linux ARM64 build, and both existing TypeScript control suites (56 tests) pass. Other TypeScript and
+database integration suites were not rerun for these Go-only behavior changes. These are simulator
+regressions checked against TypeScript source semantics; there is no shared cross-language control
+trace oracle yet. No live device writes or deployment occurred.

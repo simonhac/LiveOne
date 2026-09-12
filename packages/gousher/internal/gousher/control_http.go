@@ -20,12 +20,12 @@ func (s *Supervisor) SimulatorHandler(siteID, passkey string) http.Handler {
 			http.NotFound(w, r)
 			return
 		}
-		if r.Method != "GET" && r.Method != "POST" {
+		if (r.Method != "GET" && r.Method != "POST") || (r.URL.Path == base+"probe" && r.Method != "POST") {
 			w.WriteHeader(405)
 			return
 		}
 		var input struct {
-			Passkey    string   `json:"passkey"`
+			Passkey    *string  `json:"passkey"`
 			RuntimeSec *float64 `json:"runtimeSec"`
 			Override   bool     `json:"overrideRemoteStart"`
 		}
@@ -40,12 +40,19 @@ func (s *Supervisor) SimulatorHandler(siteID, passkey string) http.Handler {
 				return
 			}
 		}
-		if input.Passkey == "" {
-			input.Passkey = r.Header.Get("x-usher-passkey")
+		supplied := ""
+		if input.Passkey != nil {
+			supplied = *input.Passkey
+		} else if r.Method == "GET" || r.URL.Path == base+"probe" {
+			supplied = r.Header.Get("x-usher-passkey")
 		}
-		provided := sha256.Sum256([]byte(input.Passkey))
+		if passkey == "" {
+			jsonResponse(w, 503, map[string]string{"error": "control passkey is not configured on this hub"})
+			return
+		}
+		provided := sha256.Sum256([]byte(supplied))
 		expected := sha256.Sum256([]byte(passkey))
-		if passkey == "" || subtle.ConstantTimeCompare(provided[:], expected[:]) != 1 {
+		if supplied == "" || subtle.ConstantTimeCompare(provided[:], expected[:]) != 1 {
 			jsonResponse(w, 401, map[string]string{"error": "unauthorized"})
 			return
 		}
@@ -61,14 +68,16 @@ func (s *Supervisor) SimulatorHandler(siteID, passkey string) http.Handler {
 				jsonResponse(w, 503, view)
 				return
 			}
-			s.Observe(ownership, now)
-			view = s.View(now)
-			canStart := ownership.Mode == 1 && ownership.TelemetryStart && ownership.TelemetryCancel && (!ownership.Running || s.Status().Latched)
+			canStart := ownership.Mode == 1 && ownership.TelemetryStart && ownership.TelemetryCancel && !ownership.Running && view["latched"] == false
 			view["ok"] = true
 			view["wouldStart"] = canStart
 			view["verdict"] = "The simulator is ready for a supervised run."
 			if !canStart {
 				view["verdict"] = "A supervised run is not currently allowed."
+			}
+			if view["latched"] == true {
+				view["verdict"] = "Running until " + view["stopAt"].(*time.Time).UTC().Format("2006-01-02T15:04:05.000Z") + " — starting again extends the run."
+				view["verdictMessage"] = map[string]any{"template": "Running until {stopAt, time, short} — starting again extends the run.", "values": map[string]any{"stopAt": view["stopAt"]}}
 			}
 			view["mode"] = ownership.Mode
 			view["modeName"] = registerMap.Modes[strconv.Itoa(ownership.Mode)]
@@ -110,18 +119,7 @@ func (s *Supervisor) SimulatorHandler(siteID, passkey string) http.Handler {
 		if *input.RuntimeSec == 0 {
 			action = "released"
 			result["released"] = true
-			ownership, readErr := s.target.Preflight(ctx)
-			if readErr == nil {
-				s.Observe(ownership, time.Now())
-				result["status"] = s.View(time.Now())
-				if ownership.Running {
-					reason := "cool-down"
-					if ownership.RemoteStartInput == "closed" {
-						reason = "remote-start-input"
-					}
-					result["stillRunning"] = reason
-				}
-			}
+			result["stillRunning"] = s.stillRunning()
 		}
 		result["action"] = action
 		jsonResponse(w, 200, result)

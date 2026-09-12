@@ -220,7 +220,7 @@ func TestAmbiguousStartDeadlineSurvivesRestart(t *testing.T) {
 		t.Fatal("failed stop disarmed deadline")
 	}
 	target.failStop = false
-	if e = s.Reconcile(context.Background(), now.Add(time.Minute)); e != nil || s.Status().Latched {
+	if e = s.Reconcile(context.Background(), now.Add(time.Minute+15*time.Second)); e != nil || s.Status().Latched {
 		t.Fatal("retry did not release")
 	}
 }

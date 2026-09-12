@@ -42,8 +42,12 @@ required to resume it. The authenticated `/api/trial/windows` endpoint now enfor
 - Qualify Fronius discovery responses on the trial devices and the dedicated outbound telemetry destination.
   The state envelope, default SSE messages, DSE diagnostics, Fronius power/SOC and 20-report history,
   stale health (including readers with no first sample), authenticated duration histograms and bounded outbound OTLP/HTTP JSON export are implemented. Background discovery now supplies inverter identity and battery/meter details through bounded read-only requests; failed discovery leaves metadata absent.
-- Complete generator API/state parity beyond the simulator-tested deadline/latch kernel; the trial
-  HTTP control routes intentionally refuse writes and are not a production replacement.
+- Complete generator API/state parity. Simulator regressions now cover early release retry (including
+  restart and extension), request/error timestamps, remaining-time rounding, transition observations,
+  latched probes, still-running attribution and HTTP method/passkey handling. Still outstanding:
+  shared TypeScript/Go control trace fixtures, detailed start-gate/probe ownership and SCF responses,
+  defensive missing/corrupt-state boot recovery, origin JWT authentication, and full concurrent-command
+  qualification. The trial HTTP control routes intentionally refuse writes and are not a production replacement.
 - Enable and qualify the optional asynchronous TypeScript DSE/Fronius input capture in production.
   Hooks now preserve input order, integration timestamps, harvest boundaries, revisions and expected
   readings, within a bounded gzip journal. They remain disabled unless explicitly configured.

@@ -95,10 +95,12 @@ func (s *Supervisor) Request(ctx context.Context, seconds float64, override bool
 	next.StopAt = &stop
 	next.Latched = true
 	next.ReleasedAt = nil
-	next.LastError = ""
 	next.RequestedAt = &now
-	next.LastCommandAt = &now
-	next.StopFailing = false
+	if !s.status.Latched {
+		next.LastError = ""
+		next.LastCommandAt = &now
+		next.StopFailing = false
+	}
 	if e := s.persist(next); e != nil {
 		return e
 	}
@@ -115,15 +117,18 @@ func (s *Supervisor) Request(ctx context.Context, seconds float64, override bool
 	return nil
 }
 func (s *Supervisor) stop(ctx context.Context, now time.Time) error {
+	s.status.LastCommandAt = &now
+	s.transitionAt = &now
 	if e := s.target.Stop(ctx); e != nil {
 		s.status.LastError = "stop failed; retry pending"
 		s.status.StopFailing = true
 		_ = s.persist(s.status)
 		return e
 	}
-	next := ControlStatus{ReleasedAt: &now, LastCommandAt: &now, RequestedAt: s.status.RequestedAt}
+	next := ControlStatus{ReleasedAt: &now, LastCommandAt: &now}
 	if e := s.persist(next); e != nil {
 		s.status.LastError = "latch released but persistence failed; retry pending"
+		s.status.StopFailing = true
 		return e
 	}
 	s.status = next
@@ -133,6 +138,13 @@ func (s *Supervisor) stop(ctx context.Context, now time.Time) error {
 func (s *Supervisor) Reconcile(ctx context.Context, now time.Time) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	// Failed releases retry independently of the run deadline, including idle releases.
+	if s.status.StopFailing {
+		if s.status.LastCommandAt == nil || now.Sub(*s.status.LastCommandAt) >= 15*time.Second {
+			return s.stop(ctx, now)
+		}
+		return nil
+	}
 	if s.status.Latched && s.status.StopAt != nil && !now.Before(*s.status.StopAt) {
 		return s.stop(ctx, now)
 	}
@@ -156,7 +168,8 @@ func (s *Supervisor) Run(ctx context.Context) {
 func (s *Supervisor) Observe(ownership Ownership, now time.Time) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.observed != nil && s.observed.Running != ownership.Running {
+	if (s.observed != nil && s.observed.Running != ownership.Running) ||
+		(s.observed == nil && s.transitionAt != nil && now.Sub(*s.transitionAt) < 3*time.Minute) {
 		s.transitionAt = &now
 	}
 	s.observed = &ownership
@@ -195,8 +208,8 @@ func (s *Supervisor) View(now time.Time) map[string]any {
 	defer s.mu.Unlock()
 	var remaining any
 	var lastError any
-	if s.status.StopAt != nil {
-		remaining = int(math.Max(0, math.Ceil(s.status.StopAt.Sub(now).Seconds())))
+	if s.status.Latched && s.status.StopAt != nil {
+		remaining = s.remainingSeconds(now)
 	}
 	if s.status.LastError != "" {
 		lastError = s.status.LastError
@@ -215,10 +228,36 @@ func (s *Supervisor) SyntheticValues(now time.Time) map[string]any {
 	}
 	if s.status.StopAt != nil {
 		stopAt = int64(math.Floor(float64(s.status.StopAt.UnixMilli())/1000 + 0.5))
-		minutes = int(math.Max(0, math.Ceil(s.status.StopAt.Sub(now).Minutes())))
+		if s.status.Latched {
+			minutes = int(math.Ceil(float64(s.remainingSeconds(now)) / 60))
+		}
 	}
 	if s.status.LastError != "" {
 		lastError = s.status.LastError
 	}
 	return map[string]any{"controlRunActive": active, "controlInhibitActive": 0, "controlStopAt": stopAt, "controlState": s.state(now), "controlLastError": lastError, "controlRunRequestMin": minutes}
+}
+
+// TypeScript rounds seconds before deriving the remaining-minute reading.
+// Caller holds mu.
+func (s *Supervisor) remainingSeconds(now time.Time) int {
+	return int(math.Max(0, math.Floor(s.status.StopAt.Sub(now).Seconds()+0.5)))
+}
+
+// A confirmed release does not imply a stopped engine. Use the latest poll, as
+// TypeScript does; a release must not wait for a second controller round trip.
+func (s *Supervisor) stillRunning() any {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.observed == nil || !s.observed.Running {
+		return nil
+	}
+	switch s.observed.RemoteStartInput {
+	case "closed":
+		return "remote-start-input"
+	case "open":
+		return "cool-down"
+	default:
+		return "unknown"
+	}
 }
