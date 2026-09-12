@@ -154,3 +154,15 @@ Additional tests verify successful/malformed responses, diagnostic callback isol
 of harvest metrics. All **195 Usher tests across 21 suites**, root and Usher type-checks pass.
 No Go behavior changed; Go/database suites were not rerun. This corrects the metric definition before
 baseline collection; earlier harvest timings must not be used as a Fronius production baseline.
+
+## Deployment reconciliation
+
+Synced current main and regenerated the unshipped collector migration as `0067` because main already
+shipped `0066_run_provenance_per_area`. Applied `0067` to the verified `liveone-dev/main` branch;
+rollback-only probes verified the source/revision checks, both foreign keys, active-assignment unique
+index, paused default and postgres ownership. No probe rows were committed. The disposable integration
+script now uses `0067` and its five tests pass. The merged branch passes 319 selected TypeScript tests,
+Go race/vet/ARM64 checks and root/Usher/control type-checks. A full Next.js build exposed an invalid
+poller-list route export (helper's optional string argument was interpreted as route context); explicit
+request-only route wrappers fix that signature. Full build verification is recorded in the deployment
+record once complete.

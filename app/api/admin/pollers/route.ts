@@ -1,3 +1,9 @@
+import { NextRequest } from "next/server";
 import { adminPollers } from "@/lib/collectors/api";
-export const GET = adminPollers;
-export const POST = adminPollers;
+
+export function GET(request: NextRequest) {
+  return adminPollers(request);
+}
+export function POST(request: NextRequest) {
+  return adminPollers(request);
+}
