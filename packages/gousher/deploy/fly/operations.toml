@@ -5,11 +5,10 @@ kill_signal = "SIGTERM"
 kill_timeout = "30s"
 
 [build]
-  dockerfile = "packages/gousher/deploy/fly/Dockerfile"
+  dockerfile = "Dockerfile"
 
 [experimental]
-  entrypoint = ["trial-ops"]
-  cmd = ["-config", "/etc/gousher/trial-ops.json"]
+  cmd = ["trial-ops", "-config", "/etc/gousher/trial-ops.json"]
 
 [[files]]
   guest_path = "/etc/gousher/trial-ops.json"

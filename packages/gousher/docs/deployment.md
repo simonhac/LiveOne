@@ -97,3 +97,18 @@ No app, volume, secret, route or production configuration was created or changed
 record the first trial site/vendor, LiveOne management origin, assigned poller and collector identity,
 and authenticated forwarding destinations. Local tests and manifest validation do not satisfy these
 operational gates or prove that a container can start on a newly provisioned volume.
+
+## Native TLS on the private network
+
+Collector and receiver accept `GOUSHER_TLS_CERT_FILE` and `GOUSHER_TLS_KEY_FILE`. Set both to
+certificate/key files injected into the Machine; a missing partner or invalid certificate fails
+startup. TLS 1.2 is the minimum. A private trial CA can issue certificates for the exact `.internal`
+server names. Inject its public certificate into clients and set `SSL_CERT_FILE` to that path; never
+disable certificate verification. Bind the server to `[::]:8080` (collector) or `[::]:8081` (receiver)
+with no Fly service/public IP allocation. Dedicated bearer tokens remain required over TLS.
+
+The container entrypoint prepares a fresh `/data` volume and TLS-file ownership, then executes the
+requested binary as UID/GID 10001. Fly command overrides must use `cmd` only so this setup runs.
+The CA private key stays outside deployed machines; each server receives only its own key. Record
+certificate expiry and renew before the trial outlives its certificate. Default loopback deployments
+without TLS environment variables retain HTTP support.

@@ -146,6 +146,10 @@ export function hasFeedToken(request: Request): boolean {
 // 404 before the handler runs, so a credential the handler understands never gets the chance to be
 // understood. This is the same reason `/api/cron` and `/api/gush` are listed elsewhere.
 const cliTokenRoutes = [
+  // Enrollment and assignment management still requireAdmin in both helpers.
+  "/api/admin/collectors",
+  "/api/admin/pollers",
+  "/api/admin/pollers/:pollerId",
   "/api/v4/dashboards(.*)", // the dashboard CLI
   "/api/v4/devices(.*)", // device list + per-device aggregate — every handler requireAuth's
   // One session and its manifest, for `liveone session show`. A NAMED segment, never `(.*)`: there

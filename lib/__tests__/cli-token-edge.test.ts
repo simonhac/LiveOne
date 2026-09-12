@@ -84,11 +84,14 @@ describe("isCliTokenRoute — what the bypass is bounded to", () => {
       "/api/cli-auth/tokens",
       "/api/cli-auth/tokens/cli_abc",
       "/api/cli-auth/whoami",
+      "/api/admin/collectors",
+      "/api/admin/pollers",
+      "/api/admin/pollers/019f9788-fe74-7fbb-bf98-6d02eadbacde",
     ])
       expect(isCliTokenRoute(req(p))).toBe(true);
   });
 
-  it("does NOT cover admin, control, vendor, cron or page routes", () => {
+  it("does NOT cover unrelated admin, control, vendor, cron or page routes", () => {
     // A CLI credential is a real user credential, so widening this list is a real decision. These
     // are the surfaces a stray or stolen token must not reach at the edge.
     for (const p of [
@@ -207,6 +210,9 @@ describe("every route the bypass exposes authorizes for itself", () => {
     "loadOwnedDashboard",
     "requireAuth",
     "requireAdmin",
+    // Both collector admin helpers gate every method; api.test.ts verifies denial.
+    "adminCollectors",
+    "adminPollers",
     "requireDashboardAccess",
     // The `/api/v4/areas/{id}` loader (lib/areas/http.ts): it WRAPS requireAuth and then resolves
     // the id within the caller's readable set, so it is an authorization call, not a shortcut past

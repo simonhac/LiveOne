@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, jest } from "@jest/globals";
 import { createHash } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
-import { collectorApi, adminPollers } from "../api";
+import { collectorApi, adminPollers, adminCollectors } from "../api";
 import { settingsSchema, statusSchema, validateSettings } from "../contracts";
 import { requireAdmin } from "@/lib/api-auth";
 import { getDeviceCredentials } from "@/lib/secure-credentials";
@@ -159,6 +159,12 @@ describe("collector authorization and revisions", () => {
         NextResponse.json({ error: "Forbidden" }, { status: 403 }),
       );
     expect((await adminPollers(req("GET", "config"))).status).toBe(403);
+    for (const method of ["POST", "PATCH"]) {
+      expect((await adminCollectors(req(method, "config"))).status).toBe(403);
+    }
+    for (const method of ["POST", "PATCH", "DELETE"]) {
+      expect((await adminPollers(req(method, "config"))).status).toBe(403);
+    }
     expect(db.select).not.toHaveBeenCalled();
   });
 });

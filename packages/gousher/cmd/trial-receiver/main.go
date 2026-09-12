@@ -22,5 +22,5 @@ func main() {
 		log.Fatal(e)
 	}
 	s := &http.Server{Addr: *listen, Handler: h, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 15 * time.Second, IdleTimeout: 60 * time.Second}
-	log.Fatal(s.ListenAndServe())
+	log.Fatal(gousher.ListenAndServe(s, os.Getenv("GOUSHER_TLS_CERT_FILE"), os.Getenv("GOUSHER_TLS_KEY_FILE")))
 }
