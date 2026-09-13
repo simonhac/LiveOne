@@ -19,7 +19,10 @@ import { readViews, telemetryInstanceId } from "@liveone/telemetry";
  * the metric names, so one dashboard layout serves all three.
  */
 
-import { OTLPMetricExporter } from "@opentelemetry/exporter-metrics-otlp-http";
+import {
+  AggregationTemporalityPreference,
+  OTLPMetricExporter,
+} from "@opentelemetry/exporter-metrics-otlp-http";
 import {
   MeterProvider,
   PeriodicExportingMetricReader,
@@ -82,6 +85,8 @@ export function initTelemetry(log: (m: string) => void = console.log): void {
   }
 
   const inner = new OTLPMetricExporter({
+    // Preserve the first histogram population after a restart, as on LiveOne.
+    temporalityPreference: AggregationTemporalityPreference.DELTA,
     url: endpoint,
     timeoutMillis: 3000,
     headers: { Authorization: `Bearer ${token}` },
