@@ -491,6 +491,32 @@ export interface WireChangeOffset {
   nextDay: string | null;
 }
 
+/**
+ * Combine a re-bucket's passes into one report.
+ *
+ * 🛑 Three fields must come from the FIRST pass, not the last, and getting this wrong is precisely
+ * the failure this verb exists to prevent. The delete happens once, on pass 1. A resumed pass
+ * re-plans AFTER the offset has already been written, so its `offset.from` equals `offset.to` and its
+ * `span.rows` counts only what pass 1 left behind. Taking the last body wholesale reported
+ * `deleted1d: 0` and `600 → 600` on the real prod run — a re-bucket that moved a year of history
+ * describing itself as a no-op.
+ *
+ * Only `agg1dDays` accumulates. `nextDay` and `dryRun` are genuinely the last pass's.
+ */
+export function mergeChangeOffsetPasses(
+  first: WireChangeOffset,
+  last: WireChangeOffset,
+  agg1dDays: number,
+): WireChangeOffset {
+  return {
+    ...last,
+    agg1dDays,
+    offset: first.offset,
+    span: first.span,
+    deleted1d: first.deleted1d,
+  };
+}
+
 const signed = (m: number) => `${m >= 0 ? "+" : ""}${m}m`;
 
 export function renderChangeOffset(r: WireChangeOffset, passes = 1): string {
@@ -594,7 +620,8 @@ async function runChangeOffset(ctx: Ctx): Promise<number> {
       // whole history does not fit in one serverless invocation (a measured 357-day device took
       // 6m29s against a 300 s ceiling). Driving the resumption from HERE is what keeps the operation
       // one command: the CLI is long-lived, the function is not.
-      let body = await call(null).then((r) => r.body);
+      const first = await call(null).then((r) => r.body);
+      let body = first;
       let agg1dDays = body.agg1dDays;
       let passes = 1;
       while (!body.dryRun && body.nextDay) {
@@ -606,7 +633,7 @@ async function runChangeOffset(ctx: Ctx): Promise<number> {
         passes++;
       }
 
-      const merged: WireChangeOffset = { ...body, agg1dDays };
+      const merged = mergeChangeOffsetPasses(first, body, agg1dDays);
       ctx.emit(merged, () => renderChangeOffset(merged, passes));
       return !merged.dryRun && merged.agg1dDays < merged.days
         ? EXIT.FINDINGS

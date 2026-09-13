@@ -96,8 +96,8 @@ async function helperFor(areaUuid: string) {
   const [helper] = await db
     .select({ id: devices.id, rid: devices.rid, name: devices.name })
     .from(devices)
-    .innerJoin(areaMembers, eq(areaMembers.deviceId, devices.id))
-    .where(and(eq(areaMembers.areaId, areaUuid), eq(devices.vendor, "helper")))
+    // Migration 0071: the membership edge is `devices.area_id`, so no join is needed.
+    .where(and(eq(devices.areaId, areaUuid), eq(devices.vendor, "helper")))
     .limit(1);
   if (!helper) return null;
 

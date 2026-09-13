@@ -14,6 +14,7 @@ import { describe, it, expect } from "@jest/globals";
 import { parse, type Tty } from "@/lib/cli/cli";
 import {
   deviceCommand,
+  mergeChangeOffsetPasses,
   renderChangeOffset,
   renderRecompute,
   type WireChangeOffset,
@@ -262,5 +263,74 @@ describe("change-offset's rendering", () => {
   it("says plainly when there is nothing to rebuild", () => {
     const out = renderChangeOffset({ ...base, span: null, days: 0 });
     expect(out).toMatch(/no agg_1d rows/);
+  });
+});
+
+describe("merging a re-bucket's passes", () => {
+  // Modelled on the real prod run: pass 1 writes the offset, deletes 1416 rows and rebuilds 340 days
+  // before its budget runs out; pass 2 re-plans (so it sees the ALREADY-WRITTEN offset and the rows
+  // pass 1 left) and finishes the last 20.
+  const pass1: WireChangeOffset = {
+    device: {
+      id: "dv_x",
+      systemId: 5,
+      name: "Kinkora Fronius",
+      vendor: "fusher",
+    },
+    offset: { from: 660, to: 600 },
+    area: { id: "ar_x", name: "Kinkora Fronius", offsetMin: 660 },
+    span: { startDay: "2025-09-21", endDay: "2026-09-15", rows: 1416 },
+    days: 360,
+    points: 13,
+    dryRun: false,
+    deleted1d: 1416,
+    agg1dDays: 340,
+    provenanceAreas: 1,
+    nextDay: "2026-08-27",
+  };
+  const pass2: WireChangeOffset = {
+    ...pass1,
+    offset: { from: 600, to: 600 }, // re-planned after pass 1 wrote it
+    span: { startDay: "2025-09-21", endDay: "2026-09-15", rows: 1182 },
+    deleted1d: 0, // the delete already happened
+    agg1dDays: 20,
+    nextDay: null,
+  };
+
+  const merged = mergeChangeOffsetPasses(pass1, pass2, 360);
+
+  it("keeps the FIRST pass's delete count, not the resumed pass's zero", () => {
+    expect(merged.deleted1d).toBe(1416);
+  });
+
+  it("keeps the original offset, so the report still says what changed", () => {
+    expect(merged.offset).toEqual({ from: 660, to: 600 });
+  });
+
+  it("keeps the first pass's row count, which is what was actually removed", () => {
+    expect(merged.span?.rows).toBe(1416);
+  });
+
+  it("accumulates the days rather than taking the last pass's", () => {
+    expect(merged.agg1dDays).toBe(360);
+  });
+
+  it("takes nextDay and dryRun from the LAST pass — those are genuinely its own", () => {
+    expect(merged.nextDay).toBeNull();
+    expect(merged.dryRun).toBe(false);
+  });
+
+  it("renders a report that shows the work, not a no-op", () => {
+    // The regression in one assertion: before the fix this read "deleted 0" and "+600m → +600m".
+    const out = renderChangeOffset(merged, 2);
+    expect(out).toMatch(/deleted      1416 agg_1d row\(s\)/);
+    expect(out).toMatch(/\+660m → \+600m/);
+    expect(out).toMatch(/360 of 360 day\(s\), over 2 passes/);
+  });
+
+  it("is a no-op for a single pass", () => {
+    expect(mergeChangeOffsetPasses(pass1, pass1, pass1.agg1dDays)).toEqual(
+      pass1,
+    );
   });
 });

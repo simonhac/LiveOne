@@ -498,6 +498,13 @@
       "when": 1789333739563,
       "tag": "0070_device_placement_and_area",
       "breakpoints": true
+    },
+    {
+      "idx": 71,
+      "version": "7",
+      "when": 1789339234809,
+      "tag": "0071_backfill_devices_area_id",
+      "breakpoints": true
     }
   ]
 }

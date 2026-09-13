@@ -76,27 +76,29 @@ beforeEach(() => {
   mockDb = makeFakeDb();
 });
 
-describe("membership DAO reads `area_members`, never `area_devices`", () => {
-  it("getAreaMemberDeviceIds joins devices and orders by ordinal then rid", async () => {
+describe("membership DAO reads `devices.area_id`, never `area_members`", () => {
+  it("getAreaMemberDeviceIds reads the devices column and orders helper-last, then rid", async () => {
     await getAreaMemberDeviceIds("area-a");
     const [sql] = captured;
-    expect(sql).toContain('from "area_members"');
-    expect(sql).toContain(
-      'inner join "devices" on "devices"."id" = "area_members"."device_id"',
-    );
-    expect(sql).toContain('where "area_members"."area_id" = $1');
-    // The tiebreak is rid, not device_id: uuid order is not int order, and members sharing an ordinal
-    // must keep the ordering they had under `area_devices`.
-    expect(sql).toContain(
-      'order by "area_members"."ordinal" asc, "devices"."rid" asc',
-    );
+    // 🛑 Migration 0071 moved the edge onto `devices.area_id`. `area_members` is still WRITTEN during
+    // the dual-write window, so a read that slid back to it would keep working and silently stop
+    // reflecting re-homes the moment the two diverge.
+    expect(sql).toContain('from "devices"');
+    expect(sql).toContain('where "devices"."area_id" = $1');
+    expect(sql).not.toContain("area_members");
+    // Reproduces the retired `(area_members.ordinal, devices.rid)` order exactly: every helper
+    // carried ordinal 99 so it sorted last, and no other ordinal changed the relative order of the
+    // members that survive the flip. The tiebreak is rid, not device_id — uuid order is not int order.
+    expect(sql).toContain('order by "devices"."vendor" = ');
+    expect(sql).toContain('"devices"."rid" asc');
   });
 
   it("listFlowEligibleAreaHandles matches members through devices.rid", async () => {
     await listFlowEligibleAreaHandles();
     const [sql] = captured;
-    expect(sql).toContain("FROM area_members am");
-    expect(sql).toContain("JOIN devices d ON d.id = am.device_id");
+    expect(sql).toContain("FROM devices d");
+    expect(sql).toContain("JOIN areas parent ON parent.id = d.area_id");
+    expect(sql).not.toContain("area_members");
     // The int handle comparison must go through devices.rid — the seam invariant devices.rid == systems.id.
     // config-v4 Phase 13 PR 5: the handle side is `legacy_handles.handle`, not the dropped
     // `areas.legacy_system_id`. Raw `sql`, so tsc cannot see either side of this — hence the assertion.
@@ -112,12 +114,11 @@ describe("membership DAO reads `area_members`, never `area_devices`", () => {
   it("getAreaMemberPointsForServing reaches member points through the points.device_id FK", async () => {
     await getAreaMemberPointsForServing();
     const [sql] = captured;
+    // One join shallower than the `area_members` hop it replaces.
     expect(sql).toContain(
-      'inner join "area_members" on "area_members"."area_id" = "areas"."id"',
+      'inner join "devices" on "devices"."area_id" = "areas"."id"',
     );
-    expect(sql).toContain(
-      'inner join "devices" on "devices"."id" = "area_members"."device_id"',
-    );
+    expect(sql).not.toContain("area_members");
     // slice 1b: was `point_info.system_id = devices.rid`, a join through the integer handle. Points-
     // primary joins the real FK instead, so the member bridge no longer passes through an int at all.
     expect(sql).toContain(
