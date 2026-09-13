@@ -55,11 +55,23 @@ it and would otherwise render it naked on the page background.
 This is why `HeatmapPanel` and `DailyStripes` render frameless and their standalone hosts wrap them
 — the same component appears in both places, so the frame cannot belong to the component.
 
-### 2. A frame is never breakpoint-gated
+### 2. A frame is never breakpoint-gated *per surface*
 
 `md:bg-gray-800`, `sm:rounded` — a frame that materialises at a breakpoint means the chart matches
 its neighbours on a phone and diverges on a laptop. The lines chart and the daily-stripe card each
-did this, in different directions. A surface that has a frame has it at every width.
+did this, in different directions. What the rule protects is AGREEMENT between neighbours: no card
+may carry a gate its neighbour does not.
+
+There is exactly one gate that is allowed, and it is allowed because it cannot cause that drift:
+`CHART_PANEL_BLEED` drops the **section** frame and its side padding below `sm`, for every section at
+once. On a phone the chrome cost ~20px a side once the page inset, the section padding and the card
+body padding had each taken their cut, and a 600px Sankey had to fit in what was left; sections are
+separated by `gap-4` regardless, so the border was not what told them apart. `CHART_BODY_PAD` goes
+horizontally to zero at the same breakpoint for the same reason — bleeding the section while keeping
+the body inset just moves the gutter inwards. Vertical padding is untouched at every width: it keeps
+stacked charts off each other, which has nothing to do with screen width.
+
+If you find yourself wanting a second such gate, it is almost certainly a per-surface one. Don't.
 
 ### 3. A chart delimits itself; a table does not
 

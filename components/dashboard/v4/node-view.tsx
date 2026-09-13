@@ -371,8 +371,10 @@ function GroupNodeView({
 
   if (node.heading && area) {
     return (
-      <Panel as="section">
-        <div className="flex items-center gap-1.5 px-1 pb-2 text-xs font-medium uppercase tracking-wide text-gray-400">
+      // `bleed`: below `sm` the section runs to the screen edge — no frame, no side padding — so the
+      // Sankey and the tiles get the ~20px a side the chrome was taking. See CHART_PANEL_BLEED.
+      <Panel as="section" bleed>
+        <div className="flex items-center gap-1.5 px-2 pb-2 text-xs font-medium uppercase tracking-wide text-gray-400 sm:px-1">
           <Layers className="h-3.5 w-3.5" />
           <span>{area.displayName}</span>
         </div>

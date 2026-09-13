@@ -24,8 +24,16 @@
  * formula above so the two cannot drift.
  */
 
-/** Layout every tile grid shares, independent of the column count. */
-const GRID_BASE = "grid gap-2 @[560px]:gap-4 auto-rows-fr px-1";
+/**
+ * Layout every tile grid shares, independent of the column count.
+ *
+ * 🛑 The mobile inset is `px-0.5` (2px) and not `px-0`. Below `sm` the section runs to the screen
+ * edge (see `CHART_PANEL_BLEED`), and a tile draws its own 1px border: flush against the viewport
+ * the outermost column's outer border lands half on the last pixel and half off it, so it renders
+ * as a broken hairline down one side of the grid while every other tile edge looks crisp. Two
+ * pixels is enough for the border to land whole and still reads as full-bleed.
+ */
+const GRID_BASE = "grid gap-2 @[560px]:gap-4 auto-rows-fr px-0.5 sm:px-1";
 
 /**
  * count -> the responsive `grid-cols-*` classes, one per container tier

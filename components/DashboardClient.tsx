@@ -269,7 +269,7 @@ export default function DashboardClient({
           </div>
         </header>
 
-        <main className="mx-auto max-w-7xl px-1 py-4">
+        <main className="mx-auto max-w-7xl px-0 py-4 sm:px-1">
           {docHasCards(dashboard.doc) ? (
             <DashboardV4View
               doc={dashboard.doc}

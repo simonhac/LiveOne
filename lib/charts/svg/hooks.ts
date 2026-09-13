@@ -10,6 +10,37 @@
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 
+/**
+ * Does this device deliver its pointer by finger? The repo-wide answer to "can the user hover?",
+ * and the switch every tap-to-open panel is gated on.
+ *
+ * `"ontouchstart" in window` rather than a `(hover: none)` media query: it is the test the charts,
+ * the Sankey and `playwright.config.ts`'s `mobile` project (`hasTouch: true`) already agree on, so
+ * one literal here replaces copies that could drift apart. The known cost is a hybrid touch laptop,
+ * which has a working mouse and is nonetheless put into tap-only mode.
+ *
+ * 🛑 Reads `window`, so it must NOT be called during render — see `useIsTouchDevice` for that. This
+ * form is for effects and event callbacks, where the client has definitely mounted.
+ */
+export function isTouchDevice(): boolean {
+  return typeof window !== "undefined" && "ontouchstart" in window;
+}
+
+/**
+ * `isTouchDevice()` made safe to branch on during RENDER.
+ *
+ * It reports `false` on the server AND on the first client render, adopting the real answer in a
+ * mount effect, so the two renders agree and hydration cannot mismatch. A touch device therefore
+ * spends one frame with the desktop bindings attached; nothing can be tapped in that frame, so the
+ * only consequence is a single extra re-render (and, in the Sankey, one extra diagram rebuild —
+ * the same cost its `isMobile` state already pays).
+ */
+export function useIsTouchDevice(): boolean {
+  const [isTouch, setIsTouch] = useState(false);
+  useEffect(() => setIsTouch(isTouchDevice()), []);
+  return isTouch;
+}
+
 export interface Size {
   width: number;
   height: number;
@@ -121,7 +152,8 @@ export interface PointerIndexOptions {
  *    render loop without this (hover → setState → redraw → hover re-fires for the same point).
  *  - **Leave is desktop-only.** On a touch device, clearing focus on leave fights tap-to-focus, so
  *    the tap's selection would vanish immediately. Same `"ontouchstart" in window` test the existing
- *    charts use.
+ *    charts use, via `isTouchDevice`.
+ *  - **Press reports too**, so a tap registers without a move — see `onPointerDown`. Bind all three.
  */
 export function usePointerIndex({
   timestamps,
@@ -149,8 +181,21 @@ export function usePointerIndex({
     [timestamps, invert, plotLeft, report],
   );
 
+  /**
+   * The same reading, on press.
+   *
+   * 🛑 Required for TOUCH, and easy to miss because it is invisible with a mouse. A stationary
+   * finger-tap sends `pointerdown` and `pointerup` and NO `pointermove` — so with move as the only
+   * listener, tapping a chart set the crosshair only when the finger happened to drag a pixel or two
+   * on the way down. It looked like flaky hardware rather than a missing handler. (Verified in the
+   * browser: dispatching down+up leaves the focus line absent; one move puts it there.)
+   *
+   * Harmless with a mouse: the press lands where the pointer already is, so `report`'s dedup drops it.
+   */
+  const onPointerDown = onPointerMove;
+
   const onPointerLeave = useCallback(() => {
-    if (typeof window !== "undefined" && "ontouchstart" in window) return;
+    if (isTouchDevice()) return;
     report(null);
   }, [report]);
 
@@ -162,5 +207,5 @@ export function usePointerIndex({
 
   useEffect(() => resetDedup, [resetDedup]);
 
-  return { onPointerMove, onPointerLeave, resetDedup };
+  return { onPointerDown, onPointerMove, onPointerLeave, resetDedup };
 }

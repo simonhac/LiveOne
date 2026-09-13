@@ -18,6 +18,18 @@ import NodeTooltip, {
   PANEL_WIDTH,
 } from "@/components/NodeTooltip";
 import LinkTooltip from "@/components/LinkTooltip";
+import {
+  isTouchDevice,
+  useContainerSize,
+  useIsTouchDevice,
+} from "@/lib/charts/svg";
+import { togglePin } from "@/lib/charts/pin";
+import {
+  panelCentreY,
+  panelHorizontal,
+  panelTop,
+  toPagePosition,
+} from "@/lib/charts/sankey-panel-placement";
 
 /** How the Sankey lays out storage. "columns" = classic sources→loads bipartite; "battery-middle" =
  *  3-column with the battery relocated to a central STORAGE column (charge in, discharge out). */
@@ -137,6 +149,8 @@ interface EnergyFlowSankeyProps {
 /** Screen-space placement for one tooltip panel. */
 interface PanelPlacement {
   side: "left" | "right";
+  /** PAGE coordinates — see `toPagePosition`. The panel is `position: absolute`, so it travels with
+   *  the diagram when the document scrolls instead of needing to be repositioned or dismissed. */
   left: number;
   top: number;
   beakTop: number;
@@ -247,8 +261,9 @@ interface SankeyGeom {
    *  column (which the reflow centres instead of stretching) is honoured. */
   bandTop: number;
   bandBottom: number;
-  /** Each column's SVG x-range, left→right — a panel with no room beside its node is centred in the
-   *  gap between its column and the neighbouring one. */
+  /** Each column's SVG x-range, left→right. A panel with no room beside its node is placed by
+   *  reference to these: an OUTERMOST node's panel hangs off its inner edge (inside the diagram), an
+   *  INTERIOR node's is centred in the channel between its column and the neighbouring one. */
   columns: { x0: number; x1: number }[];
 }
 
@@ -413,11 +428,58 @@ export default function EnergyFlowSankey({
   linkTooltip,
 }: EnergyFlowSankeyProps) {
   const svgRef = useRef<SVGSVGElement>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
+  /**
+   * The diagram is sized from its CONTAINER, watched with a ResizeObserver.
+   *
+   * 🛑 It used to be measured only inside a `window.resize` handler, which is not the same question.
+   * A container's width changes without the window changing at all — hydration, the section going
+   * full-bleed, a card appearing as its data lands, fonts settling — and none of those fire `resize`.
+   * The svg kept whatever width it was measured at, so on a phone it could sit WIDER than the
+   * viewport and the page scrolled sideways, with no way to recover short of rotating the device.
+   * (Observed at 375px: the svg stuck at 389 until a resize event was dispatched by hand.)
+   */
+  const [containerRef, containerSize] = useContainerSize<HTMLDivElement>();
   const [isMobile, setIsMobile] = useState(false);
-  const [actualWidth, setActualWidth] = useState(width);
+  // 🛑 `isMobile` and `isTouch` are DIFFERENT questions and are not interchangeable.
+  //   `isMobile` is a viewport-WIDTH test and owns LAYOUT: below 640px the diagram spans its
+  //   container and drops its side margins.
+  //   `isTouch` asks whether the device can hover, and owns INTERACTION: hover-in/hover-out vs
+  //   tap-to-toggle, and whether spline emphasis is armed at all.
+  // They used to be one flag, which meant an iPad in landscape — plainly touch, plainly ≥640px —
+  // got the desktop mouseenter/mouseleave bindings and so had no way to open a tooltip at all.
+  const isTouch = useIsTouchDevice();
+
   const [hovered, setHovered] = useState<HoveredNode | null>(null);
+  /**
+   * The displayed node panel is PINNED — held open by a click rather than by the pointer resting on
+   * the node.
+   *
+   * A boolean, not a key: only one node panel is ever open, so "which node is pinned" is already
+   * answered by `hovered`. While it is set, hover neither opens another node's panel nor closes this
+   * one; a second click on the same node releases it. On touch this is the ONLY way a panel opens —
+   * there is no hover to preview with — so the click path is shared rather than branched.
+   */
+  const [pinned, setPinned] = useState(false);
+  /** Bumped on resize, purely to re-run the placement effects — see the effect that owns it. */
+  const [relayout, setRelayout] = useState(0);
+  /**
+   * Below `sm` the diagram fills its container; above it, it keeps the caller's fixed `width` and is
+   * centred. Derived, not state: the observer is already the source of truth, and mirroring it into
+   * state was what let the two disagree.
+   *
+   * `Math.floor` because a fractional layout width would round the svg UP to the next pixel and
+   * reintroduce the sideways scroll by a hair. Zero means "not measured yet" (see `useContainerSize`),
+   * and falling back to `width` keeps the first paint sane rather than collapsing the diagram.
+   */
+  const actualWidth =
+    isMobile && containerSize.width > 0
+      ? Math.floor(containerSize.width)
+      : width;
   const [hoveredLink, setHoveredLink] = useState<HoveredLink | null>(null);
+  /** `pinned`, for the ribbon card. Symmetric on purpose: the two panels share one surface, and a
+   *  hover-only link alongside a pinned node would let the pointer stack a second card on top of the
+   *  one the user deliberately held open. */
+  const [hoveredLinkPinned, setHoveredLinkPinned] = useState(false);
   const [placementL, setPlacementL] = useState<PanelPlacement | null>(null);
   const [placementR, setPlacementR] = useState<PanelPlacement | null>(null);
   const panelRefL = useRef<HTMLDivElement>(null);
@@ -434,8 +496,24 @@ export default function EnergyFlowSankey({
   // re-runs and carry it across the rebuild. See the restore at the end of that effect.
   const hoveredRef = useRef<HoveredNode | null>(null);
   const hoveredLinkRef = useRef<HoveredLink | null>(null);
+  // Read by the DOM listeners below, which are attached once per draw and would otherwise close over
+  // a stale `pinned` — the draw effect deliberately does not depend on it.
+  const pinnedRef = useRef(false);
+  const linkPinnedRef = useRef(false);
+  /**
+   * The current draw's `resetEmphasis`, so dismissal can reach it.
+   *
+   * A pinned panel suppresses the `mouseleave` that would normally undim the splines — that is the
+   * point of pinning — so when the pin is released from OUTSIDE the diagram (an outside click, a
+   * scroll) there is no leave event left to do it, and the diagram would stay dimmed with nothing
+   * open to explain why. `resetEmphasis` is a closure over the draw effect's own elements, so a ref
+   * is how it gets out.
+   */
+  const resetEmphasisRef = useRef<(() => void) | null>(null);
   hoveredRef.current = hovered;
   hoveredLinkRef.current = hoveredLink;
+  pinnedRef.current = pinned;
+  linkPinnedRef.current = hoveredLinkPinned;
   // The resolver is read through a ref inside the (expensive, `svg.innerHTML = ""`-rebuilding) draw
   // effect below, so a resolver identity change alone (the parent re-creating its closure — e.g. a
   // sankeyOptions toggle that doesn't change `matrix`/`unit`/`layout`) never forces a full diagram
@@ -452,25 +530,18 @@ export default function EnergyFlowSankey({
     linkTooltipRef.current = linkTooltip;
   }, [linkTooltip]);
 
-  // Detect mobile screen size and container width
+  // Detect mobile screen size. This one IS a window question — it asks which layout to draw, not how
+  // much room the diagram has; the width itself comes from the observer above.
   useEffect(() => {
     const checkMobile = () => {
       const mobile = window.innerWidth < 640; // Tailwind's sm breakpoint
       setIsMobile(mobile);
-
-      // On mobile, use full container width
-      if (mobile && containerRef.current) {
-        const containerWidth = containerRef.current.offsetWidth;
-        setActualWidth(containerWidth);
-      } else {
-        setActualWidth(width);
-      }
     };
 
     checkMobile();
     window.addEventListener("resize", checkMobile);
     return () => window.removeEventListener("resize", checkMobile);
-  }, [width]);
+  }, []);
 
   useEffect(() => {
     if (!svgRef.current) return;
@@ -782,6 +853,10 @@ export default function EnergyFlowSankey({
       for (const { path } of linkEls)
         path.setAttribute("opacity", String(LINK_BASE_OPACITY));
     };
+    // Publish it for the dismissal effect, which cannot see this closure — see `resetEmphasisRef`.
+    // Rebinding on every draw is what keeps it pointing at THIS render's elements; the previous
+    // draw's paths are gone (`svg.innerHTML = ""`), so calling a stale copy would be a no-op.
+    resetEmphasisRef.current = resetEmphasis;
 
     // Draw links with gradients (extended to overlap with rounded rect corners)
     graph.links.forEach((link: any, i: number) => {
@@ -821,14 +896,19 @@ export default function EnergyFlowSankey({
 
       // Hover emphasis: strengthen this spline, fade the rest — the SAME opacity settings as node hover.
       // Desktop only (touch has no reliable hover; a tap could leave the chart stuck dimmed).
-      if (!isMobile) {
-        path.addEventListener("mouseenter", () => emphasizeForLink(link));
-        path.addEventListener("mouseleave", resetEmphasis);
+      if (!isTouch) {
+        path.addEventListener("mouseenter", () => {
+          if (!pinnedRef.current && !linkPinnedRef.current)
+            emphasizeForLink(link);
+        });
+        path.addEventListener("mouseleave", () => {
+          if (!pinnedRef.current && !linkPinnedRef.current) resetEmphasis();
+        });
       }
 
       // Link (spline) tooltip. With a resolver, the ugly native SVG <title> is replaced by the pretty
-      // LinkTooltip centred on the spline midpoint — desktop on hover, touch on tap (the same tap-toggle
-      // the nodes use). Without a resolver, keep the native <title> fallback.
+      // LinkTooltip centred on the spline midpoint — on hover where there is one, on tap where there
+      // isn't (the same tap-toggle the nodes use). Without a resolver, keep the native <title> fallback.
       if (linkTooltipRef.current) {
         const linkKey = `${link.source.name}→${link.target.name}`;
         const resolve = (): HoveredLink | null => {
@@ -854,19 +934,32 @@ export default function EnergyFlowSankey({
           // through the endpoint-average y at its horizontal centre (t=0.5).
           const xMid = (link.source.x1 + link.target.x0) / 2;
           const yMid = (link.y0 + link.y1) / 2;
-          return {
-            key: linkKey,
-            content,
-            color: link.source.color,
-            left: r.left + xMid * sx,
-            top: r.top + yMid * sy,
-          };
+          // PAGE coordinates, like the node panels — the card is `position: absolute`, so it rides
+          // the document instead of having to be re-placed (or dismissed) on every scroll.
+          const { left, top } = toPagePosition(
+            { left: r.left + xMid * sx, top: r.top + yMid * sy },
+            { x: window.scrollX, y: window.scrollY },
+          );
+          return { key: linkKey, content, color: link.source.color, left, top };
         };
-        if (isMobile) {
-          // A 1px-wide ribbon is an impossible tap target, so the listener goes on a transparent
-          // stroke-only twin (appended above every ribbon, below the nodes — see `hitEls`) that widens
-          // the hit area to HIT_STROKE_MIN. Tapping a spline dismisses any open node panel, so the two
-          // tooltips can't stack up on a small screen.
+        // Click pins the ribbon card, mirroring the nodes. A 1px-wide ribbon is an impossible TAP
+        // target, so on touch the listener goes on a transparent stroke-only twin (appended above
+        // every ribbon, below the nodes — see `hitEls`) that widens the hit area to HIT_STROKE_MIN.
+        // With a mouse the visible spline is precise enough to click directly.
+        const onClick = (e: Event) => {
+          e.stopPropagation();
+          setHovered(null); // never both at once
+          setPinned(false);
+          const next = togglePin({
+            isSameTarget: hoveredLinkRef.current?.key === linkKey,
+            isPinned: linkPinnedRef.current,
+            target: resolve(),
+            isTouch,
+          });
+          setHoveredLinkPinned(next.pinned);
+          setHoveredLink(next.show);
+        };
+        if (isTouch) {
           const hit = document.createElementNS(
             "http://www.w3.org/2000/svg",
             "path",
@@ -881,18 +974,19 @@ export default function EnergyFlowSankey({
           hit.setAttribute("pointer-events", "stroke");
           hit.setAttribute("class", "sankey-link-hit");
           hit.style.cursor = "pointer";
-          hit.addEventListener("click", (e) => {
-            e.stopPropagation();
-            setHovered(null);
-            setHoveredLink((h) => (h?.key === linkKey ? null : resolve()));
-          });
+          hit.addEventListener("click", onClick);
           hitEls.push(hit);
         } else {
+          path.style.cursor = "pointer";
+          path.addEventListener("click", onClick);
+          // Hover PREVIEWS only, and only while nothing is pinned — see the node handlers.
           path.addEventListener("mouseenter", () => {
+            if (linkPinnedRef.current || pinnedRef.current) return;
             const next = resolve();
             if (next) setHoveredLink(next);
           });
           path.addEventListener("mouseleave", () => {
+            if (linkPinnedRef.current || pinnedRef.current) return;
             setHoveredLink((h) => (h?.key === linkKey ? null : h));
           });
         }
@@ -900,7 +994,7 @@ export default function EnergyFlowSankey({
         // effect); `resolve` recomputes the midpoint from this render's geometry.
         if (linkKey === prevLinkKey) {
           restore.link = resolve;
-          if (!isMobile) restore.emphasis = () => emphasizeForLink(link);
+          if (!isTouch) restore.emphasis = () => emphasizeForLink(link);
         }
       } else {
         const title = document.createElementNS(
@@ -986,13 +1080,17 @@ export default function EnergyFlowSankey({
 
       // Node-hover spline emphasis (desktop). Independent of the tooltip resolver so it works on any
       // diagram (incl. the /test-sankey page). Hover the node → its ribbons strengthen, the rest fade.
-      if (!isMobile) {
-        hit.addEventListener("mouseenter", () => emphasizeForNode(node));
-        hit.addEventListener("mouseleave", resetEmphasis);
+      if (!isTouch) {
+        hit.addEventListener("mouseenter", () => {
+          if (!pinnedRef.current) emphasizeForNode(node);
+        });
+        hit.addEventListener("mouseleave", () => {
+          if (!pinnedRef.current) resetEmphasis();
+        });
       }
 
       // Node hover/tap tooltip. `nodeTooltip` absent ⇒ no listeners (feature degrades to the plain
-      // diagram). Desktop: hover; mobile: tap-toggle (no hover — touch doesn't reliably fire
+      // diagram). A pointer that hovers: hover; touch: tap-toggle (touch doesn't reliably fire
       // mouseenter/mouseleave). Reads `nodeTooltipRef` (not the `nodeTooltip` closure variable) so a
       // resolver-identity-only parent re-render never needs to rebuild the whole diagram to keep the
       // tooltip content fresh (see the ref's own comment above).
@@ -1034,23 +1132,39 @@ export default function EnergyFlowSankey({
             color: node.color,
           };
         };
-        if (isMobile) {
-          hit.addEventListener("click", (e) => {
-            e.stopPropagation();
-            setHoveredLink(null); // never both at once on a small screen
-            setHovered((h) => (h?.key === nodeKey ? null : resolve()));
+        // CLICK PINS, on every device — it is the only way in on touch, and on desktop it holds the
+        // panel open once the pointer moves away. Clicking the pinned node again releases it; on
+        // desktop the pointer is still sitting on that node, so it falls back to a hover preview
+        // rather than blanking (which would read as the click having closed something permanently).
+        hit.addEventListener("click", (e) => {
+          e.stopPropagation();
+          setHoveredLink(null); // never both at once
+          setHoveredLinkPinned(false);
+          const next = togglePin({
+            isSameTarget: hoveredRef.current?.key === nodeKey,
+            isPinned: pinnedRef.current,
+            target: resolve(),
+            isTouch,
           });
-        } else {
-          hit.addEventListener("mouseenter", () => setHovered(resolve()));
-          hit.addEventListener("mouseleave", () =>
-            setHovered((h) => (h?.key === nodeKey ? null : h)),
-          );
+          setPinned(next.pinned);
+          setHovered(next.show);
+        });
+        // Hover only PREVIEWS, and only while nothing is pinned — a pinned panel is the user's
+        // explicit choice and must not be stolen by the pointer crossing another node.
+        if (!isTouch) {
+          hit.addEventListener("mouseenter", () => {
+            if (!pinnedRef.current) setHovered(resolve());
+          });
+          hit.addEventListener("mouseleave", () => {
+            if (!pinnedRef.current)
+              setHovered((h) => (h?.key === nodeKey ? null : h));
+          });
         }
         // This is the node whose tooltip was open before the rebuild — carry it over (see the top of
         // this effect). The node loop runs after the link loop, so a node's emphasis wins over a link's.
         if (nodeKey === prevNodeKey) {
           restore.node = resolve;
-          if (!isMobile) restore.emphasis = () => emphasizeForNode(node);
+          if (!isTouch) restore.emphasis = () => emphasizeForNode(node);
         }
       }
 
@@ -1201,13 +1315,18 @@ export default function EnergyFlowSankey({
     // unconditionally: with nothing to restore they pass `null`, which is a no-op when nothing was open.
     setHovered(restore.node ? restore.node() : null);
     setHoveredLink(restore.link ? restore.link() : null);
+    if (!restore.node) setPinned(false);
+    if (!restore.link) setHoveredLinkPinned(false);
     restore.emphasis?.();
 
     // Safety net for the restored hover: the pointer is sitting over an element that no longer exists,
     // so the `mouseleave` that would normally close the panel may never fire for the node/ribbon it was
     // on. Leaving the diagram entirely always closes both.
-    if (!isMobile) {
+    if (!isTouch) {
       svgElement.addEventListener("mouseleave", () => {
+        // A PINNED panel survives the pointer leaving — that is what pinning is for. Only the
+        // transient hover preview is cleaned up here.
+        if (pinnedRef.current) return;
         setHovered(null);
         setHoveredLink(null);
         resetEmphasis();
@@ -1216,7 +1335,7 @@ export default function EnergyFlowSankey({
     // `nodeTooltip` deliberately excluded — see `nodeTooltipRef`'s comment above; a resolver-identity-only
     // change must not force a full `svg.innerHTML = ""` rebuild.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [matrix, unit, layout, actualWidth, height, isMobile]);
+  }, [matrix, unit, layout, actualWidth, height, isMobile, isTouch]);
 
   // Position the hovered/tapped node's tooltip panel(s) in SCREEN space (the SVG has no viewBox/CSS
   // sizing, so SVG user px == CSS px — `sx`/`sy` below are 1 today, kept as scale guards). A beaked panel
@@ -1266,37 +1385,23 @@ export default function EnergyFlowSankey({
       const clampX = (l: number) =>
         Math.max(PAD, Math.min(l, window.innerWidth - PANEL_WIDTH - PAD));
 
-      // Horizontal: beside the node when it fits (desktop's outer margins), otherwise centred in the
-      // gap between the node's column and the next one over — which is where mobile always lands, since
-      // the diagram spans the full viewport there and the columns hug its edges.
-      let panelSide = side;
-      let left = clampX(
-        side === "left" ? nodeLeftVp - GAP - PANEL_WIDTH : nodeRightVp + GAP,
-      );
-      const fitsBeside =
-        side === "left"
-          ? left + PANEL_WIDTH <= nodeLeftVp
-          : left >= nodeRightVp;
-      if (!fitsBeside) {
-        const cols = geom?.columns ?? [];
-        const i = cols.findIndex((c) => Math.round(c.x0) === Math.round(x0));
-        // Prefer the neighbouring column on `side`; an outermost node (the usual case) has none there,
-        // so fall to the other side and FLIP the panel with it — the beak has to face the node.
-        let neighbour =
-          i < 0 ? undefined : cols[side === "left" ? i - 1 : i + 1];
-        if (i >= 0 && !neighbour) {
-          neighbour = cols[side === "left" ? i + 1 : i - 1];
-          if (neighbour) panelSide = side === "left" ? "right" : "left";
-        }
-        // Two columns → the SOURCES↔LOADS channel; three (battery-middle) → the dual battery panels get
-        // their own left and right channels instead of stacking on top of each other.
-        const gapCentreSvg = !neighbour
-          ? actualWidth / 2
-          : panelSide === "left"
-            ? (neighbour.x1 + x0) / 2
-            : (x1 + neighbour.x0) / 2;
-        left = clampX(r.left + gapCentreSvg * sx - PANEL_WIDTH / 2);
-      }
+      // Horizontal: beside the node when it fits (desktop's outer margins), otherwise INSIDE the
+      // diagram — which is where mobile always lands, since the diagram spans the full viewport there
+      // and the columns hug its edges with no margin to sit in. The arithmetic, and the cases that
+      // only arise at particular widths, live in `panelHorizontal` so they can be unit-tested.
+      const horiz = panelHorizontal({
+        side,
+        node: { leftVp: nodeLeftVp, rightVp: nodeRightVp, x0, x1 },
+        columns: geom?.columns ?? [],
+        svg: { leftVp: r.left, scaleX: sx, width: actualWidth },
+        panelWidth: PANEL_WIDTH,
+        gap: GAP,
+        clampX,
+      });
+      const panelSide = horiz.side;
+      // Viewport-space, for the beak arithmetic below — which compares against the node's own
+      // viewport coordinates. The page-space pair the panel is positioned with is `page`.
+      const left = horiz.left;
 
       // Vertical anchoring: the topmost node in a column top-aligns the panel (its top edge = the
       // node's top edge), the bottommost bottom-aligns it, everything else centres on the node. This
@@ -1307,7 +1412,17 @@ export default function EnergyFlowSankey({
           : hovered.vertPos === "bottom"
             ? nodeBottomVp - H
             : nodeCenterYVp - H / 2;
-      const top = Math.max(bandTopVp, Math.min(desiredTop, bandBottomVp - H));
+      const topVp = panelTop({
+        desiredTop,
+        band: { top: bandTopVp, bottom: bandBottomVp },
+        panelHeight: H,
+      });
+      // Viewport → page, once, at the end. Everything above is in viewport px because that is what
+      // `getBoundingClientRect` deals in; everything the panel is RENDERED with is in page px.
+      const page = toPagePosition(
+        { left: horiz.left, top: topVp },
+        { x: window.scrollX, y: window.scrollY },
+      );
 
       // Beak placement. The beak joins two boxes of different heights, and the SHORTER of the two decides
       // where it sits: centre it on the short box, which the tall one then has room to spare around.
@@ -1316,10 +1431,10 @@ export default function EnergyFlowSankey({
       // centred on the thing that constrains it, never stranded at a corner. `beakTop` is the y (in panel
       // coords) of the diamond's centre, or of the half beak's flat edge; see NodeTooltip.
       //
-      // A panel sitting ON its node (a phone too narrow for the gap, or the interior battery node) gets no
-      // beak at all — one pointing at the node underneath just reads as a rendering glitch.
-      const panelOverlapsNode =
-        left < nodeRightVp && left + PANEL_WIDTH > nodeLeftVp;
+      // A panel sitting ON its node gets no beak at all — one pointing at the node underneath just
+      // reads as a rendering glitch. See `PanelHorizontal.overlapsNode` for why this is now a last
+      // resort rather than, as it once was, the normal outcome on a phone.
+      const panelOverlapsNode = horiz.overlapsNode;
       // The half beak is for a thin node at a column EXTREME. There the panel is edge-ALIGNED to the node
       // (see `desiredTop` above), so there's no panel past the node's near edge for a diamond to occupy:
       // centred on a sliver it would hang off the panel's end. A MID-column node has panel on both sides
@@ -1339,20 +1454,23 @@ export default function EnergyFlowSankey({
         // its BOTTOM for the bottommost.
         if (hovered.vertPos === "top") {
           beakVariant = "half-top";
-          beakTop = Math.max(0, Math.min(nodeTopVp - top, H - HALF_BEAK_SIZE));
+          beakTop = Math.max(
+            0,
+            Math.min(nodeTopVp - topVp, H - HALF_BEAK_SIZE),
+          );
         } else {
           beakVariant = "half-bottom";
-          beakTop = Math.max(HALF_BEAK_SIZE, Math.min(nodeBottomVp - top, H));
+          beakTop = Math.max(HALF_BEAK_SIZE, Math.min(nodeBottomVp - topVp, H));
         }
       } else if (nodeHeightVp <= H) {
         // Node is the shorter box — centre on it (then keep the diamond on the panel). This is also the
         // thin mid-column node.
-        beakTop = nodeCenterYVp - top;
+        beakTop = nodeCenterYVp - topVp;
       } else {
         // Panel is the shorter box — centre on it, clamped into the node's span (inset by the diamond's
         // half-height, so the WHOLE beak lands on the node, not just its centre).
-        const lo = nodeTopVp - top + BEAK_HALF_SPAN;
-        const hi = nodeBottomVp - top - BEAK_HALF_SPAN;
+        const lo = nodeTopVp - topVp + BEAK_HALF_SPAN;
+        const hi = nodeBottomVp - topVp - BEAK_HALF_SPAN;
         beakTop = Math.max(lo, Math.min(H / 2, hi));
       }
       if (beakVariant === "diamond") {
@@ -1364,8 +1482,8 @@ export default function EnergyFlowSankey({
       }
       return {
         side: panelSide,
-        left,
-        top,
+        left: page.left,
+        top: page.top,
         beakTop,
         beakVariant,
         visible: true,
@@ -1421,7 +1539,7 @@ export default function EnergyFlowSankey({
       else setPlacementR(p2);
     });
     return () => cancelAnimationFrame(raf);
-  }, [hovered, isMobile, actualWidth, height]);
+  }, [hovered, isMobile, actualWidth, height, relayout]);
 
   // Clamp the hovered spline's tooltip into the same node band the node panels use. The card centres on
   // the spline midpoint, so a ribbon meeting a node near the top or bottom of the diagram would otherwise
@@ -1439,15 +1557,26 @@ export default function EnergyFlowSankey({
       const r = svg.getBoundingClientRect();
       const sy = r.height / height;
       const geom = geomRef.current;
-      const bandTopVp = r.top + (geom?.bandTop ?? MARGIN_TOP) * sy;
-      const bandBottomVp =
-        r.top + (geom?.bandBottom ?? height - MARGIN_BOTTOM) * sy;
-      const lo = bandTopVp + H / 2;
-      const hi = bandBottomVp - H / 2;
+      // The band in PAGE space, to match `hoveredLink.top` — mixing the two spaces here would clamp
+      // the card against a band that had scrolled somewhere else entirely.
+      const band = toPagePosition(
+        {
+          left: 0,
+          top: r.top + (geom?.bandTop ?? MARGIN_TOP) * sy,
+        },
+        { x: 0, y: window.scrollY },
+      );
+      const bandBottom =
+        band.top +
+        ((geom?.bandBottom ?? height - MARGIN_BOTTOM) -
+          (geom?.bandTop ?? MARGIN_TOP)) *
+          sy;
       setLinkTop(
-        lo <= hi
-          ? Math.max(lo, Math.min(hoveredLink.top, hi))
-          : (bandTopVp + bandBottomVp) / 2,
+        panelCentreY({
+          desiredCentre: hoveredLink.top,
+          band: { top: band.top, bottom: bandBottom },
+          panelHeight: H,
+        }),
       );
     };
     // Sweeping from one spline to the next, the card is still mounted — its height is known HERE, before
@@ -1456,39 +1585,60 @@ export default function EnergyFlowSankey({
     place();
     const raf = requestAnimationFrame(place);
     return () => cancelAnimationFrame(raf);
-  }, [hoveredLink, height]);
+  }, [hoveredLink, height, relayout]);
 
-  // Dismissal: outside tap (touch devices), scroll (capture-phase — a `position:fixed` panel would
-  // otherwise detach from its node), and resize all close the tooltip.
+  // Dismissal: an outside press, and nothing else.
+  //
+  // 🛑 Scroll does NOT close the panel any more, and must not be re-added. It used to, because a
+  // `position: fixed` panel detached from its node the moment the page moved — but dismissing on
+  // scroll means you cannot read a panel and scroll the chart under it, and on mobile the URL bar
+  // collapsing fires scroll/resize and closed it for you, unprompted, mid-read. The panels are
+  // page-anchored now (see `toPagePosition`), so they ride the document and there is nothing to fix
+  // up: the browser moves them, and they pass under the sticky header exactly as the diagram does.
   useEffect(() => {
     if (!hovered && !hoveredLink) return;
     const close = () => {
       setHovered(null);
       setHoveredLink(null);
+      setPinned(false);
+      setHoveredLinkPinned(false);
+      resetEmphasisRef.current?.();
     };
-    window.addEventListener("scroll", close, true);
-    window.addEventListener("resize", close);
-    const handleTouchOutside = (e: TouchEvent) => {
+    // `Event`, not `TouchEvent`: the same handler serves `touchstart` on touch and `mousedown` with
+    // a mouse, and all it reads is the target.
+    const handleOutside = (e: Event) => {
       const target = e.target as HTMLElement;
       if (
         !target.closest(".sankey-node-hit") &&
+        !target.closest(".sankey-link") &&
         !target.closest(".sankey-link-hit") &&
         !target.closest(".node-tooltip") &&
         !target.closest(".link-tooltip")
       ) {
-        setHovered(null);
-        setHoveredLink(null);
+        close();
       }
     };
-    const isTouch = "ontouchstart" in window;
-    if (isTouch) document.addEventListener("touchstart", handleTouchOutside);
+    const touch = isTouchDevice();
+    if (touch) document.addEventListener("touchstart", handleOutside);
+    // A PINNED panel outlives the pointer, so with a mouse there has to be a way out that isn't
+    // "find the node again and click it": clicking anywhere else releases it, the way any pinned
+    // popover behaves. `mousedown` rather than `click` so it lands before the diagram's own
+    // handlers — which call `stopPropagation`, and so are correctly never seen here.
+    if (!touch) document.addEventListener("mousedown", handleOutside);
     return () => {
-      window.removeEventListener("scroll", close, true);
-      window.removeEventListener("resize", close);
-      if (isTouch)
-        document.removeEventListener("touchstart", handleTouchOutside);
+      if (touch) document.removeEventListener("touchstart", handleOutside);
+      else document.removeEventListener("mousedown", handleOutside);
     };
   }, [hovered, hoveredLink]);
+
+  // A RESIZE does invalidate the geometry — the diagram relays out and its nodes move on the page —
+  // so the panel is re-placed rather than dismissed. Scroll needs no equivalent: page coordinates are
+  // scroll-invariant by construction.
+  useEffect(() => {
+    const bump = () => setRelayout((n) => n + 1);
+    window.addEventListener("resize", bump);
+    return () => window.removeEventListener("resize", bump);
+  }, []);
 
   const panels: {
     key: "left" | "right";
@@ -1543,12 +1693,20 @@ export default function EnergyFlowSankey({
 
   return (
     <>
-      <div ref={containerRef} className="w-full flex justify-center">
+      {/* `min-w-0`: this is a flex item, and its `min-width: auto` would otherwise floor it at the
+          svg's own width — so a diagram that once measured too wide could never be measured narrow
+          again, and the observer would keep confirming the oversized value. */}
+      <div ref={containerRef} className="w-full min-w-0 flex justify-center">
         <svg
           ref={svgRef}
           width={actualWidth}
           height={height}
-          className="energy-flow-sankey"
+          // `max-w-full` is a BACKSTOP, not the sizing mechanism — `actualWidth` is. Between first
+          // paint and the observer's first measurement `actualWidth` is the caller's fixed `width`
+          // (600), which on a phone is wider than the screen; without this the page gains a sideways
+          // scroll for those frames, and if a measurement is ever missed it keeps it. Clipping the
+          // diagram is a bad frame; a horizontally scrollable dashboard is a bad page.
+          className="energy-flow-sankey max-w-full"
         />
       </div>
       {typeof document !== "undefined" &&
@@ -1566,8 +1724,16 @@ export default function EnergyFlowSankey({
                 beakTop={p.placement.beakTop}
                 beakVariant={p.placement.beakVariant}
                 showHeading={p.showHeading}
+                // PAGE coordinates (see `toPagePosition`) — absolute, not fixed, so the panel
+                // travels with the diagram instead of hanging in the viewport when it scrolls.
+                positioning="absolute"
                 hidden={!p.placement.visible}
                 panelRef={p.ref}
+                // Touch only: the panel must SWALLOW the tap. Left `pointer-events-none` it would
+                // fall through to whatever it covers — typically another node's hit rect — and
+                // silently re-point itself at a different node. On desktop the pointer has to reach
+                // the node underneath for the hover to survive, so it stays transparent there.
+                onDismiss={isTouch ? () => setHovered(null) : undefined}
               />,
               document.body,
             ),
@@ -1582,6 +1748,7 @@ export default function EnergyFlowSankey({
             top={linkTop ?? hoveredLink.top}
             hidden={linkTop === null}
             panelRef={linkPanelRef}
+            onDismiss={isTouch ? () => setHoveredLink(null) : undefined}
           />,
           document.body,
         )}

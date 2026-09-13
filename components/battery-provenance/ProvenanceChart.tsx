@@ -88,7 +88,12 @@ export default function ProvenanceChart({
   const geo = useMemo(() => {
     if (size.width === 0 || size.height === 0) return null;
     const axisDomain = (
-      axis: { min?: number; max?: number; suggestedMin?: number; suggestedMax?: number },
+      axis: {
+        min?: number;
+        max?: number;
+        suggestedMin?: number;
+        suggestedMax?: number;
+      },
       which: "y" | "y1",
     ): [number, number] => {
       // The registry's explicit min/max win; otherwise fall back to the data on that axis. These are
@@ -98,8 +103,12 @@ export default function ProvenanceChart({
         .filter((s) => s.axis === which)
         .flatMap((s) => seriesValues[s.id] ?? [])
         .filter((v): v is number => v != null && Number.isFinite(v));
-      const lo = axis.min ?? Math.min(axis.suggestedMin ?? 0, ...(vals.length ? vals : [0]));
-      const hi = axis.max ?? Math.max(axis.suggestedMax ?? 0, ...(vals.length ? vals : [1]));
+      const lo =
+        axis.min ??
+        Math.min(axis.suggestedMin ?? 0, ...(vals.length ? vals : [0]));
+      const hi =
+        axis.max ??
+        Math.max(axis.suggestedMax ?? 0, ...(vals.length ? vals : [1]));
       return hi > lo ? [lo, hi] : [lo, lo + 1];
     };
 
@@ -111,7 +120,15 @@ export default function ProvenanceChart({
       ...(def.y1 ? { y1Domain: axisDomain(def.y1, "y1") } : {}),
       margin: { top: 6, bottom: 30, left: 40, right: def.y1 ? 40 : 12 },
     });
-  }, [size.width, size.height, windowStart, windowEnd, def, shown, seriesValues]);
+  }, [
+    size.width,
+    size.height,
+    windowStart,
+    windowEnd,
+    def,
+    shown,
+    seriesValues,
+  ]);
 
   const pointer = usePointerIndex({
     timestamps,
@@ -129,6 +146,10 @@ export default function ProvenanceChart({
             width={size.width}
             height={size.height}
             data-testid="provenance-chart"
+            // Horizontal drags scrub the crosshair; vertical still scrolls the page. Same reasoning
+            // as `DashboardChart` — this chart shares the pointer hook, so it shares the gesture.
+            className="touch-pan-y"
+            onPointerDown={pointer.onPointerDown}
             onPointerMove={pointer.onPointerMove}
             onPointerLeave={pointer.onPointerLeave}
           >

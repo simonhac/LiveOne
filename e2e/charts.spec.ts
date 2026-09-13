@@ -118,6 +118,74 @@ test.describe("chart gallery baselines", () => {
   }
 });
 
+test.describe("run bands on touch", () => {
+  // Touch has no hover, so a run band is TAPPED open and tapped shut. Desktop is left alone — this
+  // whole describe is skipped there, since a synthetic tap on a hover-bound band proves nothing.
+  test.skip(
+    ({ hasTouch }) => !hasTouch,
+    "tap-to-toggle only exists on a touch device",
+  );
+
+  /**
+   * The striped fill path is what the hovered state swaps the pattern on. `> path` (a DIRECT child)
+   * rather than a descendant: the group opens with a `<defs>` holding two `<clipPath>`s, whose own
+   * `<path d=…>` carries no `fill` at all and would otherwise match first.
+   */
+  const fill = (page: import("@playwright/test").Page) =>
+    page.locator("[data-run] > path").first();
+
+  /**
+   * Tap a point that is actually ON the run.
+   *
+   * `locator.tap()` aims at the element's bounding-box CENTRE, and for a run group that centre is
+   * usually bare chart: `getBoundingClientRect` ignores `clip-path`, so the group reports the whole
+   * band's width and height even though the run is a narrow slice of it, clipped twice. Playwright
+   * then correctly refuses, reporting that the `<svg>` intercepts the tap.
+   *
+   * So: take the x from the run's own clipping rect (whose `x`/`width` ARE the run's range) and hunt
+   * down the column for the first y that actually hit-tests to the run.
+   */
+  const tapRun = async (page: import("@playwright/test").Page) => {
+    const point = await page.evaluate(() => {
+      const g = document.querySelector("[data-run]");
+      const rect = g?.querySelector(":scope > rect");
+      if (!rect) return null;
+      const r = rect.getBoundingClientRect();
+      const x = r.left + r.width / 2;
+      for (let y = r.top + 1; y < r.bottom; y += 2) {
+        if (document.elementFromPoint(x, y)?.closest("[data-run]"))
+          return { x, y };
+      }
+      return null;
+    });
+    expect(point, "no point inside the run hit-tested to it").not.toBeNull();
+    await page.touchscreen.tap(point!.x, point!.y);
+  };
+
+  test("tapping a run opens it and tapping it again closes it", async ({
+    page,
+  }) => {
+    await page.goto("/labs/chart-gallery?case=stacked-load-d-runs");
+    const frame = page.getByTestId("chart-case");
+    await expect(frame).toHaveAttribute("data-case-ready", "true");
+    await expect(page.locator("[data-run]").first()).toBeVisible();
+
+    // Assert on the ink rather than a screenshot: the hovered/unhovered pair is already baselined by
+    // the `stacked-load-d-runs` / `-hovered` cases, and what is under test here is the toggle.
+    await expect(fill(page)).toHaveAttribute("fill", /-stripe\)$/);
+
+    await tapRun(page);
+    await expect(fill(page)).toHaveAttribute("fill", /-stripe-hover\)$/);
+
+    await tapRun(page);
+    await expect(fill(page)).toHaveAttribute("fill", /-stripe\)$/);
+
+    // Outside-tap dismissal is deliberately NOT asserted here: it lives in `SiteChartsCard`'s
+    // `StackedChart`, which owns the panel, and the gallery mounts `DashboardChart` alone. Manual
+    // check only, until something mounts the card outside the Clerk gate.
+  });
+});
+
 test("the gallery index lists every case", async ({ page }) => {
   // Guards the harness itself: if a case is added to `cases.ts` but the gallery cannot render it,
   // the per-case tests above would fail one-by-one with a confusing "unknown case" body. This fails

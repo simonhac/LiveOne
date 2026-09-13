@@ -131,6 +131,14 @@ function StackedCase({ c }: { c: Extract<ChartCase, { kind: "stacked" }> }) {
   const { chartData, visibleSeries, windowStart, windowEnd } = fixture;
   const focus = focusInstant(chartData.timestamps, c.focusAt);
   const runBands = c.withRuns ? runBandsFixture(fixture) : undefined;
+  // SEEDED from the case, then owned by the pointer. The seed is what keeps the screenshot baselines
+  // identical — the first render is exactly what the case asked for. Wiring `onHoverRun` on top of it
+  // is what makes the tap-toggle reachable at all: this gallery is the only place `DashboardChart` is
+  // mounted outside the Clerk-gated dashboard, and there is no jsdom in the repo, so `e2e/charts.spec.ts`
+  // is the only thing that can exercise the handlers.
+  const [hoveredRunId, setHoveredRunId] = useState<string | null>(
+    c.hoveredRun ? (runBands?.[0]?.id ?? null) : null,
+  );
 
   return (
     <div style={{ width: c.width, height: c.height }}>
@@ -145,9 +153,13 @@ function StackedCase({ c }: { c: Extract<ChartCase, { kind: "stacked" }> }) {
         hoveredTimestamp={focus}
         onHoverIndex={noop}
         runBands={runBands}
-        // The hovered state is driven by the CASE, not by a pointer: a screenshot cannot hover, and
-        // the whole point of the pair is to show that hovering changes the ink.
-        hoveredRunId={c.hoveredRun ? (runBands?.[0]?.id ?? null) : null}
+        hoveredRunId={hoveredRunId}
+        onHoverRun={(run) => setHoveredRunId(run?.id ?? null)}
+        // The harness has no pin: it only needs the ink to change, and the pin/preview distinction is
+        // `SiteChartsCard`'s. Toggling here is what lets `e2e/charts.spec.ts` exercise the click path.
+        onToggleRun={(run) =>
+          setHoveredRunId((id) => (id === run.id ? null : run.id))
+        }
         className="h-full"
       />
     </div>
