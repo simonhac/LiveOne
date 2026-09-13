@@ -4,15 +4,14 @@ import { describe, it, expect, jest, beforeEach } from "@jest/globals";
 // mock all three so we can drive the loud-skip / null-area guard deterministically.
 // config-v4 Phase 13 PR 2: `viewableByHandle` is gone. `resolveLogicalSystem` only ever used it as an
 // EXISTENCE check on the handle, so it now asks the two real readers — a device, else an area. These
-// tests drive the device leg; `areaByHandle` is stubbed so "names neither" stays reachable.
+// tests drive the device leg. `areaByHandle` now supplies BOTH the area id and the day offset the
+// result is keyed on — `resolveLogicalSystem` no longer calls `getAreaForDevice`, precisely so the
+// offset cannot come from a different area than `areaId` does.
 jest.mock("@/lib/registry/device-config", () => ({
   DeviceConfigRegistry: { deviceByHandle: jest.fn(), areaByHandle: jest.fn() },
 }));
 jest.mock("@/lib/point/point-manager", () => ({
   PointManager: { getInstance: jest.fn() },
-}));
-jest.mock("@/lib/areas/resolve", () => ({
-  getAreaForDevice: jest.fn(),
 }));
 jest.mock("@/lib/areas/members", () => ({
   listFlowEligibleAreaHandles: jest.fn(),
@@ -25,7 +24,6 @@ import {
 } from "../logical-system";
 import { DeviceConfigRegistry } from "@/lib/registry/device-config";
 import { PointManager } from "@/lib/point/point-manager";
-import { getAreaForDevice } from "@/lib/areas/resolve";
 import { listFlowEligibleAreaHandles } from "@/lib/areas/members";
 
 describe("isCompleteRoleSet", () => {
@@ -90,7 +88,12 @@ describe("resolveLogicalSystem (Area is mandatory — flow is area-only)", () =>
     (PointManager.getInstance as jest.MockedFunction<any>).mockReturnValue({
       getActivePointsForDevice,
     });
-    areaByHandle.mockResolvedValue(null);
+    areaByHandle.mockResolvedValue({
+      id: "area-uuid-1",
+      // Deliberately NOT equal to the device's `timezoneOffsetMin` below: the assertions then prove
+      // the day offset is taken from the AREA the system is keyed on, not from the device.
+      dayOffsetMin: 660,
+    } as never);
     deviceByHandle.mockResolvedValue({
       vendorType: "selectronic",
       timezoneOffsetMin: 600,
@@ -102,9 +105,6 @@ describe("resolveLogicalSystem (Area is mandatory — flow is area-only)", () =>
   });
 
   it("returns a logical system carrying the resolved Area id", async () => {
-    (getAreaForDevice as jest.MockedFunction<any>).mockResolvedValue({
-      id: "area-uuid-1",
-    });
     const ls = await resolveLogicalSystem(1);
     expect(ls).not.toBeNull();
     expect(ls!.areaId).toBe("area-uuid-1");
@@ -112,10 +112,19 @@ describe("resolveLogicalSystem (Area is mandatory — flow is area-only)", () =>
     expect(ls!.isComplete).toBe(true);
   });
 
+  it("takes the day offset from the AREA it is keyed on, never from the device", async () => {
+    // 🛑 The regression this guards: the offset used to fork on whether the handle named a device,
+    // and `point_readings_flow_attr_1d` is AREA-keyed. A device-sourced offset buckets a day against
+    // one area and files it under another the moment the two diverge — which is exactly what
+    // re-homing a device onto `devices.area_id` makes possible.
+    const ls = await resolveLogicalSystem(1);
+    expect(ls!.dayOffsetMin).toBe(660); // the area's, not the device's 600
+  });
+
   it("returns null for a COMPLETE system with no Area (never mints one — flow is area-only)", async () => {
     // A complete role set used to lazy-heal an area-of-one; now a device with no Area simply has no
     // flow view. Devices get a flow matrix only once grouped into an explicit Area.
-    (getAreaForDevice as jest.MockedFunction<any>).mockResolvedValue(null);
+    areaByHandle.mockResolvedValue(null);
     const ls = await resolveLogicalSystem(1);
     expect(ls).toBeNull();
   });
@@ -124,7 +133,7 @@ describe("resolveLogicalSystem (Area is mandatory — flow is area-only)", () =>
     getActivePointsForDevice.mockResolvedValue([
       fakePoint("source.solar", "Solar"),
     ]);
-    (getAreaForDevice as jest.MockedFunction<any>).mockResolvedValue(null);
+    areaByHandle.mockResolvedValue(null);
     const ls = await resolveLogicalSystem(1);
     expect(ls).toBeNull();
   });
@@ -135,7 +144,7 @@ describe("resolveLogicalSystem (Area is mandatory — flow is area-only)", () =>
     areaByHandle.mockResolvedValue(null);
     const ls = await resolveLogicalSystem(999);
     expect(ls).toBeNull();
-    expect(getAreaForDevice).not.toHaveBeenCalled();
+    expect(getActivePointsForDevice).not.toHaveBeenCalled();
   });
 });
 
@@ -174,8 +183,9 @@ describe("listCompleteLogicalSystems (area-only, driven off flow-eligible handle
             fakePoint("load.hws", "HW"),
           ],
     );
-    (getAreaForDevice as jest.MockedFunction<any>).mockImplementation(
-      async (id: number) => (id === 8 ? null : { id: `area-${id}` }),
+    // Handle 8 names no area → `resolveLogicalSystem` returns null and the handle drops out.
+    areaByHandle.mockImplementation(async (id: number) =>
+      id === 8 ? null : ({ id: `area-${id}`, dayOffsetMin: 600 } as never),
     );
 
     const list = await listCompleteLogicalSystems();

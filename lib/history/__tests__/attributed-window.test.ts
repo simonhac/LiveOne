@@ -85,7 +85,7 @@ const mkPoint = (i: number, stem: string): LogicalSystemPoint => ({
 const LS: LogicalSystem = {
   id: 9,
   areaId: "area-test-9",
-  timezoneOffsetMin: TZ,
+  dayOffsetMin: TZ,
   points: [mkPoint(1, "source.solar"), mkPoint(2, "load")],
   energyPoints: [],
   isComplete: true,

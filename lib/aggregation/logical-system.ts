@@ -16,7 +16,6 @@ import { Point, type PointId } from "@/lib/ids";
 import { PointManager } from "@/lib/point/point-manager";
 import { DeviceConfigRegistry } from "@/lib/registry/device-config";
 import { classifyEnergyStem, isCompleteRoleSet } from "@/lib/roles/registry";
-import { getAreaForDevice } from "@/lib/areas/resolve";
 import { listFlowEligibleAreaHandles } from "@/lib/areas/members";
 
 // Re-exported for back-compat: the role taxonomy now lives in lib/roles/registry.ts.
@@ -57,7 +56,20 @@ export interface LogicalSystem {
    * primary key of that table (P3-tail-1). See areas-and-dashboards.md (P3).
    */
   areaId: string;
-  timezoneOffsetMin: number;
+  /**
+   * The AREA's fixed day offset — the boundary `point_readings_flow_attr_1d.day` is bucketed on.
+   *
+   * 🛑 Always the area's, never the device's. This used to fork on whether the handle named a device
+   * (`device.timezoneOffsetMin`) or an area, which happened to agree only because a device's
+   * placement is projected from its own area-of-one. The value keys an AREA-keyed table, so taking it
+   * from anywhere but `areaId` is a latent mis-key: the moment a handle's device and its flow area
+   * are not the same area — which is precisely what re-homing a device onto `devices.area_id`
+   * introduces — the fork would bucket a day against one area and file it under another.
+   *
+   * Distinct from `devices.day_offset_min`, which buckets `point_readings_agg_1d` (PK'd on the POINT,
+   * so it has no area to resolve through). The two agree today.
+   */
+  dayOffsetMin: number;
   /** Participating power points (may span physical devices for a multi-device area). */
   points: LogicalSystemPoint[];
   /**
@@ -79,19 +91,13 @@ export interface LogicalSystem {
 export async function resolveLogicalSystem(
   systemId: number,
 ): Promise<LogicalSystem | null> {
-  // The handle must name SOMETHING — a real device or an Area. Phase 13 PR 2: this resolved a
-  // device-shaped view and read only its existence and its `timezoneOffsetMin`, so it asks the two real
-  // readers directly. Device-first, matching the deleted view's locked precedence (trap D-l).
+  // The handle must name SOMETHING — a real device or an Area. Both are asked unconditionally now:
+  // the area is needed for the day offset regardless of which the handle names, and `areaByHandle` is
+  // `cache`d, so the second lookup is free. (`getActivePointsForDevice` below still does its own
+  // device-first dispatch; this function only needs the area in order to KEY the result.)
   const device = await DeviceConfigRegistry.deviceByHandle(systemId);
-  const areaRow = device
-    ? null
-    : await DeviceConfigRegistry.areaByHandle(systemId);
+  const areaRow = await DeviceConfigRegistry.areaByHandle(systemId);
   if (!device && !areaRow) return null;
-  // Same value the view carried either way: `deviceByHandle` projects a device's offset FROM its
-  // area-of-one, and the synthesized area view read it straight off the area.
-  const timezoneOffsetMin = device
-    ? device.timezoneOffsetMin
-    : areaRow!.timezoneOffsetMin;
 
   // typedOnly=true drops points without a logical_path_stem (same exclusion as the engine recompute).
   const pts = await PointManager.getInstance().getActivePointsForDevice(
@@ -137,13 +143,16 @@ export async function resolveLogicalSystem(
   // (P3-tail-1). Flow is AREA-only: a device with no Area has no flow to record, so return null (never
   // mint one here). Areas are EXPLICIT now — a device gets a flow view only once a user groups it into
   // an Area (createArea); it is NOT auto-minted at create-time or lazily healed here.
-  const area = await getAreaForDevice(systemId);
-  if (!area) return null;
+  //
+  // This is `areaRow` rather than a second `getAreaForDevice(systemId)` call: both resolve the same
+  // `legacy_handles.handle → area_id` edge, and using the row we already hold is what guarantees the
+  // offset below comes from the very area the result is keyed on.
+  if (!areaRow) return null;
 
   return {
     id: systemId,
-    areaId: area.id,
-    timezoneOffsetMin,
+    areaId: areaRow.id,
+    dayOffsetMin: areaRow.dayOffsetMin,
     points,
     energyPoints,
     isComplete,

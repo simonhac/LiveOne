@@ -185,7 +185,7 @@ export async function buildAttributedFlowWindow(
   const segments = splitWindowIntoLocalDays(
     startMs,
     endMs,
-    logicalSystem.timezoneOffsetMin,
+    logicalSystem.dayOffsetMin,
   );
   const fullDays = segments.filter((s) => s.full);
 
