@@ -14,6 +14,7 @@ COPY --from=dependencies /app/node_modules ./node_modules
 COPY package.json tsconfig.json ./
 COPY packages/telemetry ./packages/telemetry
 COPY lib/telemetry ./lib/telemetry
-COPY lib/collectors/reference-export.ts ./lib/collectors/reference-export.ts
+COPY lib/collectors/reference-export.ts lib/collectors/trial-artifacts.ts lib/collectors/interval-comparison.ts ./lib/collectors/
 COPY scripts/gousher/production-supervisor.ts ./scripts/gousher/production-supervisor.ts
+RUN node --import tsx -e "require('./lib/telemetry/data-observer.ts'); require('./lib/telemetry/supervisor.ts'); require('@liveone/telemetry/runtime')"
 CMD ["node", "--import", "tsx", "scripts/gousher/production-supervisor.ts", "/etc/gousher-observer.json"]
