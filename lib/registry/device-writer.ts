@@ -208,6 +208,10 @@ async function insertDeviceToPg(
         model: data.model ?? null,
         serial: data.serial ?? null,
         primaryAreaId: areaId,
+        // Same value the area gets, which is what migration 0070's backfill wrote for every existing
+        // device. IMMUTABLE from here: `point_readings_agg_1d` buckets on this, so re-homing a device
+        // between areas must never move it. Only an explicit re-bucket op may change it.
+        dayOffsetMin: tzOffset,
         config: data.config ?? null,
         adapterState: (data.metadata ?? null) as never,
         createdAt: now,

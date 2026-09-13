@@ -28,7 +28,7 @@ truth for every column; these are roles, not schemas.
 
 | Table          | One-liner                                                                                                                                                                                         |
 | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `devices`      | One row per monitored device (a vendor connection). Owner, vendor, status, `primary_area_id`, config.                                                                                             |
+| `devices`      | One row per monitored device (a vendor connection). Owner, vendor, status, `primary_area_id`, `area_id`, `day_offset_min`, config.                                                                |
 | `points`       | Point registry: identity, physical/logical paths, metric type/unit, display name. `control` jsonb: NULL = read-only sensor (almost every row), non-NULL = a writable point that accepts commands. |
 | `device_state` | Per-device collection health (last poll/success/error, streaks, counters). State, never config.                                                                                                   |
 
@@ -36,7 +36,7 @@ truth for every column; these are roles, not schemas.
 
 | Table               | One-liner                                                                                                                                           |
 | ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `areas`             | A site/grouping. Owns timezone, day offset and location. Every device has exactly one.                                                              |
+| `areas`             | A site/grouping. Owns display timezone, location, and the day offset for the AREA-keyed derived tables. Every device has exactly one.               |
 | `area_members`      | An area's 1..N member devices, `(area_id, device_id, ordinal)`.                                                                                     |
 | `area_bindings`     | Typed role→point **overrides**; absent means the area defaults to the union of its members' points.                                                 |
 | `derivations`       | Persisted derived series (run tracking, HWS model), generalizing the former per-feature tracker tables.                                             |
@@ -133,8 +133,12 @@ These are load-bearing; don't violate them without updating
 - `point_readings` carries three times: `measurement_time` (device clock), `received_time`
   (when we fetched it), `created_at` (when it landed in PG — distinguishes live ingestion
   from backfill).
-- Timezone, day offset and location resolve on the **Area**, never the device — see
-  [Time: fixed-offset days](#time-fixed-offset-days) below.
+- Display timezone and location resolve on the **Area**, never the device, through
+  `resolvePlacement` (`lib/areas/placement.ts`) — see [Time: fixed-offset days](#time-fixed-offset-days)
+  below. The **day offset is split**, deliberately: `devices.day_offset_min` (migration 0070) keys
+  `point_readings_agg_1d`, whose PK is `(point_rid, day)` and so has no area to resolve through;
+  `areas.day_offset_min` keys the area-keyed tables (`point_readings_flow_attr_1d.day`,
+  `battery_provenance_daily.day`). They agree for every device today.
 - 🛑 **Every timestamp column is `timestamp(3)`** — millisecond precision, declared through the
   `tsMs` helper in `schema.ts`. A bare `timestamp()` is `timestamp(6)`, and a `DEFAULT now()` on one
   writes a value **no JS `Date` can represent**: drizzle parses it with `new Date(…)` (truncating)
@@ -243,7 +247,14 @@ runtime `vendor_type = 'area'`; that synthesis is deleted.
 forever.** Deleting them was the tidier model and was **rejected**: `point_readings_flow_attr_1d` and
 `battery_provenance_daily` are keyed by area uuid, so deleting an area-of-one destroys history. They are
 filtered out of the picker at render time instead. The area — not the device — is the sole home for
-timezone and location.
+display timezone and location.
+
+🛑 **`devices.day_offset_min` is IMMUTABLE except through one verb.** It is the boundary
+`point_readings_agg_1d` rolls up on, so writing it without rebuilding leaves every daily total the
+device ever produced describing a window its own `day` key no longer matches — silently, because the
+rows keep answering. `liveone device change-offset` (→ `POST /api/v4/devices/{id}/change-offset`) is
+the only sanctioned path: it moves the offset, DELETES the days it invalidated and rebuilds them on
+the new boundary. Re-homing a device between areas must never change it.
 
 🛑 **Never put `ON DELETE CASCADE` on `point_readings_flow_attr_1d.area_id`.** Its plain `NO ACTION` FK
 (`lib/db/planetscale/schema.ts`, the `pointReadingsFlowAttr1d` definition) is the **data-loss firewall**:

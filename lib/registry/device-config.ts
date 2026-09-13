@@ -46,6 +46,7 @@ import {
   devices as pgDevices,
 } from "@/lib/db/planetscale/schema";
 import type { AreaLocation } from "@/lib/areas/types";
+import { resolvePlacement } from "@/lib/areas/placement";
 import type { DeviceConfig } from "@/lib/capabilities/config";
 import { Device, type DeviceId } from "@/lib/ids";
 import { getUserIdByUsername } from "@/lib/user-cache";
@@ -68,9 +69,10 @@ type DevicePollingState = typeof pgDeviceState.$inferSelect;
  * Field-compatible with `DeviceWithPolling` (see the module header). Three columns are absent because
  * `devices` genuinely has no counterpart: `ratings`, `solarSize`, `batterySize` → `config.spec`.
  *
- * `location`, `timezoneOffsetMin` and `displayTimezone` come from the AREA-OF-ONE, not the device:
- * "eager areas — Option A" makes `devices.primary_area_id` NOT NULL and the area the sole home for
- * placement. The join is therefore inner and can never drop a device.
+ * `location`, `timezoneOffsetMin` and `displayTimezone` are PLACEMENT: they come from the device's
+ * area, resolved through `resolvePlacement` (lib/areas/placement.ts), which falls back to the platform
+ * default for a device that has no area. They are never nullable on this shape — a caller should not
+ * have to know whether the device is placed.
  */
 export interface DeviceConfigView {
   // --- DeviceWithPolling-compatible surface (see module header) ---
@@ -131,7 +133,9 @@ export interface VisibleDevice {
 
 type JoinRow = {
   devices: typeof pgDevices.$inferSelect;
-  areas: typeof pgAreas.$inferSelect;
+  // Nullable since the join went LEFT: `devices.area_id` is nullable, so an area-less device is a
+  // representable row rather than one silently dropped from every read. See `baseSelect`.
+  areas: typeof pgAreas.$inferSelect | null;
   device_state: DevicePollingState | null;
 };
 
@@ -141,6 +145,13 @@ type JoinRow = {
  * `getTableColumns` rather than a bare `.select()`: a projection-less select expands to whatever the
  * RUNNING build declares, which is what made a stale `areas` column name a runtime 42703 instead of a
  * type error (see the `areas` schema comment). Naming the three tables keeps the expansion explicit.
+ *
+ * 🛑 The area join is LEFT, and must stay LEFT. Every device read in the app funnels through here —
+ * `deviceByHandle`, `activeDevices` (the poll-all cron), `allDevices`, `devicesByOwner`,
+ * `deviceByVendorSite` — so an INNER join silently drops every device that has no area: not polled,
+ * not aggregated, invisible in admin, and no error raised anywhere. That was survivable only while
+ * `devices.primary_area_id` was NOT NULL. It is the single highest-risk line in the device→0..1-area
+ * change; `resolvePlacement` exists so the LEFT join costs nothing downstream.
  */
 function baseSelect(db = requirePlanetscaleDb()) {
   return db
@@ -150,13 +161,14 @@ function baseSelect(db = requirePlanetscaleDb()) {
       device_state: getTableColumns(pgDeviceState),
     })
     .from(pgDevices)
-    .innerJoin(pgAreas, eq(pgAreas.id, pgDevices.primaryAreaId))
+    .leftJoin(pgAreas, eq(pgAreas.id, pgDevices.primaryAreaId))
     .leftJoin(pgDeviceState, eq(pgDeviceState.deviceId, pgDevices.id));
 }
 
 /** Flatten a devices⋈areas⋈device_state row into the serving shape. */
 function toRecord(row: JoinRow): DeviceRecord {
   const d = row.devices;
+  const placement = resolvePlacement(row.areas);
   return {
     deviceId: Device.encode(d.id),
     uuid: d.id,
@@ -170,11 +182,11 @@ function toRecord(row: JoinRow): DeviceRecord {
     alias: d.slug,
     model: d.model,
     serial: d.serial,
-    location: row.areas.location,
+    location: placement.location,
     metadata: d.adapterState,
     config: d.config ?? null,
-    timezoneOffsetMin: row.areas.timezoneOffsetMin,
-    displayTimezone: row.areas.displayTimezone,
+    timezoneOffsetMin: placement.timezoneOffsetMin,
+    displayTimezone: placement.displayTimezone,
     createdAt: d.createdAt,
     updatedAt: d.updatedAt,
     commissionedOn: d.commissionedOn,

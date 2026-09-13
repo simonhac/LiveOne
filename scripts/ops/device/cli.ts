@@ -6,10 +6,12 @@
  * Http-only: every verb calls the deployed API as you, against the same readable set the web app
  * serves.
  *
- * Read-only except for ONE verb, `recompute` — which rebuilds the rows computed FROM a device's
- * readings (`agg_1d`, the per-Area flow matrix) for a window that has changed underneath them. It
- * lives here rather than in a domain of its own because its subject is a device and its window is
- * whatever a repair touched; `liveone sync` publishes the readings and points at it by name.
+ * Read-only except for two verbs, both about the rows computed FROM a device's readings
+ * (`agg_1d`, the per-Area flow matrix). `recompute` rebuilds them for a window that has changed
+ * underneath them — its subject is a device and its window is whatever a repair touched, so it lives
+ * here rather than in a domain of its own; `liveone sync` publishes the readings and points at it by
+ * name. `change-offset` moves the day BOUNDARY those rows roll up on, which invalidates all of them
+ * at once, and so rebuilds the device's whole history rather than a window.
  *
  * The `config` sub-group (./config.ts) is the other writer: it normalises the stored `DeviceConfig`
  * jsonb, which is how a config key deleted from the code finally leaves the database.
@@ -69,7 +71,8 @@ export const deviceCommand = defineCommand({
     "Http-only: every verb calls the deployed API as you (`liveone auth login`), and prints\n" +
     "`target: <origin> as <you>` on stderr first — read it to know which environment answered.\n" +
     "Ids are per-environment.\n\n" +
-    "Every verb here READS except `recompute`, which writes and is dry-run by default.",
+    "Every verb here READS except `recompute` and `change-offset`, which write and are dry-run by\n" +
+    "default.",
   uses: ["api"],
   subcommands: {
     list: {
@@ -208,6 +211,43 @@ export const deviceCommand = defineCommand({
       examples: [
         "liveone device recompute kutis --date=2026-09-10",
         "liveone device recompute 13 --start=2026-09-10 --end=2026-09-11 --apply",
+      ],
+    },
+    "change-offset": {
+      name: "change-offset",
+      summary:
+        "Move a device's fixed day offset, and re-bucket every daily aggregate rolled up on the old one.",
+      when:
+        "Run this when a device's stored offset is simply WRONG — most often a daylight-saving\n" +
+        "offset frozen in as though it were the fixed standard one, so the device's days roll over\n" +
+        "an hour off from the area it feeds. This is the only sanctioned way to change the offset:\n" +
+        "editing it anywhere else moves the label and leaves the data on the old boundary.",
+      description:
+        "Writes the device's `day_offset_min` and its own area's offset, deletes the `agg_1d` rows\n" +
+        "that were rolled up on the old boundary, and rebuilds them on the new one — then refreshes\n" +
+        "the flow matrix of every Area the device's points bind into.\n\n" +
+        "🛑 There is NO window flag, deliberately. Changing the boundary invalidates every day the\n" +
+        "device ever rolled up, so the window is the whole history and is measured from the data\n" +
+        "rather than typed. A partial re-bucket would split the device's days across two boundaries\n" +
+        "with nothing recording where the seam is.\n\n" +
+        "🛑 Refuses when the device's area has other member devices: until the resolver flip the\n" +
+        "offset a rebuild reads is the AREA's, so this has to move the area too, and a shared area\n" +
+        "would re-bucket its other members as collateral.\n\n" +
+        "The daily totals WILL change — that is the point. Run detectors are not covered; rebuild\n" +
+        "those with `liveone derivation recompute`.",
+      mutates: true,
+      args: [DEVICE_ARG],
+      flags: {
+        ...BASE_URL_FLAG,
+        offset: {
+          type: "string",
+          placeholder: "MINUTES",
+          help: "The new fixed day offset in minutes east of UTC (e.g. 600 for AEST)",
+        },
+      },
+      examples: [
+        "liveone device change-offset 'Kinkora Fronius' --offset=600",
+        "liveone device change-offset 5 --offset=600 --apply",
       ],
     },
   },
@@ -436,6 +476,146 @@ async function runRecompute(ctx: Ctx): Promise<number> {
   );
 }
 
+/** What `POST /api/v4/devices/{id}/change-offset` answers. */
+export interface WireChangeOffset {
+  device: { id: string; systemId: number; name: string; vendor: string };
+  offset: { from: number; to: number };
+  area: { id: string; name: string; offsetMin: number } | null;
+  span: { startDay: string; endDay: string; rows: number } | null;
+  days: number;
+  points: number;
+  dryRun: boolean;
+  deleted1d: number;
+  agg1dDays: number;
+  provenanceAreas: number;
+  nextDay: string | null;
+}
+
+const signed = (m: number) => `${m >= 0 ? "+" : ""}${m}m`;
+
+export function renderChangeOffset(r: WireChangeOffset, passes = 1): string {
+  const out = [
+    `device       ${r.device.systemId}  ${r.device.name}  (${r.device.vendor})`,
+    `offset       ${signed(r.offset.from)} → ${signed(r.offset.to)}`,
+    `area         ${r.area ? `${r.area.name} (offset moves with the device)` : "(none)"}`,
+    `history      ${
+      r.span
+        ? `${r.span.startDay} → ${r.span.endDay}   ${r.span.rows} agg_1d row(s), ${r.days} day(s), ${r.points} point(s)`
+        : `no agg_1d rows — offset moves, nothing to rebuild`
+    }`,
+  ];
+
+  if (r.dryRun) {
+    out.push(
+      "",
+      "would rewrite the offset, DELETE those agg_1d rows and rebuild them on the new",
+      "boundary, then refresh the flow matrix of every Area this device binds into.",
+      "Daily totals will change. Nothing has been changed.",
+      "(dry run — pass --apply to write)",
+    );
+    return out.join("\n");
+  }
+
+  out.push(
+    "",
+    `deleted      ${r.deleted1d} agg_1d row(s)`,
+    `rebuilt      ${r.agg1dDays} of ${r.days} day(s)${passes > 1 ? `, over ${passes} passes` : ""}`,
+    `flow         ${r.provenanceAreas} area(s) refreshed`,
+  );
+  // 🛑 The counts are a MEASUREMENT, not the request echoed back: the per-day rebuild is best-effort,
+  // so a shortfall here has survived the resumption loop and is a genuine failure, not a budget stop.
+  if (r.agg1dDays < r.days)
+    out.push(
+      "",
+      `${r.days - r.agg1dDays} day(s) did NOT rebuild — the reason is in the server logs.`,
+      "The offset IS changed, so those days are now absent rather than wrong. Finish them with:",
+      `  liveone device recompute ${r.device.systemId} --start=… --end=… --apply`,
+    );
+  out.push(
+    "",
+    "Run detectors are NOT covered here — rebuild those with `liveone derivation recompute`.",
+  );
+  return out.join("\n");
+}
+
+async function runChangeOffset(ctx: Ctx): Promise<number> {
+  const raw = str(ctx, "offset");
+  if (raw === undefined)
+    throw usage(
+      "no --offset",
+      "a re-bucket always names the boundary it is moving to",
+      "pass --offset=600 (minutes east of UTC; 600 is AEST)",
+    );
+  const offset = Number(raw);
+  if (!Number.isInteger(offset) || offset % 15 !== 0 || Math.abs(offset) > 840)
+    throw usage(
+      `--offset=${raw} is not a usable offset`,
+      "it is minutes east of UTC: a whole number, a multiple of 15, within ±840",
+      "pass --offset=600 for AEST, --offset=570 for ACST",
+    );
+
+  return withApiSession(
+    ctx,
+    async (s) => {
+      const device = await resolveDevice(s, ctx.args[0]);
+      if (!device.id)
+        throw usage(
+          `device ${ctx.args[0]} has no dv_ id on this origin`,
+          "change-offset addresses a device by its TypeID",
+          "run `liveone device list` to see the ids this origin serves",
+        );
+
+      const call = (resumeFrom: string | null) =>
+        apiFetch<WireChangeOffset>(
+          s.origin,
+          `/api/v4/devices/${device.id}/change-offset`,
+          {
+            method: "POST",
+            token: s.token,
+            body: {
+              dayOffsetMin: offset,
+              dryRun: ctx.dryRun,
+              ...(resumeFrom ? { resumeFrom } : {}),
+            },
+            errors: {
+              422: {
+                exit: EXIT.USAGE,
+                what: "the server refused the change",
+                why: (b) => String(b.error ?? "refused"),
+                next: resumeFrom
+                  ? `the offset IS changed; finish with --offset=${offset} again`
+                  : "nothing was changed",
+              },
+            },
+          },
+        );
+
+      // 🛑 The server rebuilds only what fits its own budget and reports where it stopped, because a
+      // whole history does not fit in one serverless invocation (a measured 357-day device took
+      // 6m29s against a 300 s ceiling). Driving the resumption from HERE is what keeps the operation
+      // one command: the CLI is long-lived, the function is not.
+      let body = await call(null).then((r) => r.body);
+      let agg1dDays = body.agg1dDays;
+      let passes = 1;
+      while (!body.dryRun && body.nextDay) {
+        ctx.note(
+          `rebuilt ${agg1dDays}/${body.days} day(s) — resuming from ${body.nextDay}`,
+        );
+        body = await call(body.nextDay).then((r) => r.body);
+        agg1dDays += body.agg1dDays;
+        passes++;
+      }
+
+      const merged: WireChangeOffset = { ...body, agg1dDays };
+      ctx.emit(merged, () => renderChangeOffset(merged, passes));
+      return !merged.dryRun && merged.agg1dDays < merged.days
+        ? EXIT.FINDINGS
+        : EXIT.OK;
+    },
+    ctx.dryRun ? "dry-run" : "APPLY",
+  );
+}
+
 const HANDLERS: Record<string, (ctx: Ctx) => Promise<number>> = {
   list: runList,
   show: runShow,
@@ -443,6 +623,7 @@ const HANDLERS: Record<string, (ctx: Ctx) => Promise<number>> = {
   latest: runLatest,
   history: runHistory,
   recompute: runRecompute,
+  "change-offset": runChangeOffset,
 };
 
 /**
