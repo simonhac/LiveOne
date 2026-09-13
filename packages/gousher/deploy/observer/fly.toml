@@ -5,7 +5,7 @@ kill_signal = "SIGTERM"
 kill_timeout = "30s"
 
 [build]
-  dockerfile = "packages/gousher/deploy/observer/Dockerfile"
+  dockerfile = "Dockerfile"
 
 [[files]]
   guest_path = "/etc/gousher-observer.json"
