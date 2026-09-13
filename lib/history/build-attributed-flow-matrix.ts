@@ -277,6 +277,6 @@ export async function buildEnergyOnlyAttributedMatrix(
     if (!displayNameByStem.has(p.stem))
       displayNameByStem.set(p.stem, p.displayName);
   }
-  const day = localDay(startMs, logicalSystem.timezoneOffsetMin);
+  const day = localDay(startMs, logicalSystem.dayOffsetMin);
   return shapeAttributedFlowMatrix(acc, day, displayNameByStem);
 }

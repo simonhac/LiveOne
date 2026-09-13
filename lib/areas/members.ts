@@ -28,21 +28,28 @@ import { Device, type DeviceId } from "@/lib/ids";
 type Db = ReturnType<typeof requirePlanetscaleDb>;
 
 /**
- * The member device ids of an Area, ordered by `ordinal` then `devices.rid`. Empty if none.
+ * The member device ids of an Area, ordered helper-last then by `devices.rid`. Empty if none.
+ *
+ * 🛑 READS `devices.area_id` (migration 0071), not `area_members`. `area_members` is still WRITTEN —
+ * the dual-write window — so reverting this function is the whole of reverting the resolver flip.
+ *
+ * The ordering reproduces the old `(area_members.ordinal, devices.rid)` exactly, and that was checked
+ * rather than assumed: every helper carried `ordinal = 99` so that it sorted last, and no other
+ * ordinal value changes the relative order of the members that survive the flip. Verified against
+ * prod and dev — the only differences are the members that deliberately leave (the OpenElectricity
+ * regions, which become ambient and area-less).
  *
  * The tiebreak is `rid`, NOT `device_id`: uuid order is not int order, so ordering by the uuid would
- * silently reshuffle members that share an ordinal. Ordering by `rid` keeps member order byte-identical
- * to the `area_devices` era.
+ * silently reshuffle members.
  */
 export async function getAreaMemberDeviceIds(
   areaId: string,
 ): Promise<DeviceId[]> {
   const rows = await requirePlanetscaleDb()
-    .select({ deviceId: areaMembers.deviceId })
-    .from(areaMembers)
-    .innerJoin(devices, eq(devices.id, areaMembers.deviceId))
-    .where(eq(areaMembers.areaId, areaId))
-    .orderBy(asc(areaMembers.ordinal), asc(devices.rid));
+    .select({ deviceId: devices.id })
+    .from(devices)
+    .where(eq(devices.areaId, areaId))
+    .orderBy(asc(sql`${devices.vendor} = 'helper'`), asc(devices.rid));
   return rows.map((r) => Device.encode(r.deviceId));
 }
 
@@ -70,7 +77,11 @@ export async function ensureAreaMember(
  * (decision "Option A" — deleting them would destroy their uuid-keyed flow/provenance history), so this
  * enumerates `areas` directly and keeps the
  * duplicate-prevention guard: if an area's integer handle is itself a member device of another active
- * Area, the parent Area owns the flow view. The caller maps these through `resolveLogicalSystem` +
+ * Area, the parent Area owns the flow view. (Since migration 0071 that membership is `devices.area_id`.
+ * The guard is retained rather than deleted: once the areas-of-one are actually gone it becomes a
+ * provable no-op — an area with no devices has no role set and `isComplete` drops it anyway — but
+ * that is a later stage's cleanup, and deleting it while they still exist would let a child area
+ * claim a Sankey its parent already owns.) The caller maps these through `resolveLogicalSystem` +
  * `isComplete`, so an Area that lacks a source/load role set still drops out. SQL-only (no resolver import).
  */
 export async function listFlowEligibleAreaHandles(): Promise<number[]> {
@@ -93,9 +104,8 @@ export async function listFlowEligibleAreaHandles(): Promise<number[]> {
         // `parent.legacy_system_id <> X` was NULL, hence not-EXISTS-satisfying, for a parent with no
         // handle, and a missing `plh` row drops that parent from the subquery the same way.
         sql`NOT EXISTS (
-          SELECT 1 FROM area_members am
-          JOIN devices d ON d.id = am.device_id
-          JOIN areas parent ON parent.id = am.area_id
+          SELECT 1 FROM devices d
+          JOIN areas parent ON parent.id = d.area_id
           JOIN legacy_handles plh ON plh.area_id = parent.id
           WHERE d.rid = ${legacyHandles.handle}
             AND plh.handle <> ${legacyHandles.handle}
@@ -155,8 +165,9 @@ export async function getAreaMemberPointsForServing(): Promise<
     // config-v4 Phase 13 PR 5: handle from `legacy_handles`, not the dropped column. INNER, so it
     // subsumes the `isNotNull(areas.legacySystemId)` that used to sit in the `where` below.
     .innerJoin(legacyHandles, eq(legacyHandles.areaId, areas.id))
-    .innerJoin(areaMembers, eq(areaMembers.areaId, areas.id))
-    .innerJoin(devices, eq(devices.id, areaMembers.deviceId))
+    // Since migration 0071 the membership edge is `devices.area_id`, so this is one join shallower
+    // than the `area_members` hop it replaces.
+    .innerJoin(devices, eq(devices.areaId, areas.id))
     // slice 1b: was `point_info.system_id = devices.rid` — a join through the integer handle. The
     // points-primary equivalent is the real FK, `points.device_id = devices.id`.
     .innerJoin(points, eq(points.deviceId, devices.id))

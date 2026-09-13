@@ -100,8 +100,10 @@ export async function healStaleAgg1dForDevice(
     const points = Object.values(map).map((p) => Point.encode(p.pointUid));
     if (points.length === 0) return empty;
 
-    // The local day currently in progress, in the device's own offset — the exclusive upper bound.
-    const offsetMs = device.timezoneOffsetMin * 60_000;
+    // The local day currently in progress, in the device's own DAY bucket — the exclusive upper
+    // bound. This has to be `day_offset_min` and not the area's placement timezone: it is used to
+    // address `point_readings_agg_1d` rows, which are keyed on that bucket.
+    const offsetMs = device.dayOffsetMin * 60_000;
     const todayStartLocalMs =
       Math.floor((nowMs + offsetMs) / 86_400_000) * 86_400_000 - offsetMs;
 
@@ -110,7 +112,7 @@ export async function healStaleAgg1dForDevice(
       {
         fromMs: todayStartLocalMs - opts.lookbackDays * 86_400_000,
         toMs: todayStartLocalMs,
-        offsetMin: device.timezoneOffsetMin,
+        offsetMin: device.dayOffsetMin,
       },
       db,
     );

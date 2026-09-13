@@ -140,7 +140,9 @@ export async function POST(
     window: { start: first.toString(), end: last.toString(), days },
     // The days are LOCAL to this device — the same boundaries the daily aggregates roll up on, which
     // for a device at a fixed offset is not the same set of instants as the caller's local days.
-    timezoneOffsetMin: device.timezoneOffsetMin,
+    // Since migration 0070 that boundary is the DEVICE's `day_offset_min`, not the area's placement
+    // timezone; reporting the latter would name a window the rebuild does not actually use.
+    dayOffsetMin: device.dayOffsetMin,
     days: dayList,
   };
 
@@ -159,7 +161,7 @@ export async function POST(
   // and the rest proceed, so the counts below are the measurement, not the request echoed back.
   const result = await recomputeDerivedForDeviceDays(
     db,
-    { id: systemId, timezoneOffsetMin: device.timezoneOffsetMin },
+    { id: systemId, dayOffsetMin: device.dayOffsetMin },
     dayList,
     Date.now(),
     "DeviceRecompute",

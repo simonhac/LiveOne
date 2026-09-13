@@ -132,6 +132,7 @@ export async function POST(request: NextRequest) {
       metadata: null,
       config: null,
       timezoneOffsetMin: 600, // Default to AEST, adapter can override
+      dayOffsetMin: 600, // the synthetic device's day bucket; never aggregated, so nominal
       displayTimezone: "Australia/Melbourne", // Default timezone for test device
       createdAt: new Date(),
       updatedAt: new Date(),

@@ -59,7 +59,14 @@ const AGG5M_RECOMPUTE_LOCK_NS = 0x41475335; // ascii "AGS5"
 /** Minimal device shape the 1d recompute needs (a `systems` row satisfies it). */
 interface DeviceForDailyAgg {
   id: number;
-  timezoneOffsetMin: number;
+  /**
+   * 🛑 The DEVICE's `day_offset_min`, not the area's timezone offset. This is the boundary the 1d
+   * rows are keyed on, and `point_readings_agg_1d` is PK'd on `(point_rid, day)` — there is no area
+   * in that key to resolve an offset through, which is why an area-less device was unrepresentable
+   * before migration 0070. Changing it re-buckets every day the device ever rolled up, so it is
+   * immutable outside `liveone device change-offset`, which deletes and rebuilds when it moves.
+   */
+  dayOffsetMin: number;
 }
 
 /**
@@ -290,7 +297,7 @@ export async function recomputeAgg1dForDay(
 ): Promise<{ rowsUpserted: number }> {
   const [dayStartUnix, dayEndUnix] = dayToUnixRangeForAggregation(
     day,
-    device.timezoneOffsetMin,
+    device.dayOffsetMin,
   );
   const dayStartMs = dayStartUnix * 1000;
   const dayEndMs = dayEndUnix * 1000;

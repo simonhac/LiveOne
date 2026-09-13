@@ -322,7 +322,7 @@ async function rebuildChunk(
       db,
       // The NEW offset, passed explicitly rather than re-read: the rebuild must not depend on whether
       // a registry cache has caught up with the write.
-      { id: deviceRid, timezoneOffsetMin: plan.newOffsetMin },
+      { id: deviceRid, dayOffsetMin: plan.newOffsetMin },
       batch,
       nowMs,
       "ChangeDayOffset",
