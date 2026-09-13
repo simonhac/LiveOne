@@ -1646,6 +1646,103 @@ async function deleteAggsForPoints(
   return { deleted5m: r5.length, deleted1d: r1.length };
 }
 
+/**
+ * The `agg_1d` day span a point set actually occupies, plus its row count. Returns `null` when the
+ * points have no 1d rows at all.
+ *
+ * Exists for the RE-BUCKET op (`POST /api/v4/devices/{id}/change-offset`), which has no caller-supplied
+ * window: changing a device's fixed day offset invalidates every day it ever rolled up, so the window
+ * IS the history, and it has to be measured rather than typed.
+ */
+async function agg1dSpanForPoints(
+  pointRids: number[],
+  exec?: ReadingsExec,
+): Promise<{ startDay: string; endDay: string; rows: number } | null> {
+  if (pointRids.length === 0) return null;
+  const db = exec ?? requirePlanetscaleDb();
+  const [r] = await db
+    .select({
+      startDay: sql<string | null>`min(${pointReadingsAgg1d.day})`,
+      endDay: sql<string | null>`max(${pointReadingsAgg1d.day})`,
+      rows: sql<number>`count(*)::int`,
+    })
+    .from(pointReadingsAgg1d)
+    .where(inArray(pointReadingsAgg1d.pointRid, pointRids));
+  if (!r?.startDay || !r.endDay) return null;
+  return { startDay: r.startDay, endDay: r.endDay, rows: r.rows };
+}
+
+/**
+ * The `agg_5m` instant span a point set occupies. Returns `null` when the points have no 5m rows.
+ *
+ * 🛑 The re-bucket derives its DAY LIST from here rather than from `agg_1d`, and that is load-bearing
+ * rather than incidental. `agg_1d` is the table the operation DELETES, so a plan built from it shrinks
+ * every time a pass runs — a resumed pass would compute a shorter history than the pass before it and
+ * reject its own `resumeFrom` as "not a day in this device's history". `agg_5m` is the SOURCE the
+ * rebuild reads and the op never writes it, so the window is stable across passes.
+ *
+ * It is also the more correct source: a day with 5m readings but no 1d row has simply never been
+ * aggregated, and a re-bucket should build it rather than skip it.
+ */
+async function agg5mSpanMsForPoints(
+  pointRids: number[],
+  exec?: ReadingsExec,
+): Promise<{ minMs: number; maxMs: number } | null> {
+  if (pointRids.length === 0) return null;
+  const db = exec ?? requirePlanetscaleDb();
+  const [r] = await db
+    .select({
+      minT: sql<string | null>`min(${pointReadingsAgg5m.intervalEnd})`,
+      maxT: sql<string | null>`max(${pointReadingsAgg5m.intervalEnd})`,
+    })
+    .from(pointReadingsAgg5m)
+    .where(inArray(pointReadingsAgg5m.pointRid, pointRids));
+  if (!r?.minT || !r.maxT) return null;
+  // The column is a naive UTC timestamp; `Z` makes the parse explicit rather than local-time.
+  return {
+    minMs: Date.parse(`${r.minT.replace(" ", "T")}Z`),
+    maxMs: Date.parse(`${r.maxT.replace(" ", "T")}Z`),
+  };
+}
+
+/**
+ * Delete the `agg_1d` rows of a POINT SET within an inclusive day range. Leaves `agg_5m` alone.
+ *
+ * 🛑 This is the one delete a re-bucket needs, and neither neighbour can stand in for it.
+ * `delete1dRange` is day-keyed and FLEET-WIDE — it would take every other device's rows for those
+ * days. `deleteAggsForPoints` is point-scoped but unbounded by day AND removes `agg_5m` too — which
+ * is the very source the rebuild reads back.
+ *
+ * Why a delete is needed at all, when `recomputeAgg1dForDay` could simply upsert over the top: that
+ * writer is upsert-ONLY (`if (toUpsert.length === 0) return`), and it emits a row only for a point
+ * with ≥1 in-day 5m reading. Moving the day boundary can leave a day with no readings that had one
+ * before — at the edges of the history, or across a gap — and that day's old row would survive,
+ * stale and indistinguishable from a real one. Delete-then-rebuild is what makes the result a
+ * function of the new offset alone.
+ *
+ * Deliberately has no "all points" form, for `deleteAggsForPoints`' reason: an empty `pointRids`
+ * deletes nothing rather than degenerating into an unfiltered delete.
+ */
+async function delete1dForPointsInRange(
+  pointRids: number[],
+  range: DayRange,
+  exec?: ReadingsExec,
+): Promise<{ deleted: number }> {
+  if (pointRids.length === 0) return { deleted: 0 };
+  const db = exec ?? requirePlanetscaleDb();
+  const res = await db
+    .delete(pointReadingsAgg1d)
+    .where(
+      and(
+        inArray(pointReadingsAgg1d.pointRid, pointRids),
+        gte(pointReadingsAgg1d.day, range.startDay),
+        lte(pointReadingsAgg1d.day, range.endDay),
+      ),
+    )
+    .returning({ day: pointReadingsAgg1d.day });
+  return { deleted: res.length };
+}
+
 /** Count the aggregate rows `deleteAggsForPoints` would remove, without removing them. */
 async function countAggsForPoints(
   pointRids: number[],
@@ -2122,6 +2219,9 @@ export const ReadingsDao = {
   rawLandingHealth,
   maxAgg5mIntervalMsForDevices,
   delete1dRange,
+  delete1dForPointsInRange,
+  agg1dSpanForPoints,
+  agg5mSpanMsForPoints,
   readAdminPivot,
   hasReadingsForDevice,
   hasReadingsForDeviceBeyond,

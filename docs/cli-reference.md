@@ -82,6 +82,7 @@ Data goes to stdout; all diagnostics go to stderr. Mutating commands are **dry b
       - [liveone device config lint](../scripts/ops/CLI_README.md#liveone-device-config-lint) — What the current parser would DROP from the stored config.
       - [liveone device config clean](../scripts/ops/CLI_README.md#liveone-device-config-clean) — Re-parse the stored config and write back the normalised form.  _(writes)_
     - [liveone device recompute](../scripts/ops/CLI_README.md#liveone-device-recompute) — Rebuild the rows derived FROM a device's readings, over a window of local days.  _(writes)_
+    - [liveone device change-offset](../scripts/ops/CLI_README.md#liveone-device-change-offset) — Move a device's fixed day offset, and re-bucket every daily aggregate rolled up on the old one.  _(writes)_
   - [liveone area](../scripts/ops/CLI_README.md#liveone-area) — Inspect and WIRE areas — devices, role bindings, latest values, history, flows.
     - [liveone area list](../scripts/ops/CLI_README.md#liveone-area-list) — List the areas you can read: id, handle, name.
     - [liveone area show](../scripts/ops/CLI_README.md#liveone-area-show) — An area's full aggregate: meta, members, bindings, capabilities.

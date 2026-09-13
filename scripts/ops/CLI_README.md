@@ -68,6 +68,7 @@ Data goes to stdout; all diagnostics go to stderr. Mutating commands are **dry b
       - [liveone device config lint](#liveone-device-config-lint)
       - [liveone device config clean](#liveone-device-config-clean)  _(writes)_
     - [liveone device recompute](#liveone-device-recompute)  _(writes)_
+    - [liveone device change-offset](#liveone-device-change-offset)  _(writes)_
   - [liveone area](#liveone-area)
     - [liveone area list](#liveone-area-list)
     - [liveone area show](#liveone-area-show)
@@ -2030,7 +2031,8 @@ Http-only: every verb calls the deployed API as you (`liveone auth login`), and 
 `target: <origin> as <you>` on stderr first — read it to know which environment answered.
 Ids are per-environment.
 
-Every verb here READS except `recompute`, which writes and is dry-run by default.
+Every verb here READS except `recompute` and `change-offset`, which write and are dry-run by
+default.
 
 Usage:
   liveone device <subcommand> [options]
@@ -2045,6 +2047,7 @@ Subcommands:
   history                Time series for a device, in the OpenNEM shape /api/history serves.
   config                 The stored DeviceConfig blob — read it, audit it for rot, normalise it.
   recompute              Rebuild the rows derived FROM a device's readings, over a window of local days.  (writes)
+  change-offset          Move a device's fixed day offset, and re-bucket every daily aggregate rolled up on the old one.  (writes)
 
 Run `liveone device <subcommand> --help` for a subcommand's own options.
 
@@ -2637,6 +2640,78 @@ External access:
 Examples:
   liveone device recompute kutis --date=2026-09-10
   liveone device recompute 13 --start=2026-09-10 --end=2026-09-11 --apply
+
+Exit codes:
+  0    success
+  1    completed, with findings or no results
+  2    usage error
+  3    authentication failure
+  5    upstream failure
+  130  interrupted
+```
+
+#### liveone device change-offset
+
+Move a device's fixed day offset, and re-bucket every daily aggregate rolled up on the old one.
+
+```
+Move a device's fixed day offset, and re-bucket every daily aggregate rolled up on the old one.
+
+When to use:
+  Run this when a device's stored offset is simply WRONG — most often a daylight-saving
+  offset frozen in as though it were the fixed standard one, so the device's days roll over
+  an hour off from the area it feeds. This is the only sanctioned way to change the offset:
+  editing it anywhere else moves the label and leaves the data on the old boundary.
+
+Writes the device's `day_offset_min` and its own area's offset, deletes the `agg_1d` rows
+that were rolled up on the old boundary, and rebuilds them on the new one — then refreshes
+the flow matrix of every Area the device's points bind into.
+
+🛑 There is NO window flag, deliberately. Changing the boundary invalidates every day the
+device ever rolled up, so the window is the whole history and is measured from the data
+rather than typed. A partial re-bucket would split the device's days across two boundaries
+with nothing recording where the seam is.
+
+🛑 Refuses when the device's area has other member devices: until the resolver flip the
+offset a rebuild reads is the AREA's, so this has to move the area too, and a shared area
+would re-bucket its other members as collateral.
+
+The daily totals WILL change — that is the point. Run detectors are not covered; rebuild
+those with `liveone derivation recompute`.
+
+Usage:
+  liveone device change-offset <device> [options]
+
+  This command WRITES. It is dry by default: nothing changes without --apply.
+
+Arguments:
+  <device>               A device: its dv_… id, integer handle, slug, or name
+
+Options:
+  --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
+  --offset <MINUTES>         The new fixed day offset in minutes east of UTC (e.g. 600 for AEST)
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+  --apply                    Actually write. Without it nothing is changed.
+  --dry-run                  Report what would change and write nothing (the default)
+  --yes                      Skip the confirmation prompt. Required with --apply off a terminal.
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
+
+Examples:
+  liveone device change-offset 'Kinkora Fronius' --offset=600
+  liveone device change-offset 5 --offset=600 --apply
 
 Exit codes:
   0    success

@@ -444,6 +444,15 @@ export const REFERENCE_LEDGER: LedgerEntry[] = [
     verdict: { protectedBy: "fk", onDelete: "no action" },
   },
   {
+    // The Home-Assistant-shaped edge (migration 0070): 0 or 1 area per device. SET NULL rather than
+    // NO ACTION because NULL is a first-class state here — deleting an area moves its devices to the
+    // unassigned bucket instead of blocking the delete. That is not a weaker guarantee than
+    // `primaryAreaId`'s: nothing derived hangs off this column. The area-keyed derived tables key on
+    // their OWN `area_id`, and `point_readings_flow_attr_1d`'s NO ACTION firewall is untouched.
+    column: devices.areaId,
+    verdict: { protectedBy: "fk", onDelete: "set null" },
+  },
+  {
     column: devices.config,
     holdsNoRefs:
       "`DeviceConfig` — capability overrides keyed by capability ID, a structured physical spec, and the battery-provenance scalars. Capability IDs are a code vocabulary, not rows.",
@@ -550,6 +559,17 @@ export const REFERENCE_LEDGER: LedgerEntry[] = [
     // be a live credential pointing at a row that cannot be read — revocable by nobody, because
     // every management verb is scoped through the area that no longer exists.
     verdict: { protectedBy: "fk", onDelete: "cascade" },
+  },
+  {
+    // Migration 0070. Identical interior to `areas.location`, and identical reasoning: it is the
+    // OWNER tier of the placement chain, so it holds geography rather than identity.
+    column: users.location,
+    holdsNoRefs:
+      "latitude, longitude and state — geography, not identity. The NEM region is DERIVED from it at read time rather than stored as a reference.",
+    verdict: {
+      protectedBy: "deliberately-unprotected",
+      reason: "scalar configuration.",
+    },
   },
   {
     column: users.defaultDashboardId,

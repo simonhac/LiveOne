@@ -127,6 +127,17 @@ export const users = pgTable(
       () => dashboards.id,
       { onDelete: "set null" },
     ),
+    // Owner-level PLACEMENT defaults (migration 0070) — the middle tier of
+    // `area → owner → platform default`, resolved by `resolvePlacement` (lib/areas/placement.ts).
+    //
+    // This is where Home Assistant's single global home-location object lands. The direct
+    // translation does not work: HA is one home, we are many-sites-per-owner, so HA's core config
+    // maps to the OWNER and the area stays a mandatory finer grain rather than an optional override.
+    // All three are nullable and NULL means "fall through to the platform default" — an ownerless
+    // device (the OE NEM regions) has no owner row to consult and lands on the default directly.
+    dayOffsetMin: integer("day_offset_min"),
+    displayTimezone: text("display_timezone"),
+    location: jsonb("location").$type<AreaLocation>(),
     createdAt: tsMs("created_at").notNull().defaultNow(),
     updatedAt: tsMs("updated_at").notNull().defaultNow(),
   },
@@ -1303,9 +1314,37 @@ export const devices = pgTable(
     serial: text("serial"),
     // Eager area: tz/location resolve HERE, not on the device. ⚠️ config-v4 CUTOVER SHAPE — NOT NULL
     // (registry-sync mints the area-of-one; the mint mirror ensureDeviceRow supplies it on every insert).
+    //
+    // 🛑 SUPERSEDED by `areaId` below (migration 0070). Both columns are live during the expand/contract
+    // window: this one is still the join target and still NOT NULL, `area_id` is nullable and
+    // unbackfilled until 0071. Migration 0072 drops this column. Do not add new readers.
     primaryAreaId: uuid("primary_area_id")
       .notNull()
       .references(() => areas.id),
+    // The device's area, Home-Assistant shaped: 0 or 1, nullable, and the SOLE edge once 0072 lands
+    // (`area_members` goes with it). NULL is a first-class state — HA's "not assigned to an area"
+    // bucket — and is what an ownerless ambient producer (the OpenElectricity NEM regions, HA's
+    // `entry_type=DeviceEntryType.SERVICE`) sits at permanently: consumers reach it by REFERENCE
+    // (`lib/grid/context.ts` resolves area.location → NEM region → the public device), never by
+    // membership.
+    //
+    // ON DELETE SET NULL: deleting an area moves its devices to the unassigned bucket rather than
+    // blocking or cascading. This does NOT loosen the flow firewall — that lives on
+    // `point_readings_flow_attr_1d.area_id`'s NO ACTION and is untouched.
+    areaId: uuid("area_id").references(() => areas.id, {
+      onDelete: "set null",
+    }),
+    // The fixed-offset day this device's `point_readings_agg_1d` rows bucket into.
+    //
+    // Why it is HERE and not read off the area: `point_readings_agg_1d` is PK'd on
+    // `(point_rid, day)` — no area column — and `recomputeAgg1dForDay` buckets per DEVICE. A
+    // bucketing key whose grain is coarser than the table it buckets cannot answer for an area-less
+    // row, which is exactly what made an area-less device unrepresentable. Seeded at mint from
+    // `area → owner → platform default` and IMMUTABLE thereafter: re-homing a device between areas
+    // must never silently re-bucket its history. `areas.day_offset_min` keeps its own, different job
+    // — the bucket for the AREA-keyed tables (`point_readings_flow_attr_1d.day`,
+    // `battery_provenance_daily.day`).
+    dayOffsetMin: integer("day_offset_min").notNull(),
     config: jsonb("config").$type<DeviceConfig>(),
     adapterState: jsonb("adapter_state"), // ← systems.metadata
     commissionedOn: date("commissioned_on"),
@@ -1314,6 +1353,7 @@ export const devices = pgTable(
   },
   (table) => ({
     ridUnique: uniqueIndex("devices_rid_unique").on(table.rid),
+    areaIdx: index("devices_area_idx").on(table.areaId),
     statusCheck: check(
       "devices_status_check",
       sql`${table.status} IN ('active','disabled','removed')`,

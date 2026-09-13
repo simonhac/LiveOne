@@ -91,6 +91,7 @@ beforeAll(async () => {
       vendorSiteId: vendor,
       name: vendor,
       primaryAreaId: areaId,
+      dayOffsetMin: 0,
     });
     await db.insert(legacyHandles).values({ handle: rid, deviceId: id });
     deviceIds.set(vendor, id);
