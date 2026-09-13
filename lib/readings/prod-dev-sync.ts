@@ -266,15 +266,11 @@ const FULL: FullTable[] = [
       // NULL (with NOT NULL dropped — SET NULL on a NOT NULL column aborts the delete instead of
       // clearing it, so the pair goes together), so the repoint stopped being what unblocks the
       // delete; it was kept one PR longer only because the area-scoped HTTP surface still RESOLVED
-      // a derivation through the column. It no longer does — every read on that surface is
-      // authorized against the derivation's own device set — so a dev-only derivation whose area
-      // realigns now takes `area_id = NULL` and stays fully listable, patchable and live.
-      //
-      // ⚠️ Precisely: one reader remains, and it is not a resolver. `areaDependents`
-      // (`lib/integrity/relied-upon.ts`) lists an area's derivations when refusing to DELETE that
-      // area, so on dev a realigned row would no longer be named there. That leg is deleted by 0064
-      // along with the column, and the protection it stood for has already moved to
-      // `derivation_sources.point_id`'s FK ("you cannot delete a point a live derivation reads").
+      // a derivation through the column. It stopped doing so — every read on that surface is
+      // authorized against the derivation's own device set — and 0068 then dropped the column
+      // outright, so there is no longer an `area_id` for a realigning area to strand. The
+      // protection it stood for moved to `derivation_sources.point_id`'s FK ("you cannot delete a
+      // point a live derivation reads").
       repoint: [{ table: "devices", cols: ["primary_area_id"] }],
       // Nullable columns behind areas_owner_alias_unique. Cleared on the drifted dev row so prod's row
       // can be inserted alongside it, which the repoint UPDATE needs as its FK target. The drifted row

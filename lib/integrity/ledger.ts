@@ -217,13 +217,6 @@ function automationTriggerRefs(value: unknown): string[] {
   return out;
 }
 
-/** `derivations.source_points` — `{signal, energy?, boundary?}` or `{power}`, all raw point uuids. */
-function derivationSourceRefs(value: unknown): string[] {
-  const v = asRecord(value);
-  if (!v) return [];
-  return Object.values(v).filter((x): x is string => typeof x === "string");
-}
-
 export const REFERENCE_LEDGER: LedgerEntry[] = [
   // -- Archives, buffers and logs. Every one of these records what was true at a moment, and must
   //    outlive whatever it described. An FK here would turn a config delete into a data loss.
@@ -569,19 +562,11 @@ export const REFERENCE_LEDGER: LedgerEntry[] = [
   },
 
   // -- Derivations and automations.
-  {
-    column: derivations.areaId,
-    // 🛑 A VESTIGE, not a reference, since 0063. The site is now derived from the derivation's
-    // sources; this column is dual-written and nothing resolves a derivation through it — the one
-    // reader left is `areaDependents` in ./relied-upon.ts, i.e. this census itself. 0064 drops the
-    // column and that leg together. The FK became
-    // ON DELETE SET NULL together with dropping NOT NULL — the pair, because SET NULL on a NOT NULL
-    // column aborts the delete instead of clearing it. So an area delete no longer NAMES its
-    // derivations as dependents: it silently clears a column nobody reads. The protection did not
-    // vanish, it MOVED — `derivation_sources.point_id` below now refuses to let you delete a point
-    // a live derivation reads, which is what the area FK was standing in for all along.
-    verdict: { protectedBy: "fk", onDelete: "set null" },
-  },
+  // 🛑 `derivations.area_id` is NOT missing from this census — 0068 dropped the column, so it is
+  // not a candidate. 0063 had already demoted it to a vestige nothing resolved a derivation
+  // through, and the protection it was standing in for MOVED rather than vanished:
+  // `derivation_sources.point_id` below refuses to let you delete a point a live derivation reads,
+  // which is a better aim than "refuse to delete the area we happened to stamp on it".
   {
     column: derivations.outputPointId,
     verdict: { protectedBy: "fk", onDelete: "no action" },
@@ -634,15 +619,6 @@ export const REFERENCE_LEDGER: LedgerEntry[] = [
     verdict: {
       protectedBy: "deliberately-unprotected",
       reason: "scalar configuration.",
-    },
-  },
-  {
-    column: derivations.sourcePoints,
-    extract: derivationSourceRefs,
-    verdict: {
-      protectedBy: "deliberately-unprotected",
-      reason:
-        "raw point uuids in jsonb with no FK — and, since the HTTP surface moved onto `derivation_sources` (block-model increment 1, PR 3), READ BY NOTHING. It is written and never consulted: the engines resolve from `derivation_sources`, and so does the wire projection, so a stale or dangling uuid here changes no behaviour anywhere. That is what demotes it from `refuseIfReliedUpon` — naming a dependent that cannot be affected would pad every refusal with a row nobody needs to act on. 🛑 The real protection is `derivation_sources.point_id`'s composite FK, which refuses to delete a point a live derivation reads. This entry, the dual-write and the column all go together in 0064.",
     },
   },
   {

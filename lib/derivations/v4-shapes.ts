@@ -4,16 +4,11 @@
  * A derivation is stored with one kind-specific jsonb column of knobs (`params`, SPARSE) and a set
  * of typed input ports in `derivation_sources` (migration 0063).
  *
- * 🛑 **The projection reads the ROWS, not `derivations.source_points`.** The jsonb is still WRITTEN
- * — 0064 drops it — but nothing reads it to learn a derivation's wiring any more, including this
- * file. (`lib/integrity/ledger.ts` still knows how to EXTRACT the uuids from it, which is the
- * census's job of classifying every column that could hold a reference, not a use of the value.)
- * It used to be read
- * here on the grounds that it was "still the wire shape", which made the wire show the unenforced
- * copy of the wiring while the engines acted on the enforced one; the two are kept in step inside
- * one transaction by every writer, but "kept in step by discipline" is a strictly worse thing to
- * show a caller than the side the database checks. The wire KEY is unchanged (`sourcePoints`), so
- * this is not a wire break — only a change of which column answers it.
+ * 🛑 **The projection reads the ROWS**, and since 0068 there is nothing else it could read: the
+ * `derivations.source_points` jsonb is gone. It used to be read here on the grounds that it was
+ * "still the wire shape", which made the wire show the unenforced copy of the wiring while the
+ * engines acted on the enforced one. The wire KEY is unchanged (`sourcePoints`), so neither the
+ * move nor the drop was a wire break — only a change of which column answers it.
  *
  * The wire speaks TypeIDs like the rest of `/api/v4`, so point uuids cross as `pt_` and device
  * uuids as `dv_`. The slot projection is per-kind and explicit rather than "encode anything

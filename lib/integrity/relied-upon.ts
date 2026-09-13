@@ -44,7 +44,7 @@ import {
   shareTokens,
   users,
 } from "@/lib/db/planetscale/schema";
-import { Area, Automation, Dashboard, Derivation, Point } from "@/lib/ids";
+import { Area, Automation, Dashboard, Point } from "@/lib/ids";
 import { scanDocRefs } from "@/lib/dashboard/doc-refs";
 
 /** The kinds of row a delete can be refused for. */
@@ -123,22 +123,12 @@ async function areaDependents(uuid: string): Promise<Dependent[]> {
       fix: "delete the automation, or move it to another area",
     });
 
-  // 🛑 Until migration 0064 drops the column, at which point this leg must be DELETED, not left to
-  // "find nothing": the column will not exist, so an un-migrated deployment gets a 42703 and a
-  // migrated one gets a compile error here. It is listed in the block-model increment-1 plan as
-  // part of the contract step for exactly that reason.
-  for (const d of await db
-    .select({ id: derivations.id, name: derivations.name })
-    .from(derivations)
-    .where(eq(derivations.areaId, uuid)))
-    out.push({
-      kind: "derivation",
-      id: Derivation.encode(d.id),
-      name: d.name,
-      via: "derivations.area_id",
-      effect: "dangles",
-      fix: "delete the derivation, or move it to another area",
-    });
+  // 🛑 There is deliberately NO derivation leg. `derivations.area_id` was the last thing that made
+  // deleting an area a fact about a derivation, and 0068 dropped it: a derivation's site is its
+  // OWNER DEVICE, computed from `derivation_sources`, so an area going away leaves every detector
+  // it happened to sit over running exactly as before. Re-adding a leg here would report a
+  // dependency that does not exist. What DOES still protect the wiring is aimed at the points
+  // instead — you cannot delete a point a live derivation reads (see `pointDependents`).
 
   return out;
 }

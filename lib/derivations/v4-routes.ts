@@ -1,16 +1,14 @@
 /**
- * The `/api/v4/derivations` handlers, as functions — the implementation both route trees share.
+ * The `/api/v4/derivations` handlers, as functions.
  *
- * Two trees serve this resource: the new identity-addressed one (`/api/v4/derivations/{dx_}`) and
- * the area-scoped one it replaces (`/api/v4/areas/{ar_}/derivations/{dx_}`), which is now a set of
- * thin shims so the CLI and any bookmarked URL keep working until PR 4 moves them. The logic lives
- * HERE rather than in either route module so that neither is the other's subordinate: a shim that
- * imported a route handler would inherit its `params` shape, and a route that imported a shim would
- * invert the dependency the plan is trying to establish.
+ * ONE tree serves this resource: the identity-addressed `/api/v4/derivations/{dx_}`. The area-scoped
+ * `/api/v4/areas/{ar_}/derivations/{dx_}` it replaced was kept as thin shims through the 0063
+ * expand window and deleted with the vestiges in 0068 — a derivation's site is derived from its
+ * sources, so there was never an area to address it by. The logic lives here rather than in the
+ * route module so the route stays a `params`-shaped adapter and nothing imports a route handler.
  *
- * 🛑 **Authorization is `lib/derivations/scope.ts`'s job on every path**, and the area in a shim's
- * URL contributes NOTHING to it. That is the point of the change: an area is a narrowing filter for
- * a listing and a default for the HWS create's device, never a grant.
+ * 🛑 **Authorization is `lib/derivations/scope.ts`'s job on every path.** An area is a narrowing
+ * filter for a listing (`?area=`) and nothing else — never a grant.
  */
 import { NextRequest, NextResponse } from "next/server";
 import { and, asc, desc, eq, gte, inArray, lte } from "drizzle-orm";
@@ -111,10 +109,7 @@ async function areaDeviceUuids(areaUuid: string): Promise<string[]> {
  * cannot see returns an empty list rather than a 403: "no derivation you may read touches that" is
  * both true and free of information about what exists elsewhere.
  */
-export async function handleList(
-  request: NextRequest,
-  scope?: { deviceUuids: string[] },
-): Promise<NextResponse> {
+export async function handleList(request: NextRequest): Promise<NextResponse> {
   const auth = await requireAuth(request);
   if (auth instanceof NextResponse) return auth;
 
@@ -139,11 +134,6 @@ export async function handleList(
     query.deviceUuid = uuid;
   }
 
-  // An explicit `?area=` and a shim's path-supplied area compose by INTERSECTION rather than one
-  // overriding the other — two narrowings both apply, which is the only reading of "and" that
-  // cannot accidentally widen.
-  const areaUuids: string[][] = [];
-  if (scope) areaUuids.push(scope.deviceUuids);
   const area = sp.get("area");
   if (area) {
     const uuid = Area.toUuidOrNull(area);
@@ -152,12 +142,8 @@ export async function handleList(
         { error: `Invalid area id: ${area}` },
         { status: 400 },
       );
-    areaUuids.push(await areaDeviceUuids(uuid));
+    query.anyDeviceUuids = await areaDeviceUuids(uuid);
   }
-  if (areaUuids.length > 0)
-    query.anyDeviceUuids = areaUuids.reduce((a, b) =>
-      a.filter((u) => b.includes(u)),
-    );
 
   const records = await listReadableDerivations(
     auth.userId,
@@ -180,14 +166,13 @@ export async function handleList(
  * output from the device's `load.hws` stem. Flattening that into one shape would mean inventing a
  * body for `hws-model` whose fields the writer then ignores.
  *
- * 🛑 **Nothing about placement is asked or answered.** There is no area in the body, and the
- * `derivations.area_id` vestige is written NULL (0064 drops it): the derivation's site is its owner
- * device, computed from the wiring. `hwsFallbackHandle` exists only so the area-scoped shim can keep
- * serving a body with no `device` in it, which is what the CLI still sends.
+ * 🛑 **Nothing about placement is asked or answered.** There is no area in the body and no
+ * `area_id` column to write (0068 dropped it): the derivation's site is its owner device, computed
+ * from the wiring. An `hws-model` therefore names the DEVICE it models, and must — the area-scoped
+ * shim that let an area-of-one's own handle stand in for `device` is gone.
  */
 export async function handleCreate(
   request: NextRequest,
-  opts: { hwsFallbackHandle?: number | null } = {},
 ): Promise<NextResponse> {
   const auth = await requireAuth(request);
   if (auth instanceof NextResponse) return auth;
@@ -317,40 +302,28 @@ export async function handleCreate(
     // `load.hws/temperature` output point and finds its `load.hws/power` source. So the only input
     // is which device.
     const ref = typeof body?.device === "string" ? body.device : null;
-    let deviceUuid: string | null = ref ? Device.toUuidOrNull(ref) : null;
+    const deviceUuid = ref ? Device.toUuidOrNull(ref) : null;
     if (ref && !deviceUuid)
       return NextResponse.json(
         { error: `Invalid device id: ${ref}` },
         { status: 422 },
       );
-    let handle: number | null = null;
-    if (deviceUuid) {
-      const [dv] = await requirePlanetscaleDb()
-        .select({ rid: devices.rid })
-        .from(devices)
-        .where(eq(devices.id, deviceUuid))
-        .limit(1);
-      if (!dv)
-        return NextResponse.json(
-          { error: `Unknown device: ${ref}` },
-          { status: 422 },
-        );
-      handle = dv.rid;
-    } else if (opts.hwsFallbackHandle != null) {
-      // The shim's back-compat leg: an area-of-one's own handle stands in for `device`.
-      handle = opts.hwsFallbackHandle;
-      const [dv] = await requirePlanetscaleDb()
-        .select({ id: devices.id })
-        .from(devices)
-        .where(eq(devices.rid, handle))
-        .limit(1);
-      deviceUuid = dv?.id ?? null;
-    }
-    if (handle == null || !deviceUuid)
+    if (!deviceUuid)
       return NextResponse.json(
         { error: "device is required (a dv_ device id)" },
         { status: 422 },
       );
+    const [dv] = await requirePlanetscaleDb()
+      .select({ rid: devices.rid })
+      .from(devices)
+      .where(eq(devices.id, deviceUuid))
+      .limit(1);
+    if (!dv)
+      return NextResponse.json(
+        { error: `Unknown device: ${ref}` },
+        { status: 422 },
+      );
+    const handle = dv.rid;
 
     const denied = await requireWriteOnDevices(
       [deviceUuid],
@@ -575,14 +548,13 @@ export async function handlePatch(
     );
   patch.updatedAt = new Date();
 
-  // 🛑 ONE TRANSACTION, because a boundary patch is a dual-write: the `derivation_sources` rows the
-  // resolver acts on and the jsonb vestige 0064 has not dropped yet. Split across two commits, a
-  // failure between them leaves detection cutting runs at a boundary the rows deny having — or,
-  // worse, leaves the delete committed and the insert not.
+  // 🛑 ONE TRANSACTION. `writeDerivationSources` is a DELETE-then-INSERT over the whole slot set,
+  // so even alone it is not atomic: a failure between the two statements leaves the derivation with
+  // NO wiring — not stale wiring, none. Wrapping it with the parent UPDATE also keeps `updatedAt`
+  // and the rows from disagreeing about whether the patch happened.
   const updatedId = await requirePlanetscaleDb().transaction(async (tx) => {
-    // Read the CURRENT slots from `derivation_sources`, not from the jsonb. Both are written, but
-    // only the table is enforced, so it is the one to build the next state from — reconstructing
-    // signal/energy out of the vestige would let a stale column overwrite correct wiring.
+    // Read the CURRENT slots first: `writeDerivationSources` rewrites the whole set, so signal and
+    // energy have to be carried across or the boundary patch would silently unwire them.
     const existing =
       boundaryPointUid === undefined
         ? []
@@ -614,11 +586,6 @@ export async function handlePatch(
         role: updated.role,
         slots: next,
       });
-      // The jsonb vestige, derived from the same source of truth so the two cannot disagree.
-      await tx
-        .update(derivations)
-        .set({ sourcePoints: next })
-        .where(eq(derivations.id, updated.id));
     }
     return updated.id;
   });

@@ -933,19 +933,15 @@ export const areaBindings = pgTable(
 // derivations — the ONE mechanism for a derived signal (config-v4 Phase 11): config that computes a
 // new signal from existing points. output='point' → a derived point in the readings pipeline (the
 // HWS thermal model); output='intervals' → run/event periods in derived_intervals (run-tracking).
+//
+// There is no `area_id` and no `source_points` here: 0063 moved the wiring into `derivation_sources`
+// and 0068 dropped both vestiges. A derivation's SITE and its authorization SCOPE are both derived
+// from that table (see its comment below, and `lib/derivations/scope.ts`) rather than asserted
+// beside it, so there is no second copy to disagree with the rows.
 export const derivations = pgTable(
   "derivations",
   {
     id: uuid("id").primaryKey().defaultRandom(),
-    // VESTIGE since 0063. A derivation's site is now derived from its sources
-    // (`derivation_sources` → `points.device_id`), so this column is DUAL-WRITTEN and read by
-    // nothing; 0064 drops it. Two changes came with the demotion, and they go together:
-    // NOT NULL was dropped and the FK became ON DELETE SET NULL, because SET NULL on a NOT NULL
-    // column aborts the delete instead of clearing it. That pair is what let `prod-dev-sync` drop
-    // its `derivations.area_id` repoint with a zero window.
-    areaId: uuid("area_id").references(() => areas.id, {
-      onDelete: "set null",
-    }),
     kind: text("kind").notNull(), // 'run-detector' | 'hws-model' | future kinds
     role: text("role"), // nullable; CHECK below (6 roles). NULL passes the CHECK (UNKNOWN ≠ FALSE).
     name: text("name").notNull(),
@@ -956,7 +952,6 @@ export const derivations = pgTable(
     // undeclared made drizzle want to DROP it on the next generate.
     outputPointId: uuid("output_point_id").references(() => points.id),
     params: jsonb("params").notNull(), // typed per kind: thresholds/hysteresis/delays | model constants
-    sourcePoints: jsonb("source_points").notNull(), // typed point refs (signal, energy, …) by uuid
     detectorVersion: integer("detector_version").notNull().default(1),
     createdAt: tsMs("created_at").notNull().defaultNow(),
     updatedAt: tsMs("updated_at").notNull().defaultNow(),
@@ -970,11 +965,6 @@ export const derivations = pgTable(
       "derivations_output_check",
       sql`${table.output} IN ('point','intervals')`,
     ),
-    // One derivation per (area, role) when role is set; role-less derivations are unconstrained.
-    areaRoleUnique: uniqueIndex("derivations_area_role_unique")
-      .on(table.areaId, table.role)
-      .where(sql`role IS NOT NULL`),
-    areaIdx: index("derivations_area_idx").on(table.areaId),
     // Redundant-but-legal: `id` is already the PK. Exists ONLY as the target of
     // `derivation_sources`' composite FK on (derivation_id, kind, role), which is what makes the
     // child's denormalised kind/role ENFORCED rather than merely asserted. Delete it only with
@@ -988,7 +978,7 @@ export const derivations = pgTable(
 );
 
 // derivation_sources — the typed input ports of a derivation, one row per slot (block-model
-// increment 1). Replaces `derivations.source_points jsonb`, which is dual-written until 0064.
+// increment 1). Replaced `derivations.source_points jsonb`, which 0068 dropped.
 //
 // Three columns are denormalised copies (device_id, kind, role) and all three are PROVED by a
 // composite FK rather than trusted, which is the entire point of the table: a jsonb object could

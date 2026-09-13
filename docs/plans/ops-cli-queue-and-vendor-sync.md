@@ -172,9 +172,16 @@ inside `jsonb` instead, where no constraint can see it:
 
 | Reference | Stored as | On delete of the target |
 | --- | --- | --- |
-| `derivations.source_points` | `jsonb` uuid refs | dangles — the detector survives and **never fires again** |
+| `derivations.source_points` ✅ *fixed* | `jsonb` uuid refs | dangles — the detector survives and **never fires again** |
 | `users.default_dashboard_id` | uuid column, FK `ON DELETE SET NULL` | **silently cleared** — the user lands somewhere else, days later, with nothing connecting it to the deletion |
 | `dashboards.doc` `area`/`device` refs | `jsonb` TypeIDs | `resolveScope` **silently drops** the unresolvable one |
+
+✅ The first row is FIXED, and it is the worked example of the fix this section argues for: the
+block model's increment 1 replaced `derivations.source_points` with `derivation_sources`, a row per
+typed slot whose composite FK `(point_id, device_id) → points(id, device_id)` makes a dangling
+reference unrepresentable rather than merely detectable (migrations 0063/0068, `docs/plans/block-model.md`).
+`derivations.area_id` went with it — a derivation's site is derived from that wiring now, so the FK
+named above no longer exists either.
 
 All three fail the same way: no error, no log, something that quietly stops working — and note that
 the middle one has an FK and fails anyway. `SET NULL` guarantees the column never dangles, which is a

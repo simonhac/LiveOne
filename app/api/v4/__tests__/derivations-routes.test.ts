@@ -39,7 +39,6 @@ function record(overrides: Record<string, unknown> = {}): DerivationRecord {
       output: "intervals",
       outputPointId: null,
       params: {},
-      sourcePoints: {},
       ...overrides,
     },
     sources: [],
