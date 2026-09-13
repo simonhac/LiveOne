@@ -187,9 +187,11 @@ async function main() {
           healthy: true,
           at: Infinity,
         };
+        let data: Awaited<ReturnType<typeof observeData>> | undefined;
+        let phase = "data";
         try {
           const asOf = Date.now();
-          const data = await observeData(
+          data = await observeData(
             config.liveoneUrl,
             token,
             target,
@@ -199,6 +201,7 @@ async function main() {
             shutdown.signal,
           );
           recordData(target, data);
+          phase = "metrics";
           const read = await queryReadEvidence(
             config.queryUrl,
             username,
@@ -227,9 +230,9 @@ async function main() {
           prior.healthy = false;
           prior.at = 0;
           observations.push({
-            pollerId: target.pollerId,
-            pointId: target.pointId,
-            error: "observation-failed",
+            target,
+            data,
+            error: `${phase}-observation-failed`,
           });
         }
         grouped.set(target.pollerId, prior);

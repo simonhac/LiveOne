@@ -367,3 +367,44 @@ it.each(["assignment", "point", "deleted", "revision"])(
     expect(ReadingsDao.readTrialReferencePage).not.toHaveBeenCalled();
   },
 );
+
+describe("read-only observer capability", () => {
+  async function mint() {
+    jest.mocked(requireAdmin).mockResolvedValue({} as never);
+    queued([collector]);
+    const result = await adminCollectors(
+      req("PATCH", "admin", { id: collectorId, observerToken: true }),
+    );
+    expect(result.status).toBe(200);
+    return (await result.json()).observerToken as string;
+  }
+  it.each([
+    "credentials",
+    "config",
+    "status",
+    "baseline",
+    "production",
+  ] as const)("cannot access %s", async (operation) => {
+    const observer = await mint();
+    const result = await collectorApi(
+      req("GET", operation, undefined, observer),
+      operation,
+    );
+    expect(result.status).toBe(403);
+    expect(getDeviceCredentials).not.toHaveBeenCalled();
+  });
+  it("accepts readings authorization, scopes assignments, and revokes on rotation", async () => {
+    const observer = await mint();
+    queued([collector], []);
+    const query = `readings?pollerId=${pollerId}&revision=2&pointId=${p.deviceId}&start=2026-09-01T00:00:00.000Z&end=2026-09-01T00:15:00.000Z&asOf=2026-09-01T00:15:00.000Z&limit=1000`;
+    expect(
+      (await collectorApi(req("GET", query, undefined, observer), "readings"))
+        .status,
+    ).toBe(404);
+    queued([{ ...collector, tokenHash: "b".repeat(64) }]);
+    expect(
+      (await collectorApi(req("GET", query, undefined, observer), "readings"))
+        .status,
+    ).toBe(401);
+  });
+});

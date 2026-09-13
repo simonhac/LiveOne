@@ -49,8 +49,13 @@ each export contains only new observations since the previous collection, includ
 the first observations after a cold start. Gauges remain absolute values/timestamps.
 Both TypeScript exporters select delta explicitly, overriding environment defaults.
 Better Stack's cumulative histogram conversion omitted the first population in live
-acceptance tests; it is unsuitable for short-lived cloud readers. Sum delta counter
-values and histogram counts; do not apply cumulative-counter derivatives to them.
+acceptance tests; it is unsuitable for short-lived cloud readers. Sum histogram
+`bucket_count` values for exact completion totals, as the supervisor does.
+Although counter **payloads** are deltas, Better Stack reconstructs cumulative
+counter snapshots in `value_*`: two one-read exports produce values one and two,
+whose sum would incorrectly claim three reads. Do not sum counter `value_sum`.
+For counter-rate charts, use the backend's per-series `rate_avg` as described in
+[Better Stack's counter queries](https://betterstack.com/docs/logs/dashboards/sql-queries/).
 An export that exhausts its retries may lose that interval's deltas. There is no
 disk queue or later cumulative catch-up; sample/freshness gates still apply.
 
@@ -277,3 +282,34 @@ Before starting the common trial clock, retain:
 Then record a single shared start, deployed build/revisions, daily comparison and
 health reports, and seven clean final-build days. The 14-day trial and production
 cutover are separate decisions; this implementation does not certify either.
+
+### Dedicated Fly baseline observer
+
+`packages/gousher/deploy/observer/fly.toml` runs a single observer on its own Fly
+machine and volume. Build from a clean repository archive and deploy with
+`--ha=false`. There are no public services or device-network clients in the image.
+Supply the example configuration as base64 secret `GOUSHER_OBSERVER_CONFIG`, with
+`dataDir: "/data/observer"` and **no `policyPath`** during baseline collection.
+The other environment secrets are the configured SQL username/password, health
+token, read-only LiveOne token, and `GOUSHER_METRICS_ENDPOINT` / `GOUSHER_METRICS_TOKEN`
+for the observer's own Better Stack source.
+
+An administrator can request a read-only token using
+`PATCH /api/admin/collectors` with `{ "id": "<collector UUID>", "observerToken": true }`.
+This token only authorizes GET requests to the readings export, limited to that
+collector's current assignments. It cannot fetch vendor credentials, configure
+readers, or report status. Rotating or disabling the collector revokes it. Keep
+all assignments paused and trial machines stopped throughout the baseline.
+
+Baseline records retain partial-only read statistics even when no successful-read
+timestamp exists; absent timestamps and empty histograms never authorize a trial.
+A metric-query failure preserves any data evidence already obtained, with an
+explicit error. Inspect every target's journal records before declaring the
+baseline started. The baseline health endpoint always returns 503.
+
+Graceful restarts release the exclusive journal lock. A crash intentionally leaves
+`supervisor.lock`: confirm that no observer process owns the volume, inspect the
+last journal/state files, then remove that stale lock before restarting. Never
+remove it automatically or run a second observer against the same data directory.
+Archive journals before their 64 MiB budget is exhausted; retain baseline evidence
+outside the machine before any destructive volume operation.

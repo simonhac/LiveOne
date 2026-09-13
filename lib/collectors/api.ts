@@ -3,7 +3,12 @@ import { ReadingsDao } from "@/lib/readings/dao";
 import { Point } from "@/lib/ids";
 import { summarizeProductionEvidence } from "./production-evidence";
 import { baselineFixture } from "./baseline";
-import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
+import {
+  createHash,
+  createHmac,
+  randomBytes,
+  timingSafeEqual,
+} from "node:crypto";
 import { and, eq, gte, lte, desc } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
@@ -26,6 +31,11 @@ import {
 
 const hash = (token: string) =>
   createHash("sha256").update(token).digest("hex");
+// Domain-separated read capability; rotating/disabling the collector revokes it.
+const observerToken = (id: string, tokenHash: string) =>
+  `lo_obs_${id}_${createHmac("sha256", Buffer.from(tokenHash, "hex"))
+    .update("liveone/production-observer/readings/v1")
+    .digest("hex")}`;
 const response = (body: unknown, status = 200) =>
   NextResponse.json(body, { status, headers: { "Cache-Control": "no-store" } });
 class ApiError extends Error {
@@ -258,10 +268,25 @@ export async function adminCollectors(req: NextRequest) {
         .object({
           id: z.string().uuid(),
           rotate: z.boolean().optional(),
+          observerToken: z.boolean().optional(),
           disabled: z.boolean().optional(),
         })
         .strict()
         .parse(await body(req));
+      if (input.observerToken) {
+        if (input.rotate !== undefined || input.disabled !== undefined)
+          throw new ApiError("Request observer token separately from updates");
+        const [row] = await db
+          .select()
+          .from(collectors)
+          .where(eq(collectors.id, input.id));
+        if (!row || row.disabled)
+          throw new ApiError("Collector unavailable", 409);
+        return response({
+          id: input.id,
+          observerToken: observerToken(row.id, row.tokenHash),
+        });
+      }
       const token = input.rotate
         ? `lo_col_${input.id}_${randomBytes(32).toString("hex")}`
         : undefined;
@@ -296,7 +321,10 @@ export async function collectorApi(
     if (!db) throw new ApiError("Database unavailable", 503);
     const token =
       req.headers.get("authorization")?.replace(/^Bearer /, "") ?? "";
-    const match = /^lo_col_([0-9a-f-]{36})_[0-9a-f]{64}$/.exec(token);
+    const readOnly = token.startsWith("lo_obs_");
+    if (readOnly && (operation !== "readings" || req.method !== "GET"))
+      throw new ApiError("Read-only observer credential", 403);
+    const match = /^lo_(?:col|obs)_([0-9a-f-]{36})_[0-9a-f]{64}$/.exec(token);
     if (!match || !z.string().uuid().safeParse(match[1]).success)
       throw new ApiError("Unauthorized", 401);
     const [collector] = await db
@@ -308,7 +336,12 @@ export async function collectorApi(
       collector.disabled ||
       !timingSafeEqual(
         Buffer.from(hash(token), "hex"),
-        Buffer.from(collector.tokenHash, "hex"),
+        Buffer.from(
+          readOnly
+            ? hash(observerToken(collector.id, collector.tokenHash))
+            : collector.tokenHash,
+          "hex",
+        ),
       )
     )
       throw new ApiError("Unauthorized", 401);
