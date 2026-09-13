@@ -66,3 +66,21 @@ it("does not treat an unsupported sentinel as an error when other data is valid"
   await createMusher({ siteId: "synthetic", telemetry }).read();
   expect(mockFinish.mock.calls[0][0]).toBe("success");
 });
+it("records success with explicit unsupported fields but preserves real field errors", async () => {
+  mockDump.readings.push({
+    field: { key: "loadKwh" },
+    value: null,
+    rawWords: [],
+    unsupported: "qualified model exclusion",
+  });
+  await createMusher({ siteId: "synthetic", telemetry }).read();
+  expect(mockFinish.mock.calls[0][0]).toBe("success");
+  mockDump.readings.push({
+    field: { key: "batteryV" },
+    value: null,
+    rawWords: [],
+    error: "timeout",
+  });
+  await createMusher({ siteId: "synthetic", telemetry }).read();
+  expect(mockFinish.mock.calls[1][0]).toBe("partial");
+});

@@ -1342,6 +1342,8 @@ export interface FieldReading {
   rawInt: number | null; // combined unsigned raw (null on read error)
   value: number | null; // decoded engineering value (null = n/a sentinel or error)
   error?: string;
+  /** Explicit model-profile exclusion; no request was made and no value was invented. */
+  unsupported?: string;
 }
 
 export interface DumpResult {
@@ -1435,8 +1437,8 @@ export class DseClient {
   }
 
   /**
-   * Read every mapped register. Within a page, fields are grouped into contiguous-ish
-   * SEGMENTS (merging across gaps up to MAX_GAP registers, capped at the FC3 125-register
+   * Read every mapped register. Within a page, fields are grouped into contiguous
+   * SEGMENTS (never bridging unmapped holes, capped at the FC3 125-register
    * limit) and each segment is read as one FC3 request. This batches the common case yet
    * keeps an unsupported register (e.g. page 7's hybrid plant-battery gap, which returns
    * "illegal function") from failing a whole page. On a segment-level failure we fall back
@@ -1447,7 +1449,7 @@ export class DseClient {
     if (!this.connected) await this.connect();
     this.client.setID(this.unitId);
 
-    const MAX_GAP = 16; // merge fields into one read across gaps up to this many registers
+    const MAX_GAP = 0; // never read unmapped holes: DSE rejects them even when adjacent fields work
     const MAX_SPAN = 125; // FC3 hard limit
 
     const byPage = new Map<number, RegField[]>();
@@ -1463,7 +1465,34 @@ export class DseClient {
     for (const [page, allFields] of [...byPage.entries()].sort(
       (a, b) => a[0] - b[0],
     )) {
-      const fields = allFields.sort((a, b) => a.offset - b.offset);
+      // The production DSE (manufacturer 1, model 0x804D) rejects these four
+      // hybrid-only fields with FC3 exception 1, individually as well as in bulk.
+      // Match the identity read in THIS dump; failed/unknown identity never opts out.
+      // Keep explicit unavailable entries in diagnostics instead of retrying known
+      // unsupported addresses every poll or treating arbitrary read errors as n/a.
+      const knownNonHybrid =
+        readings.find((r) => r.field.key === "manufacturerCode")?.value === 1 &&
+        readings.find((r) => r.field.key === "modelNumber")?.value === 0x804d;
+      const hybridOnly = new Set([
+        "plantBatterySoc",
+        "loadKwh",
+        "batteryChargeKwh",
+        "batteryDischargeKwh",
+      ]);
+      const fields = allFields
+        .filter((field) => {
+          if (!knownNonHybrid || !hybridOnly.has(field.key)) return true;
+          readings.push({
+            field,
+            rawWords: [],
+            rawInt: null,
+            value: null,
+            unsupported:
+              "hybrid register unsupported by DSE manufacturer 1/model 0x804D (field-qualified FC3 exception 1)",
+          });
+          return false;
+        })
+        .sort((a, b) => a.offset - b.offset);
 
       // Build segments: greedily extend while the next field is within MAX_GAP and the
       // span stays under the FC3 limit.
