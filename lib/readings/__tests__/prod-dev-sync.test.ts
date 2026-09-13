@@ -4,6 +4,7 @@ import type { Client } from "pg";
 import {
   assertManifestSchemaParity,
   prodDevSyncManifest,
+  raiseDevRidFloor,
   syncProdToDev,
   syncTable,
 } from "../prod-dev-sync";
@@ -268,6 +269,122 @@ describe("prod→dev readings transfer", () => {
     expect(at("INSERT INTO public.derivation_sources")).toBeLessThan(
       at("COMMIT;"),
     );
+  });
+
+  it("lets dev adopt prod's point rid by clearing only the rid-keyed children first", async () => {
+    const table = prodDevSyncManifest().find(
+      (entry) => entry.name === "points",
+    )!;
+    // NOT idDrift: a point whose only divergence is `rid` is the same logical row under the same
+    // (deterministic uuidv5) id — it must survive the leg, not be deleted as a foreign row.
+    expect(table).not.toHaveProperty("idDrift");
+    expect(table).toMatchObject({
+      ridAdopt: {
+        col: "rid",
+        children: [
+          { table: "point_readings", cols: ["point_rid"] },
+          { table: "point_readings_agg_5m", cols: ["point_rid"] },
+          { table: "point_readings_agg_1d", cols: ["point_rid"] },
+        ],
+      },
+    });
+
+    const { prod, dev, devSql } = copyClients();
+    await syncTable(
+      prod,
+      dev,
+      table,
+      new Map([["points", ["id", "rid", "device_id", "physical_path"]]]),
+      new Map([["points", ["id"]]]),
+    );
+
+    const sql = devSql.at(-1)!;
+    // Scoped to rows that are ACTUALLY moving: same PK, different rid. Empty on a normal run.
+    expect(sql).toContain("CREATE TEMP TABLE _ridmove ON COMMIT DROP AS");
+    expect(sql).toContain("SELECT DISTINCT d.rid AS old_val");
+    expect(sql).toContain("JOIN sync_staging.points s ON (d.id = s.id)");
+    expect(sql).toContain("WHERE d.rid <> s.rid");
+    // Without stats on the (usually empty) temp table the planner seq-scans ~13M + ~3M rows to
+    // find nothing — the same trap the idDrift path documents.
+    expect(sql).toContain("ANALYZE _ridmove;");
+    for (const child of [
+      "point_readings",
+      "point_readings_agg_5m",
+      "point_readings_agg_1d",
+    ]) {
+      expect(sql).toContain(
+        `DELETE FROM public.${child} x USING _ridmove b WHERE x.point_rid = b.old_val;`,
+      );
+    }
+    // The id-keyed children ride along on an unchanged id and must NOT be touched by a rid move.
+    for (const untouched of [
+      "area_bindings",
+      "derivation_sources",
+      "point_commands",
+      "derivations",
+    ]) {
+      expect(sql).not.toContain(`DELETE FROM public.${untouched}`);
+    }
+    // Atomic, and in that order: the child deletes exist purely to unblock the upsert's
+    // `SET rid = EXCLUDED.rid`, so committing them alone would drop readings for nothing.
+    const at = (needle: string) => {
+      const i = sql.indexOf(needle);
+      expect(i).toBeGreaterThan(-1);
+      return i;
+    };
+    expect(at("BEGIN;")).toBeLessThan(at("ANALYZE _ridmove;"));
+    expect(at("ANALYZE _ridmove;")).toBeLessThan(
+      at("DELETE FROM public.point_readings x"),
+    );
+    expect(at("DELETE FROM public.point_readings x")).toBeLessThan(
+      at("INSERT INTO public.points"),
+    );
+    expect(at("INSERT INTO public.points")).toBeLessThan(at("COMMIT;"));
+  });
+
+  it("floors dev's rid sequences into a band prod cannot reach, and only raises them", async () => {
+    const calls: Array<{ text: string; values: unknown[] }> = [];
+    const client = (lastValues: Record<string, number>) =>
+      ({
+        query(text: string, values: unknown[] = []) {
+          calls.push({ text, values });
+          if (text.includes("pg_sequence_last_value")) {
+            return Promise.resolve({
+              rows: [{ was: lastValues[String(values[0])] ?? 0 }],
+            });
+          }
+          return Promise.resolve({ rows: [] });
+        },
+      }) as unknown as Client;
+
+    const logged: string[] = [];
+    // A sequence still allocating inside prod's band is exactly the 2026-09-11 setup: dev minted
+    // rids 241/259 that prod then handed to different points, and the next sync aborted on
+    // points_rid_unique. Both sequences get pushed clear of it.
+    await raiseDevRidFloor(
+      client({ point_rid_seq: 240, device_rid_seq: 10038 }),
+      (m) => logged.push(m),
+    );
+    const setvals = calls.filter((c) => c.text.includes("setval"));
+    expect(setvals.map((c) => c.values)).toEqual([
+      ["point_rid_seq", 1_000_000],
+      ["device_rid_seq", 1_000_000],
+    ]);
+    expect(logged).toEqual([
+      "  [dev] point_rid_seq floored 240 → 1000000",
+      "  [dev] device_rid_seq floored 10038 → 1000000",
+    ]);
+
+    // Idempotent: a sequence already in the dev band is left alone, so re-running never rewinds
+    // an allocator that has since moved past the floor.
+    calls.length = 0;
+    logged.length = 0;
+    await raiseDevRidFloor(
+      client({ point_rid_seq: 1_000_004, device_rid_seq: 2_000_000 }),
+      (m) => logged.push(m),
+    );
+    expect(calls.filter((c) => c.text.includes("setval"))).toEqual([]);
+    expect(logged).toEqual([]);
   });
 
   it("syncs dashboards via a slug-keyed idDrift, not the retired serial mirror", async () => {
