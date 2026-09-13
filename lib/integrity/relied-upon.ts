@@ -124,7 +124,7 @@ async function areaDependents(uuid: string): Promise<Dependent[]> {
     });
 
   // 🛑 There is deliberately NO derivation leg. `derivations.area_id` was the last thing that made
-  // deleting an area a fact about a derivation, and 0068 dropped it: a derivation's site is its
+  // deleting an area a fact about a derivation, and 0069 dropped it: a derivation's site is its
   // OWNER DEVICE, computed from `derivation_sources`, so an area going away leaves every detector
   // it happened to sit over running exactly as before. Re-adding a leg here would report a
   // dependency that does not exist. What DOES still protect the wiring is aimed at the points

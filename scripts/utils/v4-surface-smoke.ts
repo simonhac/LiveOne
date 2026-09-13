@@ -893,7 +893,7 @@ async function main(): Promise<void> {
       .filter((d: any) => d.kind === "run-detector" && d.enabled)
       .sort((a: any, b: any) => b.devices.length - a.devices.length)[0];
 
-    // 🛑 `?area=` NARROWS, it never widens. This replaced the area-scoped listing that 0068 deleted
+    // 🛑 `?area=` NARROWS, it never widens. This replaced the area-scoped listing that 0069 deleted
     // (a derivation's site is derived from its sources, so there is no area to address it BY), and
     // it has to be a filter over the same authorized set rather than a second query with its own
     // access rules: every row it returns must appear in the fleet-wide listing, and none may appear

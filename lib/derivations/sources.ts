@@ -1,7 +1,7 @@
 /**
  * `derivation_sources` — a derivation's typed input ports, as rows (migration 0063).
  *
- * This REPLACED `derivations.source_points jsonb`, which 0068 dropped. It is now the only place a
+ * This REPLACED `derivations.source_points jsonb`, which 0069 dropped. It is now the only place a
  * derivation's wiring is recorded, and the only place it could be, because only here is it proved:
  *
  *  - the PK `(derivation_id, slot)` makes "two signal points" unrepresentable;

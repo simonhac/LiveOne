@@ -1,7 +1,7 @@
 # The block model
 
 > **Status:** ADOPTED · drafted 2026-09-10 · reviewed against the code 2026-09-10 · **increment 1
-> shipped 2026-09-13** (migrations 0063 expand / 0068 contract); increments 2–7 not started ·
+> shipped 2026-09-13** (migrations 0063 + 0068 expand / 0069 contract); increments 2–7 not started ·
 > successor framing for [fold-on-the-resolver.md](fold-on-the-resolver.md) and
 > [ha-parity-and-leapfrog.md](ha-parity-and-leapfrog.md) §11
 
@@ -294,8 +294,13 @@ has the enumeration.
    (`lib/derivations/scope.ts`). Six PRs: #447/#448 (the reference census and
    `assertNotReliedUpon`), #449 (migration 0063, expand), #450 (readers move onto the table), #451
    (the identity-addressed `/api/v4/derivations` tree), #452 (the CLI addresses detectors by
-   identity), and the contract PR — migration 0068, which dropped `derivations.area_id` and
-   `derivations.source_points`, the dual-write, and the area-scoped shim routes.
+   identity), and the contract PR — migrations 0068/0069, which dropped `derivations.area_id` and
+   `derivations.source_points`, the dual-write, and the area-scoped shim routes. That last PR ships
+   as a three-step release, because the two migrations run at opposite ends of it: 0068 (making
+   `source_points` nullable) BEFORE the deploy, since the new code stops writing a still-NOT NULL
+   column; 0069 (the drop) AFTER it, since drizzle expands a whole-table projection to the DECLARED
+   columns. 0063 had demoted `area_id` by dropping its NOT NULL and left `source_points` alone —
+   that asymmetry is what 0068 finishes.
 
    🛑 **The divergence it opened is still open and still undecided:** `derivations.area_id` is gone;
    `automations.area_id` stays `NOT NULL`. An automation is area-scoped, a derivation is not. That

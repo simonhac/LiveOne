@@ -165,10 +165,12 @@ findings are worth carrying forward rather than rediscovering.
 
 ### Soft references in `jsonb` have no protection, and fail silently
 
-The declared foreign keys are sound — `points→devices`, `area_bindings→points`,
-`derivations.area_id→areas` and `derivations.output_point_id→points` are all RESTRICT, so the
-obvious destructive moves are already refused at the database. Every gap is a reference that lives
-inside `jsonb` instead, where no constraint can see it:
+The declared foreign keys are sound — `points→devices`, `area_bindings→points` and
+`derivations.output_point_id→points` are all RESTRICT, so the obvious destructive moves are already
+refused at the database. (As raised, this list also named `derivations.area_id→areas`. That FK is
+GONE: 0063 demoted the column and 0069 dropped it, so deleting an area is no longer a fact about a
+derivation at all — see the note under the table.) Every gap is a reference that lives inside
+`jsonb` instead, where no constraint can see it:
 
 | Reference | Stored as | On delete of the target |
 | --- | --- | --- |
@@ -179,9 +181,10 @@ inside `jsonb` instead, where no constraint can see it:
 ✅ The first row is FIXED, and it is the worked example of the fix this section argues for: the
 block model's increment 1 replaced `derivations.source_points` with `derivation_sources`, a row per
 typed slot whose composite FK `(point_id, device_id) → points(id, device_id)` makes a dangling
-reference unrepresentable rather than merely detectable (migrations 0063/0068, `docs/plans/block-model.md`).
-`derivations.area_id` went with it — a derivation's site is derived from that wiring now, so the FK
-named above no longer exists either.
+reference unrepresentable rather than merely detectable (migrations 0063 → 0068 → 0069, and
+`docs/plans/block-model.md`). `derivations.area_id` went with it, which is why the FK inventory
+above no longer names it: a derivation's site is DERIVED from that wiring, so there is no area
+reference left to protect.
 
 All three fail the same way: no error, no log, something that quietly stops working — and note that
 the middle one has an FK and fails anyway. `SET NULL` guarantees the column never dangles, which is a

@@ -174,7 +174,7 @@ const cliTokenRoutes = [
   "/api/v4/areas/:id",
   // The derivations surface, admitted when `liveone derivation` was written (it is the whole point
   // of that domain: enable/disable, recompute, read back). Named segments, never `(.*)`, exactly as
-  // the area tree is. It was reachable under `/api/v4/areas/:id/derivations…` too until 0068 deleted
+  // the area tree is. It was reachable under `/api/v4/areas/:id/derivations…` too until 0069 deleted
   // those shims — a derivation's site is DERIVED from its source points, so there was never an area
   // to address it by.
   //

@@ -481,8 +481,15 @@
     {
       "idx": 68,
       "version": "7",
-      "when": 1789285456377,
-      "tag": "0068_drop_derivation_vestiges",
+      "when": 1789297278501,
+      "tag": "0068_derivation_source_points_nullable",
+      "breakpoints": true
+    },
+    {
+      "idx": 69,
+      "version": "7",
+      "when": 1789297281890,
+      "tag": "0069_drop_derivation_vestiges",
       "breakpoints": true
     }
   ]

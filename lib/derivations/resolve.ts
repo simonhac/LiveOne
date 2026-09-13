@@ -12,7 +12,7 @@
  * - **`params` is SPARSE.** A key is present only when it was explicitly configured; anything
  *   absent inherits the per-role code defaults (`lib/run-tracking/defaults.ts`). Thresholds are
  *   always explicit — they have no sensible default.
- * - **The wiring is read from `derivation_sources`** (migration 0063; 0068 dropped the
+ * - **The wiring is read from `derivation_sources`** (migration 0063; 0069 dropped the
  *   `source_points jsonb` it replaced). Only the table proves what it holds: the slot is checked,
  *   the point exists, and `device_id` is provably the point's own device.
  *
@@ -20,7 +20,7 @@
  *
  * `derivations.area_id` used to say where a detector lived, and it could disagree with where its
  * points actually were — nothing checked. 0063 demoted it to a vestige nothing resolved through and
- * 0068 dropped it, so there is no longer a placement fact to disagree with the wiring. The site
+ * 0069 dropped it, so there is no longer a placement fact to disagree with the wiring. The site
  * comes from the wiring instead:
  *
  *     owner point → `points.device_id` → `devices.rid`   (the `legacyHandle`)

@@ -152,7 +152,7 @@ describe("the verdicts hold up", () => {
     const jsonb = referenceCandidates().filter(
       (c) => c.columnType === "PgJsonb",
     );
-    // 18 today (19 before 0068 dropped `derivations.source_points`). Pinned so that a new jsonb
+    // 18 today (19 before 0069 dropped `derivations.source_points`). Pinned so that a new jsonb
     // column cannot slip through as "not a reference column".
     expect(jsonb.length).toBe(18);
     for (const c of jsonb) {

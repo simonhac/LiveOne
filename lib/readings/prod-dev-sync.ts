@@ -267,7 +267,7 @@ const FULL: FullTable[] = [
       // clearing it, so the pair goes together), so the repoint stopped being what unblocks the
       // delete; it was kept one PR longer only because the area-scoped HTTP surface still RESOLVED
       // a derivation through the column. It stopped doing so — every read on that surface is
-      // authorized against the derivation's own device set — and 0068 then dropped the column
+      // authorized against the derivation's own device set — and 0069 then dropped the column
       // outright, so there is no longer an `area_id` for a realigning area to strand. The
       // protection it stood for moved to `derivation_sources.point_id`'s FK ("you cannot delete a
       // point a live derivation reads").

@@ -1,7 +1,7 @@
 /**
  * The authorization core of the derivations surface.
  *
- * These cases are the whole reason `derivations.area_id` COULD be dropped, as 0068 did: the property
+ * These cases are the whole reason `derivations.area_id` COULD be dropped, as 0069 did: the property
  * that used to be carried by "the area is in the WHERE clause" is now carried by "every device in
  * the derivation's own set must clear the check". That is not visible to tsc and it is not visible in a
  * smoke run against a single-operator fleet (one owner, everything owned) — the multi-owner cases

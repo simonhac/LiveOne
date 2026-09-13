@@ -4,7 +4,7 @@
  * A derivation is stored with one kind-specific jsonb column of knobs (`params`, SPARSE) and a set
  * of typed input ports in `derivation_sources` (migration 0063).
  *
- * 🛑 **The projection reads the ROWS**, and since 0068 there is nothing else it could read: the
+ * 🛑 **The projection reads the ROWS**, and since 0069 there is nothing else it could read: the
  * `derivations.source_points` jsonb is gone. It used to be read here on the grounds that it was
  * "still the wire shape", which made the wire show the unenforced copy of the wiring while the
  * engines acted on the enforced one. The wire KEY is unchanged (`sourcePoints`), so neither the

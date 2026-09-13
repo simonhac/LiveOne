@@ -251,7 +251,7 @@ export async function PATCH(
  * ## The second refusal, and why archiving needs one at all
  *
  * `automations.area_id` is a NO ACTION FK, so a HARD delete is already blocked by Postgres.
- * (`derivations.area_id` was the other one until 0068 dropped it — a derivation's site is its owner
+ * (`derivations.area_id` was the other one until 0069 dropped it — a derivation's site is its owner
  * device now, so deleting an area is not a fact about a detector at all.) The soft archive is
  * precisely the path that FK never covered: the row stays,
  * every FK stays satisfied, and the area simply stops being served — so a dashboard node naming it

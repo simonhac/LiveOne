@@ -562,7 +562,7 @@ export const REFERENCE_LEDGER: LedgerEntry[] = [
   },
 
   // -- Derivations and automations.
-  // 🛑 `derivations.area_id` is NOT missing from this census — 0068 dropped the column, so it is
+  // 🛑 `derivations.area_id` is NOT missing from this census — 0069 dropped the column, so it is
   // not a candidate. 0063 had already demoted it to a vestige nothing resolved a derivation
   // through, and the protection it was standing in for MOVED rather than vanished:
   // `derivation_sources.point_id` below refuses to let you delete a point a live derivation reads,

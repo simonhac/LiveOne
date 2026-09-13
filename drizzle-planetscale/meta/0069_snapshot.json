@@ -1,6 +1,6 @@
 {
-  "id": "7458088b-e5ca-4c5e-a89f-1aa5ba4fda19",
-  "prevId": "40efdcad-1862-41f5-a73d-dfe456d1cd75",
+  "id": "4549be13-a16e-4aec-807f-625da174c576",
+  "prevId": "7458088b-e5ca-4c5e-a89f-1aa5ba4fda19",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -1433,12 +1433,6 @@
           "notNull": true,
           "default": "gen_random_uuid()"
         },
-        "area_id": {
-          "name": "area_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
         "kind": {
           "name": "kind",
           "type": "text",
@@ -1482,12 +1476,6 @@
           "primaryKey": false,
           "notNull": true
         },
-        "source_points": {
-          "name": "source_points",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": false
-        },
         "detector_version": {
           "name": "detector_version",
           "type": "integer",
@@ -1511,43 +1499,6 @@
         }
       },
       "indexes": {
-        "derivations_area_role_unique": {
-          "name": "derivations_area_role_unique",
-          "columns": [
-            {
-              "expression": "area_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "role",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "where": "role IS NOT NULL",
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "derivations_area_idx": {
-          "name": "derivations_area_idx",
-          "columns": [
-            {
-              "expression": "area_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
         "derivations_id_kind_role_unique": {
           "name": "derivations_id_kind_role_unique",
           "columns": [
@@ -1577,15 +1528,6 @@
         }
       },
       "foreignKeys": {
-        "derivations_area_id_areas_id_fk": {
-          "name": "derivations_area_id_areas_id_fk",
-          "tableFrom": "derivations",
-          "tableTo": "areas",
-          "columnsFrom": ["area_id"],
-          "columnsTo": ["id"],
-          "onDelete": "set null",
-          "onUpdate": "no action"
-        },
         "derivations_output_point_id_points_id_fk": {
           "name": "derivations_output_point_id_points_id_fk",
           "tableFrom": "derivations",

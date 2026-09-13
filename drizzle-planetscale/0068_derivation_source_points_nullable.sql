@@ -1,0 +1,30 @@
+-- 0068 — EXPAND. `derivations.source_points` becomes nullable.
+--
+-- One line, and it exists to make 0069 (the drop) deployable without an outage window.
+--
+-- 🛑 **Apply this BEFORE deploying the code that stops writing the column**, unlike its sibling.
+-- 0069 must be applied AFTER that deploy; this one must be applied BEFORE it. That is what
+-- expand/contract means, and the two halves genuinely run at opposite ends of the same release.
+--
+-- Why it is needed. 0063 demoted BOTH vestiges, but only half-way for this one: it dropped
+-- `area_id`'s NOT NULL (line 292 of that file) and left `source_points` NOT NULL with no DEFAULT.
+-- The asymmetry did not matter while every writer still supplied the column. It matters the moment
+-- one stops: `ensureRunDetector` and `ensureHwsDerivation` INSERT without it, so between the deploy
+-- and 0069 every create would be
+--
+--   ERROR: null value in column "source_points" of relation "derivations" violates not-null
+--   constraint
+--
+-- — a 23502 surfacing as a 500 on `POST /api/v4/derivations`, i.e. on `liveone derivation create`
+-- and on both seed scripts. Measured on `liveone-dev`, in a rolled-back transaction, before writing
+-- this. Migration 0054 records the same trap.
+--
+-- Loosening a constraint can never break the build that is already running: the OLD code supplies
+-- `source_points` on every insert and keeps doing so, unaffected. So this is safe to apply early,
+-- and safe to leave applied if the deploy is rolled back — which is the property that makes the
+-- three-step order forgiving rather than sharp-edged.
+--
+-- DROP NOT NULL rather than SET DEFAULT deliberately: a default would invent a value for a dead
+-- column, and NULL is the truthful reading of "nothing wrote this". It is also exactly what 0063
+-- did to `area_id`, so after this the two vestiges are in the same state and 0069 treats them alike.
+ALTER TABLE "derivations" ALTER COLUMN "source_points" DROP NOT NULL;

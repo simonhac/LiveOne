@@ -3,7 +3,7 @@
  *
  * ONE tree serves this resource: the identity-addressed `/api/v4/derivations/{dx_}`. The area-scoped
  * `/api/v4/areas/{ar_}/derivations/{dx_}` it replaced was kept as thin shims through the 0063
- * expand window and deleted with the vestiges in 0068 — a derivation's site is derived from its
+ * expand window and deleted with the vestiges in 0069 — a derivation's site is derived from its
  * sources, so there was never an area to address it by. The logic lives here rather than in the
  * route module so the route stays a `params`-shaped adapter and nothing imports a route handler.
  *
@@ -167,7 +167,7 @@ export async function handleList(request: NextRequest): Promise<NextResponse> {
  * body for `hws-model` whose fields the writer then ignores.
  *
  * 🛑 **Nothing about placement is asked or answered.** There is no area in the body and no
- * `area_id` column to write (0068 dropped it): the derivation's site is its owner device, computed
+ * `area_id` column to write (0069 dropped it): the derivation's site is its owner device, computed
  * from the wiring. An `hws-model` therefore names the DEVICE it models, and must — the area-scoped
  * shim that let an area-of-one's own handle stand in for `device` is gone.
  */

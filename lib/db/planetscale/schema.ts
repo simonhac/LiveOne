@@ -935,7 +935,7 @@ export const areaBindings = pgTable(
 // HWS thermal model); output='intervals' → run/event periods in derived_intervals (run-tracking).
 //
 // There is no `area_id` and no `source_points` here: 0063 moved the wiring into `derivation_sources`
-// and 0068 dropped both vestiges. A derivation's SITE and its authorization SCOPE are both derived
+// and 0069 dropped both vestiges. A derivation's SITE and its authorization SCOPE are both derived
 // from that table (see its comment below, and `lib/derivations/scope.ts`) rather than asserted
 // beside it, so there is no second copy to disagree with the rows.
 export const derivations = pgTable(
@@ -978,7 +978,7 @@ export const derivations = pgTable(
 );
 
 // derivation_sources — the typed input ports of a derivation, one row per slot (block-model
-// increment 1). Replaced `derivations.source_points jsonb`, which 0068 dropped.
+// increment 1). Replaced `derivations.source_points jsonb`, which 0069 dropped.
 //
 // Three columns are denormalised copies (device_id, kind, role) and all three are PROVED by a
 // composite FK rather than trusted, which is the entire point of the table: a jsonb object could
