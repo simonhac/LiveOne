@@ -46,16 +46,11 @@ describe("isCliTokenRoute — what the bypass is bounded to", () => {
       "/api/v4/devices/dv_x",
       "/api/v4/areas",
       "/api/v4/areas/ar_x",
-      "/api/v4/areas/ar_x/derivations",
-      // The per-derivation surface, admitted for the `liveone derivation` domain. `recompute`
+      // The derivations surface, admitted for the `liveone derivation` domain. `recompute`
       // rewrites history (delete-and-reinsert), and it is admitted only because the derivation is a
-      // path segment — there is no unscoped form of it to reach.
-      "/api/v4/areas/ar_x/derivations/dx_x",
-      "/api/v4/areas/ar_x/derivations/dx_x/recompute",
-      "/api/v4/areas/ar_x/derivations/dx_x/intervals",
-      // The same resource at its own address — where it now lives; the four above are shims.
-      // DELETE is admitted here and nowhere else in this list; see the note in route-matchers.ts
-      // for the two interlocks that make it admissible.
+      // path segment — there is no unscoped form of it to reach. DELETE is admitted here and
+      // nowhere else in this list; see the note in route-matchers.ts for the two interlocks that
+      // make it admissible.
       "/api/v4/derivations",
       "/api/v4/derivations/dx_x",
       "/api/v4/derivations/dx_x/recompute",
@@ -220,9 +215,9 @@ describe("every route the bypass exposes authorizes for itself", () => {
     // requireAuth on every path.
     "loadReadableArea",
     // The owner-scoped sibling (same file): requireAuth then owner-or-admin on the resolved area.
-    // Needed by `/api/v4/areas/{id}/derivations`, whose GET and POST both use it.
+    // Needed by the area sub-resources `/api/v4/areas/{id}/members` and `/bindings`.
     "loadAreaForOwner",
-    // The derivations surface (`/api/v4/derivations*` and the area-scoped shims onto it). Its route
+    // The derivations surface (`/api/v4/derivations*`). Its route
     // modules are two-line delegations, so the string that appears in them is the IMPORT — and that
     // is the honest thing to match on here, because the property being asserted is about the
     // module, not about one function name: EVERY export of `lib/derivations/v4-routes.ts` begins
@@ -279,10 +274,6 @@ describe("every route the bypass exposes authorizes for itself", () => {
         "app/api/v4/dashboards/route.ts",
         "app/api/v4/devices/[id]/route.ts",
         "app/api/v4/areas/[id]/route.ts",
-        "app/api/v4/areas/[id]/derivations/route.ts",
-        "app/api/v4/areas/[id]/derivations/[dxid]/route.ts",
-        "app/api/v4/areas/[id]/derivations/[dxid]/recompute/route.ts",
-        "app/api/v4/areas/[id]/derivations/[dxid]/intervals/route.ts",
         "app/api/v4/derivations/route.ts",
         "app/api/v4/derivations/[dxid]/route.ts",
         "app/api/v4/derivations/[dxid]/recompute/route.ts",

@@ -149,7 +149,7 @@ async function runCreateExercise(ctx: Ctx): Promise<number> {
       const area = await resolveArea(s, ctx.args[0]);
       // `?area=` NARROWS the fleet-wide collection to derivations touching one of this area's
       // member devices — the same set the retired area-scoped listing served, asked for in the
-      // vocabulary that survives 0064. An automation is still area-scoped; a derivation is not.
+      // vocabulary that outlived it. An automation is still area-scoped; a derivation is not.
       const detector = resolveDerivation(
         await listDerivations(s, { area: area.id! }),
         str(ctx, "derivation")!,

@@ -882,7 +882,6 @@ async function main(): Promise<void> {
       fleetRows[0]?.devices,
     );
 
-    let detectorArea: any = null;
     // 🛑 ENABLED, and that is a SAFETY predicate rather than a preference. The DELETE probe below
     // drives a refusal, and what makes the refusal certain is that the detector is live — the first
     // interlock (`derivation-enabled`) is the one that cannot be waived. Pick a DISABLED detector
@@ -894,27 +893,22 @@ async function main(): Promise<void> {
       .filter((d: any) => d.kind === "run-detector" && d.enabled)
       .sort((a: any, b: any) => b.devices.length - a.devices.length)[0];
 
-    // The area-scoped tree still serves the same rows (the CLI speaks it until PR 4). It is a
-    // NARROWING of the fleet listing now, not a different query — so every row it returns must
-    // appear in the fleet-wide one, and none may appear that the fleet listing withheld.
-    section("GET /api/v4/areas/{id}/derivations (shim)");
+    // 🛑 `?area=` NARROWS, it never widens. This replaced the area-scoped listing that 0069 deleted
+    // (a derivation's site is derived from its sources, so there is no area to address it BY), and
+    // it has to be a filter over the same authorized set rather than a second query with its own
+    // access rules: every row it returns must appear in the fleet-wide listing, and none may appear
+    // that the fleet listing withheld.
+    section("GET /api/v4/derivations?area=");
     const fleetIds = new Set(fleetRows.map((d: any) => d.id));
     for (const a of list) {
-      const r = await call("GET", `/api/v4/areas/${a.id}/derivations`);
+      const r = await call("GET", `/api/v4/derivations?area=${a.id}`);
       ok(r.status === 200, `200 for ${a.displayName}`, r.status);
       const rows = r.body?.derivations ?? [];
       ok(
         rows.every((d: any) => fleetIds.has(d.id)),
-        `the shim is a subset of the fleet listing (${a.displayName})`,
+        `?area= is a subset of the fleet listing (${a.displayName})`,
         rows.map((d: any) => d.id),
       );
-      // An area to drive the POST shim through — any area that lists the chosen detector.
-      if (
-        detector &&
-        !detectorArea &&
-        rows.some((d: any) => d.id === detector.id)
-      )
-        detectorArea = a;
     }
 
     if (!detector) {
@@ -980,22 +974,6 @@ async function main(): Promise<void> {
         "…reports `exists` and names the SAME dx_, rather than creating a second row",
         again.body,
       );
-
-      // The area-scoped POST is a shim onto the same handler and must agree, including for a body
-      // whose devices have nothing to do with the area in the URL — the area decides nothing.
-      if (detectorArea) {
-        const viaShim = await call(
-          "POST",
-          `/api/v4/areas/${detectorArea.id}/derivations`,
-          { body },
-        );
-        ok(
-          viaShim.status === 200 &&
-            viaShim.body?.derivation?.id === detector.id,
-          `the shim at ${detectorArea.displayName} agrees (the area decides nothing)`,
-          viaShim.body,
-        );
-      }
 
       // 🛑 `owner-role-taken` — the ONE invariant carried by code rather than by a constraint, and
       // therefore invisible to tsc. Provoked by re-posting the detector's own body with a DIFFERENT

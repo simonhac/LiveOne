@@ -250,8 +250,10 @@ export async function PATCH(
  *
  * ## The second refusal, and why archiving needs one at all
  *
- * `derivations.area_id` / `automations.area_id` are NO ACTION FKs, so a HARD delete was already
- * blocked by Postgres. The soft archive is precisely the path that FK never covered: the row stays,
+ * `automations.area_id` is a NO ACTION FK, so a HARD delete is already blocked by Postgres.
+ * (`derivations.area_id` was the other one until 0069 dropped it — a derivation's site is its owner
+ * device now, so deleting an area is not a fact about a detector at all.) The soft archive is
+ * precisely the path that FK never covered: the row stays,
  * every FK stays satisfied, and the area simply stops being served — so a dashboard node naming it
  * renders nothing, with no error anywhere. `refuseIfReliedUpon` names what would go quiet.
  * `?force=true` proceeds and returns the list in the body, so an override is legible in a log.

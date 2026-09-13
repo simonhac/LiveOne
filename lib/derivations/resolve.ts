@@ -12,19 +12,16 @@
  * - **`params` is SPARSE.** A key is present only when it was explicitly configured; anything
  *   absent inherits the per-role code defaults (`lib/run-tracking/defaults.ts`). Thresholds are
  *   always explicit — they have no sensible default.
- * - **The wiring is read from `derivation_sources`, not from `source_points jsonb`** (migration
- *   0063). The jsonb is still WRITTEN — 0064 drops it — but nothing here reads it, because only the
- *   table proves what it holds: the slot is checked, the point exists, and `device_id` is provably
- *   the point's own device.
+ * - **The wiring is read from `derivation_sources`** (migration 0063; 0069 dropped the
+ *   `source_points jsonb` it replaced). Only the table proves what it holds: the slot is checked,
+ *   the point exists, and `device_id` is provably the point's own device.
  *
  * ## A derivation's SITE is derived, never configured
  *
  * `derivations.area_id` used to say where a detector lived, and it could disagree with where its
- * points actually were — nothing checked. It is now a dual-written vestige that NOTHING RESOLVES A
- * DERIVATION THROUGH: not this file, not the HTTP surface (which authorizes against the derivation's
- * own device set), not the sync. One reader survives and it is not a resolver — `areaDependents`
- * (`lib/integrity/relied-upon.ts`) lists an area's derivations when refusing to delete that area —
- * and 0064 deletes that leg along with the column. The site comes from the wiring instead:
+ * points actually were — nothing checked. 0063 demoted it to a vestige nothing resolved through and
+ * 0069 dropped it, so there is no longer a placement fact to disagree with the wiring. The site
+ * comes from the wiring instead:
  *
  *     owner point → `points.device_id` → `devices.rid`   (the `legacyHandle`)
  *
@@ -77,23 +74,6 @@ export interface RunDetectorParams {
   delayOffSeconds?: number;
 }
 
-/**
- * `derivations.source_points` for kind='run-detector'. Raw `points.id` uuids.
- *
- * 🛑 DUAL-WRITTEN, never read (0063). `derivation_sources` is what the engines resolve from; this
- * shape survives only because it is still the WIRE shape and still the stored column. It goes with
- * the column in 0064.
- */
-interface RunDetectorSourcePoints {
-  signal: string;
-  energy?: string | null;
-  /**
-   * Optional CONTROL point whose edges cut runs apart (`DetectConfig.boundaryEventsMs`) — for the
-   * generator, the hub's commanded-run point. Absent = detection behaves exactly as before.
-   */
-  boundary?: string | null;
-}
-
 /** `derivations.params` for kind='hws-model'. Sparse overrides on the model constants. */
 type HwsModelParams = Partial<HwsModelOptions>;
 
@@ -122,7 +102,11 @@ export interface ResolvedRunDetector {
    */
   signalUnit: string | null;
   energyPoint: PointId | null;
-  /** Control point whose edges force a run boundary (see RunDetectorSourcePoints.boundary). */
+  /**
+   * The optional CONTROL point whose edges cut runs apart (`DetectConfig.boundaryEventsMs`) — for
+   * the generator, the hub's commanded-run point. Null = detection behaves as if unbound. It is the
+   * `boundary` slot of `derivation_sources` (`SLOTS_BY_KIND`, lib/derivations/sources.ts).
+   */
   boundaryPoint: PointId | null;
   detect: DetectConfig;
   detectorVersion: number;
@@ -631,13 +615,6 @@ export async function ensureRunDetector(
   await db.transaction(async (tx) => {
     await tx.insert(derivations).values({
       id,
-      // 🛑 NULL, deliberately. `area_id` is a vestige 0064 drops, and nothing decides anything from
-      // it — so stamping a plausible-looking area would be inventing a placement fact for a column
-      // whose whole point is that there isn't one. NULL also keeps the vestigial
-      // `derivations_area_role_unique` index out of the way: a unique index does not constrain
-      // NULLs, so two same-role detectors on different devices can both be stored, which is exactly
-      // what the owner rule below permits and the index (written for the old model) would not.
-      areaId: null,
       kind: RUN_DETECTOR_KIND,
       role,
       name: input.name,
@@ -645,12 +622,6 @@ export async function ensureRunDetector(
       output: "intervals",
       // Sparse by convention: anything absent inherits `detectorDefaultsForRole` at resolve time.
       params,
-      // Dual-written and read by nothing (0063). `derivation_sources` below is the twin the engines
-      // resolve from.
-      sourcePoints: {
-        signal: signalPointUid,
-        energy: energyPointUid ?? null,
-      } satisfies RunDetectorSourcePoints,
     });
     await writeDerivationSources(tx, {
       derivationId: id,

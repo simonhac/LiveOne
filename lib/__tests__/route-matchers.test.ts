@@ -296,7 +296,7 @@ describe("calendar-feed bypass decision (mirrors middleware.ts)", () => {
     for (const p of [
       `/api/v4/areas/${AR}?token=abc`,
       `/api/v4/areas/${AR}/members?token=abc`,
-      `/api/v4/areas/${AR}/derivations?token=abc`,
+      `/api/v4/areas/${AR}/bindings?token=abc`,
       `/api/data?systemId=1&token=abc`,
     ]) {
       expect(bypassesAuthForFeed(req(p))).toBe(false);

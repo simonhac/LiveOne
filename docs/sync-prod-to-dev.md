@@ -120,6 +120,20 @@ role) as GitHub secrets.
 > **Corollary: never use the mirror as evidence about prod.** "Is the data there?" must be answered
 > against `sydney`. After any prod-side backfill, reseed the affected rows into dev explicitly.
 
+> **`rid` is allocated per environment, so dev mints from a band prod cannot reach.**
+> `points.rid` and `devices.rid` come from a local sequence, but the sync copies **prod's** value
+> verbatim — two allocators, one number space. Anything minted on dev (a local poll discovering a
+> point, a derivation created against localhost) therefore takes a handle prod will shortly give to
+> a *different* row, and the next sync aborts on `points_rid_unique` with the whole mirror frozen
+> until someone intervenes. That is not hypothetical: it wedged the sync from 2026-09-11 to
+> 2026-09-13, dev's `point_rid_seq` sitting at 240 while synced prod rows had already reached 258.
+> Every run now calls `raiseDevRidFloor` **before** the tables, flooring dev's sequences at
+> 1,000,000 — four orders of magnitude above prod's live values, which only climb by hand-added
+> devices. It runs on every pass (not once, by hand) because a full reset restores prod's sequence
+> values along with prod's data, re-creating the hazard. The residual case — the *same* point under
+> a different rid in each environment — is handled by the `points` leg's `ridAdopt`: dev's readings
+> under the old handle are dropped inside the upsert's transaction so the row can take prod's rid.
+
 > **Schema drift caveat.** The sync derives its column list from the **dev** schema and selects
 > those columns from prod. If `liveone-dev` has columns prod lacks (a migration applied to dev
 > but not prod, or out-of-band experimentation), the copy aborts on that table. Fix by realigning

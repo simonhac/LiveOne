@@ -39,7 +39,7 @@ describe("the reference census is complete", () => {
       expect.arrayContaining([
         "dashboards.doc",
         "automations.trigger",
-        "derivations.source_points",
+        "derivation_sources.point_id",
         "users.default_dashboard_id",
         "point_commands.requested_by",
         "observations_outbox.device_rid",
@@ -152,8 +152,9 @@ describe("the verdicts hold up", () => {
     const jsonb = referenceCandidates().filter(
       (c) => c.columnType === "PgJsonb",
     );
-    // 19 today. Pinned so that a new jsonb column cannot slip through as "not a reference column".
-    expect(jsonb.length).toBe(19);
+    // 18 today (19 before 0069 dropped `derivations.source_points`). Pinned so that a new jsonb
+    // column cannot slip through as "not a reference column".
+    expect(jsonb.length).toBe(18);
     for (const c of jsonb) {
       const k = key(c.table, c.column);
       const e = ledgerByKey.get(k);
@@ -203,15 +204,6 @@ describe("the extractors read the shapes the writers store", () => {
         unless: { loadPointId: "p2", minLoadKw: 1.5 },
       }),
     ).toEqual(["d1", "p2"]);
-  });
-
-  it("finds every slot of a derivation's source points", () => {
-    const f = extractor("derivations", "source_points");
-    expect(f({ signal: "s", energy: null, boundary: "b" }).sort()).toEqual([
-      "b",
-      "s",
-    ]);
-    expect(f({ power: "p" })).toEqual(["p"]);
   });
 
   it("finds a dashboard doc's area and device refs at any depth", () => {

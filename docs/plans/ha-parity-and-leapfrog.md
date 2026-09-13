@@ -292,7 +292,8 @@ sharing, which is the natural next sharing unit after the dashboard.
 **Gap.** HA's helper ecosystem is its crown jewel: _Integration_ (Riemann sum, W→kWh), _Derivative_,
 _Utility Meter_ (cycle/tariff), _Template_ (arbitrary typed expression), _Group(sum)_. A user composes
 new typed entities purely through config. Config-v4's `derivations` unified our two derive mechanisms
-and made the wiring data (`params`, `source_points` are jsonb) — but the **kinds** are code
+and made the wiring data (`params` is jsonb; the input ports are rows in `derivation_sources`) — but
+the **kinds** are code
 (`run-detector`, `hws-model`). An engineer ships a kind; an HA user configures one.
 
 **Sketch.** New derivation kinds that need no new code per use:

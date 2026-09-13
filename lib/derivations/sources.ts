@@ -1,9 +1,8 @@
 /**
  * `derivation_sources` — a derivation's typed input ports, as rows (migration 0063).
  *
- * This is the relational twin of `derivations.source_points jsonb`. Both are written while the
- * jsonb is still the declared shape on the wire (0064 drops the vestige); everything that READS a
- * derivation's wiring reads from here, because only here is the wiring proved:
+ * This REPLACED `derivations.source_points jsonb`, which 0069 dropped. It is now the only place a
+ * derivation's wiring is recorded, and the only place it could be, because only here is it proved:
  *
  *  - the PK `(derivation_id, slot)` makes "two signal points" unrepresentable;
  *  - the per-kind CHECK refuses `power` on a run-detector and a misspelled `signl` on either;
@@ -11,10 +10,10 @@
  *    the point's own device — which is what lets a derivation's SITE be derived rather than
  *    configured.
  *
- * 🛑 **Keep the two in step.** A writer that updates one and not the other is the whole hazard of a
- * dual-write window: the jsonb is what the wire still shows, the rows are what the engines act on,
- * and a disagreement is a detector that reads one point and reports another. Every write goes
- * through {@link writeDerivationSources}.
+ * 🛑 **Every write goes through {@link writeDerivationSources}**, which is a DELETE-then-INSERT over
+ * a derivation's whole slot set. It is not atomic by itself: a caller that is also updating the
+ * parent row, or that could fail between the two statements, must wrap it in a transaction, or a
+ * derivation is left with no wiring at all. `handlePatch` (./v4-routes.ts) is the worked example.
  */
 import { and, eq, inArray } from "drizzle-orm";
 import type { requirePlanetscaleDb } from "@/lib/db/planetscale";

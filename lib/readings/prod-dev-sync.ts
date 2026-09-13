@@ -154,6 +154,14 @@ type FullTable = {
   // overwritten value — `derivation_sources` is the first (a jsonb object of slots became one row
   // per slot), and it will not be the last. Runs in the same transaction as the upsert.
   reconcileBy?: string[];
+  // Dev must ADOPT prod's value for a SECONDARY key that is itself a FK-join target (`points.rid`).
+  // Distinct from `idDrift`, which discards the dev row as a foreign logical row: here the dev row is
+  // the SAME logical row (same PK) and has to survive — only its handle moves. The upsert already
+  // assigns it (`SET rid = EXCLUDED.rid`), but that UPDATE is BLOCKED by every child FK pointing at the
+  // old value (point_readings.point_rid → points.rid is ON UPDATE NO ACTION and non-deferrable), so the
+  // children have to go first. They are dev-local readings under a dev-local handle; prod's own rows for
+  // that point arrive on the incremental legs. Runs in the same transaction as the upsert.
+  ridAdopt?: { col: string; children: FkChild[] };
 };
 type IncrementalTable = {
   name: string;
@@ -266,15 +274,11 @@ const FULL: FullTable[] = [
       // NULL (with NOT NULL dropped — SET NULL on a NOT NULL column aborts the delete instead of
       // clearing it, so the pair goes together), so the repoint stopped being what unblocks the
       // delete; it was kept one PR longer only because the area-scoped HTTP surface still RESOLVED
-      // a derivation through the column. It no longer does — every read on that surface is
-      // authorized against the derivation's own device set — so a dev-only derivation whose area
-      // realigns now takes `area_id = NULL` and stays fully listable, patchable and live.
-      //
-      // ⚠️ Precisely: one reader remains, and it is not a resolver. `areaDependents`
-      // (`lib/integrity/relied-upon.ts`) lists an area's derivations when refusing to DELETE that
-      // area, so on dev a realigned row would no longer be named there. That leg is deleted by 0064
-      // along with the column, and the protection it stood for has already moved to
-      // `derivation_sources.point_id`'s FK ("you cannot delete a point a live derivation reads").
+      // a derivation through the column. It stopped doing so — every read on that surface is
+      // authorized against the derivation's own device set — and 0069 then dropped the column
+      // outright, so there is no longer an `area_id` for a realigning area to strand. The
+      // protection it stood for moved to `derivation_sources.point_id`'s FK ("you cannot delete a
+      // point a live derivation reads").
       repoint: [{ table: "devices", cols: ["primary_area_id"] }],
       // Nullable columns behind areas_owner_alias_unique. Cleared on the drifted dev row so prod's row
       // can be inserted alongside it, which the repoint UPDATE needs as its FK target. The drifted row
@@ -332,7 +336,31 @@ const FULL: FullTable[] = [
   // both environments independently mint the SAME id for the same logical point (0/134 drift when this
   // landed) and a plain by-PK upsert works. Only device_id diverged, and `devices` above has already
   // repointed dev's rows onto prod's uuids by the time this leg runs.
-  { name: "points", mode: "full", onConflict: "update" },
+  //
+  // `rid`, however, is NOT deterministic — each environment's `point_rid_seq` allocates independently —
+  // and `ON CONFLICT (id)` can arbitrate only ONE unique index, so `points_rid_unique` needs handling of
+  // its own. Two shapes, closed two different ways:
+  //   · a dev row holding a rid prod has since given to a DIFFERENT point — this wedged the mirror for
+  //     two days from 2026-09-11 (dev's sequence sat at 240 while synced prod rows already reached 258,
+  //     so two points minted on dev took 241/259, rids prod then minted for its own). Structurally
+  //     impossible now: `raiseDevRidFloor` keeps dev's allocations in a band prod cannot reach.
+  //   · the same point under a different rid in each environment — `ridAdopt` below.
+  {
+    name: "points",
+    mode: "full",
+    onConflict: "update",
+    ridAdopt: {
+      col: "rid",
+      // Everything that joins a point by `rid` rather than `id`. The id-keyed children
+      // (area_bindings, derivation_sources, point_commands, derivations.output_point_id) are untouched
+      // by a rid move and must NOT be listed — this row keeps its id.
+      children: [
+        { table: "point_readings", cols: ["point_rid"] },
+        { table: "point_readings_agg_5m", cols: ["point_rid"] },
+        { table: "point_readings_agg_1d", cols: ["point_rid"] },
+      ],
+    },
+  },
   // Natural composite/1:1 PKs, no surrogate — plain by-PK upserts, after both FK parents.
   { name: "area_members", mode: "full", onConflict: "update" },
   { name: "device_state", mode: "full", onConflict: "update" },
@@ -352,11 +380,9 @@ const FULL: FullTable[] = [
   // deterministic (uuidv5), so both environments mint the SAME id for the same logical point and a plain
   // by-PK upsert lands.
   //
-  // ⚠️ Residual, PRE-EXISTING and deliberately unchanged here: `points_rid_unique` can still drift, since
-  // each environment's `point_rid_seq` allocates independently — and the `points` leg has never carried an
-  // `idDrift` for it. Removing `point_info`'s `["rid"]` key does NOT create that gap: that key protected the
-  // `point_info` DELETE, not the `points` upsert. Left as-is rather than folded into a drop migration's PR;
-  // it surfaces as a loud unique violation on a dispatch, never as silent data loss.
+  // The `points_rid_unique` drift this note used to flag as a known-unfixed residual is now closed — see
+  // the `points` leg's `ridAdopt` above and `raiseDevRidFloor` below. It did eventually fire (2026-09-11),
+  // exactly as predicted: a loud unique violation on every run, never silent data loss.
   // Surrogate-key tables: the PK (uuid/serial `id`) is assigned independently on
   // dev, so dev and prod hold the same row under different ids. Upsert on the
   // NATURAL unique key and exclude `id` (like point_readings) — otherwise the
@@ -691,6 +717,44 @@ async function pkOf(
   return m;
 }
 
+// ── dev-local rid band ────────────────────────────────────────────────────────
+
+// `points.rid` / `devices.rid` are handles allocated by a PER-ENVIRONMENT sequence, and this sync
+// copies prod's value verbatim. So the two allocators are competing for one number space: anything
+// minted on dev (a local poll discovering a new point, a derivation created against localhost) takes a
+// rid prod will hand to a DIFFERENT row soon after, and the next sync aborts on `points_rid_unique` —
+// which is exactly what froze the mirror for two days from 2026-09-11.
+//
+// Fix the ranges apart instead of arbitrating the collision: dev allocates from 1,000,000 up, prod is
+// four orders of magnitude below that (max rid 259 / 10,038 as of 2026-09-13) and only ever climbs by
+// hand-added devices, so the bands cannot meet. `rid` is a 32-bit int, leaving ~2.1B headroom above the
+// floor. Same `setval(greatest(…))` idiom migration 0051 used to re-floor `device_rid_seq`.
+//
+// Applied on EVERY run, and BEFORE the tables — so it survives the thing that would otherwise silently
+// undo it (an R2 restore resets dev's sequences to prod's values, re-creating the 2026-09-11 setup), and
+// so a run that later fails still leaves the floor raised.
+const DEV_RID_FLOOR = 1_000_000;
+const DEV_RID_SEQUENCES = ["point_rid_seq", "device_rid_seq"];
+
+export async function raiseDevRidFloor(
+  dev: Client,
+  log: (message: string) => void,
+): Promise<void> {
+  for (const seq of DEV_RID_SEQUENCES) {
+    const res = await dev.query(
+      `SELECT COALESCE(pg_sequence_last_value($1::regclass), 0) AS was`,
+      [seq],
+    );
+    const was = Number(res.rows[0]?.was ?? 0);
+    if (was >= DEV_RID_FLOOR) continue;
+    await dev.query(`SELECT setval($1::regclass, $2::bigint)`, [
+      seq,
+      DEV_RID_FLOOR,
+    ]);
+    log(`  [dev] ${seq} floored ${was} → ${DEV_RID_FLOOR}`);
+  }
+}
+
 // ── per-table sync ────────────────────────────────────────────────────────────
 
 export async function syncTable(
@@ -771,6 +835,7 @@ export async function syncTable(
   const idDrift = t.mode === "full" ? t.idDrift : undefined;
   const replaceConflicts = t.mode === "full" ? t.replaceConflicts : undefined;
   const reconcileBy = t.mode === "full" ? t.reconcileBy : undefined;
+  const ridAdopt = t.mode === "full" ? t.ridAdopt : undefined;
 
   // 2b. Stage prod's slice of each cross-key satellite table (see CrossKey). Must happen BEFORE the
   // `_drift` computation reads it, and it is a separate helper table because the satellite's own
@@ -942,6 +1007,29 @@ export async function syncTable(
        COMMIT;
        DROP TABLE sync_staging.${t.name};`,
       );
+    } else if (ridAdopt) {
+      const samePk = pk.map((c) => `d.${c} = s.${c}`).join(" AND ");
+      const childDeletes = ridAdopt.children
+        .map(
+          (c) =>
+            `DELETE FROM public.${c.table} x USING _ridmove b WHERE x.${c.cols[0]} = b.old_val;`,
+        )
+        .join("\n       ");
+      // ANALYZE for the same reason as `_drift`: on the normal run this temp table is EMPTY, and
+      // without stats the planner seq-scans point_readings (~13M) and agg_5m (~3M) to find nothing.
+      await dev.query(
+        `BEGIN;
+       CREATE TEMP TABLE _ridmove ON COMMIT DROP AS
+         SELECT DISTINCT d.${ridAdopt.col} AS old_val
+           FROM public.${t.name} d
+           JOIN sync_staging.${t.name} s ON (${samePk})
+          WHERE d.${ridAdopt.col} <> s.${ridAdopt.col};
+       ANALYZE _ridmove;
+       ${childDeletes}
+       ${upsert}
+       COMMIT;
+       DROP TABLE sync_staging.${t.name};`,
+      );
     } else {
       await dev.query(
         `${upsert}
@@ -1011,6 +1099,7 @@ export async function syncProdToDev(options: SyncProdToDevOptions): Promise<{
     await assertManifestSchemaParity(prod, dev, names);
     const colsByTable = await columnsOf(dev, names);
     const pkByTable = await pkOf(dev, names);
+    await raiseDevRidFloor(dev, log);
 
     for (const t of MANIFEST) {
       const t0 = Date.now();
