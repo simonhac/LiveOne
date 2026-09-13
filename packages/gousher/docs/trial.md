@@ -1,9 +1,13 @@
 # Shadow qualification record
 
-This change prepares a trial. It does not certify a 30-day soak or production control cutover.
+This change prepares a trial. It does not certify a 14-day shared trial or production control cutover.
 Keep replay qualification and independent live qualification separate for each vendor.
 
 ## Current operational plan
+
+The current [four-vendor telemetry and rollout contract](production-telemetry.md)
+supersedes the historical 30-day schedule and permits permanent bounded production
+read metrics. All four vendors must pass preflight before the common clock starts.
 
 Follow [the isolated trial plan](isolated-trial.md). Production hub instrumentation
 and forwarding were disabled after production degradation; the Go collector and ops
@@ -29,10 +33,9 @@ for independent readings comparisons. Historical gates below do not authorize re
 
 | Period | Required evidence |
 | --- | --- |
-| Days 1–7 | Four-vendor replay, offline CRUD/restart tests, real gusher integration on a disposable database, actual volume consumption |
-| Days 8–14 | Gradual Fronius reads; DSE concurrent-connection test before a second reader |
-| Days 15–21 | Shared cloud account session/request-budget checks; trial-only fault injection |
-| Days 22–30 | Daily comparisons and seven consecutive clean days on the final build |
+| Before day 1 | Four-vendor replay/integration, telemetry backend verification, 24–48-hour production baseline, reviewed thresholds, permit-failure tests and all four coexistence preflights |
+| Days 1–14 | One shared observation window; daily health and value/coverage comparisons for all four vendors |
+| Final seven days | Seven consecutive clean days on the final build; extend the trial after failures or material changes |
 
 If a vendor cannot safely support a second reader, leave it on replay. A passing decoder fixture is
 not evidence of live coexistence. Stop the affected shadow reader immediately after session eviction,
@@ -63,7 +66,7 @@ required to resume it. The authenticated `/api/trial/windows` endpoint now enfor
   new IDs at capacity. Already-pruned captures from before this upgrade cannot be reconstructed.
 - Live credential refresh-token/session coexistence qualification and real failure injection.
 - Separate Fly machine/receiver/monitoring, an independent site network path, actual storage measurements
-  in week one, month-long soak and seven clean days on the final build.
+  in week one, 14-day shared trial and seven clean days on the final build.
 
 Do not call the full attached plan complete until these are checked. Extend the trial as needed.
 Cutover is a separate operation: stop the old owner, exclude shadow backlog, and transfer generator

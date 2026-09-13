@@ -61,6 +61,8 @@ func TestWatchdogEvidenceAndDurableRuntimeShutdown(t *testing.T) {
 			defer source.Close()
 			runtime := testRuntime(t)
 			runtime.inspectorToken = "stop-secret"
+			runtime.b.TrialPermitPolicyID = "reviewed-policy"
+			runtime.permits = nil
 			runtime.cached.Config.Pollers = []Poller{{ID: "p", Revision: 1}}
 			reading, cancel := context.WithCancel(context.Background())
 			defer cancel()

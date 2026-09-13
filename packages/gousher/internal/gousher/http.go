@@ -32,6 +32,8 @@ func jsonResponse(w http.ResponseWriter, status int, v any) {
 }
 func (r *Runtime) Handler() http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("/api/trial/permit-state", r.trialPermitState)
+	mux.HandleFunc("/api/trial/permits", r.trialPermits)
 	mux.HandleFunc("/api/trial/windows", r.trialWindows)
 	mux.HandleFunc("/api/trial/incidents", r.trialIncidents)
 	mux.HandleFunc("/metrics", func(w http.ResponseWriter, req *http.Request) {

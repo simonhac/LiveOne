@@ -55,7 +55,7 @@ const manifest = z.object({
   end: timestamp,
   asOf: timestamp,
 });
-const referencePage = z.object({
+export const referencePage = z.object({
   version: z.literal(1),
   deviceId: z.string().uuid(),
   pollerId: z.string().uuid(),
@@ -80,6 +80,7 @@ const referencePage = z.object({
       error: z.string().nullable(),
       dataQuality: z.string(),
       sessionId: z.string().nullable(),
+      sessionCause: z.string().nullable().optional(),
     }),
   ),
   nextCursor: timestamp.nullable(),

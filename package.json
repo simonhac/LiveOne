@@ -118,7 +118,8 @@
     "tsx": "^4.20.4",
     "typescript": "^5.9.2",
     "uuidv7": "^1.0.2",
-    "zod": "^4.4.3"
+    "zod": "^4.4.3",
+    "@liveone/telemetry": "1.0.0"
   },
   "devDependencies": {
     "@jest/globals": "^30.5.0",

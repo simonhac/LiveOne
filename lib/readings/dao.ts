@@ -34,7 +34,7 @@ import { Device, Point, type DeviceId, type PointId } from "@/lib/ids";
 import { qualityRank } from "@/lib/data-quality";
 // The `points` identity table is broadly importable (NOT one of the three seam-restricted hot symbols),
 // and joining it is how the rid-keyed twins recover the device address they no longer carry inline.
-import { points } from "@/lib/db/planetscale/schema";
+import { points, sessions } from "@/lib/db/planetscale/schema";
 import {
   pointReadings,
   pointReadingsAgg5m,
@@ -2068,8 +2068,10 @@ async function readTrialReferencePage(
       error: pointReadings.error,
       dataQuality: pointReadings.dataQuality,
       sessionId: pointReadings.sessionId,
+      sessionCause: sessions.cause,
     })
     .from(pointReadings)
+    .leftJoin(sessions, eq(pointReadings.sessionId, sessions.id))
     .where(
       and(
         eq(pointReadings.pointRid, rid),

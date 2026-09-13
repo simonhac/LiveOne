@@ -1,8 +1,9 @@
-# Trial without production hub instrumentation
+# Isolated trial
 
 This supersedes the Fronius production-capture and hub-forwarding setup. The original
-`liveone-flyhub` remains responsible only for its existing production work. Do not enable
-trial capture, trial monitoring feeds, SSH forwarding or additional listeners there.
+`liveone-flyhub` remains responsible for production collection. Permanent bounded
+OpenTelemetry read metrics are now authorized; see [production telemetry](production-telemetry.md).
+Do not enable the old raw trial capture, monitoring feeds, SSH forwarding or additional listeners there.
 The Go collector and ops staging machines remain stopped until the gates below pass.
 
 ## Production recovery
@@ -72,7 +73,9 @@ Provision a dedicated trial route to the trial site that does not traverse or re
 `liveone-flyhub`. A separately configured site VPN peer or site-side trial machine is a
 candidate, subject to actual network configuration and credentials. No route is qualified yet.
 Restrict destinations to the two Fronius HTTP endpoints; enforce read-only requests and budgets.
-No DSE reads or generator control are part of this first live stage.
+The first live stage remains Fronius-only. Deep Sea read-only telemetry and both
+cloud vendors must subsequently pass their own preflight before the shared
+four-vendor trial begins. Generator control stays disabled in the trial.
 
 Use the hub's existing exported telemetry, existing logs and LiveOne arrival/freshness data
 for production supervision. Run the supervisor and its stale-health watchdog separately from
@@ -93,7 +96,7 @@ qualification gate before enabling live reads; do not fabricate a baseline or si
 5. Establish a representative production baseline and predeclare coverage/value/health gates.
 6. Start low-rate, read-only Fronius qualification; stop on production deterioration or missing
    supervision. Increase cadence only after coexistence is demonstrated.
-7. Run daily reviews, the month-long trial and seven consecutive clean days on the final build.
+7. Run daily reviews, the shared 14-day four-vendor trial and seven consecutive clean days on the final build.
 
 Device coexistence still matters even with a separate network path: both readers ultimately
 share the same inverters and site network. No existing successful fixture test waives that gate.

@@ -15,7 +15,11 @@ import (
 // the two-second power sampling loop. Replacement waits for these requests too.
 func (f *Fronius) startDiscovery() {
 	f.discoveryOnce.Do(func() {
-		ctx, cancel := context.WithCancel(context.Background())
+		parent := f.discoveryParent
+		if parent == nil {
+			parent = context.Background()
+		}
+		ctx, cancel := context.WithCancel(parent)
 		f.discoveryCancel = cancel
 		for _, inverter := range f.inv {
 			host := inverter.Config.Host

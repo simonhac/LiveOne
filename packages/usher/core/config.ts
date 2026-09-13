@@ -11,7 +11,13 @@ import { readFileSync } from "node:fs";
 import { parse as parseYaml } from "yaml";
 import { z } from "zod";
 
+const TelemetryIdentitySchema = z.object({
+  deviceId: z.string().uuid(),
+  readerId: z.string().uuid(),
+});
+
 const InverterSchema = z.object({
+  telemetry: TelemetryIdentitySchema.optional().catch(undefined),
   host: z.string(),
   /** master/slave; auto-detected (Site P_Load presence) when omitted */
   isMaster: z.boolean().optional(),
@@ -36,6 +42,7 @@ const ControlConfigSchema = z.object({
 });
 
 const DeepseaSourceSchema = z.object({
+  telemetry: TelemetryIdentitySchema.optional().catch(undefined),
   type: z.literal("deepsea"),
   siteId: z.string(),
   apiKeyEnv: z.string(),

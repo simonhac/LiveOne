@@ -1,5 +1,6 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  transpilePackages: ["@liveone/telemetry"],
   distDir: process.env.BUILD_DIR || ".next",
   // 🛑 `@touch4it/ical-timezones` reads its zone data with
   // `fs.readFileSync(path.join(__dirname, "zones", …))` and swallows the failure in an EMPTY

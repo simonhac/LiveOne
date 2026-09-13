@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"time"
 )
 
@@ -34,9 +35,12 @@ type TrialWatchdogConfig struct {
 	MaxAgeSec         int    `json:"maxAgeSec"`
 }
 type TrialWatchdog struct {
-	cfg     TrialWatchdogConfig
-	client  *http.Client
-	tripped bool
+	stopRequests      atomic.Uint64
+	telemetryInstance string
+	telemetryStarted  time.Time
+	cfg               TrialWatchdogConfig
+	client            *http.Client
+	tripped           bool
 }
 
 func NewTrialWatchdog(cfg TrialWatchdogConfig) (*TrialWatchdog, error) {
@@ -56,7 +60,7 @@ func NewTrialWatchdog(cfg TrialWatchdogConfig) (*TrialWatchdog, error) {
 	if u.Path != "" {
 		return nil, errors.New("inspector URL must be an origin without a path")
 	}
-	return &TrialWatchdog{cfg: cfg, client: &http.Client{Timeout: 3 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return errors.New("watchdog redirects refused") }}}, nil
+	return &TrialWatchdog{telemetryInstance: id(), telemetryStarted: time.Now(), cfg: cfg, client: &http.Client{Timeout: 3 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return errors.New("watchdog redirects refused") }}}, nil
 }
 func (w *TrialWatchdog) request(ctx context.Context, method, endpoint, tokenEnv string, body any, out any) error {
 	var data []byte
@@ -96,8 +100,8 @@ func (w *TrialWatchdog) request(ctx context.Context, method, endpoint, tokenEnv 
 
 // Once permanently latches an assignment on missing/invalid/unhealthy evidence.
 // It retries the stop even after evidence recovers and after process restarts.
-// It never enables a reader. An unreachable collector requires a separate host
-// stop mechanism or collector-side expiring permit before live qualification.
+// Healthy checks renew a short boot-bound permit. An unreachable collector or
+// dead watchdog cannot renew; the collector expires its own permission.
 func (w *TrialWatchdog) Once(ctx context.Context, now time.Time) error {
 	started := time.Now()
 	if err := os.MkdirAll(w.cfg.DataDir, 0700); err != nil {
@@ -109,8 +113,8 @@ func (w *TrialWatchdog) Once(ctx context.Context, now time.Time) error {
 		w.tripped = true
 	}
 	var healthErr error
+	var evidence SupervisorEvidence
 	if !w.tripped {
-		var evidence SupervisorEvidence
 		healthErr = w.request(ctx, "GET", w.cfg.HealthURL, w.cfg.HealthTokenEnv, nil, &evidence)
 		checkedAt := now.Add(time.Since(started))
 		if healthErr == nil && (evidence.PollerID != w.cfg.PollerID || evidence.Revision != w.cfg.Revision || evidence.PolicyID != w.cfg.PolicyID || evidence.Healthy == nil || !*evidence.Healthy || evidence.ObservedAt.IsZero() || evidence.ObservedAt.After(checkedAt) || checkedAt.Sub(evidence.ObservedAt) > time.Duration(w.cfg.MaxAgeSec)*time.Second) {
@@ -119,7 +123,34 @@ func (w *TrialWatchdog) Once(ctx context.Context, now time.Time) error {
 		w.tripped = healthErr != nil
 	}
 	if !w.tripped {
-		return nil
+		var challenge struct {
+			BootID   string `json:"bootId"`
+			PolicyID string `json:"policyId"`
+		}
+		healthErr = w.request(ctx, "GET", w.cfg.InspectorURL+"/api/trial/permit-state", w.cfg.InspectorTokenEnv, nil, &challenge)
+		if healthErr == nil && (challenge.BootID == "" || challenge.PolicyID != w.cfg.PolicyID) {
+			healthErr = errors.New("permit challenge mismatch")
+		}
+		if healthErr == nil {
+			until := time.Now().Add(15 * time.Second)
+			evidenceEnd := evidence.ObservedAt.Add(time.Duration(w.cfg.MaxAgeSec) * time.Second)
+			if evidenceEnd.Before(until) {
+				until = evidenceEnd
+			}
+			var ack struct {
+				Permitted bool      `json:"permitted"`
+				Revision  int       `json:"revision"`
+				ExpiresAt time.Time `json:"expiresAt"`
+			}
+			healthErr = w.request(ctx, "POST", w.cfg.InspectorURL+"/api/trial/permits", w.cfg.InspectorTokenEnv, permitRequest{w.cfg.PollerID, w.cfg.Revision, w.cfg.PolicyID, challenge.BootID, until}, &ack)
+			if healthErr == nil && (!ack.Permitted || ack.Revision != w.cfg.Revision || !ack.ExpiresAt.Equal(until)) {
+				healthErr = errors.New("permit not acknowledged")
+			}
+		}
+		if healthErr == nil {
+			return nil
+		}
+		w.tripped = true
 	}
 	data, _ := json.Marshal(map[string]any{"pollerId": w.cfg.PollerID, "revision": w.cfg.Revision, "policyId": w.cfg.PolicyID, "trippedAt": now.UTC()})
 	persistErr := AtomicWrite(path, data)
@@ -131,6 +162,7 @@ func (w *TrialWatchdog) Once(ctx context.Context, now time.Time) error {
 		Disabled bool `json:"disabled"`
 		Revision int  `json:"revision"`
 	}
+	w.stopRequests.Add(1)
 	stopErr := w.request(stopCtx, "POST", w.cfg.InspectorURL+"/api/trial/incidents", w.cfg.InspectorTokenEnv, map[string]any{"pollerId": w.cfg.PollerID, "revision": w.cfg.Revision, "reason": "supervision-unavailable"}, &ack)
 	if stopErr == nil && (!ack.Disabled || ack.Revision != w.cfg.Revision) {
 		stopErr = errors.New("watchdog shutdown not acknowledged")

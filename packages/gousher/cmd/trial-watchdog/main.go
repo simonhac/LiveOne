@@ -54,6 +54,7 @@ func run() error {
 	if *once {
 		return watchdog.Once(ctx, time.Now())
 	}
+	go watchdog.RunTelemetry(ctx, os.Getenv("GOUSHER_METRICS_ENDPOINT"), os.Getenv("GOUSHER_METRICS_TOKEN"))
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 	for {

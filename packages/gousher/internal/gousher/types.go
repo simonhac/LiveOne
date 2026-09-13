@@ -61,18 +61,22 @@ type Config struct {
 	Pollers     []Poller `json:"pollers"`
 }
 type Bootstrap struct {
-	LiveOneURL    string   `json:"liveoneUrl"`
-	ReceiverURL   string   `json:"receiverUrl"`
-	DataDir       string   `json:"dataDir"`
-	Listen        string   `json:"listen"`
-	Mode          string   `json:"mode"`
-	AllowedHosts  []string `json:"allowedHosts"`
-	SpoolBytes    int64    `json:"spoolBytes"`
-	BlackboxBytes int64    `json:"blackboxBytes"`
-	ReserveBytes  int64    `json:"reserveBytes"`
+	TrialPermitPolicyID string   `json:"trialPermitPolicyId"`
+	LiveOneURL          string   `json:"liveoneUrl"`
+	ReceiverURL         string   `json:"receiverUrl"`
+	DataDir             string   `json:"dataDir"`
+	Listen              string   `json:"listen"`
+	Mode                string   `json:"mode"`
+	AllowedHosts        []string `json:"allowedHosts"`
+	SpoolBytes          int64    `json:"spoolBytes"`
+	BlackboxBytes       int64    `json:"blackboxBytes"`
+	ReserveBytes        int64    `json:"reserveBytes"`
 }
 
 func (b *Bootstrap) Validate() error {
+	if b.Mode == "shadow" && b.TrialPermitPolicyID == "" {
+		return errors.New("shadow mode requires a reviewed trial permit policy")
+	}
 	if b.Mode != "shadow" && b.Mode != "replay" {
 		return errors.New("only replay and shadow modes are supported; production control is disabled")
 	}
@@ -154,7 +158,7 @@ func (p Poller) Validate(b Bootstrap) error {
 				masters++
 			}
 		}
-		if masters != 1 || p.Settings.PollMS != 2000 {
+		if masters != 1 || p.Settings.PollMS < 2000 {
 			return errors.New("Fronius requires exactly one master")
 		}
 	}

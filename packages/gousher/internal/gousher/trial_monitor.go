@@ -58,10 +58,6 @@ func (r *Runtime) saveTrialState(id string, state trialState) error {
 		r.trial = map[string]trialState{}
 	}
 	r.trial[id] = state
-	data, e := json.Marshal(r.trial)
-	if e == nil {
-		e = AtomicWrite(filepath.Join(r.b.DataDir, "trial-state.json"), data)
-	}
 	if state.Disabled {
 		h := r.health[id]
 		h.ID = id
@@ -70,6 +66,10 @@ func (r *Runtime) saveTrialState(id string, state trialState) error {
 		if active := r.readerCancels[id]; active.revision == state.Revision && active.cancel != nil {
 			active.cancel()
 		}
+	}
+	data, e := json.Marshal(r.trial)
+	if e == nil {
+		e = AtomicWrite(filepath.Join(r.b.DataDir, "trial-state.json"), data)
 	}
 	return e
 }

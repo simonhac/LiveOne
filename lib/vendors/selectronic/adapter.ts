@@ -78,7 +78,11 @@ export class SelectronicAdapter extends BaseVendorAdapter {
         const authResult = await client.authenticate();
 
         if (!authResult) {
-          return { success: false, error: "Authentication failed" };
+          return {
+            success: false,
+            error: "Authentication failed",
+            errorKind: "auth",
+          };
         }
 
         // Cache for 25 minutes (auth lasts 30 minutes)
@@ -93,6 +97,8 @@ export class SelectronicAdapter extends BaseVendorAdapter {
         return {
           success: false,
           error: response.error || "Failed to fetch data",
+          errorCode: response.errorCode,
+          errorKind: response.errorKind,
         };
       }
 

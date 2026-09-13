@@ -126,6 +126,7 @@ export class SigenergyAdapter extends BaseVendorAdapter {
         success: false,
         error: error instanceof Error ? error.message : "Unknown error",
         errorCode: e?.status ? String(e.status) : e?.kind,
+        errorKind: e?.kind,
       };
     }
   }

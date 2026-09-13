@@ -375,6 +375,7 @@ type froniusInv struct {
 	Energy map[string]*Integral
 }
 type Fronius struct {
+	discoveryParent  context.Context
 	discoveryOnce    sync.Once
 	discoveryCancel  context.CancelFunc
 	discoveryWorkers sync.WaitGroup
@@ -395,6 +396,9 @@ func NewFronius(p Poller) *Fronius {
 	}
 	return f
 }
+
+// Set before sampling a generation; discovery shares its independent permit cancellation.
+func (f *Fronius) SetReadContext(ctx context.Context) { f.discoveryParent = ctx }
 func (f *Fronius) Sample(ctx context.Context, at time.Time) (Sample, error) {
 	f.startDiscovery()
 	raw := map[string]any{}

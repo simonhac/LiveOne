@@ -41,9 +41,11 @@ export function validateSettings(source: string, settings: PollerSettings) {
   if (
     source === "fronius" &&
     (settings.inverters?.filter((i) => i.master).length !== 1 ||
-      settings.pollMs !== 2000)
+      settings.pollMs < 2000)
   )
-    throw new Error("Fronius requires one master and two-second sampling");
+    throw new Error(
+      "Fronius requires one master and at least two seconds between reads",
+    );
   if (source === "selectronic" && settings.pollMs < 60000)
     throw new Error("Selectronic requires at least one minute between reads");
   if (source === "sigenergy" && (!settings.region || settings.pollMs < 300000))

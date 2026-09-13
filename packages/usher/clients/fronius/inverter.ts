@@ -1,3 +1,8 @@
+import {
+  noopRead,
+  classifyReadError,
+  type FinishRead,
+} from "@liveone/telemetry";
 import axios from "axios";
 import {
   EnergyIntegrator,
@@ -34,6 +39,7 @@ const DEVICE_TYPE_MAP: Record<number, string> = {
 };
 
 export class Inverter {
+  public onReadStart?: () => FinishRead;
   private ip: string;
   private serialNumber: string;
   private isMaster: boolean;
@@ -145,8 +151,15 @@ export class Inverter {
 
   // Fetch power flow data from the inverter
   public async fetchPowerFlow(): Promise<PowerData | null> {
+    let finish = noopRead;
+    try {
+      finish = this.onReadStart?.() ?? noopRead;
+    } catch {
+      /* Diagnostics only. */
+    }
     const started = performance.now();
     let succeeded = false;
+    let telemetryValid = false;
     let readError: unknown;
     try {
       const response = await axios.get(
@@ -217,6 +230,12 @@ export class Inverter {
         } catch {
           /* Recording cannot fail a device read. */
         }
+        telemetryValid = [
+          powerData.solarW,
+          powerData.batteryW,
+          powerData.gridW,
+          powerData.batterySoC,
+        ].some((value) => typeof value === "number" && Number.isFinite(value));
         succeeded = true;
         return powerData;
       }
@@ -242,6 +261,14 @@ export class Inverter {
       return null;
     } finally {
       try {
+        finish(
+          succeeded && telemetryValid
+            ? "success"
+            : classifyReadError(readError) === "cancelled"
+              ? "cancelled"
+              : "error",
+          readError ?? { code: "invalid_response" },
+        );
         this.onProductionRead?.(
           performance.now() - started,
           succeeded,

@@ -38,6 +38,8 @@ export interface SelectronicData {
 
 export interface ApiResponse<T> {
   success: boolean;
+  errorCode?: string;
+  errorKind?: string;
   data?: T;
   rawResponse?: any; // Raw response object from API
   error?: string;
@@ -401,6 +403,7 @@ export class SelectronicFetchClient {
           return {
             success: false,
             error: ERROR_MESSAGES.AUTH_FAILED,
+            errorKind: "auth",
             timestamp: new Date(),
           };
         }
@@ -432,6 +435,7 @@ export class SelectronicFetchClient {
         return {
           success: false,
           error: ERROR_MESSAGES.AUTH_FAILED,
+          errorKind: "auth",
           timestamp: new Date(),
         };
       }
@@ -446,6 +450,7 @@ export class SelectronicFetchClient {
           return {
             success: false,
             error: `${ERROR_MESSAGES.MAGIC_WINDOW} (HTTP ${response.status})`,
+            errorCode: String(response.status),
             timestamp: new Date(),
           };
         }
@@ -453,6 +458,7 @@ export class SelectronicFetchClient {
         return {
           success: false,
           error: `HTTP ${response.status}: ${response.statusText}`,
+          errorCode: String(response.status),
           timestamp: new Date(),
         };
       }
@@ -494,6 +500,8 @@ export class SelectronicFetchClient {
       return {
         success: false,
         error: error instanceof Error ? error.message : "Unknown error",
+        errorCode: (error as { code?: string })?.code,
+        errorKind: error instanceof SyntaxError ? "parse" : undefined,
         timestamp: new Date(),
       };
     }

@@ -30,6 +30,7 @@ export function createSource(
   switch (sc.type) {
     case "deepsea":
       return createMusher({
+        telemetry: sc.telemetry,
         siteId: sc.siteId,
         host: sc.host,
         port: sc.port,
