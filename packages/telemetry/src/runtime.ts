@@ -2,7 +2,10 @@ import {
   MeterProvider,
   PeriodicExportingMetricReader,
 } from "@opentelemetry/sdk-metrics";
-import { OTLPMetricExporter } from "@opentelemetry/exporter-metrics-otlp-http";
+import {
+  AggregationTemporalityPreference,
+  OTLPMetricExporter,
+} from "@opentelemetry/exporter-metrics-otlp-http";
 import { resourceFromAttributes } from "@opentelemetry/resources";
 import { readViews, telemetryInstanceId } from "./index";
 
@@ -24,6 +27,9 @@ export function createTelemetryProvider(
   )
     throw Error("Invalid telemetry endpoint");
   const exporter = new OTLPMetricExporter({
+    // Better Stack's cumulative histogram conversion omits the first population.
+    // Delta preserves reads from short-lived/cold-started serverless processes.
+    temporalityPreference: AggregationTemporalityPreference.DELTA,
     url: endpoint,
     headers: { Authorization: `Bearer ${token}` },
     timeoutMillis: 3000,

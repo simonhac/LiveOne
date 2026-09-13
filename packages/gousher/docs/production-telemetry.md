@@ -30,7 +30,7 @@ coexistence evidence.
 
 Read attributes: `service`, `environment`, `vendor`, `device.id`, `reader.id`,
 plus `service.instance.id` duplicated from the resource so concurrent serverless
-processes have distinct cumulative series even if resource labels are not exposed.
+processes have distinct series even if resource labels are not exposed.
 Completions and duration add `outcome` (`success`, `partial`, `error`, `cancelled`).
 Unsuccessful completions additionally carry `error.type`: `timeout`, `connection`,
 `authentication`, `rate_limit`, `invalid_response`, `device_error`, `cancelled`, `other`.
@@ -44,7 +44,15 @@ deployments; Vercel commit/Fly image identity is used when available.
 Timestamps advance only on their events. They are absent before the first event.
 Repeated exports of an old timestamp do not refresh the event. Read state is capped
 at 512 identities per process; exceeding the cap yields missing telemetry and must
-not be interpreted as healthy. Cloud process counters start anew on cold start.
+not be interpreted as healthy. Counters and histograms use **delta temporality**:
+each export contains only new observations since the previous collection, including
+the first observations after a cold start. Gauges remain absolute values/timestamps.
+Both TypeScript exporters select delta explicitly, overriding environment defaults.
+Better Stack's cumulative histogram conversion omitted the first population in live
+acceptance tests; it is unsuitable for short-lived cloud readers. Sum delta counter
+values and histogram counts; do not apply cumulative-counter derivatives to them.
+An export that exhausts its retries may lose that interval's deltas. There is no
+disk queue or later cumulative catch-up; sample/freshness gates still apply.
 
 Histogram upper boundaries in seconds: `0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5,
 1, 2.5, 5, 10, 30, 60, 120`, plus overflow. Compute p95 from merged bucket counts,
@@ -63,10 +71,11 @@ Use synthetic UUIDs and a non-production source for these checks:
 - In a window containing 90 successes, 5 partials, 5 errors and 2 cancellations,
   the failure rate is `10 / 100 = 10%`. Cancellation durations remain queryable
   separately and are excluded from the qualification distribution.
-- In separate processes, cumulative completion counts `10 → 12` and `4 → 7`
-  contribute five new completions. A restarted process with count 1 contributes
-  one more, not a negative delta. Verify the backend handles process identity,
-  cumulative start timestamps and repeated exports before combining streams.
+- Separate processes exporting deltas `10, 2` and `4, 3` contribute 19 completions
+  including their initial observations. A restarted process with one read contributes
+  one more. A second SDK flush without intervening reads must add no counts. This
+  checks collection semantics, not deduplication of an identical HTTP request replay;
+  OTLP delivery itself does not promise exactly-once ingestion.
 - At a 60-second reporting cadence, 100 samples confined to three slots of a
   completed 15-minute window give coverage `3 / 15 = 0.2`. Repair arrivals do
   not fill those live slots. A failed export observation leaves observed_at
@@ -181,6 +190,22 @@ verify label retention, bucket counts, percentile results, counter-reset handlin
 and missing-data behavior. The queries are not certified against a live account
 merely because local fake-server tests pass. See [Better Stack SQL API](https://betterstack.com/docs/logs/query-api/connect-remotely/)
 and [histogram queries](https://betterstack.com/docs/logs/querying-histograms/).
+
+Synthetic read-duration clocks do not control the SDK's real export timestamps.
+Allow a real interval (e.g. 20 ms) between recording the last synthetic result and
+flushing. If `startTimeUnixNano == timeUnixNano`, OTLP identifies an unknown-start
+reset, and Better Stack omits its delta contribution. A controlled live comparison
+with otherwise identical payloads retained all 100 samples at 1 ms and 20 ms, but
+none at zero. Do not mistake that test artifact for dropped vendor failures.
+See [OTLP reset semantics](https://opentelemetry.io/docs/specs/otel/metrics/data-model/#resets-and-gaps).
+
+Live acceptance on 2026-09-13 verified the explicit-delta SDK with two concurrent
+processes (100 and five reads), then a fresh process (one read). All 106 histogram
+samples and five failures arrived; the primary distribution (90 at one second,
+ten at 2.5 seconds) produced p95 = 1.75 seconds. Attempts and completions matched
+the sample totals despite repeated empty SDK flushes. All three read gauges retained
+their original event timestamps, and an unused identity had zero samples. This
+verifies the exporter/backend contract, not production baseline or coexistence.
 
 ## Reviewed policy and activation
 
