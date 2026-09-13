@@ -21,6 +21,10 @@ that subset only. It contains no managed poller settings or secrets. Supply thes
 - `GOUSHER_INSPECTOR_TOKEN`: a separate random secret for state/SSE access.
 - `GOUSHER_INSTANCE_KEY`: 32 random bytes encoded as 64 hex characters (AES-256-GCM cache encryption).
 
+Vendor credentials are not among them: LiveOne owns those and issues only the assigned keys. See
+[credentials.md](docs/credentials.md) for the store, the export allow-list, the encrypted cache and
+the rotation/revocation consequences.
+
 The trial receives **no production ingestion key or heartbeat URL**. Its receiver must have a
 separate origin, matching the collector's immutable LiveOne destination and bootstrap restriction.
 The encrypted recovery snapshot also pins that destination. Do not copy production control state
@@ -64,7 +68,7 @@ tokens; only their hashes are stored in LiveOne. New SQL migration `0066` is ver
 | `GET/PATCH/DELETE /api/admin/pollers/{id}` | Revision-checked settings, pause/resume and tombstones |
 | `POST/PATCH /api/admin/collectors` | Enroll, rotate token, disable |
 | `GET /api/collectors/me/config` | Assigned configuration, ETags, retained tombstones |
-| `GET /api/collectors/me/credentials?pollerId=…` | Assigned vendor credentials only |
+| `GET /api/collectors/me/credentials?pollerId=…` | Assigned vendor credentials only ([credentials.md](docs/credentials.md)) |
 | `POST /api/collectors/me/status` | Applied revisions and collection/delivery health |
 | `GET /api/collectors/me/baseline?pollerId=…&start=…&end=…` | Scoped cloud baseline fixtures |
 
