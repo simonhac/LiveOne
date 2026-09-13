@@ -31,7 +31,8 @@ export const supervisorPolicy = z
             minimumSamples: z.number().int().min(20),
             maxFailureRate: z.number().min(0).max(1),
             maxP95Sec: z.number().positive().max(120),
-            maxMetricAgeSec: z.number().int().min(60).max(120),
+            maxMetricAgeSec: z.number().int().min(60).max(3720),
+            maxReadDurationSec: z.number().positive().max(300),
             maxReadAgeSec: z.number().positive().max(3600),
             maxDataAgeSec: z.number().positive().max(7200),
             minimumCoverage: z.number().positive().max(1),
@@ -71,6 +72,16 @@ export const supervisorPolicy = z
           message: "Duplicate observation target",
         });
       unique.add(key);
+      const exportCadence = t.service === "liveone" ? t.readCadenceSec : 60;
+      if (
+        t.maxMetricAgeSec < exportCadence ||
+        t.maxMetricAgeSec > exportCadence + 120
+      )
+        ctx.addIssue({
+          code: "custom",
+          message:
+            "Metric freshness must cover export cadence with at most 120 seconds of grace",
+        });
       if (t.minimumSamples > t.statWindowSec / t.readCadenceSec)
         ctx.addIssue({
           code: "custom",
@@ -92,6 +103,9 @@ export function policyHash(bytes: string) {
 export interface ReadEvidence {
   asOf: number;
   metricAt: number;
+  observedAt: number;
+  lastStarted: number;
+  lastCompleted: number;
   lastSuccess: number;
   samples: number;
   failures: number;
@@ -129,7 +143,14 @@ export function evaluateHealth(
     read.asOf === data.asOf &&
     data.observedAt >= data.asOf &&
     fresh(data.observedAt, 120) &&
+    fresh(read.observedAt, 120) &&
+    read.observedAt >= read.asOf &&
     fresh(read.metricAt, t.maxMetricAgeSec) &&
+    fresh(read.lastStarted, t.maxReadAgeSec) &&
+    fresh(read.lastCompleted, t.maxReadAgeSec) &&
+    read.lastSuccess <= read.lastCompleted &&
+    (read.lastStarted <= read.lastCompleted ||
+      now - read.lastStarted <= t.maxReadDurationSec) &&
     fresh(read.lastSuccess, t.maxReadAgeSec) &&
     fresh(data.lastMeasurement, t.maxDataAgeSec) &&
     fresh(data.lastReceived, t.maxDataAgeSec) &&
@@ -160,7 +181,7 @@ export function evaluateHealth(
   return {
     healthy,
     state,
-    observedAt: Math.min(data.observedAt, read.metricAt),
+    observedAt: Math.min(data.observedAt, read.observedAt),
     reason: !inputsValid
       ? "evidence-unavailable"
       : healthy
@@ -177,6 +198,7 @@ export async function queryReadEvidence(
   t: SupervisorTarget,
   now = Date.now(),
   request = fetch,
+  shutdown?: AbortSignal,
 ): Promise<ReadEvidence> {
   secureEndpoint(endpoint);
   // Revalidate all interpolated SQL identifiers even for programmatic callers.
@@ -195,18 +217,25 @@ export async function queryReadEvidence(
     t.statWindowSec > 21600
   )
     throw Error("Invalid metric query configuration");
+  const metricAge = t.maxMetricAgeSec ?? Math.max(120, t.readCadenceSec + 120);
+  if (!Number.isInteger(metricAge) || metricAge < 60 || metricAge > 3720)
+    throw Error("Invalid metric freshness configuration");
   const end =
     Math.floor((now / 1000 - 120) / t.statWindowSec) * t.statWindowSec;
   const filter = `label('service') = '${t.service}' AND label('environment') = 'production' AND label('vendor') = '${t.vendor}' AND label('device.id') = '${t.deviceId}' AND label('reader.id') = '${t.readerId}'`;
   const auth = `Basic ${Buffer.from(`${username}:${password}`).toString("base64")}`;
   const query = async (sql: string) => {
+    shutdown?.throwIfAborted();
     const value = await boundedJSON(
       await request(endpoint, {
         method: "POST",
         headers: { authorization: auth, "content-type": "text/plain" },
         body: sql + " FORMAT JSON",
         redirect: "error",
-        signal: AbortSignal.timeout(10000),
+        signal: AbortSignal.any([
+          AbortSignal.timeout(10000),
+          ...(shutdown ? [shutdown] : []),
+        ]),
       }),
     );
     return z
@@ -219,7 +248,7 @@ export async function queryReadEvidence(
     `SELECT sumMerge(bucket_count) AS samples, sumMergeIf(bucket_count, label('outcome') IN ('partial','error')) AS failures, histogramQuantile(0.95) AS p95Sec FROM remote(${t.source}) WHERE ${filter} AND name = 'liveone.read.duration' AND label('outcome') IN ('success','partial','error') AND dt >= toDateTime(${end - t.statWindowSec}) AND dt < toDateTime(${end})`,
   );
   const gauges = await query(
-    `SELECT name, maxMerge(value_max) AS value, toUnixTimestamp(max(dt)) AS observedAt FROM remote(${t.source}) WHERE ${filter} AND name IN ('liveone.read.last_started','liveone.read.last_completed','liveone.read.last_success') AND dt >= toDateTime(${Math.floor(now / 1000) - 120}) AND dt <= toDateTime(${Math.floor(now / 1000)}) GROUP BY name`,
+    `SELECT name, maxMerge(value_max) AS value, toUnixTimestamp(max(dt)) AS observedAt FROM remote(${t.source}) WHERE ${filter} AND name IN ('liveone.read.last_started','liveone.read.last_completed','liveone.read.last_success') AND dt >= toDateTime(${Math.floor(now / 1000) - metricAge}) AND dt <= toDateTime(${Math.floor(now / 1000)}) GROUP BY name`,
   );
   const numeric = z
     .union([z.number(), z.string().regex(/^-?\d+(\.\d+)?([eE][+-]?\d+)?$/)])
@@ -252,6 +281,11 @@ export async function queryReadEvidence(
     ...row,
     asOf: now / 1000,
     windowEnd: end,
+    observedAt: Date.now() / 1000,
+    lastStarted: parsed.find((x) => x.name === "liveone.read.last_started")!
+      .value,
+    lastCompleted: parsed.find((x) => x.name === "liveone.read.last_completed")!
+      .value,
     metricAt: Math.min(...parsed.map((x) => x.observedAt)),
     lastSuccess: parsed.find((x) => x.name === "liveone.read.last_success")!
       .value,

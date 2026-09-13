@@ -46,6 +46,7 @@ const configSchema = z
         observationTarget.extend({
           source: z.string().regex(/^t[0-9]+_[a-zA-Z0-9_]+_metrics$/),
           service: z.enum(["liveone", "liveone-usher"]),
+          readCadenceSec: z.number().positive().max(3600),
           statWindowSec: z
             .number()
             .int()
@@ -162,9 +163,11 @@ async function main() {
       server.once("error", reject);
       server.listen(config.port, "127.0.0.1", resolve);
     });
+  const shutdown = new AbortController();
   let stopped = false;
   const stop = () => {
     stopped = true;
+    shutdown.abort();
     server.close();
   };
   process.once("SIGTERM", stop);
@@ -191,6 +194,9 @@ async function main() {
             token,
             target,
             asOf,
+            120,
+            fetch,
+            shutdown.signal,
           );
           recordData(target, data);
           const read = await queryReadEvidence(
@@ -199,6 +205,8 @@ async function main() {
             password,
             target as SupervisorTarget,
             asOf,
+            fetch,
+            shutdown.signal,
           );
           observations.push({ target, data, read });
           if (policy) {
@@ -273,9 +281,12 @@ async function main() {
     } while (!stopped);
   } finally {
     server.close();
-    await provider.shutdown();
-    await lock.close();
-    await unlink(lockPath);
+    try {
+      await provider.shutdown();
+    } finally {
+      await lock.close();
+      await unlink(lockPath);
+    }
   }
 }
 main().catch(() => {

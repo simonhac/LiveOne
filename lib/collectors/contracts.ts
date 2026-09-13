@@ -74,6 +74,7 @@ export const statusSchema = z
         "storage-failed",
         "reader-disabled",
         "supervision-pending",
+        "awaiting-permit",
       ])
       .optional(),
     stopped: z.boolean(),

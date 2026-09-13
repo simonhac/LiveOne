@@ -48,8 +48,15 @@ func TestPermitInhibitsStartupExpiresAndCannotResume(t *testing.T) {
 	if grantPermit(t, r, "boot", "test-policy", 1, until) != 200 {
 		t.Fatal("grant refused")
 	}
-	if grantPermit(t, r, "boot", "test-policy", 1, until) != 409 {
-		t.Fatal("replayed grant accepted")
+	original := r.permits[permitKey("p", 1)]
+	if grantPermit(t, r, "boot", "test-policy", 1, until) != 200 {
+		t.Fatal("identical unexpired grant refused")
+	}
+	if r.permits[permitKey("p", 1)] != original {
+		t.Fatal("idempotent grant extended deadline")
+	}
+	if grantPermit(t, r, "boot", "test-policy", 1, until.Add(-time.Millisecond)) != 409 {
+		t.Fatal("older grant accepted")
 	}
 	select {
 	case <-source.entered:

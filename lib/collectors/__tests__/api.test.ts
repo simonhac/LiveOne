@@ -210,6 +210,16 @@ describe("managed configuration validation", () => {
       }),
     ).not.toThrow();
   });
+  it("accepts the serialized status of a shadow reader awaiting its first permit", () => {
+    const wire = JSON.stringify({
+      id: pollerId,
+      appliedRevision: 1,
+      stopped: true,
+      supervising: false,
+      error: "awaiting-permit",
+    });
+    expect(statusSchema.parse(JSON.parse(wire)).error).toBe("awaiting-permit");
+  });
   it("rejects arbitrary vendor error text in persisted health", () => {
     expect(
       statusSchema.safeParse({

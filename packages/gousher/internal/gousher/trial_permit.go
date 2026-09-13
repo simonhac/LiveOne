@@ -81,7 +81,12 @@ func (r *Runtime) trialPermits(w http.ResponseWriter, req *http.Request) {
 		jsonResponse(w, 409, map[string]string{"error": "stale, expired or disabled assignment"})
 		return
 	}
-	if exists && !input.ExpiresAt.After(old.WireUntil) {
+	if exists && input.ExpiresAt.Equal(old.WireUntil) {
+		// Retrying the same live grant acknowledges it without extending its deadline.
+		jsonResponse(w, 200, map[string]any{"revision": input.Revision, "expiresAt": old.WireUntil, "permitted": true})
+		return
+	}
+	if exists && input.ExpiresAt.Before(old.WireUntil) {
 		jsonResponse(w, 409, map[string]string{"error": "permit expiry must advance"})
 		return
 	}

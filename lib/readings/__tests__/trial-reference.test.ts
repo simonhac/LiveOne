@@ -8,23 +8,33 @@ jest.mock("@/lib/registry", () => ({
 }));
 it("bounds SQL by point, measurement window, ingestion cutoff and exact cursor before limiting", async () => {
   let predicate: any;
+  let join: any;
+  let selection: any;
   let limit: number | undefined;
   const exec = {
-    select: () => ({
-      from: () => ({
-        where: (where: unknown) => {
-          predicate = where;
-          return {
-            orderBy: () => ({
-              limit: (n: number) => {
-                limit = n;
-                return Promise.resolve([]);
+    select: (fields: unknown) => {
+      selection = fields;
+      return {
+        from: () => ({
+          leftJoin: (_table: unknown, on: unknown) => {
+            join = on;
+            return {
+              where: (where: unknown) => {
+                predicate = where;
+                return {
+                  orderBy: () => ({
+                    limit: (n: number) => {
+                      limit = n;
+                      return Promise.resolve([]);
+                    },
+                  }),
+                };
               },
-            }),
-          };
-        },
-      }),
-    }),
+            };
+          },
+        }),
+      };
+    },
   };
   const window = {
     start: "2026-01-01T00:00:00Z",
@@ -52,4 +62,8 @@ it("bounds SQL by point, measurement window, ingestion cutoff and exact cursor b
   expect(query.sql).toContain('"created_at" <=');
   expect(query.sql).toContain('"measurement_time" >');
   expect(limit).toBe(501);
+  const joinSql = new PgDialect().sqlToQuery(join).sql;
+  expect(joinSql).toContain('"point_readings"."session_id"');
+  expect(joinSql).toContain('"sessions"."id"');
+  expect(selection.sessionCause).toBeDefined();
 });

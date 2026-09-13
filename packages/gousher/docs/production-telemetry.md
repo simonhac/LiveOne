@@ -140,7 +140,9 @@ For a dedicated Linux operations host, install the repo and npm dependencies at
 `/opt/liveone`, create the service account, private config/environment files and
 persistent state directory, then use `deploy/production-supervisor.service`. It
 requires Node 22 and starts independently of both production and trial collectors.
-A reverse proxy supplies HTTPS for its loopback health endpoint.
+A reverse proxy supplies HTTPS for its loopback health endpoint. SIGTERM/SIGINT
+abort in-flight data and metric requests, prevent further queries, and remove the
+process lock after exporter cleanup, including when exporter shutdown fails.
 
 Without `policyPath`, this is baseline-only: the health endpoint always refuses
 activation. It observes every 30 seconds after the previous pass, journals private
@@ -162,7 +164,15 @@ bounded lookback are absent, not reconstructed from a heartbeat.
 The SQL adapter uses the documented Better Stack metric schema, validated source
 identifiers and exact production/vendor/device/reader/service filters. Histogram
 counts stored by Better Stack are deltas; it merges them for sample counts, failure
-rate and p95. It independently checks recent timestamps from all three read gauges.
+rate and p95. It independently checks all three read gauges, retaining last_started and
+last_completed to reject an unmatched start older than maxReadDurationSec.
+For periodic Usher exports, maxMetricAgeSec covers the 60-second exporter cadence;
+for function-lifecycle LiveOne exports it covers the configured production read
+cadence. Both allow at most 120 seconds of reviewed export/ingestion grace.
+The gauge query uses that same bounded age, so five-minute cloud polling does not
+create an artificial two-minute evidence gap. Missing or stale gauges still fail.
+An in-flight serverless start cannot be visible before its function flushes;
+metric/read freshness bounds detection when no newer start has reached ingestion.
 Statistical windows are aligned and complete, with the same 120-second settling.
 
 **Backend verification is a deployment gate:** send synthetic successes/errors,
@@ -180,7 +190,9 @@ Each target repeats its observer/source identity and explicitly supplies:
 
 - `readCadenceSec` (distinct from `cadenceSec`, which is reporting cadence).
 - `statWindowSec` (900–21600, divisible by 900), `minimumSamples` (at least 20).
-- `maxFailureRate`, `maxP95Sec` (seconds), `maxMetricAgeSec` (60–120).
+- `maxFailureRate`, `maxP95Sec` (seconds), `maxReadDurationSec` (up to 300 seconds).
+- `maxMetricAgeSec`: export cadence through cadence + 120 seconds (at least 60);
+  export cadence is 60 for Usher and readCadenceSec for LiveOne.
 - `maxReadAgeSec`, `maxDataAgeSec`, `minimumCoverage`.
 
 There are no approved default thresholds. Set them from retained baseline evidence,
@@ -198,6 +210,11 @@ the count. Missing, stale, malformed or insufficient inputs fail immediately.
 Serve `/health/POLLER_UUID` on the supervisor's loopback port, behind authenticated
 HTTPS for the remote watchdog. Never expose it as an unauthenticated public port.
 The endpoint preserves actual observation timestamps when serving cached evidence.
+Its evidence timestamp is the older completion time of the successful scoped data
+observation and metric query, after independently checking metric sample age and
+event freshness. Re-querying stale upstream samples never produces healthy evidence;
+serving a cached decision never advances its timestamp. This keeps watchdog producer
+freshness independent of a cloud reader's slower reporting cadence.
 Deploy the supervisor and watchdog separately from both collectors.
 
 The watchdog validates evidence every five seconds, then obtains the collector's
@@ -206,7 +223,9 @@ expiry. A renewal error latches shutdown. New inspector endpoints:
 
 - `GET /api/trial/permit-state`: authenticated boot ID and policy identity.
 - `POST /api/trial/permits`: inspector-authenticated `pollerId`, `revision`,
-  `policyId`, `bootId`, `expiresAt`; expiry must advance and be within 30 seconds.
+  `policyId`, `bootId`, `expiresAt`; expiry must advance or exactly match the current unexpired grant, and be within 30 seconds.
+  An identical retry acknowledges the existing monotonic deadline without extending it;
+  older or expired grants are rejected.
 
 Permits are memory-only and use monotonic local deadlines. Startup waits for a new
 permit; cached configuration never grants permission. Expiry cancels the reader

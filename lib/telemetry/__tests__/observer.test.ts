@@ -135,7 +135,8 @@ const policyTarget: SupervisorTarget = {
   minimumSamples: 20,
   maxFailureRate: 0.01,
   maxP95Sec: 5,
-  maxMetricAgeSec: 120,
+  maxMetricAgeSec: 420,
+  maxReadDurationSec: 30,
   maxReadAgeSec: 600,
   maxDataAgeSec: 1200,
   minimumCoverage: 1,
@@ -153,6 +154,9 @@ function evidence(at = now / 1000) {
     read: {
       asOf: at,
       metricAt: at - 30,
+      observedAt: at,
+      lastStarted: at - 61,
+      lastCompleted: at - 60,
       lastSuccess: at - 60,
       samples: 24,
       failures: 0,
@@ -175,7 +179,7 @@ it("requires fresh upstream observations, enough samples and two distinct bad wi
     evaluateHealth(
       policyTarget,
       data,
-      { ...read, metricAt: at - 121 },
+      { ...read, metricAt: at - 421 },
       undefined,
       at,
     ).healthy,
@@ -256,6 +260,11 @@ it("bounds and scopes Better Stack queries and rejects injection before sending"
     request,
   );
   expect(read.samples).toBe(24);
+  expect(read.lastStarted).toBe(now / 1000 - 60);
+  expect(read.lastCompleted).toBe(now / 1000 - 60);
+  expect(request.mock.calls[1][1].body).toContain(
+    `toDateTime(${now / 1000 - 420})`,
+  );
   expect(request.mock.calls[0][1].body).toContain(
     "label('environment') = 'production'",
   );
@@ -290,4 +299,120 @@ it("uses one observation cutoff across window rollover and rejects stale/future 
       at,
     ).healthy,
   ).toBe(false);
+});
+
+it("keeps five-minute cloud evidence healthy between exports but never refreshes cached observations", () => {
+  const at = now / 1000;
+  const { data, read } = evidence();
+  const slow = {
+    ...read,
+    metricAt: at - 299,
+    lastStarted: at - 301,
+    lastCompleted: at - 300,
+    lastSuccess: at - 300,
+  };
+  const result = evaluateHealth(policyTarget, data, slow, undefined, at);
+  expect(result.healthy).toBe(true);
+  expect(result.observedAt).toBe(at);
+  expect(
+    evaluateHealth(policyTarget, data, slow, undefined, at + 121).healthy,
+  ).toBe(false);
+  expect(
+    evaluateHealth(
+      policyTarget,
+      data,
+      { ...slow, metricAt: at - 421 },
+      undefined,
+      at,
+    ).healthy,
+  ).toBe(false);
+});
+
+it("rejects overdue unmatched starts despite recent successes and healthy historical statistics", () => {
+  const at = now / 1000;
+  const { data, read } = evidence();
+  expect(
+    evaluateHealth(
+      policyTarget,
+      data,
+      { ...read, lastStarted: at - 31 },
+      undefined,
+      at,
+    ).healthy,
+  ).toBe(false);
+  expect(
+    evaluateHealth(
+      policyTarget,
+      data,
+      { ...read, lastStarted: at - 29 },
+      undefined,
+      at,
+    ).healthy,
+  ).toBe(true);
+  expect(
+    evaluateHealth(
+      policyTarget,
+      data,
+      { ...read, lastStarted: at + 1 },
+      undefined,
+      at,
+    ).healthy,
+  ).toBe(false);
+  expect(
+    evaluateHealth(
+      policyTarget,
+      data,
+      { ...read, lastStarted: undefined } as never,
+      undefined,
+      at,
+    ).healthy,
+  ).toBe(false);
+});
+
+it("aborts observations and metric queries without issuing subsequent requests", async () => {
+  const controller = new AbortController();
+  const request = jest.fn(
+    (_url, options) =>
+      new Promise<Response>((_resolve, reject) => {
+        options.signal.addEventListener(
+          "abort",
+          () => reject(options.signal.reason),
+          { once: true },
+        );
+      }),
+  );
+  const data = observeData(
+    "https://liveone.example",
+    "secret",
+    target,
+    now,
+    120,
+    request,
+    controller.signal,
+  );
+  const read = queryReadEvidence(
+    "https://query.example",
+    "u",
+    "p",
+    policyTarget,
+    now,
+    request,
+    controller.signal,
+  );
+  controller.abort();
+  await expect(data).rejects.toThrow();
+  await expect(read).rejects.toThrow();
+  expect(request).toHaveBeenCalledTimes(2);
+  await expect(
+    queryReadEvidence(
+      "https://query.example",
+      "u",
+      "p",
+      policyTarget,
+      now,
+      request,
+      controller.signal,
+    ),
+  ).rejects.toThrow();
+  expect(request).toHaveBeenCalledTimes(2);
 });

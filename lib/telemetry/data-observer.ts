@@ -76,8 +76,11 @@ export async function observeData(
   now = Date.now(),
   settleSec = 120,
   request = fetch,
+  shutdown?: AbortSignal,
 ): Promise<DataObservation> {
-  observationTarget.parse(target);
+  // Supervisor targets also contain source/policy fields; validate the observation
+  // subset without rejecting the already-validated extended target.
+  observationTarget.strip().parse(target);
   if (
     !token ||
     !Number.isInteger(settleSec) ||
@@ -99,7 +102,10 @@ export async function observeData(
     limit: "1000",
   };
   const slots = new Set<number>();
-  const signal = AbortSignal.timeout(20000);
+  const signal = AbortSignal.any([
+    AbortSignal.timeout(20000),
+    ...(shutdown ? [shutdown] : []),
+  ]);
   let cursor: string | null = null,
     metadata: string | undefined,
     lastTimestamp: string | undefined;
@@ -110,6 +116,7 @@ export async function observeData(
     windowEnd: windowEnd / 1000,
   };
   for (let pageNumber = 0; pageNumber < 8; pageNumber++) {
+    signal.throwIfAborted();
     const url = new URL("/api/collectors/me/readings", origin);
     url.search = new URLSearchParams({
       ...query,

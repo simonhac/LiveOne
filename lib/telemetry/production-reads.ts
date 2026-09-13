@@ -29,7 +29,7 @@ async function flushMetrics() {
   await flushing;
 }
 
-export function beginCloudRead(vendor: Vendor, deviceId: string | undefined) {
+function beginCloudRead(vendor: Vendor, deviceId: string | undefined) {
   if (!deviceId) return noopRead;
   try {
     if (!provider) {
