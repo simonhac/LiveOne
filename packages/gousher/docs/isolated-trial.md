@@ -65,6 +65,9 @@ required, with tests for shifted timestamps, gaps, resets, unit/sign mismatches 
 
 ## Independent access and supervision
 
+For router setup, use the [UniFi UDM WireGuard client guide](unifi-udm.md),
+including the required DNS field and reusable configuration template.
+
 Provision a dedicated trial route to the trial site that does not traverse or require changes to
 `liveone-flyhub`. A separately configured site VPN peer or site-side trial machine is a
 candidate, subject to actual network configuration and credentials. No route is qualified yet.
@@ -242,3 +245,13 @@ The existing production site WireGuard route terminates on production flyhub.
 Reusing it would violate the independent-path requirement. Site-side access details
 for a new peer or trial machine are still needed. No router, VPN, production setting,
 collector assignment or trial machine was changed by this preflight.
+
+## Independent watchdog implementation
+
+The [supervisor-evidence watchdog](watchdog.md) now validates fresh, explicitly
+healthy evidence bound to a poller revision and qualification policy. Missing or
+invalid evidence durably latches a shutdown and retries the collector incident
+endpoint. Its integration tests exercise actual reader cancellation and persisted
+shutdown, without device traffic. The supervisor evidence producer, approved
+replacement health policy, and a fail-closed startup/expired-permit or host-stop
+mechanism remain required before live qualification. This code has not been deployed.

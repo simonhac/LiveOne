@@ -1,0 +1,11 @@
+{
+  "dataDir": "/var/lib/gousher-trial-watchdog",
+  "pollerId": "REPLACE_WITH_ASSIGNED_POLLER",
+  "revision": 1,
+  "policyId": "REPLACE_WITH_REVIEWED_POLICY_HASH",
+  "healthUrl": "https://supervisor.example/health/assigned-poller",
+  "healthTokenEnv": "GOUSHER_SUPERVISOR_HEALTH_TOKEN",
+  "inspectorUrl": "https://trial-inspector.example",
+  "inspectorTokenEnv": "GOUSHER_INSPECTOR_TOKEN",
+  "maxAgeSec": 60
+}

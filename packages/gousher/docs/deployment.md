@@ -9,6 +9,12 @@ has been performed by this change. Set the actual LiveOne origin, private receiv
 forwarding addresses before deployment. Apply the generated LiveOne migration through the existing
 migration workflow, first against a disposable database.
 
+## UniFi router setup
+
+For a separate site connection, follow the [UniFi UDM client guide](unifi-udm.md).
+Its client template includes the explicit DNS field required by the file importer.
+Keep real site configuration and credentials outside the repository.
+
 ## Fly
 
 Build from the repository root using `packages/gousher/deploy/fly/Dockerfile`. Create a **new** Fly

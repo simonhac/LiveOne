@@ -45,6 +45,14 @@ Production control activation is intentionally unavailable. Shared TypeScript/Go
 now pin the detailed run/probe contract and boot recovery. See [control.md](docs/control.md) for
 authentication, concurrency, deadline checks and the intentionally stricter failure behavior.
 
+## Configure your UniFi UDM
+
+Follow the [UDM setup walkthrough](docs/unifi-udm.md#configure-your-udm--quick-start)
+for the exact clicks to add an independent WireGuard VPN client. It includes a
+[reusable client template](deploy/wireguard/udm-client.conf.example), the required
+DNS field, file-import troubleshooting and connection checks. Examples contain no
+site-specific details; keep generated configs and credentials outside the repo.
+
 ## Management APIs
 
 All admin endpoints use `requireAdmin`. Collector endpoints require dedicated `lo_col_…` bearer
