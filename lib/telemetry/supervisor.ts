@@ -104,12 +104,12 @@ export interface ReadEvidence {
   asOf: number;
   metricAt: number;
   observedAt: number;
-  lastStarted: number;
-  lastCompleted: number;
-  lastSuccess: number;
+  lastStarted?: number;
+  lastCompleted?: number;
+  lastSuccess?: number;
   samples: number;
   failures: number;
-  p95Sec: number;
+  p95Sec: number | null;
   windowEnd: number;
 }
 export interface WindowState {
@@ -148,6 +148,9 @@ export function evaluateHealth(
     fresh(read.metricAt, t.maxMetricAgeSec) &&
     fresh(read.lastStarted, t.maxReadAgeSec) &&
     fresh(read.lastCompleted, t.maxReadAgeSec) &&
+    read.lastStarted !== undefined &&
+    read.lastCompleted !== undefined &&
+    read.lastSuccess !== undefined &&
     read.lastSuccess <= read.lastCompleted &&
     (read.lastStarted <= read.lastCompleted ||
       now - read.lastStarted <= t.maxReadDurationSec) &&
@@ -162,11 +165,12 @@ export function evaluateHealth(
     Number.isInteger(read.failures) &&
     read.failures >= 0 &&
     read.failures <= read.samples &&
+    read.p95Sec !== null &&
     Number.isFinite(read.p95Sec) &&
     read.p95Sec >= 0;
   const bad =
     read.failures / read.samples > t.maxFailureRate ||
-    read.p95Sec > t.maxP95Sec;
+    (read.p95Sec !== null && read.p95Sec > t.maxP95Sec);
   let state = previous ?? { end: 0, consecutive: 0 };
   if (inputsValid && read.windowEnd > state.end)
     state = {
@@ -258,7 +262,7 @@ export async function queryReadEvidence(
     .object({
       samples: numeric.pipe(z.number().int().nonnegative()),
       failures: numeric.pipe(z.number().int().nonnegative()),
-      p95Sec: numeric.pipe(z.number().nonnegative()),
+      p95Sec: numeric.pipe(z.number().nonnegative()).nullable(),
     })
     .parse(stats.length === 1 ? stats[0] : null);
   const parsed = z
@@ -273,22 +277,24 @@ export async function queryReadEvidence(
         observedAt: z.coerce.number().positive(),
       }),
     )
-    .length(3)
+    .max(3)
     .parse(gauges);
-  if (new Set(parsed.map((x) => x.name)).size !== 3)
-    throw Error("Missing reader timestamps");
+  if (new Set(parsed.map((x) => x.name)).size !== parsed.length)
+    throw Error("Duplicate reader timestamps");
+  if (row.failures > row.samples || (row.samples > 0 && row.p95Sec === null))
+    throw Error("Invalid histogram statistics");
   return {
     ...row,
     asOf: now / 1000,
     windowEnd: end,
     observedAt: Date.now() / 1000,
-    lastStarted: parsed.find((x) => x.name === "liveone.read.last_started")!
-      .value,
-    lastCompleted: parsed.find((x) => x.name === "liveone.read.last_completed")!
-      .value,
-    metricAt: Math.min(...parsed.map((x) => x.observedAt)),
-    lastSuccess: parsed.find((x) => x.name === "liveone.read.last_success")!
-      .value,
+    lastStarted: parsed.find((x) => x.name === "liveone.read.last_started")
+      ?.value,
+    lastCompleted: parsed.find((x) => x.name === "liveone.read.last_completed")
+      ?.value,
+    metricAt: parsed.length ? Math.min(...parsed.map((x) => x.observedAt)) : 0,
+    lastSuccess: parsed.find((x) => x.name === "liveone.read.last_success")
+      ?.value,
   };
 }
 

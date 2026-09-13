@@ -1,0 +1,25 @@
+# A dedicated baseline observer: no device network, public services, or trial processes.
+app = "liveone-production-observer"
+primary_region = "syd"
+kill_signal = "SIGTERM"
+kill_timeout = "30s"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[[files]]
+  guest_path = "/etc/gousher-observer.json"
+  secret_name = "GOUSHER_OBSERVER_CONFIG"
+
+[[mounts]]
+  source = "production_observer_data"
+  destination = "/data"
+
+[[restart]]
+  policy = "on-failure"
+  retries = 10
+
+[[vm]]
+  cpu_kind = "shared"
+  cpus = 1
+  memory = "512mb"

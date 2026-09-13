@@ -416,3 +416,44 @@ it("aborts observations and metric queries without issuing subsequent requests",
   ).rejects.toThrow();
   expect(request).toHaveBeenCalledTimes(2);
 });
+
+it("retains partial-only baseline statistics without authorizing a trial", async () => {
+  const request = jest
+    .fn()
+    .mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({ data: [{ samples: 24, failures: 24, p95Sec: 1 }] }),
+      ),
+    )
+    .mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          data: ["last_started", "last_completed"].map((name) => ({
+            name: `liveone.read.${name}`,
+            value: now / 1000 - 10,
+            observedAt: now / 1000 - 10,
+          })),
+        }),
+      ),
+    );
+  const read = await queryReadEvidence(
+    "https://query.example",
+    "u",
+    "p",
+    policyTarget,
+    now,
+    request,
+  );
+  expect(read.samples).toBe(24);
+  expect(read.failures).toBe(24);
+  expect(read.lastSuccess).toBeUndefined();
+  expect(
+    evaluateHealth(
+      policyTarget,
+      evidence(now / 1000).data,
+      read,
+      undefined,
+      now / 1000,
+    ).healthy,
+  ).toBe(false);
+});
