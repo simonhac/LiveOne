@@ -92,6 +92,14 @@ export interface DeviceConfigView {
   readonly config: DeviceConfig | null;
   readonly timezoneOffsetMin: number;
   readonly displayTimezone: string;
+  /**
+   * The device's OWN fixed day bucket (`devices.day_offset_min`, migration 0070) — the boundary
+   * `point_readings_agg_1d` rolls up on. Distinct from `timezoneOffsetMin`, which is PLACEMENT and
+   * resolves through the area: the 1d table is PK'd on `(point_rid, day)` and has no area to resolve
+   * through, so its key has to live on the device. They agree for every device today; only
+   * `liveone device change-offset` may move this one, and it rebuilds the history when it does.
+   */
+  readonly dayOffsetMin: number;
   readonly createdAt: Date;
   readonly updatedAt: Date;
   readonly commissionedOn: string | null;
@@ -187,6 +195,7 @@ function toRecord(row: JoinRow): DeviceRecord {
     config: d.config ?? null,
     timezoneOffsetMin: placement.timezoneOffsetMin,
     displayTimezone: placement.displayTimezone,
+    dayOffsetMin: d.dayOffsetMin,
     createdAt: d.createdAt,
     updatedAt: d.updatedAt,
     commissionedOn: d.commissionedOn,

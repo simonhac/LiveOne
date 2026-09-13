@@ -359,7 +359,7 @@ async function runHistory(ctx: Ctx): Promise<number> {
 export interface WireRecompute {
   device: { id: string; systemId: number; name: string; vendor: string };
   window: { start: string; end: string; days: number };
-  timezoneOffsetMin: number;
+  dayOffsetMin: number;
   days: string[];
   dryRun: boolean;
   agg1dDays: number;
@@ -377,7 +377,7 @@ export function renderRecompute(r: WireRecompute): string {
     `device       ${r.device.systemId}  ${r.device.name}  (${r.device.vendor})`,
     `window       ${r.window.start} → ${r.window.end}   (${r.window.days} local day${
       r.window.days === 1 ? "" : "s"
-    }, offset ${r.timezoneOffsetMin >= 0 ? "+" : ""}${r.timezoneOffsetMin}m)`,
+    }, offset ${r.dayOffsetMin >= 0 ? "+" : ""}${r.dayOffsetMin}m)`,
   ];
 
   if (r.dryRun) {

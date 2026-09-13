@@ -37,7 +37,8 @@ type PgDb = NonNullable<typeof planetscaleDb>;
 /** What `recomputeAgg1dForDay` needs, and all this module needs of a device. */
 export interface ScopedRecomputeDevice {
   id: number;
-  timezoneOffsetMin: number;
+  /** The DEVICE's day bucket — see `DeviceForDailyAgg`. Not the area's placement offset. */
+  dayOffsetMin: number;
 }
 
 export interface ScopedRecomputeResult {

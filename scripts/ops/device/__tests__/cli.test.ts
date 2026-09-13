@@ -129,7 +129,7 @@ describe("the recompute report", () => {
   const base: WireRecompute = {
     device: { id: "dv_x", systemId: 13, name: "Kutis", vendor: "sigenergy" },
     window: { start: "2026-09-10", end: "2026-09-11", days: 2 },
-    timezoneOffsetMin: 600,
+    dayOffsetMin: 600,
     days: ["2026-09-10", "2026-09-11"],
     dryRun: false,
     agg1dDays: 2,

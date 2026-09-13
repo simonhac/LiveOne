@@ -421,7 +421,7 @@ describe("recomputeAgg1dForDay", () => {
 
     const res = await recomputeAgg1dForDay(
       asDb(db),
-      { id: 1, timezoneOffsetMin: tz },
+      { id: 1, dayOffsetMin: tz },
       day,
     );
 
@@ -453,7 +453,7 @@ describe("recomputeAgg1dForDay", () => {
     const { db } = makeFakeDb([p1.row]); // cannedAgg5m empty → read5m returns [] for p1
     const res = await recomputeAgg1dForDay(
       asDb(db),
-      { id: 1, timezoneOffsetMin: 600 },
+      { id: 1, dayOffsetMin: 600 },
       day,
     );
     expect(res.rowsUpserted).toBe(0);

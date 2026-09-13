@@ -56,6 +56,11 @@ describe("POST /api/v4/devices/{id}/recompute", () => {
         vendorType: "sigenergy",
         displayName: "Kutis",
         timezoneOffsetMin: 600,
+        // Deliberately different from `timezoneOffsetMin`: the assertion below then proves the route
+        // buckets on the DEVICE's `day_offset_min` rather than on the area's placement timezone.
+        // They are equal for every real device today, which is exactly why a fixture has to separate
+        // them — otherwise the test passes whichever field the route reads.
+        dayOffsetMin: 660,
       },
     } as never);
     mockRecompute.mockResolvedValue({ agg1dDays: 2, provenanceAreas: 1 });
@@ -131,11 +136,13 @@ describe("POST /api/v4/devices/{id}/recompute", () => {
 
   it("rebuilds against the DEVICE's day offset, not the server's", async () => {
     // A device's daily aggregates roll up on its own fixed offset; a UTC day would shift every
-    // boundary by ten hours and rebuild two half-days.
+    // boundary by ten hours and rebuild two half-days. Since migration 0070 that offset is
+    // `devices.day_offset_min` — `point_readings_agg_1d` is PK'd on `(point_rid, day)` and has no
+    // area in its key to resolve a placement timezone through.
     await post({ date: "2026-09-10" });
     expect(mockRecompute.mock.calls[0][1]).toEqual({
       id: 13,
-      timezoneOffsetMin: 600,
+      dayOffsetMin: 660,
     });
   });
 

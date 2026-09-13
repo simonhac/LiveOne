@@ -31,7 +31,7 @@ const mockPM = jest.mocked(PointManager.getInstance);
 const mockRecompute = jest.mocked(recomputeDerivedForDeviceDays);
 
 /** Melbourne, UTC+10 — the device this whole investigation came from. */
-const DEVICE = { id: 13, timezoneOffsetMin: 600 };
+const DEVICE = { id: 13, dayOffsetMin: 600 };
 const db = {} as never;
 
 /** 2026-09-11T07:08:00Z = 17:08 local on 11 Sep. */
@@ -63,7 +63,7 @@ describe("healStaleAgg1dForDevice", () => {
   it("uses the DEVICE's offset for the day boundary, not the server's", async () => {
     await healStaleAgg1dForDevice(
       db,
-      { id: 1, timezoneOffsetMin: 0 },
+      { id: 1, dayOffsetMin: 0 },
       { lookbackDays: 1, nowMs: NOW },
     );
     const opts = mockStale.mock.calls[0][1];
