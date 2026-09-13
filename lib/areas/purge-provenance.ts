@@ -48,7 +48,6 @@ import { and, eq, gte, inArray, lte, sql } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import {
   areaBindings,
-  areaMembers,
   batteryProvenanceDaily,
   devices,
   pointReadingsFlowAttr1d,

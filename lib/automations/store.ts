@@ -8,8 +8,8 @@
 import { and, asc, eq, gte, inArray, isNull, lte, or, sql } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import {
-  areaMembers,
   automations,
+  devices,
   derivedIntervals,
   type AutomationAction,
   type AutomationArmedContext,
@@ -363,6 +363,9 @@ export async function claimExerciseSlot(
  * area's member device now belongs to that composite, which is exactly the case `area_id` could
  * never express. It is NOT an authorization check on its own — the caller's read access to the
  * derivation's device set is checked beside it, in `checkReferences`.
+ *
+ * Membership is `devices.area_id` since migration 0071 — one column on the device, not a row in
+ * `area_members` — so "is a member of" is now a property of the device row itself.
  */
 export async function derivationBelongsToArea(
   derivationUuid: string,
@@ -371,14 +374,9 @@ export async function derivationBelongsToArea(
   const ownerDeviceId = await ownerDeviceIdForDerivation(derivationUuid);
   if (!ownerDeviceId) return false;
   const [row] = await requirePlanetscaleDb()
-    .select({ deviceId: areaMembers.deviceId })
-    .from(areaMembers)
-    .where(
-      and(
-        eq(areaMembers.areaId, areaUuid),
-        eq(areaMembers.deviceId, ownerDeviceId),
-      ),
-    )
+    .select({ deviceId: devices.id })
+    .from(devices)
+    .where(and(eq(devices.areaId, areaUuid), eq(devices.id, ownerDeviceId)))
     .limit(1);
   return !!row;
 }

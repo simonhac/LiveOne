@@ -30,7 +30,6 @@ import { CalendarDate } from "@internationalized/date";
 import { and, eq, ne } from "drizzle-orm";
 import type { planetscaleDb } from "@/lib/db/planetscale";
 import {
-  areaMembers,
   areas,
   devices,
   points as pointsTable,
@@ -193,14 +192,19 @@ export async function planChangeDayOffset(
   if (areaRow) {
     // Everything in the area that is neither this device nor a helper. A helper is derived output of
     // the area itself, so it is not another tenant of the offset.
+    //
+    // 🛑 Reads `devices.area_id` (migration 0071), not `area_members`. The two answer differently now
+    // and the NEW one is the question worth asking: an area-of-one whose device has been re-homed to
+    // a site area still carries its stale `area_members` row, so the old query would report the
+    // device as a co-tenant of an area nothing actually lives in and refuse a re-bucket that touches
+    // nobody. That is exactly Kinkora Fronius, the device this verb was built for.
     const others = await db
       .select({ name: devices.name })
-      .from(areaMembers)
-      .innerJoin(devices, eq(devices.id, areaMembers.deviceId))
+      .from(devices)
       .where(
         and(
-          eq(areaMembers.areaId, areaRow.id),
-          ne(areaMembers.deviceId, device.uuid),
+          eq(devices.areaId, areaRow.id),
+          ne(devices.id, device.uuid),
           ne(devices.vendor, "helper"),
         ),
       );
