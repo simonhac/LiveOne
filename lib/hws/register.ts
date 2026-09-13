@@ -159,9 +159,6 @@ export async function ensureHwsDerivation(
   await db.transaction(async (tx) => {
     await tx.insert(derivations).values({
       id,
-      // 🛑 NULL — see the same note in `ensureRunDetector`. `area_id` is a vestige 0064 drops, and
-      // the model's site is its power point's device.
-      areaId: null,
       kind: HWS_MODEL_KIND,
       role: null,
       name: temp.displayName,
@@ -170,8 +167,6 @@ export async function ensureHwsDerivation(
       outputPointId: temp.pointUid,
       // Sparse: the model runs on DEFAULT_HWS_MODEL_OPTIONS unless a constant is overridden here.
       params: {},
-      // Dual-written with the `derivation_sources` row below; the resolver reads only the latter.
-      sourcePoints: { power: power.pointUid },
     });
     await writeDerivationSources(tx, {
       derivationId: id,

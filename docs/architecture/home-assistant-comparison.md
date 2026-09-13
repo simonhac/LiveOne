@@ -167,7 +167,8 @@ Real design advantages. The first two are new to this revision and are the sharp
    _Derivative_, _Utility Meter_ (cycle/tariff), _Template_, _Group(sum)_ let users compose new typed
    entities purely through config. v4's `derivations` closed the embarrassing half of this gap —
    run-tracking and the HWS thermal model are now one mechanism (`output='point'` → a derived point
-   in the pipeline; `output='intervals'` → run periods) with typed `params`/`source_points` as data.
+   in the pipeline; `output='intervals'` → run periods) with typed `params` and typed input ports
+   (`derivation_sources`) as data.
    But the **kinds** are code (`run-detector`, `hws-model`): an engineer ships a kind, where an HA
    user configures one.
 9. **Statistics semantics — HA is ahead, and further ahead than the last revision said.** HA's mean

@@ -1,7 +1,8 @@
 # The block model
 
-> **Status:** proposed · drafted 2026-09-10 · reviewed against the code 2026-09-10 · successor
-> framing for [fold-on-the-resolver.md](fold-on-the-resolver.md) and
+> **Status:** ADOPTED · drafted 2026-09-10 · reviewed against the code 2026-09-10 · **increment 1
+> shipped 2026-09-13** (migrations 0063 + 0068 expand / 0069 contract); increments 2–7 not started ·
+> successor framing for [fold-on-the-resolver.md](fold-on-the-resolver.md) and
 > [ha-parity-and-leapfrog.md](ha-parity-and-leapfrog.md) §11
 
 ## The idea
@@ -72,7 +73,7 @@ Today there are four encodings of "this feeds that":
 | Edge | source | sink |
 | --- | --- | --- |
 | `area_bindings` | a point | an area's role slot |
-| `derivations.source_points` (→ `derivation_sources`, proposed) | a point | a detector input |
+| `derivation_sources` (a row per typed slot) | a point | a detector input |
 | `automations.trigger.source` | a derivation **or** a point | the trigger |
 | a card in `dashboards.doc` | `(int handle, role)` | the card |
 
@@ -126,8 +127,8 @@ Blocks divide by whether their output is **recomputable** or **stored-and-stampe
 This is already the operative rule — migration 0055 gave every interval its own `signal_unit` for
 exactly this reason, and the derivation PATCH route refuses to re-point `sourcePoints`. But the route
 also shows the rule is finer than per-block: it *does* permit re-pointing `boundary`
-(`app/api/v4/areas/[id]/derivations/[dxid]/route.ts:29-33`), because a boundary changes where two
-adjacent runs divide, not what the stored numbers measure. So:
+(`handlePatch`, `lib/derivations/v4-routes.ts`), because a boundary changes where two adjacent runs
+divide, not what the stored numbers measure. So:
 
 **`pinned` is a property of the input port.** A run detector's `signal` and `energy` ports are
 pinned; its `boundary` port is not. A builder renders a pinned port with a lock. Re-binding a pinned
@@ -231,11 +232,11 @@ flowchart TB
   AR["Area ar_ — the role namespace"] --- BND["area_bindings: role+metric → point"]
 
   subgraph REG["REGISTERED — a config row says it exists"]
-    DX["Derivation dx_ · kind · params · enabled"] --- SP["source_points jsonb (→ derivation_sources, proposed)"]
+    DX["Derivation dx_ · kind · params · enabled"] --- SP["derivation_sources — one row per typed slot"]
     AU["Automation au_ · trigger · action · enabled"]
   end
   PT --> SP
-  SP -.->|"points.device_id = DERIVED attachment (proposed)"| DEV
+  SP -->|"points.device_id = DERIVED attachment"| DEV
   DX -->|"output = point"| RD
   DX -->|"output = intervals"| DI[("derived_intervals")]
   DI -->|"trigger.source = {kind: derivation | point}"| AU
@@ -287,10 +288,30 @@ has the enumeration.
 
 ## Increments, in order of payoff
 
-1. **Detectors attach to devices via their sources** (Part 2). Turns `source_points` into a real
-   typed port table (`derivation_sources`) and kills the last area coupling. In flight. Note the
-   divergence it opens: `derivations.area_id` goes, `automations.area_id` stays `NOT NULL` — decide
-   whether automations follow, and write it down either way.
+1. ✅ **Detectors attach to devices via their sources** — **DONE 2026-09-13.** `source_points jsonb`
+   became a real typed port table (`derivation_sources`), the last area coupling is gone, and a
+   derivation's site and its authorization scope are both DERIVED from its wiring
+   (`lib/derivations/scope.ts`). Six PRs: #447/#448 (the reference census and
+   `assertNotReliedUpon`), #449 (migration 0063, expand), #450 (readers move onto the table), #451
+   (the identity-addressed `/api/v4/derivations` tree), #452 (the CLI addresses detectors by
+   identity), and the contract PR — migrations 0068/0069, which dropped `derivations.area_id` and
+   `derivations.source_points`, the dual-write, and the area-scoped shim routes. That last PR ships
+   as a three-step release, because the two migrations run at opposite ends of it: 0068 (making
+   `source_points` nullable) BEFORE the deploy, since the new code stops writing a still-NOT NULL
+   column; 0069 (the drop) AFTER it, since drizzle expands a whole-table projection to the DECLARED
+   columns. 0063 had demoted `area_id` by dropping its NOT NULL and left `source_points` alone —
+   that asymmetry is what 0068 finishes.
+
+   🛑 **The divergence it opened is still open and still undecided:** `derivations.area_id` is gone;
+   `automations.area_id` stays `NOT NULL`. An automation is area-scoped, a derivation is not. That
+   is defensible — an automation acts on an area's devices by role — but it has not been argued,
+   only observed. Decide it before increment 3 gives another producer a registry row.
+
+   One invariant moved from the database into code and should be watched: `owner-role-taken`
+   (`lib/derivations/resolve.ts`) is what stops two detectors fighting over one `<stem>/running`
+   point, and no index can express it, because their signals may sit on different devices while
+   their owner resolves to the same one. The partial unique index it replaces
+   (`derivations_area_role_unique`) was already inert for every row written after 0063.
 2. **The graph report.** Generalise `resolveSlotsFromData` from one area's slots to every edge in
    the registered graph, read-only, served over HTTP. Cheap, and it is the thing a builder renders.
    Doing it before the fold moves means the fold's move is verified by the report, not by eye.

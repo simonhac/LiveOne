@@ -477,6 +477,20 @@
       "when": 1789223319175,
       "tag": "0067_gousher_managed_pollers",
       "breakpoints": true
+    },
+    {
+      "idx": 68,
+      "version": "7",
+      "when": 1789297278501,
+      "tag": "0068_derivation_source_points_nullable",
+      "breakpoints": true
+    },
+    {
+      "idx": 69,
+      "version": "7",
+      "when": 1789297281890,
+      "tag": "0069_drop_derivation_vestiges",
+      "breakpoints": true
     }
   ]
 }

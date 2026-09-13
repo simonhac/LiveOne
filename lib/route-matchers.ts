@@ -172,26 +172,13 @@ const cliTokenRoutes = [
   // (members, bindings, derivations, eligibility, by-handle, …) stay OUTSIDE the bypass until each
   // is judged on its own, rather than inheriting it by being a sibling.
   "/api/v4/areas/:id",
-  // Judged on its own (the first sub-resource to be): both GET and POST authorize in-handler via
-  // `loadAreaForOwner`. Again named segments, never `(.*)` — `members` and `bindings` stay outside.
-  "/api/v4/areas/:id/derivations",
-  // The per-derivation surface, admitted when `liveone derivation` was written (it is the whole
-  // point of that domain: enable/disable, recompute, read back). All three authorize through
-  // `loadDerivationForOwner` → `loadAreaForOwner`, and each puts the AREA in its WHERE clause, so
-  // the area's owner-or-admin check genuinely covers the derivation rather than merely preceding it.
+  // The derivations surface, admitted when `liveone derivation` was written (it is the whole point
+  // of that domain: enable/disable, recompute, read back). Named segments, never `(.*)`, exactly as
+  // the area tree is. It was reachable under `/api/v4/areas/:id/derivations…` too until 0069 deleted
+  // those shims — a derivation's site is DERIVED from its source points, so there was never an area
+  // to address it by.
   //
-  // `recompute` is the one worth pausing on: it is a delete-and-reinsert, and admitting a route that
-  // rewrites history is a real widening. It is safe here because the derivation is a PATH SEGMENT —
-  // there is no unscoped form to reach, unlike `/api/cron/derivations`, whose filter is optional and
-  // which stays outside this bypass.
-  "/api/v4/areas/:id/derivations/:dxid",
-  "/api/v4/areas/:id/derivations/:dxid/recompute",
-  "/api/v4/areas/:id/derivations/:dxid/intervals",
-  // The same resource at its own address, which is where it now lives: a derivation's site is
-  // DERIVED from its source points, so there is no area to address it by and the four routes above
-  // are shims onto these. Named segments, never `(.*)`, exactly as the area tree is.
-  //
-  // 🛑 The authorization argument CHANGED with the address, and it got stronger. The old one was
+  // 🛑 The authorization argument is stronger than the one the area-scoped form had. That one was
   // "each puts the AREA in its WHERE clause, so the area's owner check covers the derivation" — a
   // property of a clause someone could forget to write. These routes authorize against the
   // derivation's OWN device set (`lib/derivations/scope.ts`): write access is required on EVERY
@@ -199,10 +186,10 @@ const cliTokenRoutes = [
   // existence oracle over `dx_` ids. There is no scope for the caller to name, so there is nothing
   // to forget.
   //
-  // `recompute` is still the one worth pausing on — it is a delete-and-reinsert, and admitting a
-  // route that rewrites history is a real widening. It is safe here for the same reason as before:
-  // the derivation is a PATH SEGMENT, so there is no unscoped form to reach, unlike
-  // `/api/cron/derivations`, whose filter is optional and which stays outside this bypass.
+  // `recompute` is the one worth pausing on — it is a delete-and-reinsert, and admitting a route
+  // that rewrites history is a real widening. It is safe because the derivation is a PATH SEGMENT,
+  // so there is no unscoped form to reach, unlike `/api/cron/derivations`, whose filter is optional
+  // and which stays outside this bypass.
   //
   // 🛑 DELETE is admitted, and it is the first destructive verb on this domain. It is admissible
   // because it cannot be reached casually: the derivation must ALREADY be disabled (409

@@ -353,10 +353,10 @@ describe("DELETE /api/v4/areas/{id}", () => {
     expect(mockRefresh).not.toHaveBeenCalled();
   });
 
-  // 🛑 The archive is the path the `derivations.area_id` / `automations.area_id` NO ACTION FKs never
-  // covered: every constraint stays satisfied and the area simply stops being served, so a dashboard
-  // node naming it renders nothing with no error. These two pin that the gate runs, and that a
-  // refusal from it stops the write — not merely that it was consulted.
+  // 🛑 The archive is the path the `automations.area_id` NO ACTION FK never covered: every
+  // constraint stays satisfied and the area simply stops being served, so a dashboard node naming
+  // it renders nothing with no error. These two pin that the gate runs, and that a refusal from it
+  // stops the write — not merely that it was consulted.
   it("consults the referential-integrity gate before archiving", async () => {
     await areaDELETE(req(), params);
     expect(mockRelied).toHaveBeenCalledWith(
