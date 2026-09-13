@@ -13,6 +13,8 @@ import {
   seriesForRole,
   type RunBand,
 } from "@/lib/charts/run-bands";
+import { togglePin } from "@/lib/charts/pin";
+import { isTouchDevice, useIsTouchDevice } from "@/lib/charts/svg";
 import { runProvenancePanels } from "@/lib/charts/tooltip-metrics";
 import { formatRunWhenLines } from "@/lib/run-tracking/run-period-view";
 import { ROLES, TRACKABLE_ROLE_IDS, type RoleId } from "@/lib/roles/registry";
@@ -307,27 +309,83 @@ function StackedChart({
     band: RunBand;
     at: RunTooltipAnchor;
   } | null>(null);
+  /**
+   * The open run panel is PINNED — held by a click rather than by the pointer resting on the band.
+   *
+   * A boolean, not an id: only one run panel is ever open, so `hoveredRun` already says which run is
+   * pinned. While it is set, hovering another band neither opens it nor closes this one; clicking the
+   * same band again releases it. On touch there is no hover at all, so the click path is the whole
+   * interaction rather than a second way in.
+   */
+  const [pinnedRun, setPinnedRun] = useState(false);
+  const isTouch = useIsTouchDevice();
+
   const handleHoverRun = useCallback(
     (band: RunBand | null, at?: RunTooltipAnchor) => {
+      // A pinned panel is the user's explicit choice; the pointer crossing another band must not
+      // take it away from them.
+      if (pinnedRun) return;
       setHoveredRun(band && at ? { band, at } : null);
     },
-    [],
+    [pinnedRun],
   );
+
+  const handleToggleRun = useCallback(
+    (band: RunBand, at: RunTooltipAnchor) => {
+      const next = togglePin({
+        isSameTarget: hoveredRun?.band.id === band.id,
+        isPinned: pinnedRun,
+        target: { band, at },
+        isTouch,
+      });
+      setPinnedRun(next.pinned);
+      setHoveredRun(next.show);
+    },
+    [hoveredRun, pinnedRun, isTouch],
+  );
+
+  const closeRun = useCallback(() => {
+    setPinnedRun(false);
+    setHoveredRun(null);
+  }, []);
 
   const handleMouseLeave = useCallback(() => {
     // Only reset hover state on desktop (not touch devices)
     // On mobile, we want the hover line to persist until next tap
-    if (!("ontouchstart" in window)) {
+    if (!isTouchDevice()) {
       setHoveredTimestamp(null);
       if (onHoverIndexChange) {
         onHoverIndexChange(null);
       }
+      // Desktop only, and for the same reason the focus line is: leaving the card ends a hover
+      // preview. A PINNED panel survives — that is what pinning is for, and the outside-click effect
+      // below is what releases it. On touch there is no hover to end at all.
+      if (!pinnedRun) setHoveredRun(null);
     }
-    // The run tooltip is dismissed on EITHER platform. Its own `onPointerLeave` fires when the
-    // pointer leaves the band, but a touch that ends outside one never sends that — and unlike the
-    // focus line, a stuck 140px panel covers the chart it is describing.
-    setHoveredRun(null);
-  }, [onHoverIndexChange]);
+  }, [onHoverIndexChange, pinnedRun]);
+
+  // Outside dismissal: a tap (or, with a mouse, a click) anywhere that is neither a run band nor the
+  // panel itself releases the panel. This is the only way out of a pin that does not require finding
+  // the band again, and it is how any pinned popover behaves.
+  //
+  // `touchstart`/`mousedown` rather than `click` so it lands BEFORE the band's own toggle; the
+  // `closest` checks are what stop a press ON a band being read as a press outside one, leaving the
+  // band's `onClick` to toggle as it should. Mirrors EnergyFlowSankey's dismissal effect.
+  useEffect(() => {
+    if (!hoveredRun) return;
+    const handleOutside = (e: Event) => {
+      const target = e.target as HTMLElement;
+      if (
+        !target.closest("[data-run]") &&
+        !target.closest('[data-testid="run-tooltip"]')
+      ) {
+        closeRun();
+      }
+    };
+    const type = isTouchDevice() ? "touchstart" : "mousedown";
+    document.addEventListener(type, handleOutside);
+    return () => document.removeEventListener(type, handleOutside);
+  }, [hoveredRun, closeRun]);
 
   const renderChartContent = () => {
     if (loading) {
@@ -374,6 +432,7 @@ function StackedChart({
           runBands={runBands}
           hoveredRunId={hoveredRun?.band.id ?? null}
           onHoverRun={handleHoverRun}
+          onToggleRun={handleToggleRun}
           // 🛑 `absolute inset-0`, NOT `h-full w-full`. The chart measures its own root and draws
           // nothing at zero height, and a percentage height here resolves to `auto` on MOBILE: this
           // box's parent gets its 375px from flex growth, so its *specified* height stays `auto`
@@ -387,6 +446,7 @@ function StackedChart({
           <RunTooltip
             band={hoveredRun.band}
             at={hoveredRun.at}
+            onDismiss={closeRun}
             // Name and colour both come from the band's OWN series, so the panel is titled with the
             // same word the legend uses for the shape it is pointing at.
             name={series?.description ?? ROLES[hoveredRun.band.role].label}
@@ -406,6 +466,17 @@ function StackedChart({
     </div>
   );
 }
+
+/**
+ * The energy table's own mobile gutter, ON TOP OF the 2px its `CHART_BODY_PAD` parent already gives
+ * it — 4px from the screen edge in total.
+ *
+ * The chart beside it needs none: it is ink that states its own extent, and the axis labels sit well
+ * inside the plot. The table is TEXT in edge-aligned columns — "Load" hard against the left bezel and
+ * "%" against the right read as clipped, however many pixels are technically there. Mobile only;
+ * above `sm` the section's own `p-3`/`p-4` is already generous.
+ */
+const TABLE_GUTTER = "px-0.5 sm:px-0";
 
 /** Clearance between the outlined run and the panel describing it. */
 const RUN_TOOLTIP_GAP = 10;
@@ -429,12 +500,16 @@ function RunTooltip({
   at,
   name,
   colour,
+  onDismiss,
 }: {
   band: RunBand;
   at: RunTooltipAnchor;
   /** The band's own series name ("EV") — the panel's subject, exactly as the Sankey titles a node. */
   name: string;
   colour: string;
+  /** Close the panel. Only wired on touch, where the panel must take the tap rather than let it fall
+   *  through to the chart (and possibly another run band) underneath — see `NodeTooltip`. */
+  onDismiss: () => void;
 }) {
   // Headings in the Sankey's own order: WHAT this is, then WHEN it ran. The name was missing while
   // the time range stood alone at the top, which read as a label for the whole chart rather than for
@@ -453,6 +528,10 @@ function RunTooltip({
   const measure = useCallback((el: HTMLDivElement | null) => {
     if (el) setHeight(el.getBoundingClientRect().height);
   }, []);
+  // Desktop must NOT get `onDismiss`: it makes the panel take pointer events, and a panel that
+  // swallows them sits over the plot and freezes the crosshair whenever the mouse crosses it. With a
+  // mouse the outside-click handler in `StackedChart` is the way out instead.
+  const isTouch = useIsTouchDevice();
 
   // BESIDE the run, never over it — the outlined region is the subject, and a 140px panel centred on
   // a charge session hides exactly the shape it is explaining. Prefer the right; fall back to the
@@ -473,6 +552,17 @@ function RunTooltip({
             plot.left + plot.width - PANEL_WIDTH,
           ),
         );
+  // The beak, in `NodeTooltip`'s vocabulary: `side` is the side of the SUBJECT the panel sits on, and
+  // the beak is drawn on the opposite edge — so a panel placed to the run's right (`fitsRight`) is
+  // `side="right"` and beaks from its LEFT edge, back toward the band.
+  //
+  // Without it the panel was a card floating over the plot with nothing tying it to the striped
+  // region it describes; on a chart with two runs in view, which one it belonged to was a guess.
+  const side = fitsRight ? "right" : "left";
+  // Neither side fitting means the panel is overlapping the run (the clamp above), and a beak
+  // pointing at something the card is sitting on top of reads as a rendering glitch — the same rule
+  // the Sankey applies via `panelOverlapsNode`.
+  const overlapsRun = !fitsRight && !fitsLeft;
   // Vertically CENTRED ON THE PLOT, not on the pointer and not on the SVG. Following the pointer
   // made the panel drift up and down while scrubbing across a session, which reads as instability
   // rather than as feedback; centring on the svg instead would include the time-axis gutter and pull
@@ -483,12 +573,19 @@ function RunTooltip({
       <NodeTooltip
         data={data}
         nodeColor={colour}
-        beakVariant="none"
+        beakVariant={overlapsRun ? "none" : "diamond"}
+        side={side}
+        // Halfway down the panel. A run is a tall region rather than a point — it spans its band for
+        // the whole session — so there is no single y on it to aim at, and the panel's own centre is
+        // the only honest answer. It is also where the eye goes: the panel is centred on the plot,
+        // so the beak lands level with the middle of the run it points at.
+        beakTop={height / 2}
         showHeading
         positioning="absolute"
         left={left}
         top={top}
         panelRef={measure}
+        onDismiss={isTouch ? onDismiss : undefined}
         // One frame at the wrong offset reads as a jump, and at this size the jump is the first
         // thing the eye catches.
         hidden={height === 0}
@@ -867,7 +964,9 @@ export default function SiteChartsCard({
                     isLoading={historyLoading}
                   />
                 </div>
-                <div className="w-full md:w-64 mt-4 md:mt-0 flex-shrink-0">
+                <div
+                  className={`w-full md:w-64 mt-4 md:mt-0 flex-shrink-0 ${TABLE_GUTTER}`}
+                >
                   <EnergyTable
                     chartData={loadChartData}
                     isLoading={tablesLoading}
@@ -909,7 +1008,9 @@ export default function SiteChartsCard({
                     isLoading={historyLoading}
                   />
                 </div>
-                <div className="w-full md:w-64 mt-4 md:mt-0 flex-shrink-0">
+                <div
+                  className={`w-full md:w-64 mt-4 md:mt-0 flex-shrink-0 ${TABLE_GUTTER}`}
+                >
                   <EnergyTable
                     chartData={generationChartData}
                     isLoading={tablesLoading}

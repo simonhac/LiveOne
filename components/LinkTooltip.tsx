@@ -8,14 +8,18 @@ interface LinkTooltipProps {
   /** The link's SOURCE fill colour — the tooltip renders as a coloured "card" of the flow's origin,
    *  with dark text (mirrors the node box's own fill + black labels). */
   color: string;
-  /** Viewport coords the card is centred on (translate ‑50%): the spline's midpoint, with `top` pulled
-   *  back by the caller so the card stays inside the diagram's vertical band. */
+  /** PAGE coords the card is centred on (translate ‑50%): the spline's midpoint, with `top` pulled
+   *  back by the caller so the card stays inside the diagram's vertical band. Page, not viewport, so
+   *  the card rides the document when it scrolls — see `toPagePosition`. */
   left: number;
   top: number;
   /** Hidden (but mounted) during the measure pass — the vertical clamp needs the card's real height, so
    *  the first frame renders at the raw midpoint, invisible (mirrors NodeTooltip). */
   hidden?: boolean;
   panelRef?: React.Ref<HTMLDivElement>;
+  /** Tap-to-dismiss, and the switch that lets the card receive the tap at all — see the same prop on
+   *  `NodeTooltip` for why a hover-held card must stay `pointer-events-none`. */
+  onDismiss?: () => void;
 }
 
 /**
@@ -32,12 +36,18 @@ export default function LinkTooltip({
   top,
   hidden = false,
   panelRef,
+  onDismiss,
 }: LinkTooltipProps) {
   const hasDetail = data.emissions !== undefined;
   return (
     <div
       ref={panelRef}
-      className={`link-tooltip ${ttInterphases.className} fixed z-[100] pointer-events-none rounded px-2.5 py-1.5 text-center shadow-lg`}
+      // `absolute` + `z-20`: page-anchored so it scrolls with the diagram, and below the sticky
+      // header's `z-30` so it passes under it. Same reasoning as `NodeTooltip`.
+      className={`link-tooltip ${ttInterphases.className} absolute z-20 ${
+        onDismiss ? "pointer-events-auto" : "pointer-events-none"
+      } rounded px-2.5 py-1.5 text-center shadow-lg`}
+      onClick={onDismiss}
       style={{
         left,
         top,

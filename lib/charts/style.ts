@@ -26,9 +26,11 @@
  * border, no radius. Nesting a filled card inside the section's own box is what made the lines
  * chart and the stacked chart look like different products (they are the same component).
  *
- * Never breakpoint-gate this. The lines chart carried `md:bg-gray-800 md:border md:rounded` and the
- * daily-stripe card `sm:bg-gray-800 sm:rounded`, so both grew a frame at a width the charts beside
- * them did not — the drift was invisible on a phone and glaring on a laptop.
+ * Never breakpoint-gate this PER SURFACE. The lines chart carried `md:bg-gray-800 md:border
+ * md:rounded` and the daily-stripe card `sm:bg-gray-800 sm:rounded`, so both grew a frame at a width
+ * the charts beside them did not — the drift was invisible on a phone and glaring on a laptop. What
+ * the rule forbids is one card disagreeing with its neighbours; see {@link CHART_PANEL_BLEED} for
+ * the one gate that applies to every surface at once and so cannot drift.
  */
 export const CHART_PANEL =
   "rounded-lg border border-gray-700/70 bg-gray-900/30";
@@ -37,10 +39,37 @@ export const CHART_PANEL =
 export const CHART_PANEL_PAD = "p-2 sm:p-3";
 
 /**
+ * {@link CHART_PANEL} for a section that runs to the SCREEN EDGE below `sm`.
+ *
+ * On a phone the frame costs more than it earns: the chrome is ~20px a side by the time the page
+ * inset, the section padding and the card body padding have each taken their cut, and a 600px Sankey
+ * has to fit in what is left. Sections stack vertically and are separated by `gap-4` regardless, so
+ * the border was never what told them apart — it was just an outline around the whole viewport width.
+ *
+ * This IS a breakpoint-gated frame, and it is allowed where the per-card ones were not, because it
+ * gates every framed surface together: there is no width at which one card has a frame and the card
+ * beside it does not. Above `sm` it is byte-for-byte {@link CHART_PANEL}.
+ */
+export const CHART_PANEL_BLEED =
+  "sm:rounded-lg sm:border sm:border-gray-700/70 sm:bg-gray-900/30";
+
+/** {@link CHART_PANEL_PAD} for a bleeding section: vertical only, so the content reaches the edge. */
+export const CHART_PANEL_PAD_BLEED = "py-2 sm:p-3";
+
+/**
  * Padding for a card body inside a panel. The body's only contribution to the surface — it holds
  * the chart off the section's edge and off its neighbours.
+ *
+ * All but zero horizontally below `sm`, to match {@link CHART_PANEL_BLEED}: bleeding the section but
+ * keeping this inset would just move the same gutter inwards. The vertical padding stays at every
+ * width — it is what keeps stacked charts off each other, which has nothing to do with screen width.
+ *
+ * 🛑 `px-0.5` (2px), NOT `px-0`. A chart is happy flush against the edge, but the energy table beside
+ * it is not: its first and last columns are text, and text touching the bezel reads as clipped even
+ * when every glyph is present. Two pixels is below the threshold where it looks like a margin and
+ * above the one where it looks like a mistake.
  */
-export const CHART_BODY_PAD = "p-2 sm:p-4";
+export const CHART_BODY_PAD = "px-0.5 py-2 sm:p-4";
 
 /**
  * A hairline around content that has no shape of its own — no fill.

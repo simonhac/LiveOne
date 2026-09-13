@@ -14,6 +14,7 @@ import {
   niceDomain,
   stackedBands,
   useContainerSize,
+  useIsTouchDevice,
   usePointerIndex,
 } from "@/lib/charts/svg";
 import { CHART_COLORS } from "@/lib/chart-colors";
@@ -129,6 +130,13 @@ type StackedProps = CommonProps & {
    * {@link RunTooltipAnchor} for why these are not viewport coordinates.
    */
   onHoverRun?: (band: RunBand | null, at?: RunTooltipAnchor) => void;
+  /**
+   * Click: PIN or unpin this run's panel. Separate from `onHoverRun` because the two mean different
+   * things to the card — hover is a transient preview it may discard, a click is a choice it has to
+   * hold on to after the pointer leaves. The card decides which of the two it is looking at; this
+   * chart only reports that a run was clicked.
+   */
+  onToggleRun?: (band: RunBand, at: RunTooltipAnchor) => void;
 };
 
 export type DashboardChartProps = LinesProps | StackedProps;
@@ -175,6 +183,9 @@ export default function DashboardChart(props: DashboardChartProps) {
   // `clipPath` references are document-global, so two charts on one page would otherwise clip each
   // other's run overlays with whichever definition mounted last.
   const clipPrefix = useId().replace(/:/g, "");
+  // Touch has no hover, so a run band is opened by a TAP and toggled shut by a second one — see the
+  // run-overlay block below, and the outside-tap dismissal in `SiteChartsCard`'s `StackedChart`.
+  const isTouch = useIsTouchDevice();
   const isEnergy = props.chartData.mode === "energy";
   const timestamps = props.chartData.timestamps;
 
@@ -296,6 +307,13 @@ export default function DashboardChart(props: DashboardChartProps) {
         width={size.width}
         height={size.height}
         data-testid={`dashboard-chart-${props.variant}`}
+        // `touch-pan-y`: the browser keeps VERTICAL panning (you must still be able to scroll the
+        // page with a finger that happens to land on a chart), but horizontal drags are ours —
+        // scrubbing the crosshair along the time axis is exactly a horizontal drag. Without this the
+        // browser claims the gesture as a sideways scroll and the crosshair never moves, which reads
+        // as the chart ignoring you.
+        className="touch-pan-y"
+        onPointerDown={pointer.onPointerDown}
         onPointerMove={pointer.onPointerMove}
         onPointerLeave={pointer.onPointerLeave}
       >
@@ -483,27 +501,41 @@ export default function DashboardChart(props: DashboardChartProps) {
                       // Index rather than sanitise: the ids are internal and need only be unique.
                       const rectId = `${clipPrefix}-rect-${i}`;
                       const bandId = `${clipPrefix}-band-${i}`;
+                      // `x0`/`x1` are plot-relative (they come from the translated group), so adding
+                      // the plot's own offset puts them in the chart's box — the box the panel is
+                      // positioned inside. No measurement, nothing to go stale.
+                      const anchor = {
+                        x0: geo.plot.left + x0,
+                        x1: geo.plot.left + x1,
+                        plot: {
+                          left: geo.plot.left,
+                          top: geo.plot.top,
+                          width: geo.plot.width,
+                          height: geo.plot.height,
+                        },
+                      };
                       return (
                         <g
                           key={run.id}
                           data-run={run.id}
                           style={{ cursor: "pointer" }}
-                          onPointerEnter={() => {
-                            // `x0`/`x1` are plot-relative (they come from the translated group), so
-                            // adding the plot's own offset puts them in the chart's box — the box
-                            // the panel is positioned inside. No measurement, nothing to go stale.
-                            props.onHoverRun?.(run, {
-                              x0: geo.plot.left + x0,
-                              x1: geo.plot.left + x1,
-                              plot: {
-                                left: geo.plot.left,
-                                top: geo.plot.top,
-                                width: geo.plot.width,
-                                height: geo.plot.height,
-                              },
-                            });
-                          }}
-                          onPointerLeave={() => props.onHoverRun?.(null)}
+                          // CLICK PINS, on every device. On touch it is the only way in: a tap
+                          // fires `pointerenter` at touch-down and `pointerleave` at lift, so the
+                          // hover pair alone showed the panel just while the finger was held down.
+                          //
+                          // The click is deliberately NOT stopped from propagating: it should move
+                          // the shared crosshair (the svg's `onPointerMove`) as well as open the
+                          // panel. A run is a region of this chart, not a thing apart from it.
+                          onClick={() => props.onToggleRun?.(run, anchor)}
+                          // Hover PREVIEWS, with a mouse only. Whether a preview is allowed to
+                          // displace what is already showing is the card's call, not this chart's.
+                          {...(isTouch
+                            ? {}
+                            : {
+                                onPointerEnter: () =>
+                                  props.onHoverRun?.(run, anchor),
+                                onPointerLeave: () => props.onHoverRun?.(null),
+                              })}
                         >
                           <defs>
                             <clipPath id={rectId}>

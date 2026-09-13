@@ -160,6 +160,16 @@ interface NodeTooltipProps {
    */
   positioning?: "fixed" | "absolute";
   panelRef?: React.Ref<HTMLDivElement>;
+  /**
+   * Tap-to-dismiss, for a panel opened by a tap rather than held open by a hover.
+   *
+   * Supplying it also makes the panel take pointer events at all. At rest the panel is
+   * `pointer-events-none`, which is right on desktop (the pointer must reach the node underneath to
+   * keep the hover alive) and wrong on touch: a tap on the panel would fall THROUGH to whatever it
+   * covers — commonly another node's hit rect or an adjacent run band — and silently re-point the
+   * panel at a different subject.
+   */
+  onDismiss?: () => void;
 }
 
 /** One value column — a bold number with its unit rendered beneath (mirrors the Sankey node's "58.4"
@@ -246,6 +256,7 @@ export default function NodeTooltip({
   hidden = false,
   positioning = "fixed",
   panelRef,
+  onDismiss,
 }: NodeTooltipProps) {
   const isFull = data.variant === "full";
 
@@ -265,11 +276,18 @@ export default function NodeTooltip({
   return (
     <div
       ref={panelRef}
-      // Spelled out rather than interpolated: Tailwind generates utilities by finding the class name
-      // as a literal in the source, and `${positioning}` is not one.
+      // Both conditionals are spelled out rather than interpolated: Tailwind generates utilities by
+      // finding the class name as a literal in the source, and `${positioning}` is not one.
+      // 🛑 `z-20`, which is BELOW the dashboard header's `z-30`. The header is sticky and the chart
+      // slides under it; a panel that out-ranked it slid OVER it instead, so a tooltip opened near the
+      // top of a chart covered the site name and the period picker. The panel has to out-rank the
+      // chart it describes and nothing else.
       className={`node-tooltip ${ttInterphases.className} ${
         positioning === "absolute" ? "absolute" : "fixed"
-      } z-[100] pointer-events-none rounded p-3 shadow-lg`}
+      } z-20 ${
+        onDismiss ? "pointer-events-auto" : "pointer-events-none"
+      } rounded p-3 shadow-lg`}
+      onClick={onDismiss}
       style={{
         left,
         top,

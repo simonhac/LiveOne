@@ -1,5 +1,10 @@
 import type { ReactNode } from "react";
-import { CHART_PANEL, CHART_PANEL_PAD } from "@/lib/charts/style";
+import {
+  CHART_PANEL,
+  CHART_PANEL_BLEED,
+  CHART_PANEL_PAD,
+  CHART_PANEL_PAD_BLEED,
+} from "@/lib/charts/style";
 
 export interface PanelProps {
   children: ReactNode;
@@ -7,6 +12,13 @@ export interface PanelProps {
   as?: "div" | "section";
   /** Drop the built-in padding when the child owns its own edges (a full-bleed table). */
   padded?: boolean;
+  /**
+   * Run to the screen edge below `sm` — no frame, no horizontal padding. For a DASHBOARD SECTION,
+   * which spans the viewport anyway; see {@link CHART_PANEL_BLEED} for why this one breakpoint gate
+   * is allowed where the per-card ones were not. A standalone page's panel does not want it: it is a
+   * box on a page, not the page.
+   */
+  bleed?: boolean;
   className?: string;
 }
 
@@ -29,12 +41,15 @@ export default function Panel({
   children,
   as = "div",
   padded = true,
+  bleed = false,
   className = "",
 }: PanelProps) {
   const Tag = as;
+  const frame = bleed ? CHART_PANEL_BLEED : CHART_PANEL;
+  const pad = bleed ? CHART_PANEL_PAD_BLEED : CHART_PANEL_PAD;
   return (
     <Tag
-      className={`${CHART_PANEL}${padded ? ` ${CHART_PANEL_PAD}` : ""}${
+      className={`${frame}${padded ? ` ${pad}` : ""}${
         className ? ` ${className}` : ""
       }`}
     >
