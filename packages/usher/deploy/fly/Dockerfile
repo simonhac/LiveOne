@@ -11,6 +11,7 @@ WORKDIR /repo
 # Install with the full workspace manifest set so npm links @liveone/protocol ⇄ @liveone/usher.
 COPY package.json package-lock.json ./
 COPY packages/protocol/package.json packages/protocol/package.json
+COPY packages/telemetry/package.json packages/telemetry/package.json
 COPY packages/usher/package.json packages/usher/package.json
 RUN npm ci --no-audit --no-fund
 COPY . .

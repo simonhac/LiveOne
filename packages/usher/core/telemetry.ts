@@ -1,3 +1,4 @@
+import { readViews, telemetryInstanceId } from "@liveone/telemetry";
 /**
  * OTel metrics export to Better Stack, for the usher hub on Fly (`liveone-flyhub`).
  *
@@ -52,12 +53,15 @@ export function initTelemetry(log: (m: string) => void = console.log): void {
 
   const resource = resourceFromAttributes({
     [ATTR_SERVICE_NAME]: SERVICE_NAME,
+    "service.version":
+      process.env.SERVICE_VERSION ?? process.env.FLY_IMAGE_REF ?? "development",
+    "service.instance.id": telemetryInstanceId,
   });
 
   if (!token) {
     // No token is a legitimate state (a Pi, a laptop, a test). Gauges still register and go nowhere,
     // so there is no separate untested code path.
-    provider = new MeterProvider({ resource });
+    provider = new MeterProvider({ resource, views: readViews });
     log("telemetry: metrics export disabled (no BETTERSTACK_SOURCE_TOKEN)");
     return;
   }
@@ -66,7 +70,7 @@ export function initTelemetry(log: (m: string) => void = console.log): void {
     // Loud, and NOT fatal: the usher's job is to keep polling generators and inverters. Losing
     // metrics must never cost a reading. This is the one place the two differ from clara, which
     // throws — clara is a chat bot, the usher is data collection that runs unattended.
-    provider = new MeterProvider({ resource });
+    provider = new MeterProvider({ resource, views: readViews });
     log(
       "telemetry: BETTERSTACK_SOURCE_TOKEN is set but BETTERSTACK_METRICS_ENDPOINT is not — " +
         "metrics DISABLED. Set it to this source's own ingesting host, e.g. " +
@@ -79,6 +83,7 @@ export function initTelemetry(log: (m: string) => void = console.log): void {
 
   const inner = new OTLPMetricExporter({
     url: endpoint,
+    timeoutMillis: 3000,
     headers: { Authorization: `Bearer ${token}` },
   });
 
@@ -110,10 +115,12 @@ export function initTelemetry(log: (m: string) => void = console.log): void {
 
   provider = new MeterProvider({
     resource,
+    views: readViews,
     readers: [
       new PeriodicExportingMetricReader({
         exporter,
         exportIntervalMillis: 60_000,
+        exportTimeoutMillis: 4000,
       }),
     ],
   });

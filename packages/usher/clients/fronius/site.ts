@@ -1,3 +1,4 @@
+import { beginProductionRead } from "../../core/read-metrics";
 import { recordProductionRead } from "../../core/trial-monitor";
 import { captureTrial } from "../../core/trial-capture";
 import type { PushReading } from "../../core/source";
@@ -15,6 +16,7 @@ import { formatLocalDateTime } from "../../lib/date-utils";
  * discovery helper lives in tools/discover-fronius.ts as an occasional on-LAN setup CLI.)
  */
 export interface FroniusInverterConfig {
+  telemetry?: { deviceId: string; readerId: string };
   host: string;
   isMaster?: boolean;
 }
@@ -323,6 +325,10 @@ export class Site extends EventEmitter {
           batteryInfo,
           meterInfo,
         );
+        inverter.onReadStart = () =>
+          beginProductionRead(
+            cfg.telemetry ? { ...cfg.telemetry, vendor: "fronius" } : undefined,
+          );
         inverter.onProductionRead = (duration, ok, error) =>
           recordProductionRead(this.name, duration, ok, error);
         inverter.onTrialSample = (at, raw) =>

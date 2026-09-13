@@ -1,3 +1,5 @@
+import { beginProductionRead } from "../core/read-metrics";
+import { classifyReadError } from "@liveone/telemetry";
 import { captureTrial } from "../core/trial-capture";
 /**
  * musher — the Modbus source (DeepSea DSE7410 → gusher).
@@ -189,6 +191,7 @@ export function deriveDigitalValues(values: Values): void {
 }
 
 export interface MusherOptions {
+  telemetry?: { deviceId: string; readerId: string };
   siteId: string;
   host?: string;
   port?: number;
@@ -253,7 +256,12 @@ export function createMusher(opts: MusherOptions): Source {
     const queued = new Promise<never>((_, reject) => {
       queueTimer = setTimeout(() => {
         cancelled = true;
-        reject(new Error(`${label} waited ${queueMs}ms for the device lock`));
+        reject(
+          Object.assign(
+            new Error(`${label} waited ${queueMs}ms for the device lock`),
+            { code: "ETIMEDOUT" },
+          ),
+        );
       }, queueMs);
     });
 
@@ -268,7 +276,13 @@ export function createMusher(opts: MusherOptions): Source {
       let timer: ReturnType<typeof setTimeout>;
       const timeout = new Promise<never>((_, reject) => {
         timer = setTimeout(
-          () => reject(new Error(`${label} exceeded ${ms}ms (hung Modbus op)`)),
+          () =>
+            reject(
+              Object.assign(
+                new Error(`${label} exceeded ${ms}ms (hung Modbus op)`),
+                { code: "ETIMEDOUT" },
+              ),
+            ),
           ms,
         );
       });
@@ -384,10 +398,12 @@ export function createMusher(opts: MusherOptions): Source {
     void journal?.append(record); // primary: durable /data/usher/diag/*.jsonl
   }
 
-  async function readInner(): Promise<Values> {
+  async function readInner(onPartial: () => void): Promise<Values> {
     try {
       // readAll() returns the whole mapped set; buildReadings pushes only the manifest fields.
       const dump = await dse.readAll();
+      if (dump.pageErrors?.length || dump.readings.some((r) => r.error))
+        onPartial();
       lastRaw = Object.fromEntries(
         dump.readings.map((r) => [r.field.key, r.rawWords]),
       );
@@ -562,10 +578,36 @@ export function createMusher(opts: MusherOptions): Source {
     name: "musher",
     siteId: opts.siteId,
     manifest: DEEPSEA_MANIFEST,
-    read(): Promise<Values> {
-      return withLock("poll read", READ_LOCK_MS, READ_QUEUE_MS, () =>
-        readInner(),
+    async read(): Promise<Values> {
+      const finish = beginProductionRead(
+        opts.telemetry ? { ...opts.telemetry, vendor: "deepsea" } : undefined,
       );
+      let partial = false;
+      try {
+        const values = await withLock(
+          "poll read",
+          READ_LOCK_MS,
+          READ_QUEUE_MS,
+          () =>
+            readInner(() => {
+              partial = true;
+            }),
+        );
+        const valid = Object.values(values).some(
+          (v) => typeof v === "number" && Number.isFinite(v),
+        );
+        finish(partial ? "partial" : valid ? "success" : "error", {
+          kind: partial ? "device_error" : undefined,
+          code: valid ? undefined : "invalid_response",
+        });
+        return values;
+      } catch (error) {
+        finish(
+          classifyReadError(error) === "cancelled" ? "cancelled" : "error",
+          error,
+        );
+        throw error;
+      }
     },
     // Running when the engine is turning / producing — drives the loop's faster (1-min) cadence. In
     // diag mode this reports run + post-run hold, so the fast cadence — and thus the 1-min

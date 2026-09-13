@@ -378,7 +378,11 @@ func testRuntime(t *testing.T) *Runtime {
 	if e != nil {
 		t.Fatal(e)
 	}
-	return &Runtime{b: Bootstrap{Mode: "shadow", DataDir: dir, ReceiverURL: "http://localhost:9001/capture", AllowedHosts: []string{"master"}}, key: bytes.Repeat([]byte{1}, 32), generations: map[string]*generation{}, health: map[string]Health{}, spool: sp, blackbox: bb, cached: cache{Credentials: map[string]map[string]string{}}}
+	grants := map[string]trialPermit{}
+	for rev := 0; rev < 20; rev++ {
+		grants[permitKey("p", rev)] = trialPermit{Until: time.Now().Add(time.Hour)}
+	}
+	return &Runtime{permits: grants, b: Bootstrap{Mode: "shadow", TrialPermitPolicyID: "test-policy", DataDir: dir, ReceiverURL: "http://localhost:9001/capture", AllowedHosts: []string{"master"}}, key: bytes.Repeat([]byte{1}, 32), generations: map[string]*generation{}, health: map[string]Health{}, spool: sp, blackbox: bb, cached: cache{Credentials: map[string]map[string]string{}}}
 }
 func TestReaderReplacementWaitsAndPreservesCadenceState(t *testing.T) {
 	r := testRuntime(t)

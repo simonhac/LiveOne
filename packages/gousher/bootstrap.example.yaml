@@ -4,8 +4,12 @@
   "dataDir": "/data/gousher",
   "listen": "127.0.0.1:8080",
   "mode": "replay",
-  "allowedHosts": ["127.0.0.1:18080", "127.0.0.1"],
+  "allowedHosts": [
+    "127.0.0.1:18080",
+    "127.0.0.1"
+  ],
   "spoolBytes": 134217728,
   "blackboxBytes": 33554432,
-  "reserveBytes": 67108864
+  "reserveBytes": 67108864,
+  "trialPermitPolicyId": "REPLACE_WITH_REVIEWED_POLICY_SHA256"
 }

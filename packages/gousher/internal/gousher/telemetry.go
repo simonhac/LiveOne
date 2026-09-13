@@ -74,11 +74,14 @@ func (r *Runtime) telemetryPayload(now time.Time) any {
 	}}}
 }
 func (r *Runtime) ExportTelemetry(ctx context.Context, endpoint, token string) error {
+	return exportTelemetryPayload(ctx, endpoint, token, r.telemetryPayload(time.Now()))
+}
+func exportTelemetryPayload(ctx context.Context, endpoint, token string, payload any) error {
 	u, e := url.Parse(endpoint)
 	if e != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || token == "" || (u.Scheme != "https" && !(u.Scheme == "http" && (u.Hostname() == "127.0.0.1" || u.Hostname() == "localhost"))) {
 		return errors.New("invalid telemetry endpoint or missing dedicated token")
 	}
-	data, e := json.Marshal(r.telemetryPayload(time.Now()))
+	data, e := json.Marshal(payload)
 	if e != nil {
 		return errors.New("telemetry encoding failed")
 	}

@@ -28,7 +28,7 @@ or production backlogs into the trial volume.
 
 Create a collector and a paused poller on `/admin/pollers`, install its bootstrap and secrets, and
 start `gousher -config /path/bootstrap.yaml`. Config refreshes every 30 seconds, with a five-minute
-outage backoff ceiling. A valid cache permits offline restart. Credentials refresh separately, are
+outage backoff ceiling. A valid cache permits configuration recovery; shadow reads still require a fresh boot-bound permit. Credentials refresh separately, are
 never put into delivery records, and changes rebuild only their affected reader. A second process
 cannot own the same data directory.
 
@@ -115,6 +115,13 @@ configuration revision being captured. The asynchronous gzip journal has a 32 Mi
 a bounded in-memory queue and a 64 MiB free-space reserve; capture failures do not fail collection.
 DSE records include raw registers and expected readings; Fronius records include ordered integration
 inputs and explicit harvest boundaries. Change the revision whenever the captured configuration changes.
+
+## Production telemetry and four-vendor trial
+
+See [production-telemetry.md](docs/production-telemetry.md) for the metric contract,
+private identity configuration, independent observer, reviewed policy and expiring
+read permits. The shared trial covers Fronius, Deep Sea, Selectronic and Sigenergy
+for 14 days after preflight, with seven clean final-build days.
 
 ## Verification and monitoring
 

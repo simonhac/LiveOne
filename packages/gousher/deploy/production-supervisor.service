@@ -1,0 +1,24 @@
+[Unit]
+Description=Independent LiveOne production evidence supervisor
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=gousher-production-supervisor
+Group=gousher-production-supervisor
+WorkingDirectory=/opt/liveone
+StateDirectory=gousher-production-supervisor
+EnvironmentFile=/etc/gousher/production-supervisor.env
+ExecStart=/opt/liveone/node_modules/.bin/tsx scripts/gousher/production-supervisor.ts /etc/gousher/production-supervisor.json
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=30
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

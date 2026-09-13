@@ -1,0 +1,68 @@
+{
+  "liveoneUrl": "https://liveone.example",
+  "collectorTokenEnv": "LIVEONE_COLLECTOR_TOKEN",
+  "queryUrl": "https://query.example",
+  "queryUsernameEnv": "BETTERSTACK_QUERY_USERNAME",
+  "queryPasswordEnv": "BETTERSTACK_QUERY_PASSWORD",
+  "dataDir": "/var/lib/gousher-production-supervisor",
+  "port": 8090,
+  "healthTokenEnv": "GOUSHER_SUPERVISOR_HEALTH_TOKEN",
+  "targets": [
+    {
+      "pollerId": "00000001-1111-4111-8111-111111111111",
+      "revision": 1,
+      "deviceId": "00000001-1111-4111-8111-111111111111",
+      "readerId": "00000001-1111-4111-8111-111111111111",
+      "pointId": "00000001-1111-4111-8111-111111111111",
+      "vendor": "fronius",
+      "cadenceSec": 60,
+      "liveSessionCauses": ["PUSH"],
+      "source": "t12345_example_metrics",
+      "service": "liveone-usher",
+      "statWindowSec": 7200,
+      "readCadenceSec": 2
+    },
+    {
+      "pollerId": "00000002-1111-4111-8111-111111111111",
+      "revision": 1,
+      "deviceId": "00000002-1111-4111-8111-111111111111",
+      "readerId": "00000002-1111-4111-8111-111111111111",
+      "pointId": "00000002-1111-4111-8111-111111111111",
+      "vendor": "deepsea",
+      "cadenceSec": 300,
+      "liveSessionCauses": ["PUSH"],
+      "source": "t12345_example_metrics",
+      "service": "liveone-usher",
+      "statWindowSec": 7200,
+      "readCadenceSec": 60
+    },
+    {
+      "pollerId": "00000003-1111-4111-8111-111111111111",
+      "revision": 1,
+      "deviceId": "00000003-1111-4111-8111-111111111111",
+      "readerId": "00000003-1111-4111-8111-111111111111",
+      "pointId": "00000003-1111-4111-8111-111111111111",
+      "vendor": "selectronic",
+      "cadenceSec": 60,
+      "liveSessionCauses": ["CRON"],
+      "source": "t12345_example_metrics",
+      "service": "liveone",
+      "statWindowSec": 7200,
+      "readCadenceSec": 60
+    },
+    {
+      "pollerId": "00000004-1111-4111-8111-111111111111",
+      "revision": 1,
+      "deviceId": "00000004-1111-4111-8111-111111111111",
+      "readerId": "00000004-1111-4111-8111-111111111111",
+      "pointId": "00000004-1111-4111-8111-111111111111",
+      "vendor": "sigenergy",
+      "cadenceSec": 300,
+      "liveSessionCauses": ["CRON"],
+      "source": "t12345_example_metrics",
+      "service": "liveone",
+      "statWindowSec": 7200,
+      "readCadenceSec": 300
+    }
+  ]
+}

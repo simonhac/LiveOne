@@ -49,6 +49,9 @@ type inspectorState struct {
 	Count   int
 }
 type Runtime struct {
+	permitMu                             sync.Mutex
+	permits                              map[string]trialPermit
+	permitBootID                         string
 	telemetryInstance                    string
 	readMetrics                          map[string]readMetrics
 	telemetryError                       string
@@ -296,6 +299,11 @@ func (r *Runtime) apply(ctx context.Context, c Config, creds map[string]map[stri
 		r.generations[p.ID] = g
 		r.mu.Lock()
 		r.cached = next
+		if old != nil && old.p.Revision != p.Revision {
+			r.permitMu.Lock()
+			delete(r.permits, permitKey(p.ID, old.p.Revision))
+			r.permitMu.Unlock()
+		}
 		if !reuse {
 			delete(r.inspector, p.ID)
 		}
@@ -309,7 +317,10 @@ func (r *Runtime) apply(ctx context.Context, c Config, creds map[string]map[stri
 			r.readerCancels = map[string]readerCancellation{}
 		}
 		r.readerCancels[p.ID] = readerCancellation{p.Revision, cancel}
-		h.Stopped = p.Paused || p.Deleted || r.b.Mode == "replay" || disabled
+		h.Stopped = true
+		if !p.Paused && !p.Deleted && r.b.Mode == "shadow" && !disabled {
+			h.Error = "awaiting-permit"
+		}
 		if disabled {
 			h.Error = "reader-disabled"
 		}
@@ -342,6 +353,8 @@ func (r *Runtime) setError(id, code string) {
 	r.health[id] = h
 }
 func (r *Runtime) collect(ctx context.Context, g *generation) {
+	ctx, cancelReads := context.WithCancel(ctx)
+	defer cancelReads()
 	defer close(g.done)
 	defer func() {
 		r.mu.Lock()
@@ -354,11 +367,32 @@ func (r *Runtime) collect(ctx context.Context, g *generation) {
 		defer source.StopBackground()
 	}
 	p := g.p
+	if !r.awaitPermit(ctx, p) {
+		return
+	}
+	permitCtx, stopPermit := context.WithCancel(ctx)
+	permitDone := make(chan struct{})
+	defer func() { stopPermit(); <-permitDone }()
+	go func() { defer close(permitDone); r.supervisePermit(permitCtx, p, cancelReads) }()
+	if source, ok := g.source.(interface{ SetReadContext(context.Context) }); ok {
+		source.SetReadContext(ctx)
+	}
+	r.mu.Lock()
+	h := r.health[p.ID]
+	if ctx.Err() == nil && !(r.trial[p.ID].Revision == p.Revision && r.trial[p.ID].Disabled) {
+		h.Stopped = false
+		h.Error = ""
+	}
+	r.health[p.ID] = h
+	r.mu.Unlock()
 	nextPush := time.Now()
 	lastActive := false
 	var holdUntil time.Time
 	for {
 		if ctx.Err() != nil {
+			return
+		}
+		if !r.awaitPermit(ctx, p) {
 			return
 		}
 		started := time.Now()

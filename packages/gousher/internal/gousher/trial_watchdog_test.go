@@ -13,12 +13,14 @@ import (
 )
 
 func TestWatchdogEvidenceAndDurableRuntimeShutdown(t *testing.T) {
-	for _, scenario := range []string{"healthy", "missing", "stale", "future", "unhealthy", "wrong-poller", "wrong-revision", "wrong-policy", "missing-result", "malformed", "null", "timeout", "redirect"} {
+	for _, scenario := range []string{"healthy", "healthy-capped", "missing", "stale", "future", "unhealthy", "wrong-poller", "wrong-revision", "wrong-policy", "missing-result", "malformed", "null", "timeout", "redirect"} {
 		t.Run(scenario, func(t *testing.T) {
 			now := time.Now().UTC()
 			healthy := true
 			evidence := SupervisorEvidence{"p", 1, "reviewed-policy", now.Add(-time.Second), &healthy}
 			switch scenario {
+			case "healthy-capped":
+				evidence.ObservedAt = now.Add(-50 * time.Second)
 			case "stale":
 				evidence.ObservedAt = now.Add(-61 * time.Second)
 			case "future":
@@ -61,6 +63,8 @@ func TestWatchdogEvidenceAndDurableRuntimeShutdown(t *testing.T) {
 			defer source.Close()
 			runtime := testRuntime(t)
 			runtime.inspectorToken = "stop-secret"
+			runtime.b.TrialPermitPolicyID = "reviewed-policy"
+			runtime.permits = nil
 			runtime.cached.Config.Pollers = []Poller{{ID: "p", Revision: 1}}
 			reading, cancel := context.WithCancel(context.Background())
 			defer cancel()
@@ -78,7 +82,10 @@ func TestWatchdogEvidenceAndDurableRuntimeShutdown(t *testing.T) {
 				watchdog.client.Timeout = 100 * time.Millisecond
 			}
 			err = watchdog.Once(context.Background(), now)
-			if scenario == "healthy" {
+			if scenario == "healthy" || scenario == "healthy-capped" {
+				if scenario == "healthy-capped" && err == nil {
+					err = watchdog.Once(context.Background(), now)
+				}
 				if err != nil || reading.Err() != nil {
 					t.Fatalf("healthy evidence stopped reader: %v", err)
 				}

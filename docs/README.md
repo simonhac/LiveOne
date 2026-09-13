@@ -100,3 +100,5 @@ Kept because they answer _why does the system look like this_ — not because th
 
 - [project-history.md](project-history.md) — feature/architecture timeline
 - incidents/ — [2025-11-11 migration 0035](incidents/2025-11-11-migration-0035-point-readings-corruption.md) · [2025-11-17 migration 0016](incidents/2025-11-17-migration-0016-point-info-corruption.md) · [2025-11-26 Amber import channel collision](incidents/2025-11-26-amber-import-channel-collision.md) · [2026-06-16 prod down — migration not applied](incidents/2026-06-16-prod-down-default-dashboard-migration-not-applied.md) · [2026-07-25 prod→dev sync connection dropouts](incidents/2026-07-25-prod-dev-sync-connection-dropouts.md) · [2026-09-09 observations queue head-of-line stall](incidents/2026-09-09-observations-queue-head-of-line-stall.md) · [2026-09-11 prod down — PlanetScale role deleted](incidents/2026-09-11-prod-down-planetscale-role-deleted.md)
+
+- [Production telemetry and four-vendor trial](../packages/gousher/docs/production-telemetry.md) — metric names, private configuration, observation, expiring read permits and the shared 14-day qualification.

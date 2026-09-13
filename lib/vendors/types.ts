@@ -58,6 +58,8 @@ export interface FetchContext {
  * What vendors return from fetchData()
  */
 export interface FetchResult {
+  /** Structured vendor error class for bounded telemetry classification. */
+  errorKind?: string;
   success: boolean;
   readings?: PointReadingInput[]; // Raw readings
   readingsAgg5m?: PointReadingAgg5mInput[]; // Pre-aggregated (Enphase, Amber)

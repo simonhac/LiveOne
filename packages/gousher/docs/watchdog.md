@@ -4,7 +4,7 @@
 collector shutdown. It runs separately from the production and trial collectors,
 polls a bounded authenticated health endpoint every five seconds, and latches a
 shutdown for exactly one poller revision when evidence is missing or invalid.
-It never enables a collector or clears a shutdown. This is implemented and tested
+It renews short-lived read permits only after valid health evidence; it never clears a shutdown. This is implemented and tested
 locally, not deployed or qualified for live device access.
 
 ## Evidence contract
@@ -76,17 +76,24 @@ persistent state and automatic restart. Provision the account and matching confi
 paths before installing it. Run only one instance for a given configuration.
 Never configure the legacy production forwarding environment for this service.
 
+## Expiring read permits
+
+The watchdog now requests a boot-bound permit after each healthy check. See
+[production telemetry](production-telemetry.md) for configuration and the observer.
+Permits last at most 15 seconds (also capped by evidence expiry); renewal failures
+latch shutdown. The collector waits for its first permit and cancels on expiry.
+Permits are not recovered from disk. A new managed revision is required after a trip.
+
 ## Remaining activation gates
 
-- Implement the supervisor adapter using existing production telemetry and/or
-  LiveOne readings. The legacy `trial-ops` health files do **not** satisfy this
+- Deploy and qualify the production-telemetry supervisor and scoped LiveOne
+  observer. The legacy `trial-ops` health files do **not** satisfy this
   evidence contract and its raw-capture metrics feed remains unavailable.
 - Measure a baseline and explicitly review a replacement for the unavailable
   per-device failure-rate/p95 metrics. No replacement thresholds are approved here.
-- Add a collector-side expiring permit or independently tested host-stop fallback.
-  If the trial inspector is unreachable, this watchdog cannot prove the reader
-  stopped. Likewise, its own death cannot issue a stop. This component alone is
-  insufficient to authorize live reads or inhibit startup before the first check.
+- Fault-test collector-side permit expiry on the actual host, including inspector
+  loss, watchdog death and process restart. Unit/race tests do not establish a
+  host-level bound on completed transport cancellation.
 - Qualify those failure modes on trial-only infrastructure before enabling device
   routes, and retain evidence separately from replay and comparison results.
 

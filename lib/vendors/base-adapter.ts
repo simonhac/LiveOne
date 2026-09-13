@@ -1,3 +1,4 @@
+import { observeCloudRead } from "@/lib/telemetry/production-reads";
 import {
   measureProductionRead,
   attachProductionEvidence,
@@ -286,13 +287,25 @@ export abstract class BaseVendorAdapter implements VendorAdapter {
       ["selectronic", "sigenergy"].includes(this.vendorType);
     try {
       // 3. Fetch data (vendor implementation) - track "fetch" stage with live updates
-      const fetch = () =>
+      const rawFetch = () =>
         this.fetchData(device, credentials, {
           startedAt,
           dryRun,
           session,
           collector,
         });
+      const fetch = () =>
+        !dryRun &&
+        sessionCause === "CRON" &&
+        (this.vendorType === "selectronic" || this.vendorType === "sigenergy")
+          ? observeCloudRead(
+              this.vendorType,
+              "uuid" in device && typeof device.uuid === "string"
+                ? device.uuid
+                : undefined,
+              rawFetch,
+            )
+          : rawFetch();
       const result = await withProgress("fetch", () =>
         captureRead
           ? measureProductionRead(this.vendorType, fetch, (e) => {
