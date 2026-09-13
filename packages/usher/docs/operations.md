@@ -153,3 +153,28 @@ immediately regardless of the push cadence.
 
 - Register map and decode rules for the DeepSea controller: [`scripts/modbus-registers.md`](../../../scripts/modbus-registers.md)
   (ground truth is `clients/dse-client.ts`).
+
+### DeepSea diagnostic partial reads (2026-09-13)
+
+The production controller (GenComm manufacturer `1`, model `0x804D` / `32845`)
+returned errors for bulk reads spanning unmapped holes on pages 12, 13 and 178;
+individual mapped fields on those pages succeeded. `readAll()` now batches only
+contiguous mapped words. Segment errors and failed individual reads still make
+production telemetry partial; they are not reclassified as successes.
+
+Four hybrid-only fields on page 7 (`plantBatterySoc`, `loadKwh`,
+`batteryChargeKwh`, `batteryDischargeKwh`) returned FC3 exception 1 individually.
+For this exact manufacturer/model pair, read from the current poll, the driver
+excludes those requests and retains null diagnostic entries with an explicit
+`unsupported` reason and empty raw words. Unknown or failed identity reads do
+not activate this profile. This is a field-qualified exclusion, not a general
+rule that an illegal-function response means a healthy read. The CLI and durable
+diagnostic journal display the distinction; stdout reports the unsupported count.
+
+After deployment, require normal production polls with zero field/page errors,
+four unsupported entries, current battery/engine/I/O data, and a fresh DeepSea
+`liveone.read.last_success` reaching the independent observer. Start the final
+24–48-hour DeepSea baseline with a complete statistical window after that
+verification. Retain the earlier observations as diagnostic history; do not use
+the mixed pre/post-fix windows to set trial thresholds. This does not enable the
+trial or its readers.

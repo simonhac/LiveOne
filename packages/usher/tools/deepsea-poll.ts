@@ -133,6 +133,7 @@ function fmtAlarmWord(raw: number): string {
 
 /** Interpret one reading into a display string, per its field kind. */
 function interpret(r: FieldReading): string {
+  if (r.unsupported) return `unsupported (${r.unsupported})`;
   if (r.error) return `read error (${r.error})`;
   const { field, value, rawInt } = r;
   switch (field.kind) {

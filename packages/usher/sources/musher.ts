@@ -356,6 +356,7 @@ export function createMusher(opts: MusherOptions): Source {
         const na = sentinelReason(r.field, r.rawInt);
         if (na) e.na = na;
       }
+      if (r.unsupported) e.unsupported = r.unsupported;
       if (r.error) e.e = r.error; // value null + no raw words = a read error (≠ a sentinel)
       fields[r.field.key] = e;
     }
@@ -384,6 +385,7 @@ export function createMusher(opts: MusherOptions): Source {
     const naCount = Object.values(fields).filter(
       (f) => (f as Record<string, unknown>).na !== undefined,
     ).length;
+    const unsupportedCount = dump.readings.filter((r) => r.unsupported).length;
     const errCount = Object.values(fields).filter(
       (f) => (f as Record<string, unknown>).e !== undefined,
     ).length;
@@ -393,7 +395,7 @@ export function createMusher(opts: MusherOptions): Source {
       `[musher-diag] ${record.site}/${record.unit} running=${running} hold=${hold} ` +
         `batteryV=${moving("batteryV")} runTime=${moving("engineRunTime")} ` +
         `ctrlTime=${moving("controllerTime")} ` +
-        `sentinels=${naCount} errors=${errCount} pageErrors=${record.pageErrors.length}`,
+        `sentinels=${naCount} unsupported=${unsupportedCount} errors=${errCount} pageErrors=${record.pageErrors.length}`,
     );
     void journal?.append(record); // primary: durable /data/usher/diag/*.jsonl
   }
