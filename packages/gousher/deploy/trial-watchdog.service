@@ -1,0 +1,22 @@
+[Unit]
+Description=Independent Gousher supervisor-evidence watchdog
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=gousher-trial-watchdog
+Group=gousher-trial-watchdog
+StateDirectory=gousher-trial-watchdog
+EnvironmentFile=/etc/gousher/trial-watchdog.env
+ExecStart=/usr/local/bin/trial-watchdog -config /etc/gousher/trial-watchdog.json
+Restart=always
+RestartSec=5
+TimeoutStopSec=10
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

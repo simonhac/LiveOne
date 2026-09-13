@@ -166,7 +166,7 @@ func (r *Runtime) trialIncidents(w http.ResponseWriter, req *http.Request) {
 	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
-	if e = decoder.Decode(&input); e != nil || (input.Reason != "session-evicted" && input.Reason != "connection-disruption" && input.Reason != "attempted-write") {
+	if e = decoder.Decode(&input); e != nil || (input.Reason != "session-evicted" && input.Reason != "connection-disruption" && input.Reason != "attempted-write" && input.Reason != "supervision-unavailable") {
 		jsonResponse(w, 400, map[string]string{"error": "invalid incident"})
 		return
 	}
