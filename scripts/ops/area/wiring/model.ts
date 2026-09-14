@@ -5,7 +5,7 @@
  * particular is the step whose failure is SILENT (see `index.ts`), so it lives as a pure exported
  * function that a test can exercise directly.
  */
-import { EXIT, failWith } from "@/lib/cli/cli";
+import { CliFailure, EXIT, failWith } from "@/lib/cli/cli";
 import { type ApiSession } from "@/lib/cli-kit/api-session";
 import { resolveRef } from "../../shared";
 
@@ -90,6 +90,19 @@ export async function loadAggregate(
   };
 }
 
+/** A member whose points could not be fetched, so the pool is missing them. */
+export interface UnreadableMember {
+  deviceId: string;
+  name: string;
+  reason: string;
+}
+
+/** The point pool, plus whichever members did not contribute to it. */
+export interface PointPool {
+  points: PointCandidate[];
+  unreadable: UnreadableMember[];
+}
+
 /**
  * Every point on every member device, which is exactly the pool a binding may draw from.
  *
@@ -97,27 +110,53 @@ export async function loadAggregate(
  * either way. Dropping it does not fail: it yields an empty pool, which turns every `role set` into
  * "no point matching …" and every `role list` into a wall of raw `pt_` ids. So an empty pool from a
  * non-empty membership is treated as the bug it is, rather than as an area with nothing to bind.
+ *
+ * 🛑 `includeInactive=true`, and a per-member failure is RECORDED rather than thrown. An area
+ * aggregate returns its non-active members (`lib/areas/v4-shapes.ts` says so explicitly), while the
+ * per-device route is `activeOnly` — so this loop used to 404 on the first retired member and take
+ * the whole verb down with it. `liveone area role list` on Craig Unified, whose job is to report an
+ * area's wiring, answered `error: Device not found` and exit 1: an area whose devices had been
+ * retired was unreportable by the one verb that reports it, and the readable two-thirds of the
+ * answer went with it. Failing OPEN is the point — the caller is told which members are missing and
+ * still gets the rest.
  */
 export async function loadPointPool(
   s: ApiSession,
   members: WireMember[],
-): Promise<PointCandidate[]> {
-  const pool: PointCandidate[] = [];
+): Promise<PointPool> {
+  const points: PointCandidate[] = [];
+  const unreadable: UnreadableMember[] = [];
   for (const m of members) {
-    const dev = await s.get<{ name: string; points?: WirePoint[] }>(
-      `/api/v4/devices/${encodeURIComponent(m.id)}?include=points`,
-    );
-    for (const p of dev.points ?? [])
-      pool.push({ ...p, deviceId: m.id, deviceName: dev.name ?? m.name });
+    try {
+      const dev = await s.get<{ name: string; points?: WirePoint[] }>(
+        `/api/v4/devices/${encodeURIComponent(m.id)}?include=points&includeInactive=true`,
+      );
+      for (const p of dev.points ?? [])
+        points.push({ ...p, deviceId: m.id, deviceName: dev.name ?? m.name });
+    } catch (e) {
+      unreadable.push({
+        deviceId: m.id,
+        name: m.name,
+        reason:
+          e instanceof CliFailure
+            ? e.detail.what
+            : e instanceof Error
+              ? e.message
+              : String(e),
+      });
+    }
   }
-  if (members.length && !pool.length)
+  // Unchanged in meaning, but it must not fire when every member was ACCOUNTED FOR: an area of two
+  // unreadable members has an empty pool for a reason the caller has already been told, and
+  // throwing here would simply move the fail-closed behaviour one line down.
+  if (members.length && !points.length && !unreadable.length)
     throw failWith(
       EXIT.UPSTREAM,
       `${members.length} member device(s) reported no points at all`,
       "that is not a wiring state this CLI can act on — every area has points somewhere",
       "check `liveone device points <device>`; if that works, this loader lost its ?include=points",
     );
-  return pool;
+  return { points, unreadable };
 }
 
 /**

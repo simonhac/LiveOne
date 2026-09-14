@@ -47,7 +47,14 @@ export interface ApiInit {
 /** A caller-supplied failure for one status. Mirrors `failWith`'s arguments. */
 export interface ErrorOverride {
   exit: number;
-  what: string;
+  /**
+   * A fixed headline, or one built from the parsed body — the same option `why` has always had.
+   *
+   * The function form exists so an override can keep the DEFAULT behaviour of quoting the server's
+   * own `error` string while changing only the `next` line. Without it, a domain that wanted its
+   * own repair advice had to trade away the server's message to get it.
+   */
+  what: string | ((body: Record<string, unknown>) => string);
   /** Given the parsed body, so the server's own `error` string can be quoted. */
   why: (body: Record<string, unknown>) => string;
   next: string;
@@ -128,7 +135,7 @@ export async function apiFetch<T = Record<string, unknown>>(
   if (override)
     throw failWith(
       override.exit,
-      override.what,
+      typeof override.what === "function" ? override.what(body) : override.what,
       override.why(body),
       override.next,
     );
@@ -146,7 +153,11 @@ export async function apiFetch<T = Record<string, unknown>>(
         EXIT.FINDINGS,
         serverError ?? "forbidden",
         "the server refused this operation for this user",
-        "a doc whose refs the owner cannot read can only be repaired with --via=db",
+        // Domain-NEUTRAL on purpose. `apiFetch` serves every domain, so a default written for one
+        // of them misdirects in all the others — this one used to send a device error to
+        // `--via=db`, a transport only `dashboard` has. A domain with a better answer overrides it
+        // through the per-call `errors` map.
+        "check the `target:` line — you may need --admin, or the object may belong to another owner",
       );
     case 404:
       if (res.headers.get("x-clerk-auth-reason") === "protect-rewrite")
@@ -160,7 +171,9 @@ export async function apiFetch<T = Record<string, unknown>>(
         EXIT.FINDINGS,
         serverError ?? `not found: ${path}`,
         "nothing at that address for this user",
-        "run `liveone dashboard list` — ids are per-environment",
+        // Neutral for the same reason as the 403 above: this fired on a DEVICE that could not be
+        // read and told the operator to list dashboards.
+        "list the objects of that kind (`liveone device|area|dashboard list`) — ids are per-environment",
       );
     case 409:
       throw failWith(

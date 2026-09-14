@@ -105,7 +105,16 @@ export const importCommand = defineCommand({
     "where these rows came from. Create it first with `liveone session create`.\n\n" +
     "Writes are an UPSERT on (point, interval_end), so re-running a corrected file is the intended\n" +
     "way to repair a bad import. A row that would DOWNGRADE what is already stored refuses the whole\n" +
-    "request unless --overwrite-measured. Rows are chunked; a file of any size is one command.",
+    "request unless --overwrite-measured. Rows are chunked; a file of any size is one command.\n" +
+    "\n" +
+    "🛑 Chunking is what --check-all is about. A plain dry run projects the FIRST chunk only, so its\n" +
+    "create/replace/downgrade counts are a SAMPLE of 5000 rows however large the file is; and the\n" +
+    "apply loop is chunked too, with no transaction across it, so a refusal in chunk 7 leaves chunks\n" +
+    "1-6 written. --check-all projects every chunk: as a dry run it is the only way to get the\n" +
+    "answer worth having (does any row in this file downgrade a measured value?), and with --apply\n" +
+    "it is a pre-flight that aborts before the first write.\n" +
+    "🛑 A pre-flight is not a transaction: it is a verdict on the state it OBSERVED, so a concurrent\n" +
+    "write or a transport failure partway through can still leave earlier chunks written.",
   uses: ["api"],
   args: [
     {
@@ -131,6 +140,10 @@ export const importCommand = defineCommand({
       type: "string",
       placeholder: "id",
       help: "REQUIRED — the session these rows belong to. Create it with `liveone session create`, which takes a mandatory --label and a manifest saying where the data came from.",
+    },
+    "check-all": {
+      type: "boolean",
+      help: "Project EVERY chunk, not just the first — the only way a dry run can answer whether any row in the file downgrades a measured value. With --apply it is a pre-flight: a refusal the file was always going to earn aborts before anything is written. It does NOT make the chunked write atomic",
     },
     "overwrite-measured": {
       type: "boolean",
@@ -238,6 +251,62 @@ export function parseCsv(text: string): WireRow[] {
   return rows;
 }
 
+/**
+ * Fold per-chunk results into one, as if the file had been a single request.
+ *
+ * Exported and shared by BOTH multi-chunk paths — the `--check-all` projection and the apply loop —
+ * so a projected total and an applied total can never be computed two different ways. `rows` is the
+ * file's own count rather than the sum of the chunks', because a chunk reports the rows it was
+ * SENT and the caller already knows how many that was.
+ */
+export function mergeImports(
+  results: WireImport[],
+  totalRows: number,
+): WireImport {
+  const sum = (pick: (r: WireImport) => number) =>
+    results.reduce((n, r) => n + pick(r), 0);
+  const byPoint = new Map<string, WirePoint>();
+  for (const r of results)
+    for (const p of r.points) {
+      const prev = byPoint.get(p.id);
+      byPoint.set(
+        p.id,
+        prev
+          ? {
+              ...p,
+              rows: prev.rows + p.rows,
+              created: prev.created + p.created,
+              replaced: prev.replaced + p.replaced,
+              downgraded: prev.downgraded + p.downgraded,
+              overMeasured: prev.overMeasured + p.overMeasured,
+            }
+          : p,
+      );
+    }
+  return {
+    ...results[0],
+    points: [...byPoint.values()],
+    rows: totalRows,
+    created: sum((r) => r.created),
+    replaced: sum((r) => r.replaced),
+    downgraded: sum((r) => r.downgraded),
+    downgradesOver: [
+      ...new Set(results.flatMap((r) => r.downgradesOver)),
+    ].sort(),
+    overMeasured: sum((r) => r.overMeasured),
+    successorDeltasRepaired: sum((r) => r.successorDeltasRepaired),
+    written: sum((r) => r.written),
+    firstInterval: results.reduce(
+      (a, r) => (r.firstInterval < a ? r.firstInterval : a),
+      results[0].firstInterval,
+    ),
+    lastInterval: results.reduce(
+      (a, r) => (r.lastInterval > a ? r.lastInterval : a),
+      results[0].lastInterval,
+    ),
+  };
+}
+
 async function post(
   s: ApiSession,
   path: string,
@@ -283,7 +352,9 @@ function render(r: WireImport, applied: boolean): string {
       (r.overMeasured > 0
         ? `, ${r.overMeasured} OVER MEASURED rows (unmarked, but with samples behind them)`
         : "") +
-      (sampledFrom ? `  (of the first ${sampledFrom} rows only)` : ""),
+      (sampledFrom
+        ? `  ⚠ SAMPLE — first ${sampledFrom} rows only, not a verdict (use --check-all)`
+        : ""),
   );
   if (r.successorDeltasRepaired > 0)
     lines.push(
@@ -359,15 +430,47 @@ export async function runImport(ctx: Ctx): Promise<number> {
       // The dry run goes to the SERVER: only it knows which points belong to this device and what
       // metric type each one is, and a local "would write N rows" would be confident and wrong the
       // moment a point was retired or re-minted.
-      if (ctx.dryRun) {
-        const first = await post(s, path, {
+      const chunks = Math.ceil(rows.length / CHUNK);
+      const send = (i: number, dryRun: boolean) =>
+        post(s, path, {
           interval: "5m",
           quality,
           sessionId,
           overwriteMeasured,
-          readings: rows.slice(0, CHUNK),
-          dryRun: true,
+          readings: rows.slice(i, i + CHUNK),
+          dryRun,
         });
+
+      /**
+       * Project every chunk without writing.
+       *
+       * 🛑 What this buys, precisely. A refusal is raised by the SERVER, per request (409 →
+       * `EXIT.FINDINGS` in `post`), so a blocked row anywhere in the file throws out of this loop
+       * before the apply loop starts — which is the pre-flight `--apply` needs, because that loop
+       * has no transaction around it and would otherwise have written every chunk before the bad
+       * one.
+       *
+       * It is NOT all-or-nothing, and must not be described as such. The projection is a verdict on
+       * the state it OBSERVED: a poller or a second import can land in a later chunk's window in
+       * between, and a transport failure mid-apply still leaves earlier chunks written. What it
+       * removes is the case where the file itself was always going to be refused.
+       */
+      const projectAll = async () => {
+        const out: WireImport[] = [];
+        for (let i = 0; i < rows.length; i += CHUNK)
+          out.push(await send(i, true));
+        return mergeImports(out, rows.length);
+      };
+
+      const checkAll = ctx.flags["check-all"] === true;
+
+      if (ctx.dryRun) {
+        if (checkAll) {
+          const projected = { ...(await projectAll()), chunks };
+          ctx.emit(projected, () => render(projected, false));
+          return EXIT.OK;
+        }
+        const first = await send(0, true);
         // Report the FULL file, not just the validated first chunk, so the number the operator
         // checks is the number they are about to write. The create/replace split is necessarily the
         // first chunk's only — deciding it for the rest would mean sending the rest — so it is
@@ -376,70 +479,45 @@ export async function runImport(ctx: Ctx): Promise<number> {
         const preview = {
           ...first,
           rows: rows.length,
-          chunks: Math.ceil(rows.length / CHUNK),
+          chunks,
           effectSampledFrom: sampled ? CHUNK : undefined,
         };
         ctx.emit(preview, () => render(preview, false));
+        // 🛑 Say it on stderr as well as in the payload. `effectSampledFrom` names the limit
+        // precisely and sits BELOW three totals that read like a verdict — an operator checking
+        // "does anything in this file downgrade a measured value?" has been answered about 5,000 of
+        // 64,070 rows and cannot tell from the numbers.
+        if (sampled)
+          ctx.warn(
+            `the effect counts above are chunk 1 of ${chunks} — ${CHUNK} of ${rows.length} rows. ` +
+              `They are a SAMPLE, not a verdict: re-run with --check-all to project the whole file.`,
+          );
         return EXIT.OK;
       }
 
-      const results: WireImport[] = [];
-      for (let i = 0; i < rows.length; i += CHUNK) {
-        results.push(
-          await post(s, path, {
-            interval: "5m",
-            quality,
-            sessionId,
-            overwriteMeasured,
-            readings: rows.slice(i, i + CHUNK),
-            dryRun: false,
-          }),
+      // 🛑 The apply loop is chunked and has NO transaction around it: a refusal in chunk 7 leaves
+      // chunks 1-6 written. `--check-all` converts that into an all-or-nothing by projecting first;
+      // without it, say so before starting rather than after.
+      if (checkAll) await projectAll();
+      // 🛑 Warn EITHER WAY when the write is chunked. `--check-all` rules out a refusal the file was
+      // always going to earn; it does not make the write atomic, and suppressing the warning would
+      // let a pre-flight read as a transaction.
+      if (chunks > 1)
+        ctx.warn(
+          `writing ${rows.length} rows as ${chunks} chunks, with no transaction across them — ` +
+            (checkAll
+              ? `the pre-flight passed against the state it observed, but a concurrent write or a ` +
+                `transport failure partway through still leaves the earlier chunks written.`
+              : `a refusal partway through leaves the earlier chunks written. ` +
+                `--check-all projects the whole file first.`),
         );
-      }
 
-      const written = results.reduce((n, r) => n + r.written, 0);
-      const sum = (pick: (r: WireImport) => number) =>
-        results.reduce((n, r) => n + pick(r), 0);
-      const byPoint = new Map<string, WirePoint>();
-      for (const r of results)
-        for (const p of r.points) {
-          const prev = byPoint.get(p.id);
-          byPoint.set(
-            p.id,
-            prev
-              ? {
-                  ...p,
-                  rows: prev.rows + p.rows,
-                  created: prev.created + p.created,
-                  replaced: prev.replaced + p.replaced,
-                  downgraded: prev.downgraded + p.downgraded,
-                  overMeasured: prev.overMeasured + p.overMeasured,
-                }
-              : p,
-          );
-        }
-      const merged: WireImport = {
-        ...results[0],
-        points: [...byPoint.values()],
-        rows: rows.length,
-        created: sum((r) => r.created),
-        replaced: sum((r) => r.replaced),
-        downgraded: sum((r) => r.downgraded),
-        downgradesOver: [
-          ...new Set(results.flatMap((r) => r.downgradesOver)),
-        ].sort(),
-        overMeasured: sum((r) => r.overMeasured),
-        successorDeltasRepaired: sum((r) => r.successorDeltasRepaired),
-        written,
-        firstInterval: results.reduce(
-          (a, r) => (r.firstInterval < a ? r.firstInterval : a),
-          results[0].firstInterval,
-        ),
-        lastInterval: results.reduce(
-          (a, r) => (r.lastInterval > a ? r.lastInterval : a),
-          results[0].lastInterval,
-        ),
-      };
+      const results: WireImport[] = [];
+      for (let i = 0; i < rows.length; i += CHUNK)
+        results.push(await send(i, false));
+
+      const merged = mergeImports(results, rows.length);
+      const written = merged.written;
 
       ctx.emit(merged, () => render(merged, true));
       ctx.note(

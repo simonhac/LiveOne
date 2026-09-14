@@ -13,6 +13,12 @@ the data-download commands also accept `--format csv` — their help says so.
 Data goes to stdout; all diagnostics go to stderr. Mutating commands are **dry by default** —
 `--apply` writes, and off a terminal `--apply` additionally requires `--yes`.
 
+🛑 **Scripted callers: use `npm run --silent liveone -- …`.** The CLI honours the
+stdout/stderr split, but npm prints its own two-line run-script banner (`> liveone@1.0.0 …`) to
+**stdout**, ahead of the payload — so without `--silent` every `--format json` consumer needs a
+`sed`/`jq` guard to skip it. `--silent` suppresses only npm's banner; the CLI's own diagnostics
+still reach stderr.
+
 | Exit | Meaning |
 | ---- | ------- |
 | 0 | success |
@@ -65,6 +71,7 @@ Data goes to stdout; all diagnostics go to stderr. Mutating commands are **dry b
     - [liveone device show](#liveone-device-show)
     - [liveone device points](#liveone-device-points)
     - [liveone device latest](#liveone-device-latest)
+    - [liveone device coverage](#liveone-device-coverage)
     - [liveone device history](#liveone-device-history)
     - [liveone device config](#liveone-device-config)
       - [liveone device config show](#liveone-device-config-show)
@@ -88,6 +95,7 @@ Data goes to stdout; all diagnostics go to stderr. Mutating commands are **dry b
       - [liveone area role list](#liveone-area-role-list)
       - [liveone area role set](#liveone-area-role-set)  _(writes)_
       - [liveone area role clear](#liveone-area-role-clear)  _(writes)_
+    - [liveone area lint](#liveone-area-lint)
     - [liveone area provenance](#liveone-area-provenance)
     - [liveone area purge](#liveone-area-purge)
       - [liveone area purge flows](#liveone-area-purge-flows)  _(writes)_
@@ -2136,6 +2144,7 @@ Subcommands:
   show                   A device's full aggregate: metadata, config, adapter state, capabilities, points.
   points                 A device's point inventory: pt_… id, path, metric, unit.
   latest                 The device's current values, from the serving cache.
+  coverage               How many 5-minute readings each of a device's points holds, per local day.
   history                Time series for a device, in the OpenNEM shape /api/history serves.
   config                 The stored DeviceConfig blob — read it, audit it for rot, normalise it.
   recompute              Rebuild the rows derived FROM a device's readings, over a window of local days.  (writes)
@@ -2397,6 +2406,7 @@ Arguments:
 
 Options:
   --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
+  --include-inactive         Also consider disabled and archived devices (only active ones are listed by default)
 
 Common options:
   --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
@@ -2476,6 +2486,89 @@ Exit codes:
   130  interrupted
 ```
 
+#### liveone device coverage
+
+How many 5-minute readings each of a device's points holds, per local day.
+
+```
+How many 5-minute readings each of a device's points holds, per local day.
+
+When to use:
+  Use this for 'is this series actually complete?', and to scope a backfill before running one.
+  `device history --list-series` reports EXTENTS — the first and last row, which say nothing
+  about the interior — and this is the verb that answers density instead.
+
+--start/--end are whole LOCAL days at the device's fixed day offset (the boundaries the daily
+aggregates roll up on); --last=Nd is whole days too. Counts are per POINT, not per series:
+soc.avg/min/max share one point and one stored row, so --series selects and the answer folds.
+
+`expected` per day comes from --cadence, else the vendor's declared poll cadence (amber 30min
+→ 48/day; openelectricity and sigenergy 5min → 288/day), else the point's own best day in the
+window. The basis is always printed — a push vendor (fusher, gusher) declares no cadence, so
+its expectation is `observed` and is a floor, not an authority.
+
+Works on a disabled or archived device with --include-inactive: coverage is exactly what you
+ask about a device that has stopped.
+
+--gaps collapses the per-day table to runs of short days. --against <device> joins another
+device's points on (logical path, metric) and diffs them day by day.
+🛑 --against is DAY-granularity: the interval counts it reports are a LOWER BOUND on the true
+set difference (they cancel where each side holds rows the other lacks on the same day), and
+it never compares VALUES. For the exact rows, pull both series with
+`device history --series … --format csv` over the days it names.
+
+Usage:
+  liveone device coverage <device> [options]
+
+  Read-only. This command changes nothing.
+
+Arguments:
+  <device>               A device: its dv_… id, integer handle, slug, or name
+
+Options:
+  --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
+  --include-inactive         Also consider disabled and archived devices (only active ones are listed by default)
+  --last <30d>               Relative window ending today, in whole days, e.g. 90d (default: 30d)
+  --start <YYYY-MM-DD>       Window start — whole LOCAL days (the device's fixed day offset)
+  --end <YYYY-MM-DD>         Window end, inclusive (local days)
+  --series <glob>            Only points whose series match this glob, matched against the DEVICE-LESS path, e.g. "bidi.battery/*" (repeatable; `*` does not cross `/`)  (repeatable)
+  --cadence <minutes>        Override expected rows/day with a poll cadence in minutes (5 → 288/day). Use when the vendor declares none and the observed best day is wrong
+  --gaps                     Collapse the per-day table to runs of short days — the shape you act on
+  --against <device>         Compare with another device, joined on (logical path, metric). Day-granularity: interval counts are a LOWER BOUND, and values are never compared
+  --out <path>               Write the full payload (or the CSV, under --format csv) to this file; stdout gets a summary
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json, csv)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  --format csv     comma-separated rows on stdout — the columns are documented above
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
+
+Examples:
+  liveone device coverage kinkora --last=90d
+  liveone device coverage kinkora --series='bidi.battery/soc.avg' --start=2025-09-22 --end=2026-09-15 --gaps
+  liveone device coverage kink_fron --series='bidi.battery/soc.avg' --last=365d --against=kink_mondo
+  liveone device coverage kinkora --last=30d --format=csv --out=coverage.csv
+
+Exit codes:
+  0    success
+  1    at least one day is short of expected (or, with --against, the two devices differ)
+  2    usage error
+  3    authentication failure
+  5    upstream failure
+  130  interrupted
+```
+
 #### liveone device history
 
 Time series for a device, in the OpenNEM shape /api/history serves.
@@ -2506,14 +2599,15 @@ Arguments:
 
 Options:
   --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
+  --include-inactive         Also consider disabled and archived devices (only active ones are listed by default)
   --interval <string>        Series resolution (range caps per request: 5m ≤ 31 days, 30m/1d ≤ 13 months)  (one of: 5m, 30m, 1d; default: 5m)
   --last <7d>                Relative window ending now, e.g. 3h, 7d (default: 1d; the server owns the grammar)
   --start <YYYY-MM-DD>       Window start — whole LOCAL days (the subject's fixed day offset)
   --end <YYYY-MM-DD>         Window end, inclusive (local days)
   --series <glob>            Only series matching this glob, matched against the DEVICE-LESS path, e.g. "load/*", "**/energy.delta" (repeatable; `*` does not cross `/`)  (repeatable)
   --out <path>               Write the raw OpenNEM body (or the CSV, under --format csv) to this file; stdout gets a summary
-  --list-series              List series METADATA only — id, unit, metric type, stat suffix, declared intervals and data extents; no data arrays. The natural first call against an unfamiliar subject. Refuses time flags; --interval is ignored (the per-series `intervals` field answers it)
-  --samples                  With --list-series, also count the 5-minute rows behind each series. OFF by default: the extents are index probes, but the count reads every row the subject owns — millions, on a device with a year of history
+  --list-series              List series METADATA only — id, unit, metric type, stat suffix, declared intervals and data EXTENTS; no data arrays. The natural first call against an unfamiliar subject. 🛑 The extents are the first and last row only and say NOTHING about the interior — a series can span a year and be empty for most of it. Use `liveone device coverage` for density. Refuses time flags; --interval is ignored (the per-series `intervals` field answers it)
+  --samples                  With --list-series, also count the 5-minute rows behind each series — the cheapest check that an extent is not hiding a hole. OFF by default: the extents are index probes, but the count reads every row the subject owns — millions, on a device with a year of history
 
 Common options:
   --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json, csv)
@@ -3034,6 +3128,7 @@ Subcommands:
   flows                  The rolled-up source×load energy-flow matrix (the Sankey) for a period.
   devices                Which devices an area is made of (writes: add, remove, set).
   role                   Which point fills an area's (role, metric) slot, and in what order (writes: set, clear).
+  lint                   Census an area's wiring for the states nothing else reports.
   provenance             What derived rows an area actually holds — the flow matrix and the battery fold.
   purge                  Delete an area's derived rows — the flow matrix, or the battery fold.
   archive                Retire an area: keep every row, stop serving it.  (writes)
@@ -3256,8 +3351,8 @@ Options:
   --end <YYYY-MM-DD>         Window end, inclusive (local days)
   --series <glob>            Only series matching this glob, matched against the DEVICE-LESS path, e.g. "load/*", "**/energy.delta" (repeatable; `*` does not cross `/`)  (repeatable)
   --out <path>               Write the raw OpenNEM body (or the CSV, under --format csv) to this file; stdout gets a summary
-  --list-series              List series METADATA only — id, unit, metric type, stat suffix, declared intervals and data extents; no data arrays. The natural first call against an unfamiliar subject. Refuses time flags; --interval is ignored (the per-series `intervals` field answers it)
-  --samples                  With --list-series, also count the 5-minute rows behind each series. OFF by default: the extents are index probes, but the count reads every row the subject owns — millions, on a device with a year of history
+  --list-series              List series METADATA only — id, unit, metric type, stat suffix, declared intervals and data EXTENTS; no data arrays. The natural first call against an unfamiliar subject. 🛑 The extents are the first and last row only and say NOTHING about the interior — a series can span a year and be empty for most of it. Use `liveone device coverage` for density. Refuses time flags; --interval is ignored (the per-series `intervals` field answers it)
+  --samples                  With --list-series, also count the 5-minute rows behind each series — the cheapest check that an extent is not hiding a hole. OFF by default: the extents are index probes, but the count reads every row the subject owns — millions, on a device with a year of history
 
 Common options:
   --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json, csv)
@@ -3719,7 +3814,7 @@ Examples:
 
 Exit codes:
   0    success
-  1    completed, with findings or no results
+  1    at least one member device could not be read, so the wiring reported is partial
   2    usage error
   3    authentication failure
   5    upstream failure
@@ -3841,35 +3936,50 @@ Exit codes:
   130  interrupted
 ```
 
-#### liveone area provenance
+#### liveone area lint
 
-What derived rows an area actually holds — the flow matrix and the battery fold.
+Census an area's wiring for the states nothing else reports.
 
 ```
-What derived rows an area actually holds — the flow matrix and the battery fold.
+Census an area's wiring for the states nothing else reports.
 
 When to use:
-  Use this before a `purge`, and to answer 'is this area still computing anything?' — an area
-  that has stopped being a site keeps its rows and keeps looking authoritative.
+  Use this after any bindings change, and as the fleet-wide check that a wiring migration
+  landed — `area role list` shows ONE area's bindings and cannot tell you whether two of them
+  contend, or whether a bound point's device has left.
 
-Reports both layers: the flow matrix (rows, days, range — needs --start/--end) and the battery
-provenance (fold rows, the helper device, its blend readings and bindings).
+Read-only, and one `/api/v4/tree` request regardless of how many areas it checks.
 
-Read-only. This is the evidence a `purge` dry run is based on.
+Checks:
+  serving-key-collision  two or more wires on one `logical_path/metric_type` in one area —
+                         two instruments measuring one quantity, of which one can serve.
+                         This is the chain census; it must return zero rows.
+  departed-device        a binding whose point's device is no longer in the area.
+  archived-member        a member device that is not active — the state that used to make
+                         `area role list` fail outright.
+  inactive-bound-point   a bound point with `active = false`. It cannot produce a reading,
+                         and the server ranks it BELOW its fallbacks while `role list`
+                         still prints it as the one that serves.
+  area-without-devices   an area with bindings or a handle but no member device.
+  census-incomplete      a binding whose point is not in the inventory you can read, so its
+                         serving key could not be checked. Not a clean result — re-run with
+                         --admin.
+
+🛑 `--all` is explicit and has no default: naming an area and passing --all is a usage error,
+and so is passing neither. Exit 1 when anything was found.
 
 Usage:
-  liveone area provenance <area> [options]
+  liveone area lint [area] [options]
 
   Read-only. This command changes nothing.
 
 Arguments:
-  <area>                 An area: its ar_… id, integer handle, or display name
+  [area]                 An area: its ar_… id, integer handle, or display name
 
 Options:
   --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
-  --start <YYYY-MM-DD>       Window start (local days)
-  --end <YYYY-MM-DD>         Window end, inclusive (local days)
-  --include-archived         Also consider archived areas (they are hidden from every listing by default)
+  --all                      Check every area you can read, instead of one named area
+  --kind <kind>              Only report these check kinds (repeatable), e.g. --kind=serving-key-collision  (repeatable)
 
 Common options:
   --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
@@ -3888,12 +3998,87 @@ External access:
             A missing, expired or revoked token is exit 3; an API failure is exit 5.
 
 Examples:
-  liveone area provenance kutis
-  liveone area provenance 13 --start=2026-07-06 --end=2026-09-12
+  liveone area lint kinkora
+  liveone area lint --all
+  liveone area lint --all --admin --kind=serving-key-collision --format=json
 
 Exit codes:
   0    success
-  1    completed, with findings or no results
+  1    at least one finding
+  2    usage error
+  3    authentication failure
+  5    upstream failure
+  130  interrupted
+```
+
+#### liveone area provenance
+
+What derived rows an area actually holds — the flow matrix and the battery fold.
+
+```
+What derived rows an area actually holds — the flow matrix and the battery fold.
+
+When to use:
+  Use this before a `purge`, and to answer 'is this area still computing anything?' — an area
+  that has stopped being a site keeps its rows and keeps looking authoritative.
+
+Reports both layers: the flow matrix (rows, days, range — needs --start/--end) and the battery
+provenance (fold rows, the helper device, its blend readings and bindings).
+
+It also compares the SPANS of the derived tiers and warns when they disagree. They are
+rebuilt by different passes, so one can fall a long way behind the others in silence — the
+case that prompted this was a blend whose 1d rollup covered ~71 days while its 5-minute data
+went back a year, with both numbers printed and nothing saying so. Exit 1 when they disagree.
+
+--daily switches to the fold's LEARNED state, per day: soc first/last/min and sample count,
+learned capacity, round-trip and charge efficiency, reserve floor, idle loss, and whether the
+day was excluded as a BMS recalibration. The counts answer how much the fold holds; this
+answers what it decided, which is what a change of SoC instrument actually moves. Take it
+before a rebind and again after to prove the fold is unchanged.
+
+Read-only. This is the evidence a `purge` dry run is based on.
+
+Usage:
+  liveone area provenance <area> [options]
+
+  Read-only. This command changes nothing.
+
+Arguments:
+  <area>                 An area: its ar_… id, integer handle, or display name
+
+Options:
+  --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
+  --start <YYYY-MM-DD>       Window start (local days)
+  --end <YYYY-MM-DD>         Window end, inclusive (local days)
+  --include-archived         Also consider archived areas (they are hidden from every listing by default)
+  --daily                    Report the fold's learned parameters per day (capacity, eta, charge efficiency, reserve floor, SoC) instead of row counts
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json, csv)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  --format csv     comma-separated rows on stdout — the columns are documented above
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
+
+Examples:
+  liveone area provenance kutis
+  liveone area provenance 13 --start=2026-07-06 --end=2026-09-12
+  liveone area provenance kinkora --daily --start=2026-01-01 --end=2026-01-31
+  liveone area provenance kinkora --daily --format=csv
+
+Exit codes:
+  0    success
+  1    the derived tiers disagree — or, with --daily, the window holds no fold rows
   2    usage error
   3    authentication failure
   5    upstream failure
@@ -6566,6 +6751,15 @@ Writes are an UPSERT on (point, interval_end), so re-running a corrected file is
 way to repair a bad import. A row that would DOWNGRADE what is already stored refuses the whole
 request unless --overwrite-measured. Rows are chunked; a file of any size is one command.
 
+🛑 Chunking is what --check-all is about. A plain dry run projects the FIRST chunk only, so its
+create/replace/downgrade counts are a SAMPLE of 5000 rows however large the file is; and the
+apply loop is chunked too, with no transaction across it, so a refusal in chunk 7 leaves chunks
+1-6 written. --check-all projects every chunk: as a dry run it is the only way to get the
+answer worth having (does any row in this file downgrade a measured value?), and with --apply
+it is a pre-flight that aborts before the first write.
+🛑 A pre-flight is not a transaction: it is a verdict on the state it OBSERVED, so a concurrent
+write or a transport failure partway through can still leave earlier chunks written.
+
 Usage:
   liveone import <device> [options]
 
@@ -6579,6 +6773,7 @@ Options:
   --file <path>              CSV of point,interval_end,value — or `-` for stdin
   --quality <marker>         REQUIRED — the data_quality to stamp on every row. `calculated` = exact by identity from a measured series; `interpolated` = a genuine guess of ours; `good` = a measurement.  (one of: good, actual, calculated, interpolated, estimated)
   --session <id>             REQUIRED — the session these rows belong to. Create it with `liveone session create`, which takes a mandatory --label and a manifest saying where the data came from.
+  --check-all                Project EVERY chunk, not just the first — the only way a dry run can answer whether any row in the file downgrades a measured value. With --apply it is a pre-flight: a refusal the file was always going to earn aborts before anything is written. It does NOT make the chunked write atomic
   --overwrite-measured       Allow rows that would overwrite an existing reading — one graded higher, or an unmarked one with real samples behind it (which is what every raw vendor's aggregate looks like). Off by default; the import is refused outright instead.
 
 Common options:

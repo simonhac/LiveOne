@@ -234,11 +234,20 @@ terminal additionally requires `--yes`.
 and the HWS model: list, create, set, enable/disable, delete, recompute, intervals — addressed by
 `dx_`/name/role, never by an area; `create` names the DEVICE the detector is about), `sync` (re-fetch
 a window from a device's vendor), and `device` / `area` / `user` (list, show, latest values, history;
+`device coverage` reports per-day reading DENSITY and gap runs; `area lint` censuses wiring;
 `area flows` downloads the rolled-up Sankey matrix for a period — read-only except
 `device recompute`, `device config clean`, `area purge` and `area archive`/`area delete`). Run
 `-- <domain> --help` for verbs;
 the generated reference is `docs/cli-reference.md`, the architecture doc is `docs/cli.md`.
 
+- 🛑 **Scripting it: `npm run --silent liveone -- …`.** The CLI puts data on stdout and every
+  diagnostic on stderr, but **npm's run-script banner goes to stdout**, ahead of the payload — so
+  without `--silent`, `--format json | jq` fails on npm's own two lines. `--silent` suppresses only
+  that banner.
+- **"Is this series actually complete?"** is `liveone device coverage <device>` — per-point,
+  per-local-day row counts, `--gaps` for the runs, `--against <device>` to diff two instruments.
+  🛑 `device history --list-series` reports EXTENTS (first row, last row); they say nothing about
+  the interior, and a series can span a year while holding nothing for most of it.
 - **First run:** `npm run liveone -- auth login` — a browser hand-off mints a `lo_cli_` token,
   stored per-origin in `~/.config/liveone/cli-auth.json` (0600). Prod, preview and localhost logins
   coexist; commands resolve their token strictly by the origin they call.

@@ -22,9 +22,26 @@ import { Dashboard } from "@/lib/ids";
 import { countCardNodes, isDashboardV4 } from "@/lib/dashboard/v4";
 import { CliFailure, EXIT, failWith, type Ctx } from "@/lib/cli/cli";
 import { isAliasCollision } from "@/lib/dashboard/dashboards";
-import { apiFetch } from "@/lib/cli-kit/http";
+import { apiFetch, type ErrorOverride } from "@/lib/cli-kit/http";
 import { printApiTarget } from "@/lib/cli-kit/api-session";
 import { requireToken, resolveOrigin } from "@/lib/cli-kit/target";
+
+/**
+ * The 403 this transport actually gets, and the repair path only IT has.
+ *
+ * `apiFetch`'s own 403 default is domain-NEUTRAL, because it serves every domain — it used to carry
+ * this advice, which sent a device or area refusal to a transport those domains do not have. The
+ * advice is still right here, so it lives here. `what` stays a body function so the server's own
+ * message survives, exactly as the shared default renders it.
+ */
+const DASHBOARD_403: Record<number, ErrorOverride> = {
+  403: {
+    exit: EXIT.FINDINGS,
+    what: (b) => (typeof b.error === "string" ? b.error : "forbidden"),
+    why: () => "the server refused this operation for this user",
+    next: "a doc whose refs the owner cannot read can only be repaired with --via=db",
+  },
+};
 import {
   connect,
   listDashboards,
@@ -302,7 +319,8 @@ interface WireListRow {
 }
 
 function makeHttpTransport(origin: string, token: string): DashboardTransport {
-  const get = <T>(path: string) => apiFetch<T>(origin, path, { token });
+  const get = <T>(path: string) =>
+    apiFetch<T>(origin, path, { token, errors: DASHBOARD_403 });
 
   const getOne = async (id: string): Promise<DashRowLike> => {
     const { body } = await get<{
@@ -374,7 +392,16 @@ function makeHttpTransport(origin: string, token: string): DashboardTransport {
       const { body } = await apiFetch<{ revision: number }>(
         origin,
         `/api/v4/dashboards/${encodeURIComponent(row.id)}`,
-        { method: "PUT", body: { doc }, ifMatch: row.revision, token },
+        {
+          method: "PUT",
+          body: { doc },
+          ifMatch: row.revision,
+          token,
+          // 🛑 The writer needs this MORE than the reads do: the unreadable-reference 403 that
+          // `--via=db` exists to work around is raised by exactly this PUT — the repairing write is
+          // itself refused, which is the whole reason the db escape hatch exists.
+          errors: DASHBOARD_403,
+        },
       );
       return { revision: body.revision };
     },

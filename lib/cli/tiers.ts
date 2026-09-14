@@ -88,6 +88,13 @@ export const TIERS: TierManifest = {
     // destructive thing in the area domain and the reasoning about which layer heals itself belongs
     // next to the code that deletes it, not buried in a file of read verbs.
     "scripts/ops/area/purge/index.ts",
+    // `area lint` — the read-only wiring census (serving-key collisions, departed devices, orphan
+    // areas). Its own file because it is a PURE checker over one `/api/v4/tree` payload, which is
+    // what lets it be tested against a fixture instead of a network.
+    "scripts/ops/area/lint/index.ts",
+    // `device coverage` — per-day reading density and gap runs. Split from device/cli.ts for the
+    // same reason `config` is: it carries its own arithmetic, renderers and a comparison mode.
+    "scripts/ops/device/coverage.ts",
     "scripts/ops/user/cli.ts",
     "scripts/ops/queue/cli.ts",
     // The `sync` verb — the only WRITER among the composed http modules, so it carries the

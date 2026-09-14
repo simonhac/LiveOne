@@ -13,6 +13,12 @@ the data-download commands also accept `--format csv` — their help says so.
 Data goes to stdout; all diagnostics go to stderr. Mutating commands are **dry by default** —
 `--apply` writes, and off a terminal `--apply` additionally requires `--yes`.
 
+🛑 **Scripted callers: use `npm run --silent liveone -- …`.** The CLI honours the
+stdout/stderr split, but npm prints its own two-line run-script banner (`> liveone@1.0.0 …`) to
+**stdout**, ahead of the payload — so without `--silent` every `--format json` consumer needs a
+`sed`/`jq` guard to skip it. `--silent` suppresses only npm's banner; the CLI's own diagnostics
+still reach stderr.
+
 | Exit | Meaning |
 | ---- | ------- |
 | 0 | success |

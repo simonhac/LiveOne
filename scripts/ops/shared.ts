@@ -200,7 +200,13 @@ export async function listDevices(
   return devices;
 }
 
-/** List + resolve a device ref, the one way every domain should address a device. */
+/**
+ * List + resolve a device ref, the one way every domain should address a device.
+ *
+ * 🛑 Same rule as {@link resolveArea}: the ref is matched against the LIST, never sent to the
+ * server, so an archived device is unaddressable without `includeArchived` — passing its literal
+ * `dv_…` id does not get you past it.
+ */
 export async function resolveDevice(
   s: ApiSession,
   ref: string,
@@ -409,15 +415,18 @@ export const HISTORY_FLAGS = {
     type: "boolean",
     help:
       "List series METADATA only — id, unit, metric type, stat suffix, declared intervals and " +
-      "data extents; no data arrays. The natural first call against an unfamiliar subject. " +
-      "Refuses time flags; --interval is ignored (the per-series `intervals` field answers it)",
+      "data EXTENTS; no data arrays. The natural first call against an unfamiliar subject. " +
+      "🛑 The extents are the first and last row only and say NOTHING about the interior — a " +
+      "series can span a year and be empty for most of it. Use `liveone device coverage` for " +
+      "density. Refuses time flags; --interval is ignored (the per-series `intervals` field " +
+      "answers it)",
   },
   samples: {
     type: "boolean",
     help:
-      "With --list-series, also count the 5-minute rows behind each series. OFF by default: the " +
-      "extents are index probes, but the count reads every row the subject owns — millions, on a " +
-      "device with a year of history",
+      "With --list-series, also count the 5-minute rows behind each series — the cheapest check " +
+      "that an extent is not hiding a hole. OFF by default: the extents are index probes, but the " +
+      "count reads every row the subject owns — millions, on a device with a year of history",
   },
 } as const satisfies Record<string, FlagSpec>;
 
@@ -684,9 +693,15 @@ async function runListSeriesVerb(
     () =>
       [
         `${label}  ${series.length} series${body.subject?.displayTimezone ? `  (${body.subject.displayTimezone})` : ""}`,
+        // 🛑 The column is labelled `extent`, and the footer below is not decoration.
+        // `firstData → lastData` are MIN and MAX — two index probes — and the natural reading of
+        // "first → last" is "this range is covered". It is not: a Fronius SoC series reported
+        // `2025-09-22 → 2026-09-15` while holding nothing at all for 222 days in the middle, and
+        // the output gave no hint that the interior might be empty.
+        `  ${"series".padEnd(40)} ${"unit".padEnd(9)} ${"metric".padEnd(7)} ${"ivals".padEnd(6)} extent`,
         ...series.map(
           (r) =>
-            `  ${(r.id ?? "?").padEnd(40)} ${(r.units ?? "").padEnd(4)} ${(r.metricType ?? "").padEnd(7)} ` +
+            `  ${(r.id ?? "?").padEnd(40)} ${(r.units ?? "").padEnd(9)} ${(r.metricType ?? "").padEnd(7)} ` +
             `${(r.intervals ?? []).join(",").padEnd(6)} ` +
             (r.firstData
               ? `${r.firstData.slice(0, 10)} → ${r.lastData?.slice(0, 10) ?? "?"}` +
@@ -697,6 +712,15 @@ async function runListSeriesVerb(
                   : "")
               : "(no data)"),
         ),
+        // A single space, not "": the `.filter(Boolean)` below (which drops the absent `wrote …`
+        // line) would strip an empty string and close the gap.
+        " ",
+        "extent = the FIRST and LAST 5-minute row, nothing about the interior. A series can span a",
+        "year and be empty for most of it.",
+        wantSamples
+          ? "`samples` is the exact row count behind each series — compare it with the extent."
+          : "Pass --samples for the exact row count behind each series.",
+        "For per-day density and the runs of missing days, use `liveone device coverage`.",
         out !== undefined ? `wrote ${out}` : "",
       ]
         .filter(Boolean)

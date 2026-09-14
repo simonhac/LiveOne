@@ -39,6 +39,7 @@ import {
   type WireDevice,
 } from "../shared";
 import { configSpec, CONFIG_HANDLERS } from "./config";
+import { coverageSpec, runCoverage } from "./coverage";
 
 const DEVICE_ARG = {
   name: "device",
@@ -155,7 +156,7 @@ export const deviceCommand = defineCommand({
         "Use this to find a point's id or path — e.g. before wiring a binding or reading a\n" +
         "specific series.",
       args: [DEVICE_ARG],
-      flags: { ...BASE_URL_FLAG },
+      flags: { ...BASE_URL_FLAG, ...INCLUDE_INACTIVE_FLAG },
       examples: ["liveone device points daylesford"],
     },
     latest: {
@@ -168,6 +169,7 @@ export const deviceCommand = defineCommand({
       flags: { ...BASE_URL_FLAG },
       examples: ["liveone device latest daylesford"],
     },
+    coverage: coverageSpec,
     history: {
       name: "history",
       summary:
@@ -185,7 +187,11 @@ export const deviceCommand = defineCommand({
         "series with the unit in the header (`13/load/power.avg (W)`); nulls are empty cells.\n" +
         "With --out the CSV goes to the file and stdout gets the summary (as JSON).",
       args: [DEVICE_ARG],
-      flags: { ...BASE_URL_FLAG, ...HISTORY_FLAGS },
+      flags: {
+        ...BASE_URL_FLAG,
+        ...INCLUDE_INACTIVE_FLAG,
+        ...HISTORY_FLAGS,
+      },
       formats: ["human", "json", "csv"],
       exitCodes: {
         1: "no series matched (the window, or the --list-series subject)",
@@ -377,8 +383,12 @@ async function fetchAggregate(
   opts: { includeInactive?: boolean } = {},
 ): Promise<Record<string, unknown> & { points?: WirePoint[] }> {
   const device = await resolveDevice(s, ref, opts);
+  // 🛑 The widening has to reach the AGGREGATE too, not just the ref lookup. The per-device route
+  // applies its own `activeOnly`, so resolving an inactive ref and then fetching it without the
+  // param trades "cannot name it" for a 404 — the same failure one step later.
+  const q = opts.includeInactive ? "&includeInactive=true" : "";
   return s.get(
-    `/api/v4/devices/${encodeURIComponent(device.id!)}?include=points,capabilities`,
+    `/api/v4/devices/${encodeURIComponent(device.id!)}?include=points,capabilities${q}`,
   );
 }
 
@@ -393,7 +403,7 @@ async function runShow(ctx: Ctx): Promise<number> {
 
 async function runPoints(ctx: Ctx): Promise<number> {
   return withApiSession(ctx, async (s) => {
-    const body = await fetchAggregate(s, ctx.args[0]);
+    const body = await fetchAggregate(s, ctx.args[0], inactiveOpts(ctx));
     const points = body.points ?? [];
     ctx.emit(
       {
@@ -435,7 +445,7 @@ async function runLatest(ctx: Ctx): Promise<number> {
 
 async function runHistory(ctx: Ctx): Promise<number> {
   return withApiSession(ctx, async (s) => {
-    const device = await resolveDevice(s, ctx.args[0]);
+    const device = await resolveDevice(s, ctx.args[0], inactiveOpts(ctx));
     return runHistoryVerb(
       ctx,
       s,
@@ -881,6 +891,7 @@ const HANDLERS: Record<string, (ctx: Ctx) => Promise<number>> = {
   points: runPoints,
   latest: runLatest,
   history: runHistory,
+  coverage: runCoverage,
   recompute: runRecompute,
   "change-offset": runChangeOffset,
 };

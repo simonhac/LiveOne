@@ -34,6 +34,7 @@ import {
   INCLUDE_ARCHIVED_FLAG,
   resolveArea,
   str,
+  toCsv,
   usage,
 } from "../../shared";
 
@@ -71,12 +72,37 @@ export const PROVENANCE_SPEC = {
     "Reports both layers: the flow matrix (rows, days, range — needs --start/--end) and the battery\n" +
     "provenance (fold rows, the helper device, its blend readings and bindings).\n" +
     "\n" +
+    "It also compares the SPANS of the derived tiers and warns when they disagree. They are\n" +
+    "rebuilt by different passes, so one can fall a long way behind the others in silence — the\n" +
+    "case that prompted this was a blend whose 1d rollup covered ~71 days while its 5-minute data\n" +
+    "went back a year, with both numbers printed and nothing saying so. Exit 1 when they disagree.\n" +
+    "\n" +
+    "--daily switches to the fold's LEARNED state, per day: soc first/last/min and sample count,\n" +
+    "learned capacity, round-trip and charge efficiency, reserve floor, idle loss, and whether the\n" +
+    "day was excluded as a BMS recalibration. The counts answer how much the fold holds; this\n" +
+    "answers what it decided, which is what a change of SoC instrument actually moves. Take it\n" +
+    "before a rebind and again after to prove the fold is unchanged.\n" +
+    "\n" +
     "Read-only. This is the evidence a `purge` dry run is based on.",
   args: [AREA_ARG],
-  flags: { ...BASE_URL_FLAG, ...WINDOW_FLAGS, ...INCLUDE_ARCHIVED_FLAG },
+  flags: {
+    ...BASE_URL_FLAG,
+    ...WINDOW_FLAGS,
+    ...INCLUDE_ARCHIVED_FLAG,
+    daily: {
+      type: "boolean",
+      help: "Report the fold's learned parameters per day (capacity, eta, charge efficiency, reserve floor, SoC) instead of row counts",
+    },
+  },
+  formats: ["human", "json", "csv"],
+  exitCodes: {
+    1: "the derived tiers disagree — or, with --daily, the window holds no fold rows",
+  },
   examples: [
     "liveone area provenance kutis",
     "liveone area provenance 13 --start=2026-07-06 --end=2026-09-12",
+    "liveone area provenance kinkora --daily --start=2026-01-01 --end=2026-01-31",
+    "liveone area provenance kinkora --daily --format=csv",
   ],
 } satisfies CommandSpec;
 
@@ -174,7 +200,89 @@ interface ProvenanceReport {
   helper: { deviceId: string; name: string; pointRids: number[] } | null;
   agg5mRows: number;
   agg1dRows: number;
+  /** Index probes, not counts. Absent on a deployment older than the tier-skew check. */
+  agg5mSpan?: { firstMs: number; lastMs: number } | null;
+  agg1dSpan?: { firstDay: string; lastDay: string } | null;
   bindings: number;
+}
+
+/** The dense columnar payload `GET …/provenance-daily` serves. */
+interface ProvenanceDaily {
+  range: { start: string; end: string };
+  days: string[];
+  fields: Record<string, (number | null)[]>;
+}
+
+/**
+ * The learned parameters, in the order they are worth reading — what the fold DECIDED, not what it
+ * was fed. These are what a change of SoC instrument actually moves, and `area provenance` reported
+ * only row counts, so nothing could see them.
+ */
+const LEARNED_FIELDS: { key: string; label: string; dp: number }[] = [
+  { key: "socFirst", label: "soc first", dp: 1 },
+  { key: "socLast", label: "soc last", dp: 1 },
+  { key: "socMin", label: "soc min", dp: 1 },
+  { key: "socSamples", label: "soc n", dp: 0 },
+  { key: "capacityKwh", label: "capacity kWh", dp: 2 },
+  { key: "eta", label: "eta", dp: 4 },
+  { key: "chargeEff", label: "charge eff", dp: 4 },
+  { key: "reserveFloorPct", label: "reserve %", dp: 1 },
+  { key: "idleLossKwhDay", label: "idle kWh/d", dp: 3 },
+  { key: "recal", label: "recal", dp: 0 },
+];
+
+const DAY_MS = 86_400_000;
+
+/**
+ * Days between two `YYYY-MM-DD` strings, inclusive. Fixed-offset day strings, so plain UTC
+ * arithmetic is exact — the same assumption every local-day bucket in this system makes.
+ */
+function spanDays(first: string, last: string): number {
+  return Math.round((Date.parse(last) - Date.parse(first)) / DAY_MS) + 1;
+}
+
+/**
+ * Flag a derived tier that covers materially less than its siblings.
+ *
+ * 🛑 This is the check `area provenance` was missing. It printed `dailyRows: 349` (a year) beside
+ * `agg1dRows: 426` — which across six blend points is ~71 days — and said nothing, so the blend's
+ * daily rollup being eight months short of its own 5-minute data was something you found by
+ * accident, when a 1d baseline capture came back all-null. A verb that reports derived-row
+ * inventory should notice when one tier is an order of magnitude shorter than another.
+ *
+ * Compared on SPANS, not on counts: `agg1dRows / pointRids.length` is arithmetic on a uniformity
+ * nothing guarantees, while a span is a fact.
+ */
+export function tierSkew(p: ProvenanceReport): string[] {
+  const tiers: { name: string; days: number }[] = [];
+  if (p.firstDay && p.lastDay)
+    tiers.push({ name: "battery fold", days: spanDays(p.firstDay, p.lastDay) });
+  if (p.agg5mSpan)
+    tiers.push({
+      name: "blend 5m",
+      days: Math.round((p.agg5mSpan.lastMs - p.agg5mSpan.firstMs) / DAY_MS) + 1,
+    });
+  if (p.agg1dSpan)
+    tiers.push({
+      name: "blend 1d",
+      days: spanDays(p.agg1dSpan.firstDay, p.agg1dSpan.lastDay),
+    });
+  if (tiers.length < 2) return [];
+  const longest = tiers.reduce((a, t) => (t.days > a.days ? t : a));
+  // Half. Deliberately coarse: this is a "these do not describe the same history" signal, not a
+  // completeness metric, and a tight threshold on tiers that legitimately differ by a warm-up day
+  // or two would train the reader to ignore it.
+  const short = tiers.filter((t) => t.days * 2 < longest.days);
+  if (!short.length) return [];
+  return [
+    "",
+    `  ⚠ derived tiers disagree — ${longest.name} spans ${longest.days} days, but:`,
+    ...short.map(
+      (t) =>
+        `      ${t.name} spans only ${t.days} (${Math.round((t.days / longest.days) * 100)}%)`,
+    ),
+    "    they are rebuilt by different passes, so one can fall behind silently.",
+  ];
 }
 
 function requireWindow(ctx: Ctx): { start: string; end: string } {
@@ -203,7 +311,49 @@ function renderProvenance(p: ProvenanceReport): string[] {
     lines.push("  helper device     (none — this area has no battery blend)");
   }
   lines.push(`  blend bindings    ${p.bindings}`);
+  lines.push(...tierSkew(p));
   return lines;
+}
+
+/** One row per day, one column per learned parameter. */
+export function renderDaily(d: ProvenanceDaily): string {
+  const present = LEARNED_FIELDS.filter((f) => d.fields[f.key]);
+  const head = ["day", ...present.map((f) => f.label)];
+  const rows = d.days.map((day, i) => [
+    day,
+    ...present.map((f) => {
+      const v = d.fields[f.key]?.[i];
+      return v === null || v === undefined ? "" : v.toFixed(f.dp);
+    }),
+  ]);
+  const w = head.map((h, c) =>
+    Math.max(h.length, ...rows.map((r) => r[c].length)),
+  );
+  const line = (cells: string[]) =>
+    cells
+      .map((cell, c) => (c === 0 ? cell.padEnd(w[c]) : cell.padStart(w[c])))
+      .join("  ");
+  const filled = rows.filter((r) => r.slice(1).some((v) => v !== "")).length;
+  return [
+    line(head),
+    ...rows.map(line),
+    "",
+    `${filled} of ${d.days.length} day(s) in ${d.range.start} → ${d.range.end} have a fold row.`,
+  ].join("\n");
+}
+
+export function dailyCsv(d: ProvenanceDaily): string {
+  const present = LEARNED_FIELDS.filter((f) => d.fields[f.key]);
+  return toCsv(
+    ["day", ...present.map((f) => f.key)],
+    d.days.map((day, i) => [
+      day,
+      ...present.map((f) => {
+        const v = d.fields[f.key]?.[i];
+        return v === null || v === undefined ? "" : v;
+      }),
+    ]),
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -217,6 +367,34 @@ async function runProvenanceRead(ctx: Ctx): Promise<number> {
     });
     const start = str(ctx, "start");
     const end = str(ctx, "end");
+
+    // --daily is a different QUESTION, not a louder answer: the counts say how much the fold holds,
+    // this says what it LEARNED. They share a verb because you reach for them in the same breath.
+    if (bool(ctx, "daily")) {
+      // Refuse half a window rather than quietly serving the default trailing year: an operator who
+      // typed `--start` and got a year back would read the wrong range as the one they asked for.
+      if ((start === undefined) !== (end === undefined))
+        throw usage(
+          start === undefined
+            ? "--end without --start"
+            : "--start without --end",
+          "an explicit window needs both edges",
+          "pass both --start and --end, or neither for the default trailing year",
+        );
+      const q = start && end ? `?start=${start}&end=${end}` : "";
+      const daily = await s.get<ProvenanceDaily>(
+        `/api/v4/areas/${area.id}/provenance-daily${q}`,
+      );
+      const filled = daily.days.filter((_, i) =>
+        LEARNED_FIELDS.some((f) => daily.fields[f.key]?.[i] != null),
+      ).length;
+      ctx.emit(
+        { area: { id: area.id, name: area.displayName }, ...daily },
+        () => renderDaily(daily),
+        () => dailyCsv(daily),
+      );
+      return filled ? EXIT.OK : EXIT.FINDINGS;
+    }
 
     const prov = await s.get<ProvenanceReport & { ok: boolean }>(
       `/api/v4/areas/${area.id}/provenance`,
@@ -244,7 +422,9 @@ async function runProvenanceRead(ctx: Ctx): Promise<number> {
           ...renderProvenance(prov),
         ].join("\n"),
     );
-    return EXIT.OK;
+    // Findings when the tiers disagree: this is the condition the verb exists to surface, and a
+    // scripted check that exits 0 on it would be the same silence as before.
+    return tierSkew(prov).length ? EXIT.FINDINGS : EXIT.OK;
   });
 }
 
