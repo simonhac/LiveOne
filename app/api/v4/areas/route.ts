@@ -66,9 +66,16 @@ export async function GET(request: NextRequest) {
  * `POST /api/v4/dashboards` returns.
  *
  * The area is owner-scoped (owner forced to the caller) and always gets a SYNTHETIC handle, so it can
- * grow from one member to many without re-keying. Each member must be READABLE by the caller
- * (`resolveMemberDeviceRefs`, the §8.4 no-escalation firewall). Timezone defaults from the first member.
- *   403 unreadable/unknown member · 409 slug taken · 422 bad body.
+ * grow from one member to many without re-keying.
+ *
+ * 🛑 `members` is a RE-HOME list, not an add list. Each named device MOVES into the new area, leaving
+ * whatever area it was in, so admission is `assertDevicesRehomable` (own it, or own the area it is
+ * leaving) rather than the read check that sufficed while membership was additive — and an ownerless
+ * OpenElectricity region is refused outright (422) because it is an ambient SERVICE producer that
+ * consumers reference by id. `members: []` is legal: a zero-device area is first-class.
+ *
+ * Timezone defaults from the first member, or the platform default when there are none.
+ *   403 un-placeable member · 409 slug taken · 422 bad body / ambient device.
  */
 export async function POST(request: NextRequest) {
   const auth = await requireAuth(request);
@@ -94,8 +101,13 @@ export async function POST(request: NextRequest) {
       { status: members.status },
     );
 
-  // Day offset + display timezone default from the FIRST member device, as the legacy twin does.
-  const first = await DeviceConfigRegistry.deviceByHandle(members.systemIds[0]);
+  // Day offset + display timezone default from the FIRST member device, as the legacy twin does. An
+  // area may now be created with NO members (a zero-device area is first-class since Stage 4), in
+  // which case there is nothing to default from and the platform default stands.
+  const first =
+    members.systemIds.length > 0
+      ? await DeviceConfigRegistry.deviceByHandle(members.systemIds[0])
+      : null;
   const dayOffsetMin =
     typeof body?.dayOffsetMin === "number"
       ? body.dayOffsetMin

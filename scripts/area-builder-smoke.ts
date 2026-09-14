@@ -198,16 +198,18 @@ async function main() {
       );
     }
 
-    // 6. Removing down to the last member is refused.
-    const memberIds = await memberHandles(areaId);
-    for (const m of memberIds.slice(1)) await removeMember(areaId, m);
-    let refused = false;
-    try {
-      await removeMember(areaId, (await memberHandles(areaId))[0]);
-    } catch {
-      refused = true;
-    }
-    assert(refused, "removeMember refuses the last member");
+    // 6. Removing every member is ALLOWED — a zero-device area is first-class since Stage 4 of the
+    // device→0..1-area change, which is what lets "hide areas-of-one" become the structural "hide
+    // areas with zero devices". Removal ORPHANS: the devices keep their rows, with `area_id` NULL.
+    for (const m of await memberHandles(areaId)) await removeMember(areaId, m);
+    assert(
+      (await memberHandles(areaId)).length === 0,
+      "an area can be emptied of every member",
+    );
+    assert(
+      (await countPoints(H)) === 0,
+      "an emptied area resolves to no points at all",
+    );
 
     console.log("\n✅ ALL CHECKS PASSED");
   } finally {

@@ -126,6 +126,13 @@ export interface DeviceRecord extends DeviceConfigView {
   readonly uuid: string;
   /** The device's area-of-one (`devices.primary_area_id`, NOT NULL). */
   readonly primaryAreaId: string;
+  /**
+   * The Area this device is IN (`devices.area_id`, migration 0071) — nullable, because a device is in
+   * 0 or 1 Area. Not to be confused with `primaryAreaId`: that is the eagerly-minted area-of-one the
+   * device was born with, which since the Stage 3 flip means nothing to the resolver and survives
+   * only because its column is still NOT NULL.
+   */
+  readonly areaId: string | null;
 }
 
 /** The trimmed shape the device switcher renders — mirrors `getDevicesVisibleByUser`'s projection. */
@@ -181,6 +188,7 @@ function toRecord(row: JoinRow): DeviceRecord {
     deviceId: Device.encode(d.id),
     uuid: d.id,
     primaryAreaId: d.primaryAreaId,
+    areaId: d.areaId,
     id: d.rid,
     ownerClerkUserId: d.ownerUserId,
     vendorType: d.vendor,

@@ -20,7 +20,7 @@ import { areas, legacyHandles } from "@/lib/db/planetscale/schema";
 import { Area, Device, type DeviceId } from "@/lib/ids";
 import { DeviceRegistry } from "@/lib/registry";
 import {
-  assertMembersReadable,
+  assertDevicesRehomable,
   AreaAccessError,
   AreaValidationError,
 } from "@/lib/areas/create";
@@ -141,7 +141,8 @@ export type MemberRefsResult =
 
 /**
  * Decode a v4 `members: [dv_…]` list into the integer handles the area DAOs still take, refusing any
- * ref the caller cannot READ — the §8.4 no-escalation firewall on the members wire.
+ * ref the caller may not PLACE — the §8.4 no-escalation firewall on the members wire. See
+ * `assertDevicesRehomable` for why placing is a stricter question than reading.
  *
  * Two failures are deliberately COLLAPSED into one 403: a well-formed `dv_` id that names no device,
  * and one that names a device the caller cannot see. Distinguishing them would turn this endpoint into
@@ -149,22 +150,28 @@ export type MemberRefsResult =
  * (wrong prefix / bad base32) is a different thing — it cannot name anything, so it is a body error and
  * reads as 422 with the offending value echoed.
  *
- * Order is PRESERVED (it becomes `area_members.ordinal`), and duplicates are rejected rather than
- * silently deduped: on a declarative full-replace, `[a, b, a]` states two different ordinals for `a` and
- * there is no defensible way to pick one.
+ * 🛑 An EMPTY array is accepted (a zero-device area is first-class since Stage 4) but a MISSING or
+ * non-array `members` is still a 422. The distinction is load-bearing in the one direction that
+ * matters: `PUT /members` is a full replace, so reading a malformed body as "no members" would let a
+ * client bug silently empty an area and orphan every device in it.
+ *
+ * Order is no longer significant — `area_members.ordinal` is gone with the membership row — but
+ * duplicates are still rejected rather than silently deduped, because a caller that names a device
+ * twice does not have the model this endpoint implements.
  */
 export async function resolveMemberDeviceRefs(
   userId: string,
   isAdmin: boolean,
   refs: unknown,
 ): Promise<MemberRefsResult> {
-  if (!Array.isArray(refs) || refs.length === 0) {
+  if (!Array.isArray(refs)) {
     return {
       ok: false,
       status: 422,
-      message: "members must be a non-empty array of dv_ ids",
+      message: "members must be an array of dv_ ids",
     };
   }
+  if (refs.length === 0) return { ok: true, deviceIds: [], systemIds: [] };
   const deviceIds: DeviceId[] = [];
   for (const ref of refs) {
     const parsed = typeof ref === "string" ? Device.parse(ref) : null;
@@ -186,7 +193,7 @@ export async function resolveMemberDeviceRefs(
   }
 
   // `ridsForDevices` answers only for devices that HAVE a row; a miss is an unknown id, which collapses
-  // into "not readable" above. The readability decision itself is `assertMembersReadable`'s — the same
+  // into "not readable" above. The admission decision itself is `assertDevicesRehomable`'s — the same
   // firewall the legacy routes call, so v4 cannot become the laxer door onto the same tables.
   const rids = await DeviceRegistry.ridsForDevices(deviceIds);
   const systemIds: number[] = [];
@@ -202,7 +209,7 @@ export async function resolveMemberDeviceRefs(
     systemIds.push(rid);
   }
   try {
-    await assertMembersReadable(userId, isAdmin, systemIds);
+    await assertDevicesRehomable(userId, isAdmin, systemIds);
   } catch (err) {
     if (err instanceof AreaAccessError)
       return { ok: false, status: 403, message: err.message };

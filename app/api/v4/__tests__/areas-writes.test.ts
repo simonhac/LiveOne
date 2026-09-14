@@ -81,7 +81,7 @@ jest.mock("@/lib/areas/create", () => {
     replaceMembers: jest.fn(),
     replaceBindings: jest.fn(),
     refreshAreaServing: jest.fn(),
-    assertMembersReadable: jest.fn(),
+    assertDevicesRehomable: jest.fn(),
   };
 });
 

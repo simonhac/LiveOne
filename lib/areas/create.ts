@@ -75,32 +75,55 @@ export class AreaValidationError extends Error {
 const AREA_ALIAS_UNIQUE = "areas_owner_alias_unique";
 
 /**
- * Assert the caller may pull each `systemId` into an area they own — the no-escalation firewall. A
- * member is allowed when the caller can READ it (admin / owner / public-ownerless): you can only
- * aggregate data you can already see. (Read, not write: public grid-region devices — e.g. an
- * OpenElectricity NEM region — are legitimately added as members without owning them.)
+ * Assert the caller may place each `systemId` in an area they own — the no-escalation firewall.
+ *
+ * 🛑 **This used to ask only "can the caller READ it", and that is no longer a sufficient question.**
+ * The old rule was sound precisely because membership was ADDITIVE: the worst a caller could do by
+ * naming your device was aggregate data they could already see, and your own area kept it too. With
+ * `devices.area_id` a device is in 0 or 1 area, so naming it here TAKES IT OUT of wherever it was —
+ * a read-shaped permission would let anyone who can see a device silently remove it from someone
+ * else's site, blanking that site's Sankey and its bindings. So there are now two legs:
+ *
+ *  1. **Ownership.** Admin, or the caller owns the device.
+ *  2. **Custody.** The device is currently in an area the CALLER owns — so it is leaving a place
+ *     they are already responsible for. This is what lets an owner re-home their own site's members
+ *     between their own areas without owning every device in them (Craig's devices in Craig Unified).
+ *
+ * And an **ownerless device is not placeable at all** → `AreaValidationError` (422, not 403: it is a
+ * statement about the device, not about the caller, and every caller gets the same answer). Ownerless
+ * means an OpenElectricity NEM region — Home Assistant's `entry_type=SERVICE`: an ambient producer
+ * that many areas consume by REFERENCE and none contains. It was admissible under the read rule, and
+ * that is exactly how OE regions ended up as members of three areas each before migration 0071 made
+ * them ambient.
  *
  * A fourth `user_systems` viewer-grant term was dropped with that table in migration 0045 (slice F).
- * This is the strict direction — a caller who could previously add a granted member now gets
- * `AreaAccessError` — which is the correct default for a firewall whose whole job is refusing
- * escalation.
  */
-export async function assertMembersReadable(
+export async function assertDevicesRehomable(
   userId: string,
   isAdmin: boolean,
   systemIds: number[],
 ): Promise<void> {
   for (const sid of systemIds) {
-    const sys = await DeviceConfigRegistry.deviceByHandle(sid);
-    if (!sys) throw new AreaValidationError(`System ${sid} not found`);
-    if (
-      isAdmin ||
-      sys.ownerClerkUserId === userId ||
-      sys.ownerClerkUserId == null
-    )
-      continue;
+    const dev = await DeviceConfigRegistry.deviceByHandle(sid);
+    if (!dev) throw new AreaValidationError(`System ${sid} not found`);
+    if (dev.ownerClerkUserId == null)
+      throw new AreaValidationError(
+        `Device ${sid} is ambient (no owner) and cannot be placed in an area — reference it by id instead`,
+      );
+    if (isAdmin || dev.ownerClerkUserId === userId) continue;
+    if (dev.areaId && (await areaOwner(dev.areaId)) === userId) continue;
     throw new AreaAccessError(`No access to system ${sid}`);
   }
+}
+
+/** Who owns an area, for the custody leg above. Null for an unknown area. */
+async function areaOwner(areaId: string): Promise<string | null> {
+  const [row] = await requirePlanetscaleDb()
+    .select({ ownerUserId: areas.ownerUserId })
+    .from(areas)
+    .where(eq(areas.id, areaId))
+    .limit(1);
+  return row?.ownerUserId ?? null;
 }
 
 export interface CreateAreaInput {
@@ -282,6 +305,60 @@ export async function removeMember(
       );
     await setDeviceArea(tx, target, null);
   });
+}
+
+/**
+ * Move ONE device into an area, or out of every area (`toAreaId = null`) — the device-side inverse of
+ * the area-side `PUT /members`, backing `PATCH /api/v4/devices/{id} { areaId }`.
+ *
+ * Both verbs exist because both questions are natural and neither is derivable from the other in one
+ * request: "which devices are in this area" (the area builder's picker) and "which area is this
+ * device in" (the device settings dialog, and the only way to say *not assigned*). Home Assistant has
+ * the same pair, for the same reason.
+ *
+ * Returns the area the device LEFT, so the caller can refresh serving for both ends — a re-home
+ * invalidates the KV subscription registry and the point-series cache of the source area just as much
+ * as the destination's, and refreshing only the destination leaves the old area serving latest values
+ * for a device it no longer holds.
+ *
+ * Departing bindings go with it, by exactly the predicate `removeMember` uses. A no-op move (already
+ * there) short-circuits BEFORE the delete: re-stating a device's current area must not drop its
+ * bindings.
+ */
+export async function rehomeDevice(
+  deviceId: DeviceId,
+  toAreaId: string | null,
+): Promise<{ fromAreaId: string | null; moved: boolean }> {
+  const db = requirePlanetscaleDb();
+  const deviceUuid = Device.toUuid(deviceId);
+  const [row] = await db
+    .select({ areaId: devices.areaId })
+    .from(devices)
+    .where(eq(devices.id, deviceUuid))
+    .limit(1);
+  if (!row) throw new AreaValidationError(`Device ${deviceId} not found`);
+  const fromAreaId = row.areaId;
+  if (fromAreaId === toAreaId) return { fromAreaId, moved: false };
+
+  await db.transaction(async (tx) => {
+    if (fromAreaId)
+      await tx
+        .delete(areaBindings)
+        .where(
+          and(
+            eq(areaBindings.areaId, fromAreaId),
+            inArray(
+              areaBindings.pointUid,
+              tx
+                .select({ id: points.id })
+                .from(points)
+                .where(eq(points.deviceId, deviceUuid)),
+            ),
+          ),
+        );
+    await setDeviceArea(tx, deviceId, toAreaId);
+  });
+  return { fromAreaId, moved: true };
 }
 
 /**
