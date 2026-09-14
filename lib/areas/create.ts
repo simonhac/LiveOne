@@ -115,12 +115,28 @@ export type AuthorizedPlacements = Map<string, string | null>;
  *     they are already responsible for. This is what lets an owner re-home their own site's members
  *     between their own areas without owning every device in them (Craig's devices in Craig Unified).
  *
- * And an **ownerless device is not placeable at all** → `AreaValidationError` (422, not 403: it is a
- * statement about the device, not about the caller, and every caller gets the same answer). Ownerless
- * means an OpenElectricity NEM region — Home Assistant's `entry_type=SERVICE`: an ambient producer
- * that many areas consume by REFERENCE and none contains. It was admissible under the read rule, and
- * that is exactly how OE regions ended up as members of three areas each before migration 0071 made
- * them ambient.
+ * Two kinds of device are **not placeable at all**, by anyone including an admin →
+ * `AreaValidationError` (422, not 403: each is a statement about the DEVICE, not about the caller,
+ * so every caller gets the same answer).
+ *
+ *  - **Ownerless.** An OpenElectricity NEM region — Home Assistant's `entry_type=SERVICE`: an
+ *    ambient producer that many areas consume by REFERENCE and none contains. It was admissible
+ *    under the read rule, and that is exactly how OE regions ended up as members of three areas
+ *    each before migration 0071 made them ambient.
+ *  - **A `vendor='helper'` device.** A helper is an area's own COMPUTED output — it owns the
+ *    battery-provenance blend points of the area that minted it, and `helperSiteId(areaId)` bakes
+ *    that area into its `vendor_site_id` permanently. Adopting one into a second area makes that
+ *    area's resolver union another site's blend, which is the "serving points of a device you do
+ *    not hold" class this whole change exists to close. `replaceMembers` has always refused to
+ *    EVICT a helper by omission; this is the missing other half, and without it the two rules
+ *    contradict — you could not drop a helper you had just been allowed to steal.
+ *
+ *    🛑 It is also how `ensureHelperDevice` broke. Adopt Daylesford's helper into another area and
+ *    the dedupe (which looks in the area) misses, so the next provenance recompute tries to MINT a
+ *    second helper and dies on `devices_helper_area_unique` — a 500 on
+ *    `POST /api/v4/areas/{id}/recompute-provenance`, reproduced on `origin/main` by
+ *    `v4-surface-smoke`. The dedupe now heals that too, but the adoption should not have been
+ *    possible.
  *
  * A fourth `user_systems` viewer-grant term was dropped with that table in migration 0045 (slice F).
  */
@@ -136,6 +152,10 @@ export async function assertDevicesRehomable(
     if (dev.ownerClerkUserId == null)
       throw new AreaValidationError(
         `Device ${sid} is ambient (no owner) and cannot be placed in an area — reference it by id instead`,
+      );
+    if (dev.vendorType === "helper")
+      throw new AreaValidationError(
+        `Device ${sid} is an area's derived output and belongs to the area that mints it — it cannot be moved`,
       );
     observed.set(dev.uuid, dev.areaId);
     if (isAdmin || dev.ownerClerkUserId === userId) continue;

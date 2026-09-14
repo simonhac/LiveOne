@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { refuseIfReliedUpon } from "@/lib/integrity/http";
+import { Dashboard } from "@/lib/ids";
 import {
   updateDashboardDoc,
   updateDashboard,
@@ -165,7 +166,13 @@ export async function DELETE(
   const r = await loadOwnedDashboard(request, id);
   if ("error" in r) return r.error;
 
-  const relied = await refuseIfReliedUpon(request, "dashboard", r.dashboard.id);
+  // 🛑 The raw uuid, not the `db_…` id. `refuseIfReliedUpon` queries `users.default_dashboard_id`
+  // and `dashboard_grants.dashboard_id`, both `uuid` columns, so handing it the TypeID made every
+  // delete a 22P02 → 500. Pre-existing and unrelated to membership; found by `v4-surface-smoke`,
+  // which asserts this route answers `200 { success }`.
+  const uuid = Dashboard.toUuidOrNull(r.dashboard.id);
+  if (!uuid) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  const relied = await refuseIfReliedUpon(request, "dashboard", uuid);
   if ("response" in relied) return relied.response;
 
   await deleteDashboard(r.dashboard.id);

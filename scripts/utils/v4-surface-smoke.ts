@@ -1516,47 +1516,42 @@ async function main(): Promise<void> {
       { got: memberShape?.map((m: any) => m.legacySystemId), handleA, handleB },
     );
 
-    // 🛑 A SERVER-MANAGED `vendor:"helper"` member survives being omitted from a full replace. Driven on
-    // a throwaway area, never on a real one — but the hazard it guards is real and lives on the real
-    // ones: a client that read `members`, filtered to the devices its picker shows, and PUT the result
-    // back would otherwise delete the area's blend bindings and blank its provenance card until the
-    // next daily recompute rebuilt them.
+    // 🛑 A `vendor:"helper"` device CANNOT BE ADOPTED into another area — 422, for every caller
+    // including an admin.
+    //
+    // This assertion used to be the opposite: it created a scratch area WITH a real helper in it, to
+    // prove the full replace never evicts one by omission. That drove a defect rather than a
+    // contract. A helper is an area's own computed output and `helperSiteId(areaId)` bakes its area
+    // into `vendor_site_id` permanently, so adopting Daylesford's helper elsewhere left
+    // `ensureHelperDevice` unable to find it — and the next
+    // `POST /api/v4/areas/{id}/recompute-provenance` 500'd on `devices_helper_area_unique` trying to
+    // mint a second one. THIS SCRIPT is what found that, on `origin/main`, by performing the
+    // adoption itself.
+    //
+    // The eviction carve-out it was testing is unchanged and is unit-tested
+    // (`lib/areas/__tests__/replace-members.test.ts`) — it has to be, because with adoption refused
+    // there is no way to construct an area holding someone else's helper to drive it over the wire.
     if (fixture.helperDevice) {
-      const withHelper = await call("POST", "/api/v4/areas", {
+      const adopt = await call("POST", "/api/v4/areas", {
         body: {
-          name: `${AREA_PREFIX} helper-keep`,
+          name: `${AREA_PREFIX} helper-adopt`,
           members: [fixture.deviceA, fixture.helperDevice],
         },
       });
       ok(
-        withHelper.status === 201,
-        "an area with a helper member creates",
-        withHelper,
+        adopt.status === 422,
+        "naming a `vendor:helper` device as a member → 422 (an area's derived output cannot move)",
+        adopt,
       );
-      const dropped = await call(
-        "PUT",
-        `/api/v4/areas/${withHelper.body?.id}/members`,
-        { body: { members: [fixture.deviceA] } },
-      );
-      ok(
-        dropped.body?.members?.length === 2 &&
-          dropped.body.members.some(
-            (m: any) => m.id === fixture.helperDevice,
-          ) &&
-          dropped.body.members.some((m: any) => m.id === fixture.deviceA),
-        "omitting a `vendor:helper` member does NOT evict it (server-managed membership)",
-        dropped.body?.members,
-      );
-      const droppedReal = await call(
-        "PUT",
-        `/api/v4/areas/${withHelper.body?.id}/members`,
-        { body: { members: [fixture.helperDevice] } },
+      // And the helper did not move on the way to being refused: the check runs before any write.
+      const stillThere = await call(
+        "GET",
+        "/api/v4/devices/" + fixture.helperDevice,
       );
       ok(
-        droppedReal.body?.members?.length === 1 &&
-          droppedReal.body.members[0].id === fixture.helperDevice,
-        "…while a REAL member named-out is still removed (the exception is narrow)",
-        droppedReal.body?.members,
+        stillThere.status === 200 && !!stillThere.body?.areaId,
+        "…and the refused helper is still in its own area",
+        stillThere.body,
       );
     }
 
