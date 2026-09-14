@@ -8,8 +8,16 @@
  *   3. with no bindings, the point set is the UNION of its members' own points;
  *   4. with bindings, the point set is exactly the BOUND points (override);
  *   5. adding a member grows the union;
- *   6. removing the last member is refused.
- * Then it hard-deletes the area (area_members + area_bindings cascade).
+ *   6. an area can be emptied of every member.
+ * Then it hard-deletes the area (area_bindings cascade).
+ *
+ * 🛑 **This run MOVES real devices, and it has to put them back.** Membership is `devices.area_id`
+ * since migration 0071: a device is in at most one area, so pulling one into the throwaway site
+ * takes it OUT of the site it actually belongs to, and step 6 then leaves it ambient. Before the
+ * device→0..1-area change this script was read-only with respect to existing membership — adding a
+ * member was purely additive, so there was nothing to restore. Now there is, so the `finally`
+ * restores every borrowed device's original `area_id` BEFORE deleting the throwaway area (the FK is
+ * `ON DELETE SET NULL`, which would otherwise silently orphan anything still pointing at it).
  *
  * Runs directly against the DB in .env.local — DEV only (the DB-env guard refuses a prod-token
  * connection). Bypasses HTTP/Clerk, so it needs no live session.
@@ -36,7 +44,9 @@ async function main() {
   const { planetscaleDb, requirePlanetscaleDb } = await import(
     "@/lib/db/planetscale"
   );
-  const { areas, legacyHandles } = await import("@/lib/db/planetscale/schema");
+  const { areas, devices, legacyHandles } = await import(
+    "@/lib/db/planetscale/schema"
+  );
   const { createArea, addMember, replaceBindings, removeMember } = await import(
     "@/lib/areas/create"
   );
@@ -100,6 +110,21 @@ async function main() {
   console.log(
     `Members: seed=${seed.join(",")}${extra ? `  extra=${extra}` : ""}\n`,
   );
+
+  // 🛑 Record where every borrowed device lives BEFORE anything moves it. See the header: this used
+  // to be a purely additive operation and is not one any more.
+  const uuidByRid = new Map<number, string>();
+  const originalArea = new Map<string, string | null>();
+  for (const rid of members) {
+    const uuid = await DeviceRegistry.uuidForRid(rid, db);
+    uuidByRid.set(rid, uuid);
+    const [row] = await db
+      .select({ areaId: devices.areaId })
+      .from(devices)
+      .where(eq(devices.id, uuid))
+      .limit(1);
+    originalArea.set(uuid, row?.areaId ?? null);
+  }
 
   let areaId: string | null = null;
   try {
@@ -213,6 +238,23 @@ async function main() {
 
     console.log("\n✅ ALL CHECKS PASSED");
   } finally {
+    // Put every borrowed device back where it was, FIRST. `devices.area_id` is ON DELETE SET NULL,
+    // so deleting the throwaway area below would otherwise silently leave them ambient — and a
+    // wrapped cleanup means the operator would see the smoke run pass while dev quietly lost its
+    // membership. Wrapped so a restore failure cannot impersonate a test failure, but LOUD.
+    for (const [uuid, was] of originalArea) {
+      try {
+        await db
+          .update(devices)
+          .set({ areaId: was })
+          .where(eq(devices.id, uuid));
+      } catch (err) {
+        console.error(
+          `⚠️  could not restore device ${uuid} to area ${was}:`,
+          err,
+        );
+      }
+    }
     if (areaId) {
       // `legacy_handles.area_id` is NO ACTION, not CASCADE, so the handle row must go first — without
       // this the delete throws and, being in a `finally`, MASKS whatever the body actually failed on.

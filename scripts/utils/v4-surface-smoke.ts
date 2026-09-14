@@ -54,15 +54,17 @@ import { isNull } from "drizzle-orm";
 import { createClerkClient } from "@clerk/nextjs/server";
 import { planetscaleDb } from "@/lib/db/planetscale";
 import { shareTokens } from "@/lib/db/planetscale/schema";
-import { eq, like } from "drizzle-orm";
+import { eq, inArray, like } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import {
   areas,
   dashboards as dashboardsTable,
+  devices as devicesTable,
   legacyHandles,
 } from "@/lib/db/planetscale/schema";
 // The server's OWN binding predicate, so the fixture this script builds cannot drift from the rules
 // `replaceBindings` validates against.
+import { Device, type DeviceId } from "@/lib/ids";
 import { bindingShapeMatches } from "@/lib/areas/slots";
 import { ROLES, type RoleId } from "@/lib/roles/registry";
 
@@ -437,10 +439,72 @@ async function sweepScratchAreas(): Promise<number> {
     .from(areas)
     .where(like(areas.name, `${AREA_PREFIX}%`));
   for (const row of rows) {
+    // 🛑 NAME anything still living in the scratch area before deleting it, and do not try to guess
+    // where it belongs. Membership is `devices.area_id` since migration 0071, so a scratch area holds
+    // REAL devices that were taken out of their real site to be in it, and the FK is
+    // `ON DELETE SET NULL` — the delete below leaves them AMBIENT.
+    //
+    // A live run restores the exact prior area in `restoreBorrowedDevices`, from a map it captured
+    // before it moved anything. This sweep is the CRASHED-run backstop and has no such map, and
+    // `devices.primary_area_id` is NOT a substitute: it is the area-of-one each device was minted
+    // with, which for every re-homed device is a different area from the one it actually belongs to.
+    // Restoring from it would silently move Kutis out of High Street Kew and into an empty shell —
+    // a wrong answer delivered quietly, which is worse than a right question asked loudly.
+    const stranded = await db
+      .select({ name: devicesTable.name, rid: devicesTable.rid })
+      .from(devicesTable)
+      .where(eq(devicesTable.areaId, row.id));
+    if (stranded.length > 0)
+      console.error(
+        `  ! ${stranded.length} device(s) were left in a crashed run's scratch area and are now ` +
+          `AMBIENT (in no area): ${stranded.map((d) => `${d.name} (${d.rid})`).join(", ")} — ` +
+          `put them back with \`liveone device area <device> <area> --apply\``,
+      );
     await db.delete(legacyHandles).where(eq(legacyHandles.areaId, row.id));
-    await db.delete(areas).where(eq(areas.id, row.id)); // area_members/area_bindings cascade
+    await db.delete(areas).where(eq(areas.id, row.id)); // area_bindings cascade
   }
   return rows.length;
+}
+
+/**
+ * Where each of this run's fixture devices lived BEFORE it was borrowed, and the restore that puts
+ * them back.
+ *
+ * 🛑 This exists because the members PUT stopped being additive. Before migration 0071 pulling a
+ * device into a scratch area left its real membership untouched, so there was nothing to restore and
+ * this script was read-only with respect to `liveone-dev`'s wiring. It is not any more: a device is
+ * in at most one area, so every fixture device is taken OUT of its real site for the duration of the
+ * run, and `devices.area_id` is `ON DELETE SET NULL`, so the teardown would otherwise leave them
+ * ambient on a SHARED database.
+ */
+async function captureDeviceAreas(
+  deviceUuids: string[],
+): Promise<Map<string, string | null>> {
+  if (deviceUuids.length === 0) return new Map();
+  const db = requirePlanetscaleDb();
+  const rows = await db
+    .select({ id: devicesTable.id, areaId: devicesTable.areaId })
+    .from(devicesTable)
+    .where(inArray(devicesTable.id, deviceUuids));
+  return new Map(rows.map((r) => [r.id, r.areaId]));
+}
+
+async function restoreBorrowedDevices(
+  original: Map<string, string | null>,
+): Promise<void> {
+  const db = requirePlanetscaleDb();
+  for (const [uuid, areaId] of original) {
+    try {
+      await db
+        .update(devicesTable)
+        .set({ areaId })
+        .where(eq(devicesTable.id, uuid));
+    } catch (err) {
+      // Loud, never silent: a failed restore leaves a real device out of its real site on a shared
+      // database, and the run would otherwise print PASS over the top of it.
+      console.error(`  ! could not restore device ${uuid} to ${areaId}:`, err);
+    }
+  }
 }
 
 interface BindingFixture {
@@ -461,27 +525,38 @@ interface BindingFixture {
  * Nothing is hardcoded, and nothing is cloned from an existing multi-member area — an earlier version
  * did exactly that and went un-runnable the moment the 2-hourly prod→dev sync rewrote
  * `areas.owner_user_id` to a PROD user id, dropping every multi-member area out of the test user's
- * readable set. What survives that: an area whose `members` is a single device IS that device (its
- * handle addresses the device), so the readable areas-of-one give both a `dv_` → integer-handle map and
- * a set of devices this user can definitely pull into an area of their own.
+ * readable set.
+ *
+ * 🛑 The `dv_` → integer-handle map now comes from `GET /api/v4/devices`, which states both. It used
+ * to be inferred from the readable AREAS-OF-ONE, on the reading "an area whose `members` is a single
+ * device IS that device" — and migration 0071 falsified that: a device re-homed into its site area
+ * leaves its area-of-one with ZERO members, so the map came back all but empty and this function
+ * returned null, failing the run with "fewer than 2 readable devices carry a bindable point" rather
+ * than with anything about areas. The device list was always the more direct source; it simply was
+ * not carrying the handle when this was written.
  *
  * The candidate bindings are then checked with the SERVER'S OWN predicate (`bindingShapeMatches`, which
  * `replaceBindings` validates against), so a fixture that this function returns is one the API must
  * accept — the fixture cannot drift away from the binding rules.
  */
 async function findBindingFixture(
-  areaList: any[],
+  deviceList: any[],
 ): Promise<BindingFixture | null> {
   const handleOf = new Map<string, number>();
   // EVERY helper, not merely the first: there are several on `liveone-dev`, and skipping only one of
   // them let a helper become `deviceB` — at which point the members PUT correctly refused to evict it
   // and three assertions failed on a bad fixture rather than on a real defect.
   const helpers = new Set<string>();
-  for (const a of areaList) {
-    const agg = (await call("GET", `/api/v4/areas/${a.id}`)).body;
-    const members: any[] = agg?.members ?? [];
-    for (const m of members) if (m.vendor === "helper") helpers.add(m.id);
-    if (members.length === 1) handleOf.set(members[0].id, a.legacySystemId);
+  for (const d of deviceList) {
+    if (!d.id || typeof d.legacySystemId !== "number") continue;
+    // An OWNERLESS device is ambient by construction (an OpenElectricity NEM region) and the server
+    // refuses to place one, so it cannot be a member fixture.
+    if (d.ownerUserId === null) continue;
+    if (d.vendor === "helper") {
+      helpers.add(d.id);
+      continue;
+    }
+    handleOf.set(d.id, d.legacySystemId);
   }
 
   /** The first (role, metric, point) triple on this device that `replaceBindings` would accept. */
@@ -642,6 +717,10 @@ async function main(): Promise<void> {
       `  (swept ${preSwept} leftover scratch area(s) from a crashed run)`,
     );
 
+  // Filled once the fixture is chosen; restored in the `finally`. Declared out here so the restore
+  // runs even if the run dies between choosing the fixture and finishing.
+  const borrowedAreas = new Map<string, string | null>();
+
   try {
     // ---------------------------------------------------------------- 1. GET /areas
     section("GET /api/v4/areas");
@@ -716,10 +795,25 @@ async function main(): Promise<void> {
           typeof d.vendor === "string" &&
           "vendorSiteId" in d &&
           typeof d.status === "string" &&
-          "ownerUserId" in d,
+          "ownerUserId" in d &&
+          "areaId" in d &&
+          "areaName" in d,
       ),
-      "every entry satisfies `CandidateDevice` in full (id: dv_…, legacySystemId, name, slug, vendor, vendorSiteId, status, ownerUserId)",
+      "every entry satisfies `CandidateDevice` in full (id: dv_…, legacySystemId, name, slug, vendor, vendorSiteId, status, ownerUserId, areaId, areaName)",
       deviceList[0],
+    );
+    // 🛑 `areaId` is what makes the picker honest. A device is in at most one area, so choosing one
+    // MOVES it — and a picker that cannot say where a device currently lives is offering that move
+    // with its consequence hidden. Null is a real answer (an ambient OpenElectricity region), so the
+    // assertion is on the KEY, above, and on the shape here.
+    ok(
+      deviceList.every(
+        (d: any) =>
+          (d.areaId === null || String(d.areaId).startsWith("ar_")) &&
+          (d.areaId === null) === (d.areaName === null),
+      ),
+      "areaId is an ar_ id or null, and areaName agrees with it",
+      deviceList.map((d: any) => [d.name, d.areaId, d.areaName]),
     );
     ok(
       deviceList.every(
@@ -1091,7 +1185,7 @@ async function main(): Promise<void> {
     // 🛑 Every one of these is driven by CREATING FROM SCRATCH, never by re-running against something
     // that already exists. This repo has twice shipped a write that worked on the second call and 500'd
     // on the first (an `ON CONFLICT … coalesce` path, and an FK that only breaks first creation).
-    const fixture = await findBindingFixture(list);
+    const fixture = await findBindingFixture(deviceList);
     if (!fixture)
       throw new Error(
         "fewer than 2 readable devices carry a bindable point — cannot prove the members PUT removal leg",
@@ -1101,6 +1195,13 @@ async function main(): Promise<void> {
     );
     const handleA = fixture.handleOf.get(fixture.deviceA)!;
     const handleB = fixture.handleOf.get(fixture.deviceB)!;
+    // 🛑 Record where the fixture devices live BEFORE anything moves them. See `captureDeviceAreas`.
+    for (const [uuid, was] of await captureDeviceAreas(
+      [fixture.deviceA, fixture.deviceB].map((d) =>
+        Device.toUuid(d as DeviceId),
+      ),
+    ))
+      borrowedAreas.set(uuid, was);
 
     // ---------------------------------------------------------------- 5b. POST /areas
     section("POST /api/v4/areas");
@@ -1175,11 +1276,16 @@ async function main(): Promise<void> {
       "slug + legacySystemId persisted as created",
       fresh.body?.area,
     );
+    // 🛑 A SET, not a sequence. The request order used to become `area_members.ordinal`; with one
+    // area per device there is no membership row to carry an ordinal, and `getAreaMemberDeviceIds`
+    // sorts (helper-last, rid). Asserting the request order here would be asserting a property the
+    // server deliberately stopped having.
     ok(
       fresh.body?.members?.length === 2 &&
-        fresh.body.members[0].id === fixture.deviceA &&
-        fresh.body.members[1].id === fixture.deviceB,
-      "members are the two requested devices, in the requested ORDER",
+        [fixture.deviceA, fixture.deviceB].every((d) =>
+          fresh.body.members.some((m: any) => m.id === d),
+        ),
+      "members are exactly the two requested devices (order is the server's, not the request's)",
       fresh.body?.members,
     );
     ok(
@@ -2657,6 +2763,9 @@ async function main(): Promise<void> {
 
     // ==================================================================
   } finally {
+    // 🛑 BEFORE the area delete. `devices.area_id` is ON DELETE SET NULL, so deleting the scratch
+    // area after this would leave every borrowed device ambient — see `captureDeviceAreas`.
+    await restoreBorrowedDevices(borrowedAreas);
     await trash();
     // 🛑 The backstop, and it must run even when `trash()` reported success — that is the whole point.
     // A non-zero count here means the HTTP teardown believed it had deleted something it had not.
