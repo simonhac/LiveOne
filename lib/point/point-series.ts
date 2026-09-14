@@ -27,7 +27,16 @@ export function getSupportedIntervals(
     if (aggregationField === AggregationField.LAST) return ["5m", "1d"];
     return [];
   } else if (metricType === MetricType.SOC) {
-    // SOC: last in both, avg/min/max only in 1d
+    // SOC: `last` is the answer at every interval — a charge level is a level, so the value AT the
+    // interval is what the question means, and it is what every chart and the KV latest map read.
+    //
+    // `avg`/`min`/`max` are stored at 5m too (the 1d figures are aggregated from those very
+    // columns, and the battery-provenance fold reads `agg_5m.avg` directly via `readAgg5m`) but
+    // they were withheld from 5m serving until 2026-09-15. They are now reachable and marked ON
+    // DEMAND at 5m in `getAllSeriesForDevice` — so nothing new appears in an unasked listing, and
+    // a caller that needs the exact column the fold reads can ask for it by name. The case that
+    // forced it: copying one instrument's 5-minute SoC onto another's gap through `liveone import`
+    // is only faithful if the `avg` column is readable, and no supported path could return it.
     if (aggregationField === AggregationField.LAST) {
       return ["5m", "1d"];
     } else if (
@@ -37,7 +46,7 @@ export function getSupportedIntervals(
         AggregationField.MAX,
       ].includes(aggregationField as AggregationField)
     ) {
-      return ["1d"];
+      return ["5m", "1d"];
     }
     return [];
   } else {

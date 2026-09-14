@@ -31,10 +31,14 @@ describe("getSupportedIntervals", () => {
   });
 
   describe("the other metric types are unchanged", () => {
-    it("gives SoC `last` at both intervals and the rest only daily", () => {
-      expect(getSupportedIntervals("soc", "last")).toEqual(["5m", "1d"]);
-      for (const f of ["avg", "min", "max"])
-        expect(getSupportedIntervals("soc", f)).toEqual(["1d"]);
+    it("gives SoC every aggregation at both intervals", () => {
+      // `avg`/`min`/`max` were 1d-only until 2026-09-15. They are stored at 5m — the 1d figures
+      // aggregate those very columns, and the battery-provenance fold reads `agg_5m.avg` — so the
+      // restriction was a serving rule, not a data fact. They are now reachable at 5m and withheld
+      // from unasked 5m listings instead, which is `SeriesInfo.onDemandIntervals`' job, not this
+      // function's; see `point-manager` for the listing half.
+      for (const f of ["last", "avg", "min", "max"])
+        expect(getSupportedIntervals("soc", f)).toEqual(["5m", "1d"]);
     });
 
     it("gives power every aggregation at both intervals", () => {
