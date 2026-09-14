@@ -69,22 +69,37 @@ export interface OnboardingPlacement {
  * invisible the moment it is created. Ownership is re-checked for the same reason it is checked
  * anywhere else: the area could have been re-owned since the default was recorded.
  */
-async function usableDefaultArea(
-  ownerClerkUserId: string,
-): Promise<{ id: string; location: AreaLocation | null } | null> {
+async function readDefaultArea(ownerClerkUserId: string): Promise<{
+  /** Whatever `users.default_area_id` holds, usable or not — the CAS token for a replacement. */
+  recorded: string | null;
+  /** The same area, only when it is still ACTIVE and still this owner's. */
+  usable: { id: string; location: AreaLocation | null } | null;
+}> {
   const [row] = await requirePlanetscaleDb()
-    .select({ id: areas.id, location: areas.location })
+    .select({
+      recorded: users.defaultAreaId,
+      areaId: areas.id,
+      areaOwner: areas.ownerUserId,
+      areaStatus: areas.status,
+      location: areas.location,
+    })
     .from(users)
-    .innerJoin(areas, eq(areas.id, users.defaultAreaId))
-    .where(
-      and(
-        eq(users.clerkUserId, ownerClerkUserId),
-        eq(areas.ownerUserId, ownerClerkUserId),
-        eq(areas.status, "active"),
-      ),
-    )
+    // LEFT, so an UNUSABLE default is distinguishable from an absent one. An inner join reported
+    // both as "nothing recorded", and the replacement write then CAS'd on `default_area_id IS NULL`
+    // and silently did nothing — leaving a user whose default had been archived unable to ever
+    // acquire a new one, because the next connection saw the area this one created and stopped
+    // trying. Found in review.
+    .leftJoin(areas, eq(areas.id, users.defaultAreaId))
+    .where(eq(users.clerkUserId, ownerClerkUserId))
     .limit(1);
-  return row ? { id: row.id, location: row.location ?? null } : null;
+  if (!row) return { recorded: null, usable: null };
+  const usable =
+    row.areaId &&
+    row.areaOwner === ownerClerkUserId &&
+    row.areaStatus === "active"
+      ? { id: row.areaId, location: row.location ?? null }
+      : null;
+  return { recorded: row.recorded ?? null, usable };
 }
 
 /** Does this owner have any active area at all? Decides whether a new area becomes the default. */
@@ -111,14 +126,23 @@ async function hasAnyArea(ownerClerkUserId: string): Promise<boolean> {
  */
 async function fillBlankLocation(
   areaId: string,
+  ownerClerkUserId: string,
   location: AreaLocation,
 ): Promise<void> {
   await requirePlanetscaleDb()
     .update(areas)
     .set({ location, updatedAt: new Date() })
-    // Re-stated as a predicate, not just checked by the caller: two concurrent connects both
-    // reading "blank" must not have the second overwrite the first.
-    .where(and(eq(areas.id, areaId), isNull(areas.location)));
+    // Every clause of the read is RE-STATED as a predicate, not merely checked by the caller. Two
+    // concurrent connects both reading "blank" must not have the second overwrite the first — and
+    // the owner is re-stated because the area could have been transferred between the read and this
+    // write, at which point writing a location into it would be editing somebody else's site.
+    .where(
+      and(
+        eq(areas.id, areaId),
+        eq(areas.ownerUserId, ownerClerkUserId),
+        isNull(areas.location),
+      ),
+    );
 }
 
 /**
@@ -135,8 +159,15 @@ async function fillBlankLocation(
 async function recordDefaultArea(
   ownerClerkUserId: string,
   areaId: string,
-): Promise<void> {
-  await requirePlanetscaleDb()
+  /**
+   * What the column held when we decided to replace it — `null` for "nothing recorded", or the id
+   * of a default we OBSERVED to be unusable (archived, or re-owned). Replacing exactly that value
+   * is the CAS: it cannot clobber a default somebody set concurrently, and unlike a bare
+   * `IS NULL` it does not permanently strand a user whose recorded default has gone stale.
+   */
+  replacing: string | null,
+): Promise<boolean> {
+  const written = await requirePlanetscaleDb()
     .insert(users)
     .values({ clerkUserId: ownerClerkUserId, defaultAreaId: areaId })
     .onConflictDoUpdate({
@@ -148,8 +179,16 @@ async function recordDefaultArea(
       // earlier cut that asked "is this my only area?" AFTER creating produced the worse outcome
       // still — each saw the other's area, neither recorded anything, and the user was left with no
       // default for ever. First writer wins; the loser is a no-op.
-      setWhere: isNull(users.defaultAreaId),
-    });
+      setWhere:
+        replacing === null
+          ? isNull(users.defaultAreaId)
+          : eq(users.defaultAreaId, replacing),
+    })
+    // 🛑 REPORTED, not assumed. Two racing first connections both decide to record; only one write
+    // lands, and both claiming `recordedAsDefault: true` made `createDevice` log two different
+    // areas as the user's default.
+    .returning({ id: users.clerkUserId });
+  return written.length > 0;
 }
 
 /**
@@ -161,12 +200,12 @@ export async function resolveOnboardingArea(
   ownerClerkUserId: string,
   site: OnboardingSite,
 ): Promise<OnboardingPlacement> {
-  const existing = await usableDefaultArea(ownerClerkUserId);
-  if (existing) {
-    if (!existing.location && site.location)
-      await fillBlankLocation(existing.id, site.location);
+  const { recorded, usable } = await readDefaultArea(ownerClerkUserId);
+  if (usable) {
+    if (!usable.location && site.location)
+      await fillBlankLocation(usable.id, ownerClerkUserId, site.location);
     return {
-      areaId: existing.id,
+      areaId: usable.id,
       createdAreaId: null,
       recordedAsDefault: false,
     };
@@ -176,9 +215,14 @@ export async function resolveOnboardingArea(
   // the caller has already changed. An earlier cut asked afterwards, excluding the area just made,
   // on the theory that it avoided a race; it created a worse one — two concurrent first connections
   // each saw the OTHER's new area, so neither recorded a default and the user never got one. Asking
-  // first means both racers decide "record it", and `recordDefaultArea`'s `WHERE default IS NULL`
-  // settles which.
-  const isFirst = !(await hasAnyArea(ownerClerkUserId));
+  // first means both racers decide "record it", and `recordDefaultArea`'s CAS settles which.
+  //
+  // A RECORDED-BUT-UNUSABLE default also gets a replacement, regardless of how many other areas the
+  // owner has: the column already names this user's onboarding target, it has simply gone stale, so
+  // repointing it is maintenance rather than the guess we decline to make for a multi-site owner
+  // who has never chosen one.
+  const shouldRecord =
+    recorded !== null || !(await hasAnyArea(ownerClerkUserId));
 
   // No usable default: mint the site this connection implies. `memberSystemIds: []` because the
   // device does not exist yet — the writer places it by setting `devices.area_id` on insert, which
@@ -195,11 +239,13 @@ export async function resolveOnboardingArea(
     authorized: new Map(),
   });
 
-  if (isFirst) await recordDefaultArea(ownerClerkUserId, created.id);
+  const recordedAsDefault = shouldRecord
+    ? await recordDefaultArea(ownerClerkUserId, created.id, recorded)
+    : false;
 
   return {
     areaId: created.id,
     createdAreaId: created.id,
-    recordedAsDefault: isFirst,
+    recordedAsDefault,
   };
 }

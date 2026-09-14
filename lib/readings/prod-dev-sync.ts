@@ -56,7 +56,30 @@ import {
 // Children don't all ON DELETE CASCADE, so id-drift clears them by hand. `point_info` has NO FK
 // children left at all since migration 0047 (config-v4 Phase 12 slice E PR 2a) released
 // `area_bindings`, the last one.
-type FkChild = { table: string; cols: string[] };
+type FkChild = {
+  table: string;
+  /**
+   * ONE foreign key's columns, zipped POSITIONALLY against the parent's PK columns. Two independent
+   * FKs into the same parent are two entries, not one entry with two columns — `repoint` emits
+   * `${col} = b.new_${pk[i]}`, so a mismatched length silently produces `b.new_undefined`.
+   */
+  cols: string[];
+  /**
+   * The column may legitimately be ABSENT from the target database, and the leg is then skipped
+   * rather than emitted (a 42703) or missing (a silent gap).
+   *
+   * Exists for exactly one thing: a column that is being dropped by a migration which, by
+   * expand/contract, lands AFTER the code that stops using it. `devices.primary_area_id` is such a
+   * column — it still has its NO ACTION FK during the deploy window, so the realignment needs the
+   * repoint; once 0074 applies it is gone and the same manifest must not name it.
+   *
+   * 🛑 Opt-IN, deliberately. A blanket "skip anything the catalog does not have" was the first cut
+   * and it turns a TYPO into a silent missing leg — misspell `area_id` and the realignment stops
+   * repointing devices, which with `ON DELETE SET NULL` quietly makes them ambient instead of
+   * aborting. A required column that is missing is a schema mismatch and must be loud.
+   */
+  transitional?: true;
+};
 
 // Resolve a divergent-surrogate collision that the natural-key trick (excludeCols) CAN'T fix because
 // the surrogate PK is itself the FK-join key children carry — so dev must ADOPT prod's PK, not keep its
@@ -294,7 +317,7 @@ const FULL: FullTable[] = [
       // lands, which is what makes it safe to leave here rather than needing a third PR.
       repoint: [
         { table: "devices", cols: ["area_id"] },
-        { table: "devices", cols: ["primary_area_id"] },
+        { table: "devices", cols: ["primary_area_id"], transitional: true },
       ],
       // Nullable columns behind areas_owner_alias_unique. Cleared on the drifted dev row so prod's row
       // can be inserted alongside it, which the repoint UPDATE needs as its FK target. The drifted row
@@ -938,14 +961,27 @@ export async function syncTable(
       // `colsByTable` and the entry silently drops out, which is also what makes it safe to leave
       // here rather than needing a third PR to remove it.
       const repoint = (idDrift.repoint ?? []).filter((c) => {
+        // The zip below is positional against the parent PK, so a length mismatch is a manifest
+        // bug that would otherwise emit `b.new_undefined` into production SQL. Asserted, not
+        // trusted: it is invisible to `tsc` and the generated string looks plausible.
+        if (c.cols.length !== pk.length)
+          throw new Error(
+            `repoint ${c.table}(${c.cols.join(", ")}) has ${c.cols.length} column(s) but ${t.name}'s PK has ${pk.length} — an entry is ONE foreign key, zipped against the PK`,
+          );
         const live = colsByTable.get(c.table);
         // Unknown table: keep it. Skipping a repoint because we lack information is how a missing
         // leg becomes a silent failure instead of a loud one.
         if (!live) return true;
-        // 🛑 ALL-OR-NOTHING per entry, because an entry's `cols` are ONE foreign key — they are
-        // zipped positionally against the parent's PK below (`b.new_${pk[i]}`). Filtering
-        // individual columns out of a composite FK would emit `b.new_undefined`.
-        return c.cols.every((col) => live.includes(col));
+        const missing = c.cols.filter((col) => !live.includes(col));
+        if (missing.length === 0) return true;
+        // 🛑 Only a column DECLARED transitional may be absent. Anything else is a schema mismatch
+        // — most likely a typo in the manifest — and must abort rather than quietly drop a leg that
+        // is the only thing stopping `ON DELETE SET NULL` from blanking dev's placements.
+        if (!c.transitional)
+          throw new Error(
+            `repoint ${c.table}(${missing.join(", ")}) names column(s) the target does not have; mark the entry \`transitional: true\` if that is expected`,
+          );
+        return false;
       });
       const newPkCols = repoint.length
         ? ", " + pk.map((c) => `s.${c} AS new_${c}`).join(", ")

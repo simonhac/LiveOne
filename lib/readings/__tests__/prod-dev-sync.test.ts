@@ -471,7 +471,7 @@ describe("prod→dev readings transfer", () => {
         // out against the live catalog once the column is gone. See the SQL assertions below.
         repoint: [
           { table: "devices", cols: ["area_id"] },
-          { table: "devices", cols: ["primary_area_id"] },
+          { table: "devices", cols: ["primary_area_id"], transitional: true },
         ],
         // config-v4 Phase 13 PR 6: `legacy_system_id` is GONE from here — migration 0052 dropped the
         // column, and `neutralize` becomes a literal `UPDATE areas SET <col> = NULL` at runtime.
@@ -629,6 +629,60 @@ describe("prod→dev readings transfer", () => {
     expect(droppedSql).toContain(
       "UPDATE public.devices x SET area_id = b.new_id FROM _drift b WHERE x.area_id = b.id;",
     );
+  });
+
+  // 🛑 Absence is OPT-IN. A blanket "skip whatever the catalog lacks" turns a manifest typo into a
+  // silently missing repoint — and a missing repoint on `devices.area_id` does not abort, it lets
+  // `ON DELETE SET NULL` quietly make dev's devices ambient and exit 0.
+  it("ABORTS on a repoint column the target lacks unless the entry says it is transitional", async () => {
+    const areas = prodDevSyncManifest().find((e) => e.name === "areas")!;
+    const typo = {
+      ...areas,
+      idDrift: {
+        ...(areas as { idDrift: Record<string, unknown> }).idDrift,
+        repoint: [{ table: "devices", cols: ["are_id"] }], // typo
+      },
+    } as typeof areas;
+    const { prod, dev } = copyClients();
+    await expect(
+      syncTable(
+        prod,
+        dev,
+        typo,
+        new Map([
+          ["areas", ["id", "owner_user_id", "name", "slug"]],
+          ["devices", ["id", "rid", "area_id"]],
+        ]),
+        new Map([["areas", ["id"]]]),
+      ),
+    ).rejects.toThrow(/transitional/);
+  });
+
+  // The other half of the same invariant: an entry is ONE foreign key, zipped positionally against
+  // the parent PK. Two columns in one entry emitted `primary_area_id = b.new_undefined` — valid
+  // SQL, wrong SQL, and invisible to tsc.
+  it("ABORTS on a repoint entry whose column count does not match the parent PK", async () => {
+    const areas = prodDevSyncManifest().find((e) => e.name === "areas")!;
+    const zipped = {
+      ...areas,
+      idDrift: {
+        ...(areas as { idDrift: Record<string, unknown> }).idDrift,
+        repoint: [{ table: "devices", cols: ["area_id", "primary_area_id"] }],
+      },
+    } as typeof areas;
+    const { prod, dev } = copyClients();
+    await expect(
+      syncTable(
+        prod,
+        dev,
+        zipped,
+        new Map([
+          ["areas", ["id", "owner_user_id", "name", "slug"]],
+          ["devices", ["id", "rid", "area_id", "primary_area_id"]],
+        ]),
+        new Map([["areas", ["id"]]]),
+      ),
+    ).rejects.toThrow(/ONE foreign key/);
   });
 
   it("realigns drifted devices by neutralizing NOT NULL rid to a sentinel, not NULL", async () => {

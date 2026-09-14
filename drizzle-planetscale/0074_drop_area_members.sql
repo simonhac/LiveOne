@@ -56,15 +56,24 @@ DO $$ DECLARE n int; BEGIN
 END $$;
 
 --> statement-breakpoint
--- GATE B: no ACTIVE device sits in a non-active area.
+-- GATE B: no ACTIVE, ORDINARY device sits in a non-active area.
 --
 -- The other way a device becomes unreachable with nothing left to say where it came from. An active
 -- device parked in an archived area is not served, not listed and not obviously broken — and after
 -- `primary_area_id` goes there is no second opinion about where it belongs. Measured 0 on dev.
+--
+-- 🛑 `vendor='helper'` is EXCLUDED, and the exclusion is not a loophole — it is the same exception
+-- the writer makes. A helper is an area's own derived output; `ensureHelperDevice` deliberately
+-- opts out of `insertDeviceToPg`'s active-area precheck so that recomputing provenance for an
+-- ARCHIVED area still works, which means an active helper inside an archived area is a state this
+-- code produces ON PURPOSE. Gating on it would abort the migration over a row whose suggested
+-- remedy — re-home it — is both refused by `assertDevicesRehomable` and semantically wrong: a
+-- helper belongs to the area that mints it and nowhere else. Caught in review, after the writer's
+-- exception had been written and this gate had not been told about it.
 DO $$ DECLARE n int; BEGIN
   SELECT count(*) INTO n
     FROM devices d JOIN areas a ON a.id = d.area_id
-   WHERE d.status = 'active' AND a.status <> 'active';
+   WHERE d.status = 'active' AND a.status <> 'active' AND d.vendor <> 'helper';
   IF n > 0 THEN
     RAISE EXCEPTION 'GATE B: % active device(s) sit in a non-active area. Re-home them first — after this migration nothing records where they came from.', n;
   END IF;

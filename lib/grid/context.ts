@@ -53,19 +53,45 @@ export async function resolveGridContextForDevice(
 
     // b. The Area for this handle carries the location we derive the region from — a multi-device site
     //    ("Kinkora Unified") or a genuine single-device Area (e.g. "Kutis"). Location is an Area-only
-    //    property (areas are explicit — no area-of-one), so a bare device with no Area has no grid card.
-    // config-v4 Phase 13 PR 5: located via `legacy_handles`, not the dropped
-    // `areas.legacy_system_id`. INNER join — the old predicate could not match a NULL handle either,
-    // and a miss still degrades to "no grid card" via the `!area` return below.
-    const [area] = await db
-      .select({ location: areas.location })
-      .from(areas)
-      .innerJoin(legacyHandles, eq(legacyHandles.areaId, areas.id))
-      .where(eq(legacyHandles.handle, systemId))
+    //    property, so a device in no Area has no grid card.
+    //
+    // 🛑 **DEVICE-FIRST, through `devices.area_id`** — the same precedence `lib/dashboard/subject.ts`
+    // locks, and the same edge every other reader moved to. It used to resolve a device handle
+    // through `legacy_handles.handle → area_id`, i.e. the eagerly-minted AREA-OF-ONE, and that broke
+    // twice over once the mint stopped:
+    //
+    //   - a NEWLY onboarded device has no `legacy_handles` area leg at all (the writer stopped
+    //     claiming one — an area it is placed in already owns a handle), so this returned null and
+    //     the device silently lost `grid-signals` and its Local Grid card;
+    //   - a RE-HOMED device resolved its shell's location rather than its site's, which is the same
+    //     wrong-area class the whole 0..1 change exists to close.
+    //
+    // The `legacy_handles` leg survives for the OTHER kind of handle: a synthetic AREA handle
+    // (≥ 1,000,000) names no device, and that is still how it finds its area.
+    //
+    // An AMBIENT device (`area_id IS NULL`) returns null HERE rather than falling through to the
+    // handle leg — falling through would resurrect the shell's location for a device deliberately
+    // placed nowhere.
+    let location: AreaLocation | null;
+    const [byDevice] = await db
+      .select({ areaId: devices.areaId, location: areas.location })
+      .from(devices)
+      .leftJoin(areas, eq(areas.id, devices.areaId))
+      .where(eq(devices.rid, systemId))
       .limit(1);
-    if (!area) return null;
-
-    const location = (area.location ?? null) as AreaLocation | null;
+    if (byDevice) {
+      if (!byDevice.areaId) return null;
+      location = (byDevice.location ?? null) as AreaLocation | null;
+    } else {
+      const [byHandle] = await db
+        .select({ location: areas.location })
+        .from(areas)
+        .innerJoin(legacyHandles, eq(legacyHandles.areaId, areas.id))
+        .where(eq(legacyHandles.handle, systemId))
+        .limit(1);
+      if (!byHandle) return null;
+      location = (byHandle.location ?? null) as AreaLocation | null;
+    }
 
     // c. Derive the NEM region; null means off-NEM (e.g. WA/NT or no usable location).
     const region = nemRegionForLocation(location);

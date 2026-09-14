@@ -103,6 +103,26 @@ async function writeDefaultDashboard(
 }
 
 /**
+ * The authorization half of {@link setDefaultDashboardById}, without the write.
+ *
+ * Exists so `PATCH /api/user/preferences` can validate EVERY field before writing ANY of them: it
+ * can set the default area and the default dashboard in one request, and those are two separate
+ * UPDATEs, so a dashboard that turns out to be unknown or not-yours must be discovered before the
+ * area is committed rather than after. Same predicate as the writer, deliberately — a second
+ * check that could disagree with the one that matters is worse than no check.
+ */
+export async function checkDefaultDashboard(
+  clerkUserId: string,
+  dashboardId: string,
+): Promise<{ success: boolean; error?: string }> {
+  const dash = await getDashboard(dashboardId);
+  if (!dash) return { success: false, error: "not_found" };
+  if (dash.ownerClerkUserId !== clerkUserId)
+    return { success: false, error: "Not your dashboard" };
+  return { success: true };
+}
+
+/**
  * Set the user's default landing dashboard by its id. Owner-only. Lands the `/dashboard` redirect on
  * `/dashboard/id/{id}`.
  */
@@ -111,11 +131,8 @@ export async function setDefaultDashboardById(
   dashboardId: string,
 ): Promise<{ success: boolean; error?: string }> {
   await getOrCreateUserPreferences(clerkUserId);
-  const dash = await getDashboard(dashboardId);
-  if (!dash) return { success: false, error: "not_found" };
-  if (dash.ownerClerkUserId !== clerkUserId) {
-    return { success: false, error: "Not your dashboard" };
-  }
+  const check = await checkDefaultDashboard(clerkUserId, dashboardId);
+  if (!check.success) return check;
   await writeDefaultDashboard(clerkUserId, dashboardId);
   return { success: true };
 }

@@ -4,30 +4,50 @@
  * This decides something that used to be structural — every device minted its own area because
  * `devices.primary_area_id` was NOT NULL — so the failure modes are all silent ones. Nothing here
  * throws when it gets the answer wrong: the device is created either way, polls either way, and the
- * cost shows up as a discarded site address, an area nobody asked for, or a device trapped in an
- * area nothing can move it out of.
+ * cost shows up as a discarded site address, an area nobody asked for, a device in somebody else's
+ * site, or a user who can never acquire a default at all.
  */
 import { describe, it, expect, jest, beforeEach } from "@jest/globals";
 
+const OWNER = "user_1";
 const AREA_DEFAULT = "aaaaaaaa-0000-7000-8000-000000000001";
 const AREA_NEW = "bbbbbbbb-0000-7000-8000-000000000002";
 const AREA_OTHER = "cccccccc-0000-7000-8000-000000000003";
 
-/**
- * Queued answers for the two reads, in call order: the default-area lookup, then the has-any-area
- * lookup. A queue rather than a table fake — the module asks two specific questions and the thing
- * worth pinning is what it does with each answer, not that drizzle composes.
- */
-let reads: Array<Array<{ id: string; location?: unknown }>> = [];
+/** One row of the `users ⟕ areas` read, or `null` for "this user has no `users` row". */
+type DefaultRow = {
+  recorded: string | null;
+  areaId: string | null;
+  areaOwner: string | null;
+  areaStatus: string | null;
+  location: unknown;
+} | null;
+
+let defaultRow: DefaultRow = null;
+/** What `hasAnyArea` finds. Only consulted when there is no RECORDED default. */
+let otherAreas: Array<{ id: string }> = [];
+/** Whether the guarded upsert's `setWhere` matches — i.e. whether this writer wins the race. */
+let defaultWriteApplies = true;
+
 const upserts: Array<{ clerkUserId: string; defaultAreaId: string }> = [];
-/** `onConflictDoUpdate`'s options, so the `WHERE default IS NULL` guard can be asserted present. */
 const upsertOpts: Array<Record<string, unknown>> = [];
 const locationFills: Array<unknown> = [];
 
+/**
+ * Two shapes of read, told apart by whether a join was used: the default lookup LEFT JOINs `areas`
+ * onto `users`, `hasAnyArea` selects from `areas` alone.
+ */
 const chain = () => {
+  let joined = false;
   const self: Record<string, unknown> = {};
-  for (const k of ["from", "innerJoin", "where"]) self[k] = () => self;
-  self.limit = async () => reads.shift() ?? [];
+  self.from = () => self;
+  self.leftJoin = () => {
+    joined = true;
+    return self;
+  };
+  self.where = () => self;
+  self.limit = async () =>
+    joined ? (defaultRow ? [defaultRow] : []) : otherAreas;
   return self;
 };
 
@@ -43,10 +63,13 @@ jest.mock("@/lib/db/planetscale", () => ({
     }),
     insert: () => ({
       values: (v: { clerkUserId: string; defaultAreaId: string }) => ({
-        onConflictDoUpdate: async (opts: Record<string, unknown>) => {
-          upserts.push(v);
-          upsertOpts.push(opts);
-        },
+        onConflictDoUpdate: (opts: Record<string, unknown>) => ({
+          returning: async () => {
+            upserts.push(v);
+            upsertOpts.push(opts);
+            return defaultWriteApplies ? [{ id: v.clerkUserId }] : [];
+          },
+        }),
       }),
     }),
   }),
@@ -71,8 +94,19 @@ const SITE = {
   location: { country: "AU", state: "VIC", postcode: "3130" },
 };
 
+/** A usable default: recorded, active, this owner's. */
+const usable = (location: unknown): DefaultRow => ({
+  recorded: AREA_DEFAULT,
+  areaId: AREA_DEFAULT,
+  areaOwner: OWNER,
+  areaStatus: "active",
+  location,
+});
+
 beforeEach(() => {
-  reads = [];
+  defaultRow = null;
+  otherAreas = [];
+  defaultWriteApplies = true;
   upserts.length = 0;
   upsertOpts.length = 0;
   locationFills.length = 0;
@@ -81,8 +115,8 @@ beforeEach(() => {
 
 describe("resolveOnboardingArea", () => {
   it("reuses the owner's default area, and creates nothing", async () => {
-    reads = [[{ id: AREA_DEFAULT, location: { country: "AU" } }]];
-    expect(await resolveOnboardingArea("user_1", SITE)).toEqual({
+    defaultRow = usable({ country: "AU" });
+    expect(await resolveOnboardingArea(OWNER, SITE)).toEqual({
       areaId: AREA_DEFAULT,
       createdAreaId: null,
       recordedAsDefault: false,
@@ -94,8 +128,7 @@ describe("resolveOnboardingArea", () => {
   });
 
   it("creates a site carrying the vendor's timezone and location when there is no default", async () => {
-    reads = [[], []]; // no usable default; no other area
-    const out = await resolveOnboardingArea("user_1", SITE);
+    const out = await resolveOnboardingArea(OWNER, SITE);
     expect(out).toEqual({
       areaId: AREA_NEW,
       createdAreaId: AREA_NEW,
@@ -105,7 +138,7 @@ describe("resolveOnboardingArea", () => {
     // feeds the Enphase sun-times window and the NEM region — dropping it here is silent and
     // unrecoverable without the user re-entering it by hand.
     expect(createArea).toHaveBeenCalledWith({
-      ownerClerkUserId: "user_1",
+      ownerClerkUserId: OWNER,
       displayName: "Enphase System",
       timezoneOffsetMin: 600,
       displayTimezone: "Australia/Melbourne",
@@ -113,19 +146,12 @@ describe("resolveOnboardingArea", () => {
       memberSystemIds: [],
       authorized: new Map(),
     });
-  });
-
-  it("records a first area as the owner's default, so the column self-populates", async () => {
-    reads = [[], []]; // no default; no other area
-    await resolveOnboardingArea("user_1", SITE);
-    expect(upserts).toEqual([
-      { clerkUserId: "user_1", defaultAreaId: AREA_NEW },
-    ]);
+    expect(upserts).toEqual([{ clerkUserId: OWNER, defaultAreaId: AREA_NEW }]);
   });
 
   it("does NOT record a default when the owner already has another area", async () => {
-    reads = [[], [{ id: AREA_OTHER }]]; // no usable default, but other areas exist
-    const out = await resolveOnboardingArea("user_1", SITE);
+    otherAreas = [{ id: AREA_OTHER }]; // nothing recorded, but other areas exist
+    const out = await resolveOnboardingArea(OWNER, SITE);
     expect(out.recordedAsDefault).toBe(false);
     // A multi-site owner has no obvious default, and guessing one from whichever device they
     // happened to connect next is worse than leaving it blank: blank means "mint a site for this
@@ -134,51 +160,81 @@ describe("resolveOnboardingArea", () => {
     expect(out.areaId).toBe(AREA_NEW);
   });
 
+  it("🛑 REPLACES a recorded default that has been archived, however many areas the owner has", async () => {
+    // The regression the first cut of the CAS introduced: guarding the write on `default IS NULL`
+    // meant a user whose default had been archived could never acquire a new one — the column was
+    // not null, so the update matched nothing, and the NEXT connection saw the area this one had
+    // just created and stopped trying. Silent, permanent, and visible only as "my devices keep
+    // landing in new sites".
+    defaultRow = {
+      recorded: AREA_DEFAULT,
+      areaId: AREA_DEFAULT,
+      areaOwner: OWNER,
+      areaStatus: "archived",
+      location: null,
+    };
+    otherAreas = [{ id: AREA_OTHER }];
+    const out = await resolveOnboardingArea(OWNER, SITE);
+    expect(out).toEqual({
+      areaId: AREA_NEW,
+      createdAreaId: AREA_NEW,
+      recordedAsDefault: true,
+    });
+    expect(upserts).toEqual([{ clerkUserId: OWNER, defaultAreaId: AREA_NEW }]);
+  });
+
+  it("…and replaces one whose area has been re-owned", async () => {
+    defaultRow = {
+      recorded: AREA_DEFAULT,
+      areaId: AREA_DEFAULT,
+      areaOwner: "user_someone_else",
+      areaStatus: "active",
+      location: null,
+    };
+    const out = await resolveOnboardingArea(OWNER, SITE);
+    expect(out.areaId).toBe(AREA_NEW);
+    expect(out.recordedAsDefault).toBe(true);
+  });
+
   it("🛑 fills a BLANK location on a reused default from the vendor's address", async () => {
     // Tesla first (its callback passes `location: null`), Enphase second. Without this the address
     // Enphase supplies — the only source of the sun-times window and the NEM region — is discarded
     // by the very mechanism whose reason for existing is not discarding it.
-    reads = [[{ id: AREA_DEFAULT, location: null }]];
-    await resolveOnboardingArea("user_1", SITE);
+    defaultRow = usable(null);
+    await resolveOnboardingArea(OWNER, SITE);
     expect(locationFills).toEqual([SITE.location]);
   });
 
   it("…and never OVERWRITES a location the default already has", async () => {
-    reads = [[{ id: AREA_DEFAULT, location: { country: "AU", state: "NSW" } }]];
-    await resolveOnboardingArea("user_1", SITE);
+    defaultRow = usable({ country: "AU", state: "NSW" });
+    await resolveOnboardingArea(OWNER, SITE);
     expect(locationFills).toEqual([]);
   });
 
-  it("🛑 guards the default write on it still being blank", async () => {
-    // The concurrency rule, pinned at the only place it can be: two first-ever connections both
-    // decide to record, and the WHERE is what stops the second silently re-pointing the first.
-    reads = [[], []];
-    await resolveOnboardingArea("user_1", SITE);
+  it("🛑 CAS-guards the default write, and reports whether it actually landed", async () => {
+    // Two first-ever connections both decide to record; the `setWhere` is what stops the second
+    // silently re-pointing the first, and the `returning()` is what stops both of them CLAIMING to
+    // have won — `createDevice` logged two different areas as the user's default.
+    defaultWriteApplies = false;
+    const out = await resolveOnboardingArea(OWNER, SITE);
     expect(upsertOpts[0]).toHaveProperty("setWhere");
     expect(upsertOpts[0].setWhere).toBeDefined();
+    expect(out.recordedAsDefault).toBe(false);
+    // …and losing the race does not change where THIS device goes: it still lands in the site this
+    // call created, which is a real site with the right location.
+    expect(out.areaId).toBe(AREA_NEW);
   });
 
   it("asks 'does this owner have any area' BEFORE creating one", async () => {
     // Asking afterwards (excluding the one just made) is what let two racing first connections each
-    // see the other's new area and record no default at all. The queue order IS the assertion: the
-    // second read is consumed before `createArea` is called.
-    let sawAreaCountFirst = false;
-    reads = [[], []];
+    // see the other's new area and record no default at all.
+    let askedBeforeCreate = false;
     createArea.mockImplementationOnce(async () => {
-      sawAreaCountFirst = reads.length === 0;
+      askedBeforeCreate = true;
       return { id: AREA_NEW, legacySystemId: 42, vacatedAreaIds: [] };
     });
-    await resolveOnboardingArea("user_1", SITE);
-    expect(sawAreaCountFirst).toBe(true);
-  });
-
-  it("creates a fresh site when the recorded default is archived or re-owned", async () => {
-    // The default lookup joins on `status = 'active'` AND owner, so an unusable default reads as
-    // absent. It must not be used: placing a new device into an archived site makes it invisible
-    // the moment it is created.
-    reads = [[], [{ id: AREA_OTHER }]];
-    const out = await resolveOnboardingArea("user_1", SITE);
-    expect(out.areaId).toBe(AREA_NEW);
-    expect(createArea).toHaveBeenCalled();
+    await resolveOnboardingArea(OWNER, SITE);
+    expect(askedBeforeCreate).toBe(true);
+    expect(upserts).toHaveLength(1);
   });
 });

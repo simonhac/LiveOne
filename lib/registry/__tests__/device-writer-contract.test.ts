@@ -48,6 +48,8 @@ const store = {
   areas: new Set<string>(),
   /** Areas in this set answer the status precheck with `archived` rather than `active`. */
   archivedAreas: new Set<string>(),
+  /** Overrides the owner the precheck sees, for the transferred-area case. */
+  areaOwners: new Map<string, string | null>(),
   devices: new Map<string, { rid: number; areaId: string | null }>(),
   handles: new Map<
     number,
@@ -79,6 +81,10 @@ const exec = {
               const rows = [...store.areas].map((id) => ({
                 id,
                 status: store.archivedAreas.has(id) ? "archived" : "active",
+                // The fake's areas belong to whoever `CREATE` names, so the ownership leg of the
+                // precheck passes unless a test says otherwise.
+                ownerUserId:
+                  store.areaOwners.get(id) ?? CREATE.ownerClerkUserId,
               }));
               return Object.assign(Promise.resolve(rows), {
                 for: async () => rows,
@@ -189,6 +195,7 @@ beforeEach(() => {
   ops.length = 0;
   store.areas.clear();
   store.archivedAreas.clear();
+  store.areaOwners.clear();
   store.devices.clear();
   store.handles.clear();
   resolveOnboardingArea.mockClear();
@@ -283,6 +290,27 @@ describe("DeviceWriter.createSystem — the two-step insert order", () => {
       };
     });
     await expect(DeviceWriter.createDevice(CREATE)).rejects.toThrow(/archived/);
+    expect(store.devices.size).toBe(0);
+  });
+
+  it("🛑 REFUSES to create a device in an area that now belongs to someone else", async () => {
+    // Status alone was the first cut of the precheck and it misses this entirely: a bulk ownership
+    // transfer (`lib/ownership/transfer.ts`) re-owns an area without touching its status, so an
+    // area validated as the caller's default moments earlier can be somebody else's by the time
+    // the insert runs — and the FK checks existence, not ownership.
+    resolveOnboardingArea.mockImplementationOnce(async () => {
+      ops.push("resolveOnboardingArea");
+      store.areas.add(ONBOARDING_AREA);
+      store.areaOwners.set(ONBOARDING_AREA, "user_someone_else");
+      return {
+        areaId: ONBOARDING_AREA,
+        createdAreaId: null,
+        recordedAsDefault: false,
+      };
+    });
+    await expect(DeviceWriter.createDevice(CREATE)).rejects.toThrow(
+      /another user/,
+    );
     expect(store.devices.size).toBe(0);
   });
 

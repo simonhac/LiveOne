@@ -194,11 +194,13 @@ async function insertDeviceToPg(
    * in it. Onboarding asks for this; `createHelperDevice` does not.
    *
    * 🛑 It closes a real gap rather than being belt-and-braces. `resolveOnboardingArea` reads the
-   * owner's default in its own transaction, and the FK on `devices.area_id` checks EXISTENCE, not
-   * status — so an area archived between the two would be accepted, and the device would be
-   * created active, in an archived site, invisible, with nothing recording where it should have
-   * gone. `FOR SHARE` is what makes the check mean something: it conflicts with the row UPDATE an
-   * archive performs, so the archiver waits for this insert or this insert sees the archive.
+   * owner's default in its own transaction, and the FK on `devices.area_id` checks EXISTENCE and
+   * nothing else — so an area archived OR TRANSFERRED between the two would be accepted, and the
+   * device would be created either invisible (archived site) or in somebody else's site
+   * (`lib/ownership/transfer.ts` re-owns areas in bulk). `FOR SHARE` is what makes the check mean
+   * something: it conflicts with the row UPDATE both of those perform, so the writer waits for this
+   * insert or this insert sees the change. Status ALONE was the first cut and it missed the
+   * transfer case — the area stays `active` throughout.
    *
    * Helpers opt out because their area is the one currently being recomputed, and a helper for an
    * archived area is legitimate — `recomputeAreaProvenance` on an archived area must not start
@@ -211,7 +213,7 @@ async function insertDeviceToPg(
     return await pg.transaction(async (tx) => {
       if (areaId && opts.requireActiveArea) {
         const [target] = await tx
-          .select({ status: areas.status })
+          .select({ status: areas.status, ownerUserId: areas.ownerUserId })
           .from(areas)
           .where(eq(areas.id, areaId))
           .limit(1)
@@ -221,6 +223,10 @@ async function insertDeviceToPg(
         if (target.status !== "active")
           throw new Error(
             `createDevice: area ${areaId} is ${target.status}, not active — refusing to create a device nothing can see`,
+          );
+        if (target.ownerUserId !== data.ownerClerkUserId)
+          throw new Error(
+            `createDevice: area ${areaId} belongs to another user — refusing to place this device in it`,
           );
       }
       const rid = await allocateRid(tx);
