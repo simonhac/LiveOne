@@ -31,19 +31,57 @@ export class AmberAdapter extends BaseVendorAdapter {
   protected pollIntervalMinutes = 5;
 
   /**
-   * Amber takes a scheduled nightly maintenance window, 00:05-00:30 AEST: `/prices` answers 502 for
-   * the whole of it. Measured on prod 2026-08-19 over the preceding 14 days — 90 failed CRON polls,
-   * 100% of them in AEST hour 00, on all 14 nights, one error string. The default budget (3 × the
-   * 5-minute slot = 15 min) therefore pages at 00:30 every single night for a vendor behaving
-   * exactly as advertised, which is how a monitor gets ignored.
+   * Amber takes a scheduled nightly maintenance window in which its FORECASTS endpoint answers 502
+   * for the whole of it (`Forecast stage 2 failed: Amber API error: 502 Bad Gateway` — one string,
+   * 1,556 of the 1,566 in-window failures on record).
    *
-   * 45 min clears a 30-minute window with headroom and still pages if Amber is genuinely dark. It
-   * is deliberately NOT an `isEligible` gate keyed on the clock: that would bake a vendor's ops
-   * schedule into our source, break silently the day Amber moves it, and hide a real outage that
-   * happened to start at midnight. Nothing is lost during the window — prices are 30-minute
-   * intervals and the 00:30 poll refetches today + tomorrow.
+   * 🛑 **The window is keyed to UTC+10, NOT to Melbourne wall-clock time** — which matters here
+   * because every Australian device on the fleet is in a zone that observes daylight saving, and
+   * Amber's is not. Measured 2026-09-15 over `sessions` for device 9, 301 of a possible 302 nights
+   * spanning both DST regimes:
+   *
+   * Query: `sessions WHERE device_rid = 9 AND cause = 'CRON' AND successful = false`, grouped by
+   * `extract(hour FROM created_at)` and then by 5-minute bucket, split at 2026-04-04 16:00 UTC.
+   *
+   *   - AEDT, 16 Nov 2025 – 4 Apr 2026: 677 failed polls in UTC hour 14, on 139 nights, and ZERO
+   *     in UTC hour 13 — which is where Melbourne wall-clock would have put them.
+   *   - AEST, 5 Apr – 14 Sep 2026: 896 failed polls in UTC hour 14, on 162 nights.
+   *   - The 5 Apr 2026 transition itself shifted nothing: 14:0x–14:2x UTC either side of it.
+   *
+   * The counts reconcile as: 2,032 failed `CRON` sessions in all → 1,573 in UTC hour 14 (the 677 +
+   * 896 above) → 1,566 of those in minutes :05–:29, the other 7 being stragglers on a single night.
+   * The 459 outside hour 14 are nine episodic vendor incidents (one a two-day outage spanning all
+   * 24 hours), NOT a second window — checked, because AEMO settlement timing made ~04:00 a
+   * plausible candidate for one.
+   *
+   * Within hour 14 the 5-minute buckets are identical in both regimes — :05 :10 :15 :20 :25 carry
+   * essentially all of it, with 7 stragglers at :00/:30+ across the whole period, all on one night.
+   * So: 14:05–14:30 UTC, fixed, year round. Presumably because Amber's pipeline follows the NEM,
+   * which keys everything to AEST. `Australia/Brisbane` is UTC+10 and never observes DST, so it
+   * says that and stays readable; do NOT "fix" it to `Australia/Melbourne`.
+   *
+   * The end is declared 5 minutes late, at 00:35, to cover the recovery poll: failures stop by
+   * :29 and the 00:30 slot succeeds. The window CLOSING is what re-arms the alarm — at 00:35 a
+   * still-dark Amber is ~35 min stale against the default 15-minute budget and pages on the very
+   * next check, so a window that has moved or run long is loud, not silent.
+   *
+   * This is deliberately NOT an `isEligible` gate keyed on the clock: we keep polling right
+   * through, so Amber is picked up the instant it returns and an early finish costs nothing. The
+   * clock changes only the VERDICT (`device_in_maintenance`), never whether we ask.
+   *
+   * Nothing is lost during the window — prices are 30-minute intervals and the 00:30 poll refetches
+   * today + tomorrow.
+   *
+   * Note what is NOT declared: no `staleBudgetMinutes`. It used to be 45 min, bought to clear this
+   * window, and it cost us a 45-minute blind spot for the other 23½ hours — then stopped working
+   * anyway when the `device_failing` check (which does not read it) landed. Amber now takes the
+   * fleet-default 15-minute cliff whenever it is not in this window.
    */
-  readonly staleBudgetMinutes = 45;
+  readonly maintenanceWindow = {
+    timezone: "Australia/Brisbane", // UTC+10, no DST — equivalently 14:05–14:35 UTC
+    start: "00:05",
+    end: "00:35",
+  };
 
   readonly credentialFields: CredentialField[] = [
     {

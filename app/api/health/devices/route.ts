@@ -6,9 +6,14 @@
  * credential was restored, while the Daylesford collector stayed dead for another four hours.
  * This route answers the other question: is every device we poll still landing data?
  *
- * 200 = every active poll device is inside its budget. **503** = at least one is not, so a plain
- * "expect 2xx" monitor opens an incident with the offending devices in the response body. No
- * per-device heartbeat plumbing, no per-device URL storage: one monitor covers the whole fleet.
+ * 200 = every active poll device is inside its budget, or is outside it for a reason its vendor
+ * declared in advance. **503** = at least one is not, so a plain "expect 2xx" monitor opens an
+ * incident with the offending devices in the response body. No per-device heartbeat plumbing, no
+ * per-device URL storage: one monitor covers the whole fleet.
+ *
+ * ⚠️ `unhealthy` in the body is deliberately WIDER than what 503s — a device can be listed and the
+ * status still be 200 (`device_in_maintenance`, `device_never_polled`). Read the `code`, not the
+ * presence of an entry.
  *
  * 🛑 Requires `X-Health-Key`. This repo is public and site names (`sheephouse`, `kutis`, …) are
  * infrastructure detail we keep out of it; an unauthenticated version of this route would publish
@@ -21,6 +26,7 @@ import { planetscaleDb } from "@/lib/db/planetscale";
 import {
   evaluateDeviceHealth,
   unhealthy,
+  alertable,
 } from "@/lib/monitoring/device-staleness";
 
 export const dynamic = "force-dynamic";
@@ -49,9 +55,10 @@ export async function GET(request: NextRequest) {
   try {
     const all = await evaluateDeviceHealth(db);
     const bad = unhealthy(all);
-    // `device_never_polled` is a config problem, not an outage — it would pin the monitor red
-    // forever on a device that was added and never wired up. Report it, don't fail on it.
-    const failing = bad.filter((d) => d.code !== "device_never_polled");
+    // Report everything that isn't `ok`; fail on the subset worth waking someone for. A device that
+    // was added and never wired up, or one inside its vendor's declared maintenance window, appears
+    // in the body — with its numbers — but does not turn the monitor red. See `alertable()`.
+    const failing = alertable(all);
 
     return NextResponse.json(
       {

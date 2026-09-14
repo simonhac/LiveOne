@@ -82,8 +82,10 @@ const RAW_STALE_MINUTES = num(process.env.MONITOR_RAW_STALE_MINUTES, 15);
 // tripped it, while the ordinary 1-2 slot misses in the same 24 h would not.
 //
 // It is the DEFAULT, not the rule: an adapter may declare `staleBudgetMinutes` where its own
-// reality doesn't fit a multiple of its slot (Amber's is a scheduled, nightly, 30-minute vendor
-// maintenance window — see `lib/vendors/amber/adapter.ts`).
+// reality doesn't fit a multiple of its slot. A SCHEDULED outage is not that case — widening a
+// budget to cover one buys quiet at midnight with a blind spot at 3 pm, so a vendor with a known
+// window declares `maintenanceWindow` and keeps the tight default the rest of the day. Amber is
+// the worked example (`lib/vendors/amber/adapter.ts`).
 const DEVICE_STALE_SLOTS = num(process.env.MONITOR_DEVICE_STALE_SLOTS, 3);
 const QUEUE_LAG_MAX = num(process.env.MONITOR_QUEUE_LAG_MAX, 1000);
 const DLQ_ALERT = num(process.env.MONITOR_DLQ_ALERT, 50); // DLQ ≥ this ⇒ alert (any DLQ ⇒ warn)
@@ -270,7 +272,15 @@ export async function GET(request: NextRequest) {
         // `device_failing` is the leading indicator — a device inside its budget but failing every
         // poll. It alerts rather than warns because a warn goes to console.warn and nowhere else,
         // and "we saw it coming and said nothing" is the exact failure this exists to prevent.
-        severity: d.code === "device_never_polled" ? "warn" : "alert",
+        //
+        // `device_in_maintenance` is the same evidence with the opposite meaning: the vendor said
+        // in advance it would be down now. It stays a warn ON PURPOSE rather than being dropped —
+        // the nightly line is the standing record that the suppression fired, and its ABSENCE is
+        // what would tell us a vendor has moved or abandoned its window.
+        severity:
+          d.code === "device_never_polled" || d.code === "device_in_maintenance"
+            ? "warn"
+            : "alert",
         code: d.code,
         message: d.message,
       });
@@ -613,6 +623,20 @@ export async function GET(request: NextRequest) {
       ? "warn"
       : "ok";
 
+  // 🛑 Warnings are logged whether or not something ALSO alerted, and with their messages.
+  // They used to sit in an `else if` off the alert branch, printing codes only — so a single
+  // alert erased every warning from the logs, and even alone a warning read
+  // `amber/9:device_in_maintenance` with none of the evidence. That matters now that
+  // `device_in_maintenance` is a warn: the nightly line is the ONLY standing record that a
+  // suppression fired, and its absence is how we would learn a vendor has moved its window.
+  // A warn still never reaches the webhook — that part was deliberate and is unchanged.
+  const warnings = issues.filter((i) => i.severity === "warn");
+  if (warnings.length > 0) {
+    console.warn(
+      `[MonitorObservations] WARN:\n${warnings.map((i) => `• ${i.message}`).join("\n")}`,
+    );
+  }
+
   let sentAlert = false;
   if (status === "alert") {
     const lines = issues
@@ -624,10 +648,6 @@ export async function GET(request: NextRequest) {
     );
     sentAlert = await sendAlert(
       `🚨 LiveOne observations mirror unhealthy:\n${lines}`,
-    );
-  } else if (status === "warn") {
-    console.warn(
-      `[MonitorObservations] WARN: ${issues.map((i) => i.code).join(", ")}`,
     );
   }
 
