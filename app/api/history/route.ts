@@ -530,7 +530,11 @@ export async function GET(request: NextRequest) {
 
     // Metadata-only listing mode (`?list=series`): what series exist, no data arrays, no time
     // range. Interval is not required — the per-entry `intervals` field answers that question
-    // better than a filter would (an interval filter silently hides the 1d-only soc stats).
+    // better than a filter would, since a filter answers "which of these serve 5m?" by DELETING
+    // the rest rather than saying so. (It used to name the 1d-only soc stats as the case; those
+    // are 5m-reachable since 2026-09-15, and are now withheld from unasked 5m listings by
+    // `isWithheldFromListing` instead — which is exactly why the interval-less mode must keep
+    // listing them: withholding is per interval, and this mode has none.)
     // The subject resolution and authorization below are SHARED with the data path; the branch
     // itself sits after `requireDashboardAccess`, so this mode can never relax auth.
     const listParam = searchParams.get("list");
