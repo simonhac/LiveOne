@@ -79,7 +79,8 @@ jest.mock("@/lib/db/planetscale/schema", () => ({
     pointUid: "pointUid",
     ordinal: "ordinal",
   },
-  areaMembers: { areaId: "areaId", deviceId: "deviceId", ordinal: "ordinal" },
+  // `areaMembers` left this mock with migration 0074 — membership is `devices.area_id` now, and
+  // the table (and its schema export) are gone.
   devices: { id: "id", rid: "rid" },
   points: { id: "id", deviceId: "deviceId" },
 }));
