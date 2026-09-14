@@ -675,6 +675,11 @@ async function main(): Promise<void> {
     }
   };
 
+  // 🛑 BEFORE the self-heal below, which DELETES things. The refusal has to come before any
+  // mutation, or a run that is about to be stopped has already swept scratch dashboards and areas —
+  // side effects on the way to declining to run. (`assertNoStaleJournal` itself only reads.)
+  assertNoStaleJournal(WORLD_JOURNAL);
+
   // Self-heal: adopt (and therefore delete) anything a previous crashed run left behind.
   const preexisting = await call("GET", "/api/v4/dashboards");
   for (const d of preexisting.body?.dashboards ?? []) {
@@ -707,11 +712,8 @@ async function main(): Promise<void> {
   // moves. See `smoke-world-snapshot.ts`.
   let world: WorldSnapshot | null = null;
 
-  // 🛑 REFUSE on a journal from an interrupted run; never replay one automatically. A journal is a
-  // photograph of the whole config, so replaying it is a blind write over every placement and every
-  // binding with no idea what has legitimately changed since — including the 2-hourly prod→dev sync.
-  // `assertNoStaleJournal` prints the deliberate restore command and exits.
-  assertNoStaleJournal(WORLD_JOURNAL);
+  // The refusal already ran, before the self-heal above. This is the CAPTURE — still ahead of the
+  // first borrow, which is what it has to be ahead of.
   world = await captureWorld(WORLD_JOURNAL);
   console.log(
     `  world snapshot: ${world.placements.length} placement(s), ${world.bindings.length} binding(s) → ${WORLD_JOURNAL}`,
@@ -1502,10 +1504,15 @@ async function main(): Promise<void> {
       "a member is { id: dv_…, legacySystemId, name, vendor, status, capabilities }",
       memberShape?.[0],
     );
+    // 🛑 A SET, not a sequence — `findBindingFixture` picks A and B out of a list sorted by DISPLAY
+    // NAME, while members now come back sorted by `rid`. So "Alpha" (rid 20) before "Zulu" (rid 10)
+    // makes `[handleA, handleB]` the wrong expectation while nothing is actually wrong. What is
+    // load-bearing is that each member carries its REAL handle, not the order they arrive in.
     ok(
-      memberShape?.map((m: any) => m.legacySystemId).join(",") ===
-        [handleA, handleB].join(","),
-      "…and each `legacySystemId` is the member's real handle, in membership order",
+      [handleA, handleB].every((h) =>
+        memberShape?.some((m: any) => m.legacySystemId === h),
+      ) && memberShape?.length === 2,
+      "…and each `legacySystemId` is the member's real handle (order is the server's, by rid)",
       { got: memberShape?.map((m: any) => m.legacySystemId), handleA, handleB },
     );
 
@@ -2789,7 +2796,8 @@ async function main(): Promise<void> {
         failures++;
         console.error(
           `\n  ! the world snapshot could not be fully restored. NOT deleting scratch records. ` +
-            `The journal is at ${WORLD_JOURNAL} — fix the cause and re-run, which restores from it.`,
+            `The journal is at ${WORLD_JOURNAL}. Nothing is replayed automatically — inspect it, then\n` +
+            `    restore it with scripts/utils/restore-smoke-journal.ts, or delete it if the world is fine.`,
         );
       }
     }

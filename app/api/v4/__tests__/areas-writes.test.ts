@@ -72,10 +72,17 @@ jest.mock("@/lib/areas/create", () => {
       this.name = "AreaAccessError";
     }
   }
+  class AreaConflictError extends Error {
+    constructor(message: string) {
+      super(message);
+      this.name = "AreaConflictError";
+    }
+  }
   return {
     AreaAliasTakenError,
     AreaValidationError,
     AreaAccessError,
+    AreaConflictError,
     createArea: jest.fn(),
     updateAreaMeta: jest.fn(),
     replaceMembers: jest.fn(async () => []),

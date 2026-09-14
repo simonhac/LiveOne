@@ -125,6 +125,21 @@ export async function captureWorld(
  */
 export async function restoreWorld(snap: WorldSnapshot): Promise<boolean> {
   const db = requirePlanetscaleDb();
+  // 🛑 The provenance stamp is CHECKED, not merely recorded. It was written and never compared for
+  // one round, which made its own docstring false: a journal taken against one branch could be
+  // replayed over another, and because these are the same rows copied between environments every
+  // uuid would still "resolve" — silently imposing one environment's wiring on another.
+  const here = describeDatabase();
+  if (snap.database !== here) {
+    console.error(
+      `  ! REFUSING to restore: the journal was taken against\n` +
+        `      ${snap.database}\n` +
+        `    and this process is connected to\n` +
+        `      ${here}\n` +
+        `    Every uuid would still match — that is exactly why this is refused.`,
+    );
+    return false;
+  }
   let ok = true;
 
   for (const [id, areaId] of snap.placements) {
@@ -167,13 +182,22 @@ export async function restoreWorld(snap: WorldSnapshot): Promise<boolean> {
   return ok;
 }
 
-/** Re-read a journal left behind by an interrupted run, if there is one. */
+/**
+ * Re-read a journal left behind by an interrupted run.
+ *
+ * 🛑 A file that exists but does not parse is NOT "no journal". Returning null for it let the next
+ * run sail past the refusal and `captureWorld` overwrite the only record of a damaged world with a
+ * snapshot OF that damaged world. It throws instead: a corrupt journal is a thing to look at.
+ */
 export function readJournal(journalPath: string): WorldSnapshot | null {
   if (!existsSync(journalPath)) return null;
+  const raw = readFileSync(journalPath, "utf8");
   try {
-    return JSON.parse(readFileSync(journalPath, "utf8")) as WorldSnapshot;
-  } catch {
-    return null;
+    return JSON.parse(raw) as WorldSnapshot;
+  } catch (err) {
+    throw new Error(
+      `journal at ${journalPath} exists but is not readable JSON — inspect it by hand, do not delete it blindly: ${String(err)}`,
+    );
   }
 }
 

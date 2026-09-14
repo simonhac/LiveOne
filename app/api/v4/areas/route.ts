@@ -10,6 +10,7 @@ import {
   createArea,
   refreshAreaServing,
   AreaAliasTakenError,
+  AreaConflictError,
 } from "@/lib/areas/create";
 import { Area } from "@/lib/ids";
 import { DeviceConfigRegistry } from "@/lib/registry/device-config";
@@ -164,6 +165,10 @@ export async function POST(request: NextRequest) {
         { error: "That shortname is already in use" },
         { status: 409 },
       );
+    // A member moved between authorization and the write. The area was NOT created — the whole
+    // transaction rolled back — so this can never answer 201 with fewer members than asked for.
+    if (err instanceof AreaConflictError)
+      return NextResponse.json({ error: err.message }, { status: 409 });
     throw err;
   }
 }

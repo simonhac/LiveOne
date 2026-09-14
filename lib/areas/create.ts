@@ -49,6 +49,21 @@ export class AreaAccessError extends Error {
   }
 }
 
+/**
+ * Raised when the world moved under a write: a device this request authorized against is no longer
+ * where authorization saw it. → HTTP 409.
+ *
+ * 🛑 It exists so the whole write ROLLS BACK. Without it a full replace could commit its destructive
+ * half and skip its constructive one — remove X and its bindings, silently fail to move Y in because
+ * Y had gone elsewhere, and answer 200 with an empty area.
+ */
+export class AreaConflictError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "AreaConflictError";
+  }
+}
+
 /** Raised on bad input (unknown role, non-member point, removing the last member, …). → HTTP 400. */
 export class AreaValidationError extends Error {
   constructor(message: string) {
@@ -358,7 +373,14 @@ async function moveDevicesInto(
         ),
       )
       .returning({ id: devices.id });
-    if (applied.length === 0) continue; // moved out from under us — leave everything alone
+    // 🛑 THROW, do not skip. Skipping was how a full replace committed its destructive half: the
+    // departing members and their bindings were already gone by the time we got here, so continuing
+    // would commit an emptied area and report success. Throwing rolls the whole transaction back, and
+    // the route turns it into a 409 telling the caller to refetch.
+    if (applied.length === 0)
+      throw new AreaConflictError(
+        `device ${uuid} is no longer in the area it was authorized from — refetch and try again`,
+      );
     if (from) {
       await detachBindings(tx, from, uuid);
       vacated.add(from);
@@ -677,6 +699,31 @@ export async function replaceBindings(
     batteryIdx < 0 ? undefined : resolvedSystemIds[batteryIdx];
 
   await db.transaction(async (tx) => {
+    // 🛑 RE-CHECK membership inside the transaction. `members` above was read before it opened, and a
+    // concurrent re-home invalidates it: a binding PUT validates device D in area A, D's owner moves
+    // it to B — which deletes A's bindings onto D as its firewall — and this then re-inserts exactly
+    // those bindings. Both requests succeed, and A resumes serving a device it no longer holds,
+    // because binding readers join through `points` and never consult membership. Re-reading here
+    // and refusing is what makes the re-home's cleanup actually final.
+    if (resolvedUids.length > 0) {
+      const stillMembers = new Set(
+        (
+          await tx
+            .select({ id: devices.id })
+            .from(devices)
+            .where(eq(devices.areaId, areaId))
+        ).map((d) => d.id),
+      );
+      const owners = await tx
+        .select({ id: points.id, deviceId: points.deviceId })
+        .from(points)
+        .where(inArray(points.id, resolvedUids));
+      for (const point of owners)
+        if (!stillMembers.has(point.deviceId))
+          throw new AreaConflictError(
+            `a device moved out of this area while its bindings were being saved — refetch and try again`,
+          );
+    }
     await tx.delete(areaBindings).where(eq(areaBindings.areaId, areaId));
     if (bindings.length > 0) {
       await tx.insert(areaBindings).values(

@@ -125,14 +125,22 @@ Two deliberate non-participants:
   not own would mint a doc that fails its own later edit check. Admin widens what you may address,
   not what you may embed.
 
-🛑 **The rule as it stands: READS are opt-in, WRITES are not** — and the split is a staging decision,
-not a principle.
+🛑 **The rule as it stands: the ENUMERATING reads are opt-in, writes are not** — and the split is a
+staging decision, not a principle.
 
-Every cross-owner **read** now goes through `actingAsAdmin`. Every cross-owner **write** —
-`requireDeviceAccess`'s `canWrite`, `loadAreaForOwner`'s gate, `resolveMemberDeviceRefs` /
-`assertDevicesRehomable`, `PATCH /api/v4/devices/{id}` — still uses plain `isAdmin` and is
-unconditional, exactly as it was before. That is pre-existing behaviour rather than a regression, and
-it is uniform: no write route is the odd one out.
+The reads converted are the **enumerating** ones and the **area aggregate**: `listReadableAreas`,
+`devicesVisibleByUser`, and therefore `GET /api/v4/areas`, `GET /api/v4/devices`, and
+`GET /api/v4/areas/{id}` + its sub-resources through `findReadableArea`.
+
+⚠️ **Not every cross-owner read.** `requireDeviceAccess`'s `canRead` and
+`GET /api/v4/areas/by-handle/{handle}` still use plain `isAdmin`, so without the header an admin can
+be refused by `GET /api/v4/devices/{id}` and still read that device's `/config` or `/sessions`. That
+is an inconsistency, not an escalation — those privileges are pre-existing and unchanged — but it is
+real and it is why this section says "the reads converted" rather than "all reads".
+
+Every cross-owner **write** — `requireDeviceAccess`'s `canWrite`, `loadAreaForOwner`'s gate,
+`resolveMemberDeviceRefs` / `assertDevicesRehomable`, `PATCH /api/v4/devices/{id}` — still uses plain
+`isAdmin` and is unconditional, exactly as before. Uniform: no write route is the odd one out.
 
 Moving the write side onto the opt-in is the right end state and should be **one** change, because a
 half-converted write surface is worse than either end — an admin would be able to reach a route and

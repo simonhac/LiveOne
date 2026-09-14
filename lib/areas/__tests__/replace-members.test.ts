@@ -38,7 +38,11 @@ jest.mock("@/lib/kv-cache-manager", () => ({
 
 import { areaBindings, devices } from "@/lib/db/planetscale/schema";
 import { Device } from "@/lib/ids";
-import { replaceMembers, AreaValidationError } from "../create";
+import {
+  replaceMembers,
+  AreaConflictError,
+  AreaValidationError,
+} from "../create";
 
 /**
  * Identify the target table by IDENTITY against the imported schema objects, not by reading a name off
@@ -172,19 +176,21 @@ describe("replaceMembers — the declarative full replace", () => {
     expect(vacated).toEqual(["area-elsewhere"]);
   });
 
-  it("🛑 touches NOTHING when the device moved out from under us", async () => {
+  it("🛑 THROWS when the device moved out from under us, so the whole replace rolls back", async () => {
     // The conditional UPDATE matches zero rows because `area_id` is no longer what authorization
-    // saw. Nothing must follow it: the source area's bindings belong to whoever holds the device
-    // now, and reporting it vacated would have the route refresh an area that never changed.
+    // saw. Skipping it — which the first cut did — commits the DESTRUCTIVE half of a full replace and
+    // not the constructive one: the departing members and their bindings are already gone by this
+    // point, so the caller gets 200 and an EMPTY area. Throwing rolls the transaction back and the
+    // route answers 409.
     currentMembers = [A];
     authorized = new Map([
       [uuid(1), "area-a"],
       [uuid(2), "area-elsewhere"],
     ]);
     updateApplies = false;
-    const vacated = await replaceMembers("area-a", [A, B], authorized);
-    expect(ops.filter((o) => o.op === "delete")).toEqual([]);
-    expect(vacated).toEqual([]);
+    await expect(
+      replaceMembers("area-a", [A, B], authorized),
+    ).rejects.toBeInstanceOf(AreaConflictError);
   });
 
   it("moves an AMBIENT device in without trying to detach it from anywhere", async () => {

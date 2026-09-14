@@ -15,7 +15,7 @@
  * The round-trip is therefore the assertion, not a detail of it.
  */
 import { describe, it, expect, jest, beforeEach } from "@jest/globals";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -147,9 +147,32 @@ describe("the world snapshot", () => {
     expect(await restoreWorld(snap)).toBe(false);
   });
 
-  it("readJournal answers null for a missing or corrupt file", () => {
+  it("readJournal answers null for a MISSING file, and THROWS on a corrupt one", () => {
     expect(readJournal(join(dir, "nope.json"))).toBeNull();
     clearJournal(join(dir, "nope.json")); // must not throw
+
+    // 🛑 A file that exists but does not parse is not "no journal". Treating it as one let the next
+    // run sail past the refusal and overwrite the only record of a damaged world with a snapshot OF
+    // that damaged world.
+    const corrupt = join(dir, "corrupt.json");
+    writeFileSync(corrupt, "{not json", "utf8");
+    expect(() => readJournal(corrupt)).toThrow(/not readable JSON/);
+  });
+
+  it("🛑 REFUSES to restore a journal taken against a DIFFERENT database", async () => {
+    // The stamp was written and never compared for a whole round, which made its own docstring
+    // false. These are the same rows copied between environments, so every uuid would still
+    // "resolve" — which is exactly why a mismatch has to be refused rather than trusted.
+    const snap = await captureWorld(join(dir, "j7.json"));
+    snap.database = "someone@elsewhere.psdb.cloud/postgres";
+    const err = jest.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      expect(await restoreWorld(snap)).toBe(false);
+      expect(err.mock.calls.flat().join("\n")).toContain("REFUSING to restore");
+    } finally {
+      err.mockRestore();
+    }
+    expect(writes).toEqual([]);
   });
 
   it("🛑 REFUSES on a stale journal rather than replaying it", async () => {

@@ -278,7 +278,8 @@ async function main() {
     if (!restored) {
       console.error(
         `\n❌ NOT deleting area ${areaId}: the world snapshot could not be fully restored. The ` +
-          `journal is at ${JOURNAL} — fix the cause and re-run, which will restore from it.`,
+          `journal is at ${JOURNAL}. Nothing is replayed automatically — inspect it, then restore it\n` +
+          `          with scripts/utils/restore-smoke-journal.ts, or delete it if the world is fine.`,
       );
       process.exitCode = 1;
     } else if (areaId) {

@@ -4,6 +4,7 @@ import {
   replaceBindings,
   refreshAreaServing,
   type BindingInput,
+  AreaConflictError,
   AreaValidationError,
 } from "@/lib/areas/create";
 import { loadAreaBindings } from "@/lib/areas/v4-load";
@@ -94,6 +95,11 @@ export async function PUT(
   try {
     await replaceBindings(uuid, bindings);
   } catch (err) {
+    // A member moved out of this area while its bindings were being saved. Nothing was written; the
+    // re-home already deleted the bindings onto the departed device, and re-creating them here is
+    // exactly what this refuses.
+    if (err instanceof AreaConflictError)
+      return NextResponse.json({ error: err.message }, { status: 409 });
     if (err instanceof AreaValidationError)
       return NextResponse.json({ error: err.message }, { status: 422 });
     throw err;
