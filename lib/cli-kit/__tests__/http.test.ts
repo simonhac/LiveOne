@@ -80,7 +80,16 @@ describe("the ambiguous statuses, disambiguated", () => {
     expect(d.next).toContain("liveone auth login");
   });
 
-  it("maps 403 to findings, naming --via=db as the repair path", async () => {
+  /**
+   * 🛑 The default `next` is DOMAIN-NEUTRAL, and that is the contract.
+   *
+   * It used to say "a doc whose refs the owner cannot read can only be repaired with --via=db" —
+   * true for `dashboard`, and misdirection for every other domain on this client, none of which
+   * has a `--via` at all. (Its 404 twin was worse: a device that could not be read told the
+   * operator to run `liveone dashboard list`.) The dashboard-specific advice now lives in the
+   * dashboard transport's own `errors` override, which is what per-call overrides are for.
+   */
+  it("maps 403 to findings, quoting the server and giving neutral advice", async () => {
     const d = await failure(
       call(
         respond(403, {
@@ -90,7 +99,33 @@ describe("the ambiguous statuses, disambiguated", () => {
     );
     expect(d.code).toBe(1);
     expect(d.what).toContain("cannot read");
-    expect(d.next).toContain("--via=db");
+    expect(d.next).not.toContain("--via=db");
+    expect(d.next).toContain("target:");
+  });
+
+  it("maps 404 without naming another domain's list command", async () => {
+    const d = await failure(call(respond(404, { error: "Device not found" })));
+    expect(d.code).toBe(1);
+    expect(d.what).toContain("Device not found");
+    expect(d.next).not.toContain("liveone dashboard list");
+  });
+
+  /** An override may build `what` from the body, so it can change only the advice. */
+  it("lets an override quote the server's own message while replacing the next step", async () => {
+    const d = await failure(
+      call(respond(403, { error: "refs you cannot read" }), {
+        errors: {
+          403: {
+            exit: 1,
+            what: (b: Record<string, unknown>) => String(b.error),
+            why: () => "the server refused this operation for this user",
+            next: "repair it with --via=db",
+          },
+        },
+      }),
+    );
+    expect(d.what).toBe("refs you cannot read");
+    expect(d.next).toBe("repair it with --via=db");
   });
 
   it("maps 412 with the server's current revision", async () => {

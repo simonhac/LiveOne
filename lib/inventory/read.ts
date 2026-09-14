@@ -105,6 +105,10 @@ export async function readTreeInventory(
             deviceId: points.deviceId,
             name: points.name,
             path: points.physicalPath,
+            // The LOGICAL stem, beside the vendor tail. Carried because an area's serving key is
+            // `logical_path/metric_type` (`lib/areas/binding-chain.ts`) — without it the tree can
+            // show every binding and still not say which two of them contend.
+            logicalPath: points.logicalPath,
             metric: points.metricType,
             unit: points.unit,
             active: points.active,

@@ -133,8 +133,14 @@ imports no tools.
 - **History windows are LOCAL fixed-offset days.** `--start/--end` bound whole days at the
   subject's `dayOffsetMin` — the same boundaries the daily aggregates roll up on. Deliberately not
   DST-aware.
-- **Piping is safe.** npm's run-script banner goes to stderr, so
-  `npm run liveone -- … --format json | jq` yields clean JSON; `--silent` merely tidies stderr.
+- 🛑 **Piping needs `--silent`.** The CLI honours the contract — payload on stdout, the `target:`
+  line and every other diagnostic on stderr — but **npm's own run-script banner goes to stdout**
+  (`> liveone@1.0.0 liveone` / `> tsx scripts/ops/liveone.ts …`), ahead of it. So
+  `npm run liveone -- … --format json | jq` fails on the first two lines, and every scripted
+  consumer ends up carrying a `sed -n '/^{/,$p'`. Use **`npm run --silent liveone -- …`**, which
+  suppresses npm's banner and nothing else. (This entry previously claimed the banner went to
+  stderr; measured on npm 10.9.4 it does not.) There is deliberately no `bin` entry: the root
+  package is never installed as a dependency, so a `bin` would not be linked anywhere.
 
 ## Device naming
 

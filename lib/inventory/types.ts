@@ -34,7 +34,10 @@ export interface TreeInventory {
     id: string;
     deviceId: string;
     name: string;
+    /** The vendor tail (`points.physical_path`), e.g. `E1/kwh`. */
     path: string;
+    /** The logical stem (`points.logical_path`), e.g. `bidi.battery`. Null for unstemmed points. */
+    logicalPath: string | null;
     metric: string;
     unit: string;
     active: boolean;

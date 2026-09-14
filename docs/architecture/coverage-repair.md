@@ -7,7 +7,19 @@ vendor API, for every **re-fetchable** external vendor (Amber, OpenElectricity, 
 generalization of the one-off Amber usage backfill into standing infrastructure. Push vendors
 (Fronius/DeepSea) are **out of scope** — their gaps are device/network downtime, gone for good.
 
-Engine: `lib/coverage/`. Providers: `lib/vendors/<vendor>/coverage-repair.ts`. Cron:
+> 🛑 **Out of scope for REPAIR is not out of scope for REPORTING.** A push vendor has no history
+> endpoint, so `liveone sync` refuses it (422) and this cron skips it — both correct, and the
+> consequence used to be that a `fusher` device could produce nothing for 222 days with no
+> scheduled job, alert or command ever saying so. It was found by accident. **`liveone device
+> coverage <device>`** is the reporting path: it reads `point_readings_agg_5m` directly, so it is
+> vendor-agnostic and answers for any device, archived ones included. It shares this module's
+> primitive (`ReadingsDao.countAgg5mByLocalDay`) and its expected-per-day rule, and where a vendor
+> declares no cadence it says so rather than inventing one — see `lib/coverage/density.ts`.
+>
+> It is **on demand**, not scheduled: nothing yet notices a dark push vendor unasked. That gap is
+> open, and narrower than it was.
+
+Engine: `lib/coverage/` (`find-gaps.ts` + `runner.ts` repair; `density.ts` + `report.ts` report). Providers: `lib/vendors/<vendor>/coverage-repair.ts`. Cron:
 `app/api/cron/repair-coverage/route.ts` (nightly in `vercel.json`; **shallow** most nights, **deep** on
 Mondays — see [Window depth](#window-depth-shallow-nightly-deep-weekly)).
 

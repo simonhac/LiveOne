@@ -92,7 +92,29 @@ function membershipWriter(
         // evidence was never fetched is worse than no warning at all — it reads as "nothing to
         // lose".
         const leaving = current.filter((id) => !target.includes(id));
-        const pool = leaving.length ? await loadPointPool(s, agg.members) : [];
+        const loaded = leaving.length
+          ? await loadPointPool(s, agg.members)
+          : { points: [], unreadable: [] };
+        const pool = loaded.points;
+
+        // 🛑 Fail CLOSED here, unlike every read path. `loadPointPool` now tolerates a member whose
+        // aggregate cannot be fetched, which is right for reporting — but this verb is destructive
+        // and its whole safety argument is the `doomed` list below. A departing device whose points
+        // we could not read contributes nothing to that list, so the command would print "0
+        // bindings would be deleted" while `replaceMembers` deletes them server-side: the precise
+        // "reads as nothing to lose" failure the comment above warns about, now arriving silently
+        // instead of as an error. An unreadable member that is STAYING is harmless — its bindings
+        // are not at risk — so only the departing ones block.
+        const blind = loaded.unreadable.filter((u) =>
+          leaving.includes(u.deviceId),
+        );
+        if (blind.length)
+          throw failWith(
+            EXIT.UPSTREAM,
+            `cannot enumerate what removing ${blind.length} device(s) would destroy`,
+            `${blind.map((u) => `${u.name} (${u.deviceId}): ${u.reason}`).join("; ")} — their points could not be read, so any binding of theirs is invisible to the warning below, and this write DELETES a departing member's bindings`,
+            "resolve the read failure first (try `liveone device points <device> --include-archived`), or remove the readable devices in a separate call",
+          );
         const doomed = leaving.length
           ? agg.bindings.filter((b) => {
               const p = pool.find((x) => x.id === b.pointId);
@@ -164,7 +186,7 @@ function membershipWriter(
 async function runRoleList(ctx: Ctx): Promise<number> {
   return withApiSession(ctx, async (s) => {
     const agg = await loadAggregate(s, ctx.args[0]);
-    const pool = await loadPointPool(s, agg.members);
+    const { points: pool, unreadable } = await loadPointPool(s, agg.members);
     const wantPoints = ctx.flags.points === true;
 
     const sorted = [...agg.bindings].sort(
@@ -176,6 +198,10 @@ async function runRoleList(ctx: Ctx): Promise<number> {
     ctx.emit(
       {
         area: agg.area,
+        // Reported, not thrown. These members' points are absent from the pool, so any binding of
+        // theirs renders as a bare `pt_` id below — the reader has to be told why rather than left
+        // to infer it from a gap.
+        ...(unreadable.length ? { unreadableMembers: unreadable } : {}),
         bindings: sorted.map((b) =>
           ranks.has(b.pointId) ? { ...b, chainRank: ranks.get(b.pointId) } : b,
         ),
@@ -201,6 +227,15 @@ async function runRoleList(ctx: Ctx): Promise<number> {
           "",
           `${sorted.length} binding(s) across ${agg.members.length} device(s).`,
         );
+        if (unreadable.length) {
+          out.push(
+            "",
+            `⚠ ${unreadable.length} member device(s) could not be read — their points are missing`,
+            "  from the pool above, so any binding of theirs shows as a bare pt_ id:",
+          );
+          for (const u of unreadable)
+            out.push(`    ${u.name} (${u.deviceId}) — ${u.reason}`);
+        }
         if (wantPoints) {
           out.push("", "bindable points:");
           for (const p of [...pool].sort((a, b) =>
@@ -218,7 +253,9 @@ async function runRoleList(ctx: Ctx): Promise<number> {
         return out.join("\n");
       },
     );
-    return EXIT.OK;
+    // Findings, not OK: the answer is partial. Exit 0 here would let a scripted check pass over an
+    // area it could only half read — which is the failure this verb just stopped being.
+    return unreadable.length ? EXIT.FINDINGS : EXIT.OK;
   });
 }
 
@@ -236,7 +273,7 @@ async function runRoleSet(ctx: Ctx): Promise<number> {
           "to empty a slot use `liveone area role clear <area> <role> <metric>`",
         );
 
-      const pool = await loadPointPool(s, agg.members);
+      const { points: pool } = await loadPointPool(s, agg.members);
       const picked = refs.map((r) => resolvePoint(pool, r));
 
       const dupe = picked.find(
@@ -303,7 +340,7 @@ async function runRoleClear(ctx: Ctx): Promise<number> {
     async (s) => {
       const agg = await loadAggregate(s, ctx.args[0]);
       const [role, metric] = [ctx.args[1], ctx.args[2]];
-      const pool = await loadPointPool(s, agg.members);
+      const { points: pool } = await loadPointPool(s, agg.members);
 
       const doomed = agg.bindings.filter(
         (b) =>

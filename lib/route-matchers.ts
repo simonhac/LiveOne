@@ -241,6 +241,18 @@ const cliTokenRoutes = [
   // table is empty, so deletion there is a supported operation rather than damage.
   "/api/v4/areas/:id/flows",
   "/api/v4/areas/:id/provenance",
+  // The battery fold's per-day rows — `liveone area provenance --daily`. Its sibling
+  // `provenance` reports COUNTS, and the counts are not the interesting part: the learned
+  // parameters (capacity, round-trip and charge efficiency, reserve floor) are what a change of SoC
+  // instrument actually moves, and they were unreadable from any operator surface. Read-only, GET
+  // is the only method the route defines, and it authorizes through the same owner check its
+  // siblings do.
+  //
+  // 🛑 Admitted BY NAME, and `provenance-summary` deliberately is NOT. The two were excluded
+  // together ("the two `provenance-*` reads stay outside until each is judged on its own"); this is
+  // one of them being judged, not both being waved through, and a `provenance(.*)` wildcard here
+  // would have admitted the other by accident.
+  "/api/v4/areas/:id/provenance-daily",
   // Read-only, and the reason `area archive`/`area delete` can preview honestly instead of printing
   // "would delete" and then handing you a 409. Owner-gated in the handler like its siblings.
   "/api/v4/areas/:id/dependents",

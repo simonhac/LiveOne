@@ -137,6 +137,9 @@ export const ROLE_SPEC = {
           help: "Also list every bindable point on the area's devices, marking which are unbound",
         },
       },
+      exitCodes: {
+        1: "at least one member device could not be read, so the wiring reported is partial",
+      },
       examples: [
         "liveone area role list kew",
         "liveone area role list kew --points",

@@ -68,6 +68,15 @@ describe("isCliTokenRoute — what the bypass is bounded to", () => {
       // Read-only, and admitted WITH the two writers: it is how an operator checks a wiring write
       // landed. Admitting a mutator without the read that verifies it is a half-usable tool.
       "/api/v4/areas/ar_x/resolution",
+      // Read-only (GET only), owner-gated in the handler: the battery fold's per-day LEARNED state
+      // — capacity, round-trip and charge efficiency, reserve floor. `area provenance` reported row
+      // counts and nothing else, so the parameters a change of SoC instrument actually moves were
+      // unreadable from any operator surface.
+      "/api/v4/areas/ar_x/provenance-daily",
+      // The per-device coverage read, which rides the `devices(.*)` matcher. `requireDeviceAccess`
+      // in-handler, read-only, and deliberately NOT `devicesVisibleByUser` — coverage is what you
+      // ask about a device that has STOPPED, so it must answer for an archived one.
+      "/api/v4/devices/dv_x/coverage",
       "/api/v4/users",
       "/api/v4/users/user_x",
       // 🛑 The most consequential admitted route: the only one that can move an object OUT of a
@@ -103,6 +112,11 @@ describe("isCliTokenRoute — what the bypass is bounded to", () => {
       "/api/v4/areas/ar_x/eligibility",
       "/api/v4/areas/ar_x/default-group",
       "/api/v4/areas/ar_x/recompute-provenance",
+      // 🛑 The SIBLING of `provenance-daily`, which IS admitted above. The two were excluded
+      // together ("the two `provenance-*` reads stay outside until each is judged on its own"), and
+      // only one of them has been judged. A `provenance(.*)` wildcard would have admitted this by
+      // accident — which is the whole reason the entry is a named segment.
+      "/api/v4/areas/ar_x/provenance-summary",
       // 🛑 The CRON twin of the recompute that IS admitted above. Its `derivation=`/`handle=`+`role=`
       // filter is OPTIONAL, so it has an unscoped form that rebuilds every detector in the fleet —
       // which is precisely why `…/derivations/:dxid/recompute` exists and why this stays outside.

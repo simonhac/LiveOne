@@ -16,6 +16,12 @@ the data-download commands also accept `--format csv` — their help says so.
 Data goes to stdout; all diagnostics go to stderr. Mutating commands are **dry by default** —
 `--apply` writes, and off a terminal `--apply` additionally requires `--yes`.
 
+🛑 **Scripted callers: use `npm run --silent liveone -- …`.** The CLI honours the
+stdout/stderr split, but npm prints its own two-line run-script banner (`> liveone@1.0.0 …`) to
+**stdout**, ahead of the payload — so without `--silent` every `--format json` consumer needs a
+`sed`/`jq` guard to skip it. `--silent` suppresses only npm's banner; the CLI's own diagnostics
+still reach stderr.
+
 | Exit | Meaning |
 | ---- | ------- |
 | 0 | success |
@@ -79,6 +85,7 @@ Data goes to stdout; all diagnostics go to stderr. Mutating commands are **dry b
     - [liveone device show](../scripts/ops/CLI_README.md#liveone-device-show) — A device's full aggregate: metadata, config, adapter state, capabilities, points.
     - [liveone device points](../scripts/ops/CLI_README.md#liveone-device-points) — A device's point inventory: pt_… id, path, metric, unit.
     - [liveone device latest](../scripts/ops/CLI_README.md#liveone-device-latest) — The device's current values, from the serving cache.
+    - [liveone device coverage](../scripts/ops/CLI_README.md#liveone-device-coverage) — How many 5-minute readings each of a device's points holds, per local day.
     - [liveone device history](../scripts/ops/CLI_README.md#liveone-device-history) — Time series for a device, in the OpenNEM shape /api/history serves.
     - [liveone device config](../scripts/ops/CLI_README.md#liveone-device-config) — The stored DeviceConfig blob — read it, audit it for rot, normalise it.
       - [liveone device config show](../scripts/ops/CLI_README.md#liveone-device-config-show) — The device's stored config blob, verbatim.
@@ -102,6 +109,7 @@ Data goes to stdout; all diagnostics go to stderr. Mutating commands are **dry b
       - [liveone area role list](../scripts/ops/CLI_README.md#liveone-area-role-list) — The area's role→point bindings, grouped by slot.
       - [liveone area role set](../scripts/ops/CLI_README.md#liveone-area-role-set) — Fill one (role, metric) slot — priority follows argument order.  _(writes)_
       - [liveone area role clear](../scripts/ops/CLI_README.md#liveone-area-role-clear) — Empty a (role, metric) slot, or every slot of a role.  _(writes)_
+    - [liveone area lint](../scripts/ops/CLI_README.md#liveone-area-lint) — Census an area's wiring for the states nothing else reports.
     - [liveone area provenance](../scripts/ops/CLI_README.md#liveone-area-provenance) — What derived rows an area actually holds — the flow matrix and the battery fold.
     - [liveone area purge](../scripts/ops/CLI_README.md#liveone-area-purge) — Delete an area's derived rows — the flow matrix, or the battery fold.
       - [liveone area purge flows](../scripts/ops/CLI_README.md#liveone-area-purge-flows) — Delete the area's flow/Sankey matrix over a window of local days.  _(writes)_

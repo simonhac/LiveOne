@@ -79,6 +79,18 @@ export interface ProvenancePurgeReport {
   /** Blend readings, by table. */
   agg5mRows: number;
   agg1dRows: number;
+  /**
+   * The local-day SPAN each tier actually occupies — index probes, not counts.
+   *
+   * 🛑 These exist because the counts above cannot be compared. Kinkora Rd reported `dailyRows: 349`
+   * beside `agg1dRows: 426`, and the second number is 426 rows across SIX points, i.e. ~71 days —
+   * so the blend's daily rollup covered mid-July onward while its 5-minute data went back a year,
+   * and both numbers were printed with nothing saying they disagreed. Dividing a row count by
+   * `pointRids.length` to recover that would be arithmetic on a uniformity nothing guarantees; a
+   * span is a fact, and `agg5mSpanMsForPoints`/`agg1dSpanForPoints` are index-only probes.
+   */
+  agg5mSpan: { firstMs: number; lastMs: number } | null;
+  agg1dSpan: { firstDay: string; lastDay: string } | null;
   /** Blend bindings (`role='battery'` at the six blend metrics). */
   bindings: number;
 }
@@ -190,6 +202,10 @@ export async function inspectProvenance(
     .where(eq(batteryProvenanceDaily.areaId, areaUuid));
 
   const counts = await ReadingsDao.countAggsForPoints(rids);
+  const [span5m, span1d] = await Promise.all([
+    ReadingsDao.agg5mSpanMsForPoints(rids),
+    ReadingsDao.agg1dSpanForPoints(rids),
+  ]);
 
   const [bindings] = await db
     .select({ n: sql<number>`count(*)::int` })
@@ -209,6 +225,10 @@ export async function inspectProvenance(
     helper,
     agg5mRows: counts.agg5m,
     agg1dRows: counts.agg1d,
+    agg5mSpan: span5m ? { firstMs: span5m.minMs, lastMs: span5m.maxMs } : null,
+    agg1dSpan: span1d
+      ? { firstDay: span1d.startDay, lastDay: span1d.endDay }
+      : null,
     bindings: bindings?.n ?? 0,
   };
 }

@@ -28,6 +28,8 @@ import { apiFetch } from "@/lib/cli-kit/http";
 import {
   BASE_URL_FLAG,
   HISTORY_FLAGS,
+  INCLUDE_ARCHIVED_DEVICES_FLAG,
+  bool,
   listDevices,
   resolveArea,
   resolveDevice,
@@ -37,6 +39,7 @@ import {
   type WireDevice,
 } from "../shared";
 import { configSpec, CONFIG_HANDLERS } from "./config";
+import { coverageSpec, runCoverage } from "./coverage";
 
 const DEVICE_ARG = {
   name: "device",
@@ -112,6 +115,7 @@ export const deviceCommand = defineCommand({
       when: "Start here when you do not yet know a device's id.",
       flags: {
         ...BASE_URL_FLAG,
+        ...INCLUDE_ARCHIVED_DEVICES_FLAG,
         vendor: {
           type: "string",
           placeholder: "vendor",
@@ -138,7 +142,7 @@ export const deviceCommand = defineCommand({
         "`capabilities` are DERIVED (a point scan + compound predicates), and `area show` remains\n" +
         "the authoritative place to read them in context — its members carry the same list.",
       args: [DEVICE_ARG],
-      flags: { ...BASE_URL_FLAG },
+      flags: { ...BASE_URL_FLAG, ...INCLUDE_ARCHIVED_DEVICES_FLAG },
       examples: [
         "liveone device show daylesford",
         "liveone device show dv_01kybrhzkmfyxvz63d15rscj19",
@@ -151,7 +155,7 @@ export const deviceCommand = defineCommand({
         "Use this to find a point's id or path — e.g. before wiring a binding or reading a\n" +
         "specific series.",
       args: [DEVICE_ARG],
-      flags: { ...BASE_URL_FLAG },
+      flags: { ...BASE_URL_FLAG, ...INCLUDE_ARCHIVED_DEVICES_FLAG },
       examples: ["liveone device points daylesford"],
     },
     latest: {
@@ -164,6 +168,7 @@ export const deviceCommand = defineCommand({
       flags: { ...BASE_URL_FLAG },
       examples: ["liveone device latest daylesford"],
     },
+    coverage: coverageSpec,
     history: {
       name: "history",
       summary:
@@ -181,7 +186,11 @@ export const deviceCommand = defineCommand({
         "series with the unit in the header (`13/load/power.avg (W)`); nulls are empty cells.\n" +
         "With --out the CSV goes to the file and stdout gets the summary (as JSON).",
       args: [DEVICE_ARG],
-      flags: { ...BASE_URL_FLAG, ...HISTORY_FLAGS },
+      flags: {
+        ...BASE_URL_FLAG,
+        ...INCLUDE_ARCHIVED_DEVICES_FLAG,
+        ...HISTORY_FLAGS,
+      },
       formats: ["human", "json", "csv"],
       exitCodes: {
         1: "no series matched (the window, or the --list-series subject)",
@@ -330,7 +339,9 @@ async function runList(ctx: Ctx): Promise<number> {
   return withApiSession(ctx, async (s) => {
     const vendor = str(ctx, "vendor");
     const status = str(ctx, "status");
-    const devices = (await listDevices(s)).filter(
+    const devices = (
+      await listDevices(s, { includeArchived: bool(ctx, "includeArchived") })
+    ).filter(
       (d) =>
         (vendor === undefined || d.vendor === vendor) &&
         (status === undefined || d.status === status),
@@ -354,16 +365,25 @@ async function runList(ctx: Ctx): Promise<number> {
 async function fetchAggregate(
   s: ApiSession,
   ref: string,
+  includeArchived = false,
 ): Promise<Record<string, unknown> & { points?: WirePoint[] }> {
-  const device = await resolveDevice(s, ref);
+  const device = await resolveDevice(s, ref, { includeArchived });
+  // 🛑 The flag has to reach the AGGREGATE too, not just the ref lookup: the per-device route is
+  // `activeOnly` on its own account, so resolving an archived ref and then fetching it without the
+  // param trades "cannot name it" for a 404 — the same failure one step later.
+  const q = includeArchived ? "&includeArchived=true" : "";
   return s.get(
-    `/api/v4/devices/${encodeURIComponent(device.id!)}?include=points,capabilities`,
+    `/api/v4/devices/${encodeURIComponent(device.id!)}?include=points,capabilities${q}`,
   );
 }
 
 async function runShow(ctx: Ctx): Promise<number> {
   return withApiSession(ctx, async (s) => {
-    const body = await fetchAggregate(s, ctx.args[0]);
+    const body = await fetchAggregate(
+      s,
+      ctx.args[0],
+      bool(ctx, "includeArchived"),
+    );
     // Object-heavy payload: the pretty JSON IS the human rendering (a table would hide the shape).
     ctx.emit(body, () => JSON.stringify(body, null, 2));
     return EXIT.OK;
@@ -372,7 +392,11 @@ async function runShow(ctx: Ctx): Promise<number> {
 
 async function runPoints(ctx: Ctx): Promise<number> {
   return withApiSession(ctx, async (s) => {
-    const body = await fetchAggregate(s, ctx.args[0]);
+    const body = await fetchAggregate(
+      s,
+      ctx.args[0],
+      bool(ctx, "includeArchived"),
+    );
     const points = body.points ?? [];
     ctx.emit(
       {
@@ -414,7 +438,9 @@ async function runLatest(ctx: Ctx): Promise<number> {
 
 async function runHistory(ctx: Ctx): Promise<number> {
   return withApiSession(ctx, async (s) => {
-    const device = await resolveDevice(s, ctx.args[0]);
+    const device = await resolveDevice(s, ctx.args[0], {
+      includeArchived: bool(ctx, "includeArchived"),
+    });
     return runHistoryVerb(
       ctx,
       s,
@@ -860,6 +886,7 @@ const HANDLERS: Record<string, (ctx: Ctx) => Promise<number>> = {
   points: runPoints,
   latest: runLatest,
   history: runHistory,
+  coverage: runCoverage,
   recompute: runRecompute,
   "change-offset": runChangeOffset,
 };

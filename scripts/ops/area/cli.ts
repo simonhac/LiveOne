@@ -37,6 +37,7 @@ import {
 } from "../shared";
 import { DEVICES_SPEC, ROLE_SPEC, WIRING_HANDLERS } from "./wiring";
 import { PROVENANCE_SPEC, PURGE_SPEC, PURGE_HANDLERS } from "./purge";
+import { LINT_HANDLERS, LINT_SPEC } from "./lint";
 import { ARCHIVE_SPEC, DELETE_SPEC, RETIRE_HANDLERS } from "./retire";
 
 const AREA_ARG = {
@@ -228,6 +229,7 @@ export const areaCommand = defineCommand({
     },
     devices: DEVICES_SPEC,
     role: ROLE_SPEC,
+    lint: LINT_SPEC,
     provenance: PROVENANCE_SPEC,
     purge: PURGE_SPEC,
     archive: ARCHIVE_SPEC,
@@ -495,6 +497,7 @@ export async function runArea(ctx: Ctx): Promise<number> {
   const key = path.join(".");
   const handler =
     WIRING_HANDLERS[key] ??
+    LINT_HANDLERS[key] ??
     PURGE_HANDLERS[key] ??
     RETIRE_HANDLERS[key] ??
     HANDLERS[key];

@@ -27,8 +27,8 @@ import {
  * point roster. Read-only; the operator CLI's `device show`.
  *
  * Readability is decided by the SAME source as the list route — `devicesVisibleByUser` (owned ∪
- * public ∪ dashboard-granted, active only) — so the aggregate can never answer for a device the list
- * would not name. Unknown and not-readable are deliberately the SAME 404: distinguishing them would
+ * public ∪ dashboard-granted, active only unless `?includeArchived=true`) — so the aggregate can
+ * never answer for a device the list would not name. Unknown and not-readable are deliberately the SAME 404: distinguishing them would
  * make this an existence oracle over other owners' devices (the §8.4 rule the areas loaders apply as
  * a 403 collapse; here the twins collapse into 404 because the resource is addressed by id, not
  * listed).
@@ -68,12 +68,22 @@ export async function GET(
     .where(eq(devicesTable.id, uuid))
     .limit(1);
 
+  // `?includeArchived=true` widens WHICH STATUSES are readable, never WHOSE devices — the same
+  // opt-in the list route and `GET /api/v4/areas` take, and deliberately NOT implied by
+  // `x-liveone-admin` (admin widens the owner set, not the status set). `devicesVisibleByUser` is
+  // `activeOnly` by default, while an area aggregate DOES return its archived members
+  // (`lib/areas/v4-shapes.ts`), so without this the two disagree and every consumer that walks an
+  // area's members into this route 404s on a retired one.
+  const includeArchived =
+    request.nextUrl.searchParams.get("includeArchived") === "true";
   // The readable set is keyed by rid (the list route's `VisibleDevice.id`), so the row must resolve
   // first — but a missing row and an unreadable one exit through the SAME response (see header).
   const visible = row
-    ? await DeviceConfigRegistry.devicesVisibleByUser(auth.userId, true, {
-        isAdmin: auth.actingAsAdmin,
-      })
+    ? await DeviceConfigRegistry.devicesVisibleByUser(
+        auth.userId,
+        !includeArchived,
+        { isAdmin: auth.actingAsAdmin },
+      )
     : [];
   if (!row || !visible.some((d) => d.id === row.rid))
     return NextResponse.json({ error: "Device not found" }, { status: 404 });
