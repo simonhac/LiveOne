@@ -437,7 +437,7 @@ without a database session:
 - `lib/battery-provenance/field-registry.ts` is the single source of truth the API, the chart series,
   and the table's tooltip copy all read from — a `satisfies Record<keyof BatteryProvenanceDailyRow, …>`
   guard makes an un-registered schema column a compile error.
-- The helper device carries no area-of-one, so the panel resolves its **parent** Area (the row key)
+- The helper device is created directly in the Area it serves, so the panel resolves that Area (the row key)
   from the helper's `vendor_site_id` (`helper:area:<uuid>`, minted by `ensureHelperDevice` —
   [above](#the-helper-device--where-the-blend-lives)) via `lib/areas/helper-site-id.ts`, not from the
   device page's section-key sentinel.

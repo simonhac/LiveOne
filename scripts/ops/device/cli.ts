@@ -596,15 +596,15 @@ export function renderChangeOffset(r: WireChangeOffset, passes = 1): string {
   if (r.area?.divergesAfter) {
     out.push(
       "",
-      `⚠️  The area "${r.area.name}" keeps bucketing on ${signed(r.area.dayOffsetMin)}, so its flow`,
-      `    matrix and battery provenance will use a different day boundary from this device's`,
-      `    daily totals.${
+      `⚠️  "${r.area.name}" keeps bucketing on ${signed(r.area.dayOffsetMin)}, so its flow matrix and`,
+      `    battery provenance will use a different day boundary from this device's totals.`,
+      `    ${
         r.area.otherDevices.length > 0
-          ? ` ${r.area.otherDevices.length} other device(s) share it: ${r.area.otherDevices.join(", ")}.`
-          : " This device is its only tenant."
+          ? `${r.area.otherDevices.length} other device(s) share it: ${r.area.otherDevices.join(", ")}.`
+          : "This device is its only tenant."
       }`,
-      `    If the AREA should move too, that is a separate, deliberate call:`,
-      `      PATCH /api/v4/areas/{ar_} { "dayOffsetMin": ${r.offset.to} }`,
+      `    Moving the AREA too is a separate, deliberate call:`,
+      `      PATCH /api/v4/areas/${r.area.id} { "dayOffsetMin": ${r.offset.to} }`,
     );
   }
 

@@ -6,7 +6,7 @@ import { areas, devices } from "@/lib/db/planetscale/schema";
 import { resolveOnboardingArea } from "@/lib/areas/onboarding";
 import type { AreaLocation } from "@/lib/areas/types";
 import type { DeviceConfig } from "@/lib/capabilities/config";
-import { Area, Device, type DeviceId } from "@/lib/ids";
+import { Device, type DeviceId } from "@/lib/ids";
 import { DeviceRegistry, type DeviceRegistryExec } from "./device-registry";
 
 /**

@@ -16,6 +16,7 @@ type FakeDevice = {
   uuid: string;
   ownerClerkUserId: string | null;
   areaId: string | null;
+  vendorType?: string;
 };
 
 let fleet: Map<number, FakeDevice>;
@@ -67,6 +68,16 @@ beforeEach(() => {
     [3, { uuid: "dev-3", ownerClerkUserId: THEM, areaId: "area-mine" }],
     // an OpenElectricity NEM region
     [4, { uuid: "dev-4", ownerClerkUserId: null, areaId: null }],
+    // an area's own derived output — owned, readable, in an area I own, and still not movable
+    [
+      5,
+      {
+        uuid: "dev-5",
+        ownerClerkUserId: ME,
+        areaId: "area-mine",
+        vendorType: "helper",
+      },
+    ],
   ]);
 });
 
@@ -109,6 +120,17 @@ describe("assertDevicesRehomable", () => {
     // two OE regions ended up as members of three areas each before migration 0071.
     await expect(run([4])).rejects.toBeInstanceOf(AreaValidationError);
     await expect(run([4], true)).rejects.toBeInstanceOf(AreaValidationError);
+  });
+
+  it("🛑 REFUSES a HELPER outright, for every caller including admin", async () => {
+    // A helper is the area's own computed output, and `helperSiteId(areaId)` bakes that area into
+    // its `vendor_site_id` permanently. Adopting one elsewhere makes the adopting area's resolver
+    // union another site's blend points — and hides the helper from `ensureHelperDevice`'s lookup,
+    // so the next provenance recompute tries to mint a second one and 500s on
+    // `devices_helper_area_unique`. Note this device passes every other leg: owned by the caller,
+    // and sitting in an area the caller owns.
+    await expect(run([5])).rejects.toBeInstanceOf(AreaValidationError);
+    await expect(run([5], true)).rejects.toBeInstanceOf(AreaValidationError);
   });
 
   it("refuses the whole set if any one member fails", async () => {

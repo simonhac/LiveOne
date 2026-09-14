@@ -3,7 +3,7 @@ import { eq } from "drizzle-orm";
 import { requireDeviceAccess } from "@/lib/api-auth";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import { devices as devicesTable } from "@/lib/db/planetscale/schema";
-import { Device } from "@/lib/ids";
+import { Area, Device } from "@/lib/ids";
 import {
   applyChangeDayOffset,
   isValidDayOffsetMin,
@@ -117,7 +117,9 @@ export async function POST(
     offset: { from: plan.currentOffsetMin, to: newOffsetMin },
     area: plan.area
       ? {
-          id: plan.area.id,
+          // `ar_…`, not the raw uuid: every other v4 surface speaks the opaque id, and the CLI
+          // prints this straight into the `PATCH /api/v4/areas/{id}` it suggests.
+          id: Area.encode(plan.area.id),
           name: plan.area.name,
           dayOffsetMin: plan.area.dayOffsetMin,
           otherDevices: plan.area.otherDevices,

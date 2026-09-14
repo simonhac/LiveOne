@@ -191,7 +191,7 @@ describe("change-offset's rendering", () => {
     },
     offset: { from: 660, to: 600 },
     area: {
-      id: "ar_x",
+      id: "ar_01kv06sy19evn989sjamnjn4j8",
       name: "Kinkora Unified",
       dayOffsetMin: 660,
       otherDevices: ["Kinkora Mondo"],
@@ -285,7 +285,7 @@ describe("merging a re-bucket's passes", () => {
     },
     offset: { from: 660, to: 600 },
     area: {
-      id: "ar_x",
+      id: "ar_01kv06sy19evn989sjamnjn4j8",
       name: "Kinkora Unified",
       dayOffsetMin: 660,
       otherDevices: ["Kinkora Mondo"],

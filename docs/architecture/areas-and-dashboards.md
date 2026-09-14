@@ -45,11 +45,10 @@ HA — including where HA is ahead.
   time-series tables (`point_readings(point_rid, measurement_time)` and the aggregates). The seam
   rule is absolute: **uuids above, rids below**, with `lib/registry/registry-cache.ts` the only owner
   of the translation and a prebuild gate enforcing it.
-- **A device is in 0 or 1 area** (`devices.area_id`, nullable) — Home Assistant's shape. NULL is
-  AMBIENT: a real state, not a broken one. `devices.primary_area_id` (NOT NULL) still names the area
-  minted alongside the device, but it is vestigial — it is no longer membership, and migration 0072
-  drops it. Timezone and location live on the area, resolved through `lib/areas/placement.ts` so an
-  ambient device still has both.
+- **A device is in 0 or 1 area** (`devices.area_id`, nullable) — Home Assistant's shape, and the
+  only device→area edge since migration 0074 dropped `primary_area_id` and `area_members`. NULL is
+  AMBIENT: a real state, not a broken one. Timezone and location live on the area, resolved through
+  `lib/areas/placement.ts` so an ambient device still has both.
 
 ## 3. Semantic: areas, membership, bindings
 
@@ -63,13 +62,16 @@ it was in, deleting that area's bindings onto its points. Both the area-side ver
 go through `assertDevicesRehomable`, which asks ownership **or custody** rather than mere
 readability — read access was a sufficient firewall only while membership was additive.
 
-**Areas are still eager, but the area-of-one is vestigial.** Every device still mints an area at
-onboarding, solely because `devices.primary_area_id` is still NOT NULL, and those areas are never
-deleted — they key uuid-addressed history (`point_readings_flow_attr_1d`,
-`battery_provenance_daily`). They are no longer a device's membership: since migration 0071 the
-device's area is `devices.area_id`, and for every device in a multi-device site the two name
-different areas. Migration 0072 drops `primary_area_id`, and only then does a new device arrive
-unassigned.
+**The area-of-one is gone; onboarding places a device instead.** Until migration 0072 every device
+minted a private area solely because `devices.primary_area_id` was NOT NULL — 14 of prod's 17 areas
+were such shells. Those existing shells are **never deleted** (they key uuid-addressed history:
+`point_readings_flow_attr_1d`, `battery_provenance_daily`) but nothing mints new ones. A newly
+onboarded device is placed by `resolveOnboardingArea` (`lib/areas/onboarding.ts`): an **owned**
+device goes to `users.default_area_id`, or to a site created for this connection and recorded as
+their default if it is their first; an **ownerless** one is never placed. The reason it is placed
+at all rather than left unassigned, HA-style, is that the area is the sole home of the display
+timezone and the location, so an ambient onboarding would silently discard the site address the
+vendor supplies at the one moment it offers it.
 
 **Role resolution is per-role and explicit.** An area's _visible point set_ is always the union of
 its members' points. Its _role resolution_ is per-role: if bindings exist for role R they define R;
@@ -225,8 +227,8 @@ Recorded explicitly, because they were stated confidently here and people rememb
 | Was                                                                                                                                     | Now                                                                                                                                                                                                                                                                            |
 | --------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | **"Not planned — retiring integer system addressing."** `areas.legacy_system_id` was called load-bearing addressing, kept deliberately. | **Overturned.** The integer handle is the clean sheet's _headline deletion_ — a polymorphic address where `≥1,000,000` meant "synthetic area" and nothing in the type system knew. It dies in Phase 13; `legacy_handles` resolves `?systemId=N` forever as a thin compat shim. |
-| **"Areas are lazy"** — no area-of-one at create time, minted on demand.                                                                 | **Overturned (Option A, 2026-07-22), then narrowed (2026-09-14).** Areas are still eager and areas-of-one are still never deleted — they key uuid-addressed history, so `retire-implied-areas.ts` is abandoned and must not run. But the area-of-one is no longer a device's MEMBERSHIP: `devices.area_id` is, and the mint survives only because `primary_area_id` is still NOT NULL. Migration 0072 drops it, after which a new device arrives unassigned. |
-| **"Ours is more general than HA — a device can belong to several areas."** `area_members` was many-to-many. | **Overturned (2026-09-14).** A device is in **0 or 1** area (`devices.area_id`), which is exactly HA's shape. The generality was never used for anything a human authored — it existed so a device could sit in both its area-of-one and its real site — and it cost two real defects: every Kutis EV run read $0.00 for two months because something had to GUESS which of a device's areas priced it, and the flow-eligibility guard exists only to stop a child area claiming its parent's Sankey. `area_members` is frozen until migration 0072. |
+| **"Areas are lazy"** — no area-of-one at create time, minted on demand.                                                                 | **Overturned (Option A, 2026-07-22), then RE-OVERTURNED (2026-09-14).** Existing areas-of-one are still never deleted — they key uuid-addressed history, so `retire-implied-areas.ts` is abandoned and must not run. But nothing mints new ones: migration 0072 dropped `primary_area_id`'s NOT NULL, which was the only thing forcing it, and 0074 dropped the column. Onboarding now PLACES a device (`resolveOnboardingArea`) rather than wrapping it — which is lazier than Option A for the second device of a site and eager-ish for the first, because the area is the sole home of timezone and location and dropping the vendor's address is worse than an extra area. |
+| **"Ours is more general than HA — a device can belong to several areas."** `area_members` was many-to-many. | **Overturned (2026-09-14).** A device is in **0 or 1** area (`devices.area_id`), which is exactly HA's shape. The generality was never used for anything a human authored — it existed so a device could sit in both its area-of-one and its real site — and it cost two real defects: every Kutis EV run read $0.00 for two months because something had to GUESS which of a device's areas priced it, and the flow-eligibility guard exists only to stop a child area claiming its parent's Sankey. `area_members` was dropped by migration 0074. |
 | **"An area must have at least one member."** Enforced in `replaceMembers`, `removeMember`, the create route and the builder dialog. | **Overturned (2026-09-14).** A zero-device area is first-class. The rule protected nothing — an area with no devices resolves to no points and drops out of flow eligibility on its own — and it is what forced "hide areas-of-one" to be a render-time convention instead of the structural "hide areas with no devices". |
 | **"A device's own area cannot take a second member."** `PUT …/members` refused with `409 AREA_OF_ONE_CANNOT_ADD` whenever the Area's `legacy_system_id` also named a device. | **Overturned (2026-09-09).** A verbatim carry-over from the legacy `POST /devices` handler that protected nothing still relied on: `?systemId=N` resolves **device-first** (`lib/dashboard/subject.ts`, locked) so growing such an Area cannot widen the legacy alias, and `lib/kv-subjects.ts` already reads BOTH legs of a colliding handle and unions them. The state it forbade already existed — `liveone-dev` handle 13 is a real Sigenergy device AND a 3-member Area with 12 bindings — because server-managed writers never passed through the route. Retiring the integer handle itself is scoped in `docs/plans/retire-the-integer-handle.md`. |
 | **"Additive coexistence, NOT demolition"** — legacy per-system dashboards coexist with composition dashboards indefinitely.             | **Overturned.** Config-v4's definition of done is _one shape, not two_: no runtime branch on dashboard shape, no adapter, no rewriter, one card registry, one write surface. Phase 14 **dropped** `descriptor` (migration 0054).                                               |

@@ -92,6 +92,7 @@ rows that can't dangle — which buys us enforcement and costs us HA's zero-migr
 | `lib/roles/registry.ts` (6 roles, carries `device_class`/`state_class`/`unit`)         | _(no native table)_ — Energy-dashboard role slots                                                            | **Explicitly HA-aware** — our export bridge in waiting. v4 deletes its SQL projection (`roles`); `area_bindings_role_check` holds the vocabulary. |
 | `areas` (uuid `ar_…`; owns `day_offset_min`, `display_timezone`, `location`, `config`) | **Area** registry (+ configured primary temperature/humidity sensors)                                        | Close — and converging: HA areas have started acquiring per-role sensor slots of their own                                                        |
 | `devices.area_id` (nullable — a device is in 0 or 1 area)                               | device's single `area_id` (also nullable)                                                                    | **Identical, since 2026-09-14.** We were many-to-many (`area_members`) and called it "more general"; it inverted — see below                      |
+| `users.default_area_id` — where a newly onboarded device is placed                      | _(none — a discovered device is left area-less and the user assigns it)_                                     | **Ours has to decide, HA doesn't.** Our area is the sole home of the display timezone and the location, so onboarding into no area silently discards the site address the vendor supplies; HA renders fine area-less, so it can afford to wait for the user |
 | `area_bindings` (role→point, `priority`, shape-validated, FK + CHECK)                  | Energy "preferences" — `energy_sources[]` with `flow_from`/`flow_to`, `stat_cost`, `device_consumption[]`    | Same job. Ours is enforced SQL with deterministic per-slot resolution; theirs is a JSON doc with per-source cost/price fields we lack             |
 | `derivations` / `derived_intervals` (+ per-run cost / emissions / renewable)           | Helper integrations (Threshold, Integration, Derivative, Utility Meter, Template, Group)                     | Same intent — **one mechanism now**, but our kinds are code-typed where HA's are user-composable                                                  |
 | `dashboards.doc` (recursive node tree) + `dashboard_revisions`                         | **Lovelace** storage-mode dashboard, **or a generated _strategy_**                                           | Close in shape; ours adds revisions + `If-Match`. HA additionally generates dashboards from the registries at render time (strategies)            |
@@ -211,7 +212,7 @@ Real design advantages. The first two are new to this revision and are the sharp
   dashboards show this point" without walking documents.
 - **A device is in 0 or 1 area** — matching HA exactly, after this doc spent two revisions claiming
   the opposite was an advantage. `area_members` was many-to-many and was described as "more general
-  than HA". The generality was never used for anything a human authored: it existed so a device could
+  than HA" (it was dropped by migration 0074). The generality was never used for anything a human authored: it existed so a device could
   sit in both its eagerly-minted area-of-one AND its real site. What it cost was concrete. Something
   had to GUESS which of a device's areas priced its runs — `ORDER BY ordinal, areas.id LIMIT 1` — and
   every Kutis EV charge read $0.00 for two months because the guess went to the area that bound no
@@ -368,6 +369,13 @@ Remaining borrowings worth considering, in rough order of value-per-risk:
 
 ## Revision history
 
+- **2026-09-14 (second pass)** — the many-to-many table and the eagerly-minted area-of-one are both
+  GONE (migrations 0072/0074), so the row above is now literally true rather than true-in-effect.
+  One place we DIVERGE from HA on purpose, added to the table: HA leaves a newly discovered device
+  area-less, and we cannot, because our area — not our device — owns the display timezone and the
+  location. `users.default_area_id` is the answer, and it is HA's global home-location object
+  re-pitched at the owner, for the same reason the placement chain is `area → owner → platform`:
+  HA is one home, we are many sites per owner.
 - **2026-09-14** — the `area_members` row **inverted**. A device is now in 0 or 1 area
   (`devices.area_id`), exactly HA's shape; the "ours is more general" claim is withdrawn in both
   places it appeared, with the two defects that generality cost recorded beside it. Added the
