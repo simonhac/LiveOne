@@ -144,9 +144,11 @@ export async function resolveLogicalSystem(
   // mint one here). Areas are EXPLICIT now — a device gets a flow view only once a user groups it into
   // an Area (createArea); it is NOT auto-minted at create-time or lazily healed here.
   //
-  // This is `areaRow` rather than a second `getAreaForDevice(systemId)` call: both resolve the same
-  // `legacy_handles.handle → area_id` edge, and using the row we already hold is what guarantees the
-  // offset below comes from the very area the result is keyed on.
+  // This is `areaRow` — the row already resolved above — rather than a second handle→area lookup, so
+  // the offset below is guaranteed to come from the very area the result is keyed on. (`areaRow` is
+  // `DeviceConfigRegistry.areaByHandle`; `getAreaForDevice`, the other reader of that edge, is gone —
+  // it answered the area leg without ever seeing the device leg. See
+  // `docs/plans/exact-resolution-or-refuse.md`.)
   if (!areaRow) return null;
 
   return {

@@ -3,7 +3,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { runPeriodsQuery } from "@/lib/queries";
 import { useTemporalRange } from "@/lib/charts/useTemporalRange";
-import { getPeriodDuration } from "@/lib/charts/temporal";
+import { getPeriodDuration, toInstantRange } from "@/lib/charts/temporal";
 import { formatSecondsAsDuration } from "@/lib/fe-date-format";
 import { formatRunWhen } from "@/lib/run-tracking/run-period-view";
 import { formatDollars, formatKgCo2 } from "@/lib/provenance-format";
@@ -39,6 +39,7 @@ export default function RunsCard({
   role = "generator",
   title = "Generator runs",
   emptyText = "No generator runs in this period",
+  untrackedText = "No generator run detector for this device",
   activeLabel = "running",
   noun = "run",
   runningOverride,
@@ -49,6 +50,15 @@ export default function RunsCard({
   role?: string;
   title?: string;
   emptyText?: string;
+  /**
+   * Shown INSTEAD of `emptyText` when the server reports no detector for this `(subject, role)`.
+   *
+   * 🛑 These are two different facts and must not share a message. "No charge sessions in this period"
+   * is a claim about the period; "nothing here is tracked" is a claim about the configuration, and
+   * rendering the first for the second is how this card once reported no sessions on a page whose
+   * chart was bracketing them. Same principle as `energyKwh` being null rather than 0 on the wire.
+   */
+  untrackedText?: string;
   /** Badge text while a period is open, e.g. "running" / "charging". */
   activeLabel?: string;
   /** Footer count noun, singular; pluralised with a bare "s" ("run"/"runs", "session"/"sessions"). */
@@ -59,10 +69,17 @@ export default function RunsCard({
     timezoneOffsetMin,
   });
 
+  // 🛑 Through `toInstantRange`, never raw. For M/Y the navigator's `start`/`end` are tz-naive
+  // UTC-midnight markers naming LOCAL calendar days (the `1d` history encoder's convention), and this
+  // endpoint filters on real timestamps — so passing them through shifted the whole window by the
+  // offset and truncated the inclusive last day at 00:00 UTC, dropping late runs on it. D/W are
+  // already instants and pass through unchanged.
+  const window = toInstantRange({ period, start, end }, timezoneOffsetMin);
+
   const { data, isPending, isError } = useQuery(
     runPeriodsQuery(
-      isHistoricalMode && start && end
-        ? { systemId, role, start, end }
+      isHistoricalMode && window
+        ? { systemId, role, start: window.start, end: window.end }
         : {
             systemId,
             role,
@@ -75,10 +92,13 @@ export default function RunsCard({
 
   // The strict window the navigator is showing, used only to flag runs that extend beyond it.
   const nowMs = Date.now();
-  const windowEndMs = isHistoricalMode && end ? Date.parse(end) : nowMs;
+  // Same instants that were REQUESTED — not the raw params — so a run is marked as spanning outside
+  // the window against the window the server actually filtered on.
+  const windowEndMs =
+    isHistoricalMode && window ? Date.parse(window.end) : nowMs;
   const windowStartMs =
-    isHistoricalMode && start
-      ? Date.parse(start)
+    isHistoricalMode && window
+      ? Date.parse(window.start)
       : nowMs - getPeriodDuration(period);
 
   // Server returns events oldest-first; show newest-first in the panel. Decorate each with its
@@ -173,6 +193,11 @@ export default function RunsCard({
         <div className="px-4 py-6 text-sm text-red-400">
           Failed to load {title.toLowerCase()}
         </div>
+      ) : data?.tracked === false ? (
+        // Not "nothing happened" — nothing is watching. `tracked` is optional on the wire, so an
+        // older deployment's response (undefined) keeps the period reading, which is what every
+        // caller assumed before the field existed.
+        <div className="px-4 py-6 text-sm text-gray-400">{untrackedText}</div>
       ) : rows.length === 0 ? (
         <div className="px-4 py-6 text-sm text-gray-400">{emptyText}</div>
       ) : (

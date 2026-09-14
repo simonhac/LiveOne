@@ -19,7 +19,6 @@
  * `capabilitiesFromLatest` there.
  */
 import { PointManager } from "@/lib/point/point-manager";
-import { getAreaForDevice } from "@/lib/areas/resolve";
 import { getAreaMemberDeviceIds } from "@/lib/areas/members";
 import { DeviceRegistry } from "@/lib/registry";
 import { runDetectorRolesForDevices } from "@/lib/derivations/resolve";
@@ -49,32 +48,41 @@ import {
 } from "@/lib/registry/device-config";
 
 /**
- * The member devices behind a handle: an area's members, or the handle's own device.
+ * The member devices behind a handle: the handle's own device, or — for a handle that names no
+ * device — an area's members.
  *
  * The uuid is the PRIMITIVE since 0063 — the run-detector lookup joins `derivation_sources.device_id`
  * — and the `rid` rides along because `point_info` and the KV keyspace are still int-addressed.
  * {@link memberSystemIds} is the thin int-only wrapper the rest of the callers still use. The `!` is
  * safe by `devices.rid`'s NOT NULL — see `DeviceRegistry.ridsForDevices`.
  *
- * 🛑 The empty-membership fall-through is now the NORMAL path for a device handle, not an edge case.
- * A device handle names both the device and its area-of-one, and since migration 0071 that area holds
- * ZERO devices (the device's `area_id` points at the site area it actually belongs to). So `area` is
- * found, its member list is empty, and the answer is the handle's own device — which is exactly
- * right, and is why the length check has to be there rather than an `if (area) return members`.
+ * 🔒 **DEVICE-FIRST, and that is the same lock as `PointManager._resolvePointsForHandle`.** A handle
+ * can name BOTH a device and an area (handle 13 is a real Sigenergy device AND an area), so this is a
+ * precedence decision, not a lookup — `DeviceRegistry.resolveHandle` returns both legs and states no
+ * precedence precisely so each caller makes it explicitly. The two readers are per-request memoized,
+ * so asking both costs no extra round trip.
+ *
+ * This used to be AREA-first, with a fall-through justified by a claim about production data: *"since
+ * migration 0071 that area holds ZERO devices, so `area` is found, its member list is empty, and the
+ * answer is the handle's own device"*. That claim was false — a re-homed device leaves its
+ * area-of-one behind holding that area's own derived helper, so membership was non-empty, the
+ * fall-through never fired, and this returned a member set that did not contain the device the handle
+ * names. The visible symptom was an EV charge panel reporting "no charge sessions" on a page whose
+ * chart was bracketing those very sessions, because no run detector resolved. A comment cannot be
+ * wrong at build time, so the rule is now structural instead: the device leg wins, full stop.
+ * See `docs/plans/exact-resolution-or-refuse.md`.
  */
 export async function memberDevices(
   handle: number,
 ): Promise<{ deviceId: DeviceId; rid: number }[]> {
-  const area = await getAreaForDevice(handle);
-  if (area) {
-    const memberIds = await getAreaMemberDeviceIds(area.id);
-    if (memberIds.length) {
-      const rids = await DeviceRegistry.ridsForDevices(memberIds);
-      return memberIds.map((id) => ({ deviceId: id, rid: rids.get(id)! }));
-    }
-  }
   const own = await DeviceConfigRegistry.deviceByHandle(handle);
-  return own ? [{ deviceId: own.deviceId, rid: handle }] : [];
+  if (own) return [{ deviceId: own.deviceId, rid: handle }];
+  const area = await DeviceConfigRegistry.areaByHandle(handle);
+  if (!area) return [];
+  const memberIds = await getAreaMemberDeviceIds(area.id);
+  if (!memberIds.length) return [];
+  const rids = await DeviceRegistry.ridsForDevices(memberIds);
+  return memberIds.map((id) => ({ deviceId: id, rid: rids.get(id)! }));
 }
 
 async function memberSystemIds(handle: number): Promise<number[]> {

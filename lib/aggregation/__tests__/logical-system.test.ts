@@ -5,8 +5,9 @@ import { describe, it, expect, jest, beforeEach } from "@jest/globals";
 // config-v4 Phase 13 PR 2: `viewableByHandle` is gone. `resolveLogicalSystem` only ever used it as an
 // EXISTENCE check on the handle, so it now asks the two real readers — a device, else an area. These
 // tests drive the device leg. `areaByHandle` now supplies BOTH the area id and the day offset the
-// result is keyed on — `resolveLogicalSystem` no longer calls `getAreaForDevice`, precisely so the
-// offset cannot come from a different area than `areaId` does.
+// result is keyed on, precisely so the offset cannot come from a different area than `areaId` does.
+// (It used to call `getAreaForDevice` for the id; that reader has since been deleted outright — it
+// answered a handle's area leg without ever seeing its device leg.)
 jest.mock("@/lib/registry/device-config", () => ({
   DeviceConfigRegistry: { deviceByHandle: jest.fn(), areaByHandle: jest.fn() },
 }));

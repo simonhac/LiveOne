@@ -530,3 +530,40 @@ export function encodeRangeToParams(
   }
   return params;
 }
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * A {@link TemporalRange}'s window as REAL INSTANTS, for an endpoint that filters on a timestamp.
+ *
+ * 🛑 `start`/`end` are not the same kind of thing across periods, and that is deliberate. For D/W they
+ * are true instants (`decodeUrlDate` applied the offset). For M/Y they are **tz-naive UTC-midnight**
+ * markers — `utcMidnightISO` — carrying a LOCAL calendar date, chosen so the `1d` history encoder's
+ * `split("T")[0]` recovers the intended day. A consumer that hands those straight to something which
+ * `Date.parse`es them gets a window shifted by the whole offset: in AEST the M/Y window starts 10 h
+ * early and its inclusive last day is truncated at 00:00 UTC, so anything late on that day vanishes.
+ *
+ * So the conversion has two parts, and both matter:
+ *   - subtract the offset, turning "local midnight, written as UTC" into the instant it names;
+ *   - advance the END by one day, because for M/Y it is the INCLUSIVE last calendar day, not a bound.
+ *
+ * Returns `null` when the range carries no window at all (the live trailing D/W case) — the caller
+ * then wants its own `period=Nd` form, not a fabricated window.
+ */
+export function toInstantRange(
+  range: Pick<TemporalRange, "period" | "start" | "end">,
+  timezoneOffsetMin: number,
+): { start: string; end: string } | null {
+  if (!range.start || !range.end) return null;
+  if (!isDateOnlyPeriod(range.period)) {
+    return { start: range.start, end: range.end };
+  }
+  const offsetMs = timezoneOffsetMin * 60_000;
+  const startMs = Date.parse(range.start) - offsetMs;
+  const endMs = Date.parse(range.end) - offsetMs + DAY_MS;
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) return null;
+  return {
+    start: new Date(startMs).toISOString(),
+    end: new Date(endMs).toISOString(),
+  };
+}

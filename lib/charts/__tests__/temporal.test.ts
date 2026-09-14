@@ -5,6 +5,7 @@ import {
   computeNewer,
   encodeRangeToParams,
   isDateOnlyPeriod,
+  toInstantRange,
   type TemporalRange,
 } from "../temporal";
 import { endDateFromIso } from "@/lib/date-utils";
@@ -436,5 +437,72 @@ describe("decodeRangeFromParams — malformed params", () => {
     expect(r.droppedParams).toBeUndefined();
     expect(dayOf(r.start)).toBe("2026-06-01");
     expect(dayOf(r.end)).toBe("2026-06-30");
+  });
+});
+
+describe("toInstantRange", () => {
+  // The whole of September 2026, as the decoder emits it: tz-naive UTC-midnight markers naming LOCAL
+  // calendar days, with `end` the INCLUSIVE last day.
+  const SEP = {
+    period: "M" as const,
+    start: "2026-09-01T00:00:00.000Z",
+    end: "2026-09-30T00:00:00.000Z",
+  };
+
+  it("M/Y: shifts the naive day markers onto the real local instants", () => {
+    // +10:00 → the window opens at 1 Sep 00:00 local = 31 Aug 14:00Z.
+    expect(toInstantRange(SEP, OFFSET)?.start).toBe("2026-08-31T14:00:00.000Z");
+  });
+
+  it("M/Y: covers the whole of the inclusive last day", () => {
+    // 🛑 The bug this exists for. Parsed raw, `end` truncated the window at 30 Sep 00:00 UTC — i.e.
+    // 30 Sep 10:00 local — so anything late on the final day of the month silently vanished. The
+    // correct bound is the END of that local day: 1 Oct 00:00 +10:00 = 30 Sep 14:00Z.
+    expect(toInstantRange(SEP, OFFSET)?.end).toBe("2026-09-30T14:00:00.000Z");
+  });
+
+  it("M/Y: a whole local day fits strictly inside the window", () => {
+    const w = toInstantRange(SEP, OFFSET)!;
+    // A run at 23:30 local on the last day — the case that used to fall outside.
+    const lateOnLastDay = Date.parse("2026-09-30T13:30:00.000Z");
+    expect(Date.parse(w.start)).toBeLessThan(lateOnLastDay);
+    expect(Date.parse(w.end)).toBeGreaterThan(lateOnLastDay);
+  });
+
+  it("M/Y: works for a negative offset too", () => {
+    // -05:00. The direction of the shift must follow the sign, not be hardcoded for AEST.
+    const w = toInstantRange(SEP, -300)!;
+    expect(w.start).toBe("2026-09-01T05:00:00.000Z");
+    expect(w.end).toBe("2026-10-01T05:00:00.000Z");
+  });
+
+  it("D/W: already real instants, passed through untouched", () => {
+    const dw = {
+      period: "W" as const,
+      start: "2026-09-07T14:00:00.000Z",
+      end: "2026-09-14T14:00:00.000Z",
+    };
+    expect(toInstantRange(dw, OFFSET)).toEqual({
+      start: dw.start,
+      end: dw.end,
+    });
+  });
+
+  it("returns null when the range carries no window (the live trailing case)", () => {
+    // The caller then wants its own `period=Nd` form rather than a fabricated window.
+    expect(toInstantRange({ period: "D" }, OFFSET)).toBeNull();
+    expect(
+      toInstantRange(
+        { period: "W", start: "2026-09-07T14:00:00.000Z" },
+        OFFSET,
+      ),
+    ).toBeNull();
+  });
+
+  it("agrees with the decoder end-to-end for a calendar month", () => {
+    const r = decodeRangeFromParams(params("period=M&end=2026-09-15"), OFFSET);
+    const w = toInstantRange(r, OFFSET)!;
+    expect(w.start).toBe("2026-08-31T14:00:00.000Z"); // 1 Sep 00:00 +10:00
+    expect(w.end).toBe("2026-09-30T14:00:00.000Z"); // 1 Oct 00:00 +10:00
   });
 });

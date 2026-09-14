@@ -278,12 +278,40 @@ export type HeatmapCardConfig = z.infer<typeof heatmapConfigSchema>;
  * does resolve: a detector is reachable from every device it draws a source point from, so the
  * member set finds it (`getRunDetectorForDevices`).
  */
-export const runsConfigSchema = z
+/**
+ * Module-private on purpose: {@link resolveRunsConfig} is the only way in.
+ *
+ * The schema is a `strictObject`, so `safeParse` fails on any unrecognised key — and a caller doing
+ * that parse itself is one `: defaultRole` away from re-inventing the silent fallback this pair exists
+ * to remove. Exporting only the resolver makes "what happens on invalid config" a decision taken in
+ * one place. `CARD_CONFIG_SCHEMAS` below still registers it for the doc validator.
+ */
+const runsConfigSchema = z
   .strictObject({
     role: z.enum(["generator", "ev"]).default("generator"),
   })
   .describe("runs");
 export type RunsCardConfig = z.infer<typeof runsConfigSchema>;
+
+/**
+ * Parse a `runs` node's config, or `null` when it does not satisfy the schema.
+ *
+ * Absent config resolves to `{ role: "generator" }` via the schema default, and that is REQUIRED
+ * back-compat: a doc written before the rename carries no config and meant the generator.
+ *
+ * `null` means the config is present and INVALID — which the doc validator rejects on write, but which
+ * a doc persisted by another build, by a script, or by direct SQL can still carry. The plugin renders a
+ * notice rather than guessing, matching `resolveHeatmapConfig` and `resolveDailyStripeConfig`.
+ *
+ * 🛑 It must not fall back to the default. The schema is a `strictObject`, so ONE unrecognised key is a
+ * parse failure — and defaulting turned that into an EV card silently rendering as a generator card:
+ * wrong title, wrong `?role=` fetch, wrong live badge, every part of it confident. A card that cannot
+ * read its own config has to say so.
+ */
+export function resolveRunsConfig(config: unknown): RunsCardConfig | null {
+  const r = runsConfigSchema.safeParse(config ?? {});
+  return r.success ? r.data : null;
+}
 
 /**
  * Known-type → config schema. A known type ABSENT from this map is BARE: it must carry no config
