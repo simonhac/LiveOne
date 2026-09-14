@@ -91,6 +91,45 @@ Where things live, so you know which tree to look in. Within each, read the rout
 | Family                        | What it is                                                                                                                                                                               |
 | ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `/api/v4/*`                   | **Config CRUD**, TypeID-addressed: areas (+ `members`, `bindings`, `resolution`, `eligibility`, `default-group`, provenance ops), dashboards (+ `grants`, `shares`, `validate`), devices |
+
+### Admin is a privilege you invoke, not a state you are in
+
+🛑 **Being an admin and acting as one are different, and the default is not acting.** An admin
+browsing the app or running the CLI is answered exactly as any other user would be; reaching across
+owners is something you say, once, and see reported back to you. A privilege that is always on is one
+you cannot audit and cannot forget to use.
+
+The carrier is the request header **`x-liveone-admin: 1`**, surfaced as `AuthContext.actingAsAdmin`
+(`lib/api-auth.ts`). It is gated on the caller actually being an admin, so the header alone grants
+nothing — setting it is a REQUEST to use a privilege, never a claim to have one. A header rather than
+a query parameter because "act as admin for this request" is a property of the request, not a
+selector on one resource, so every verb carries it without each route parsing it.
+
+| surface | how you invoke it |
+| --- | --- |
+| operator CLI | `--admin` on any API verb. The `target:` line then reads `(AS ADMIN — fleet-wide)` instead of `(admin, not in use)`, so a fleet-wide answer is always traceable to a request for one. A non-admin passing it is refused (exit 3), never silently narrowed. |
+| web app | not yet wired — see below |
+
+What it widens today: `listReadableAreas` and `devicesVisibleByUser`, and therefore
+`GET /api/v4/areas`, `GET /api/v4/devices`, and `GET /api/v4/areas/{id}` + its sub-resources through
+`findReadableArea`. That last one is what removes a real asymmetry — `loadAreaForOwner` has always
+granted an admin WRITE on any area, so without it an admin could `PATCH` an area that `GET` on the
+same id refused: **write access to something you cannot read.**
+
+Two deliberate non-participants:
+
+- **`requireAdmin`** (the `/api/admin/*` surfaces) keeps using `isAdmin`, not `actingAsAdmin`.
+  Navigating to an admin-only route IS the explicit act; a second signal there would be ceremony.
+- **`POST /api/v4/dashboards {seedArea}`** and `checkDocRefsReadable` validate a document's refs
+  against the document's **owner**, not the caller — so seeding from an area an admin can see but does
+  not own would mint a doc that fails its own later edit check. Admin widens what you may address,
+  not what you may embed.
+
+⚠️ **Still on `isAdmin` rather than `actingAsAdmin`, and worth revisiting deliberately:**
+`requireDeviceAccess`'s `canRead`/`canWrite` and `loadAreaForOwner`'s write gate. Both predate this
+distinction and both are unconditional — so an admin still writes across owners without asking. That
+is pre-existing behaviour, not a regression, and narrowing it is its own change with its own blast
+radius. The web app's "act as admin" toggle belongs with it.
 | `/api/data`                   | Live values for one subject (KV-backed) — the serving endpoint for card "now" values                                                                                                     |
 | `/api/history`                | All historical series, OpenNEM format, plus `?include=sankey` for the flow matrix. One endpoint for every window                                                                         |
 | `/api/device[s]/*`            | Per-device reads (points, series, run-periods) and device management (credentials, location, Tesla commands)                                                                             |

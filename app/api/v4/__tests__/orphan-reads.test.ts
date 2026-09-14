@@ -95,6 +95,7 @@ function selectChain(rows: unknown[]) {
 const anonAuth = {
   userId: null,
   isAdmin: false,
+  actingAsAdmin: false,
   isCron: false,
   isClaudeDev: false,
 };
@@ -175,7 +176,37 @@ describe("GET /api/v4/devices — the candidate-devices twin", () => {
   it("asks only for ACTIVE devices — the same visible set the legacy twin picks from", async () => {
     mockVisible.mockResolvedValue([]);
     await devicesGET(new NextRequest("http://localhost/api/v4/devices"));
-    expect(mockVisible).toHaveBeenCalledWith("user_1", true);
+    expect(mockVisible).toHaveBeenCalledWith("user_1", true, {
+      isAdmin: false,
+    });
+  });
+
+  it("🛑 answers an admin who did NOT ask with their own devices — this is the member picker", async () => {
+    // Being an admin is not acting as one, and the default is not acting.
+    mockRequireAuth.mockResolvedValue({
+      ...ownerAuth,
+      isAdmin: true,
+      actingAsAdmin: false,
+    } as never);
+    mockVisible.mockResolvedValue([]);
+    await devicesGET(new NextRequest("http://localhost/api/v4/devices"));
+    expect(mockVisible).toHaveBeenCalledWith("user_1", true, {
+      isAdmin: false,
+    });
+  });
+
+  it("widens to the fleet only when the request ASKED to act as admin", async () => {
+    mockRequireAuth.mockResolvedValue({
+      ...ownerAuth,
+      isAdmin: true,
+      actingAsAdmin: true,
+    } as never);
+    mockVisible.mockResolvedValue([]);
+    const ok = await devicesGET(
+      new NextRequest("http://localhost/api/v4/devices"),
+    );
+    expect(ok.status).toBe(200);
+    expect(mockVisible).toHaveBeenCalledWith("user_1", true, { isAdmin: true });
   });
 
   it("skips the rid→uuid query entirely when nothing is visible", async () => {

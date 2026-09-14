@@ -325,7 +325,20 @@ async function devicesByOwner(userId: string): Promise<DeviceRecord[]> {
 
 /**
  * Devices visible to a user for the switcher: OWNED, PUBLIC (ownerless, readable by everyone), or
- * reached by a DASHBOARD GRANT. ← `getDevicesVisibleByUser`.
+ * reached by a DASHBOARD GRANT — or, for an ADMIN who asks, every device. ← `getDevicesVisibleByUser`.
+ *
+ * 🛑 **`opts.isAdmin` closes a real asymmetry, and it is OPT-IN for a reason.** `requireDeviceAccess`
+ * has always granted an admin read AND write on any single device (`canRead = ctx.isAdmin || …`), so
+ * an admin could already fetch anyone's device by handle — they simply could not ENUMERATE. That made
+ * `PATCH /api/v4/areas/{id}` (admin-gated, allowed) reachable for an area `GET /api/v4/areas` would
+ * not name: you could write what you could not read, which is backwards.
+ *
+ * 🛑 **Being an admin is not acting as one**, so this is a parameter and the routes pass
+ * `AuthContext.actingAsAdmin` — did this REQUEST ask (`x-liveone-admin`) — rather than `isAdmin`.
+ * The device/area PICKERS are this same query, and an admin composing a dashboard does not want
+ * every other owner's devices in the dropdown; worse, a default that returned them would make
+ * cross-owner reach the thing you get by not thinking about it. In the CLI the ask is `--admin`, and
+ * the `target:` line says which answer you got.
  *
  * The granted leg stays HANDLE-TYPED on purpose: `grantedDeviceScopeForUser` returns integer handles
  * and keeps doing so until Phase 13 makes the grant scope TypeID-native. Converting it here would be a
@@ -342,30 +355,39 @@ async function devicesByOwner(userId: string): Promise<DeviceRecord[]> {
 async function devicesVisibleByUser(
   userId: string,
   activeOnly: boolean = true,
+  opts: { isAdmin?: boolean } = {},
 ): Promise<VisibleDevice[]> {
   const db = requirePlanetscaleDb();
 
-  const ownedOrPublic = await baseSelect(db).where(
-    or(eq(pgDevices.ownerUserId, userId), isNull(pgDevices.ownerUserId)),
-  );
+  // An admin asking for the fleet skips both legs: the owner/public predicate AND the grant probe,
+  // which can only ever ADD to a set that is already everything.
+  const rows = opts.isAdmin
+    ? await baseSelect(db)
+    : await baseSelect(db).where(
+        or(eq(pgDevices.ownerUserId, userId), isNull(pgDevices.ownerUserId)),
+      );
 
   const byHandle = new Map<number, DeviceRecord>();
-  for (const r of ownedOrPublic) {
+  for (const r of rows) {
     const rec = toRecord(r);
     byHandle.set(rec.id, rec);
   }
 
-  const { grantedDeviceScopeForUser } = await import("@/lib/dashboard/grants");
-  const grantedHandles = [...(await grantedDeviceScopeForUser(userId))].filter(
-    (h) => !byHandle.has(h),
-  );
-  if (grantedHandles.length > 0) {
-    const granted = await baseSelect(db).where(
-      inArray(pgDevices.rid, grantedHandles),
+  if (!opts.isAdmin) {
+    const { grantedDeviceScopeForUser } = await import(
+      "@/lib/dashboard/grants"
     );
-    for (const r of granted) {
-      const rec = toRecord(r);
-      byHandle.set(rec.id, rec);
+    const grantedHandles = [
+      ...(await grantedDeviceScopeForUser(userId)),
+    ].filter((h) => !byHandle.has(h));
+    if (grantedHandles.length > 0) {
+      const granted = await baseSelect(db).where(
+        inArray(pgDevices.rid, grantedHandles),
+      );
+      for (const r of granted) {
+        const rec = toRecord(r);
+        byHandle.set(rec.id, rec);
+      }
     }
   }
 

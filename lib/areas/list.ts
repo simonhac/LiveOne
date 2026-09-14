@@ -43,7 +43,8 @@ async function withChartCapabilityIfRequested<
 
 /**
  * The Areas a user may read = Areas they own, plus any Area whose handle is one of their visible
- * systems, plus any Area a dashboard they've been GRANTED puts in scope.
+ * systems, plus any Area a dashboard they've been GRANTED puts in scope — or, with `opts.isAdmin`,
+ * every active Area.
  * The dashboard owner can compose a card from any of these, and the authoring check
  * (PUT /api/dashboard/[systemId]) rejects a card binding any Area outside this set.
  *
@@ -59,28 +60,39 @@ async function withChartCapabilityIfRequested<
  */
 export async function listReadableAreas(
   userId: string,
-  opts: { withChartCapability?: boolean } = {},
+  opts: { withChartCapability?: boolean; isAdmin?: boolean } = {},
 ): Promise<ReadableArea[]> {
-  const devices = await DeviceConfigRegistry.devicesVisibleByUser(userId, true);
-  // Dynamic import of `lib/dashboard/grants` breaks a module cycle (grants → access → point-manager
-  // → device-config → here), the same reason `devicesVisibleByUser` does it.
-  const { grantedDeviceScopeForUser } = await import("@/lib/dashboard/grants");
-  const systemIds = [
-    ...new Set([
-      ...devices.map((s) => s.id),
-      ...(await grantedDeviceScopeForUser(userId)),
-    ]),
-  ];
+  // An ADMIN asking for the fleet needs neither leg — see `devicesVisibleByUser`'s docstring for why
+  // this is opt-in rather than a blanket widening, and for the asymmetry it closes (admin could
+  // PATCH an area this function would not name). `undefined` means "no predicate": every active area.
+  let accessCond: ReturnType<typeof or> | ReturnType<typeof eq> | undefined;
+  if (!opts.isAdmin) {
+    const devices = await DeviceConfigRegistry.devicesVisibleByUser(
+      userId,
+      true,
+    );
+    // Dynamic import of `lib/dashboard/grants` breaks a module cycle (grants → access → point-manager
+    // → device-config → here), the same reason `devicesVisibleByUser` does it.
+    const { grantedDeviceScopeForUser } = await import(
+      "@/lib/dashboard/grants"
+    );
+    const systemIds = [
+      ...new Set([
+        ...devices.map((s) => s.id),
+        ...(await grantedDeviceScopeForUser(userId)),
+      ]),
+    ];
 
-  // Areas a user can read: explicit Areas they own, plus legacy explicit Areas still addressed by a
-  // visible device id or put in scope by a granted dashboard.
-  const accessCond =
-    systemIds.length > 0
-      ? or(
-          eq(areas.ownerUserId, userId),
-          inArray(legacyHandles.handle, systemIds),
-        )
-      : eq(areas.ownerUserId, userId);
+    // Areas a user can read: explicit Areas they own, plus legacy explicit Areas still addressed by a
+    // visible device id or put in scope by a granted dashboard.
+    accessCond =
+      systemIds.length > 0
+        ? or(
+            eq(areas.ownerUserId, userId),
+            inArray(legacyHandles.handle, systemIds),
+          )
+        : eq(areas.ownerUserId, userId);
+  }
 
   const rows = await requirePlanetscaleDb()
     .select({
@@ -96,6 +108,9 @@ export async function listReadableAreas(
     // still match an owned area that happens to carry no handle — an inner join would silently narrow
     // the readable set, which is the direction that REMOVES access.
     .leftJoin(legacyHandles, eq(legacyHandles.areaId, areas.id))
+    // 🛑 `status = 'active'` survives the admin leg. Admin widens WHOSE areas are listed; it does
+    // not resurrect archived ones, which leave this set by design (`PATCH {status:"archived"}` is a
+    // delete by another name).
     .where(and(eq(areas.status, "active"), accessCond));
 
   const present = rows

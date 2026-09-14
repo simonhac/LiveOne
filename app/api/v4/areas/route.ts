@@ -19,6 +19,9 @@ import { isValidTimezone } from "@/lib/timezones";
  * config-v4 areas collection (§9.2), TypeID-native. The readable set (areas the caller owns ∪ areas
  * whose handle is a device they can see) a v4 editor lists to add an area or pick a seed source.
  *   GET  → { areas: [{ id: ar_…, displayName, legacySystemId, chartCapable }] }
+ *   GET with `x-liveone-admin` → every active area, for an admin who ASKED. Being an admin is not
+ *       acting as one: without the header this answers with the caller's own areas like anyone
+ *       else's, which is what keeps the picker from quietly becoming a fleet list.
  *   POST { name, slug?, members:[dv_…], location?, dayOffsetMin?, displayTimezone? } → 201 { id, legacySystemId }
  * Ids are `ar_` TypeIDs (areas are uuid-PK'd today — no cutover needed to speak the public id).
  *
@@ -38,6 +41,7 @@ export async function GET(request: NextRequest) {
 
   const areas = await listReadableAreas(auth.userId, {
     withChartCapability: true,
+    isAdmin: auth.actingAsAdmin,
   });
   return NextResponse.json({
     areas: areas.map((a) => ({

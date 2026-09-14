@@ -323,6 +323,15 @@ function globalFlags(spec: CommandSpec): Record<string, FlagSpec> {
     },
     help: { type: "boolean", help: "Show this help and exit" },
   };
+  // 🛑 Only for commands that call the API, and only as an OPT-IN. Being an admin and using admin
+  // privilege are different things: the default answer is the one a plain user would get, whoever you
+  // are, so a fleet-wide result is always traceable to somebody asking for one. The `target:` line
+  // says which you got. A non-admin passing it is refused (exit 3) rather than silently narrowed.
+  if ((spec.uses ?? []).includes("api"))
+    g.admin = {
+      type: "boolean",
+      help: "Act as admin: read across every owner, not just your own (admins only)",
+    };
   if (spec.mutates) {
     g.apply = {
       type: "boolean",

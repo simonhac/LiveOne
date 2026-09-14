@@ -90,10 +90,20 @@ export type ReadableAreaResult =
  * authenticated) so it can back both the `/api/v4/areas/{id}` route loader and the `POST /dashboards
  * {seedArea}` branch without a second Clerk round-trip. A malformed id → 400; a well-formed id outside the
  * readable set → 403 (the §8.4 no-escalation collapse: "unknown" and "not yours" are indistinguishable).
+ *
+ * 🛑 `opts.isAdmin` means "this request ASKED to act as admin" (`AuthContext.actingAsAdmin`), not
+ * "this user is one". Being an admin and using it are different, and the default is not using it —
+ * so an admin who does not send the header sees their own areas here, exactly as anyone else does.
+ * When they do send it, this is what stops an admin being able to `PATCH /api/v4/areas/{id}` an area
+ * that `GET` on the same id refused: write access to something you cannot read.
+ *
+ * It is NOT passed by the `POST /dashboards {seedArea}` branch, which seeds a doc whose refs must be
+ * readable by the doc's OWNER — see `checkDocRefsReadable`.
  */
 export async function findReadableArea(
   userId: string,
   arId: string,
+  opts: { isAdmin?: boolean } = {},
 ): Promise<ReadableAreaResult> {
   const parsed = Area.parse(arId);
   if (!parsed.ok) {
@@ -104,7 +114,9 @@ export async function findReadableArea(
     };
   }
   const uuid = Area.toUuid(parsed.id);
-  const area = (await listReadableAreas(userId)).find((a) => a.id === uuid);
+  const area = (
+    await listReadableAreas(userId, { isAdmin: opts.isAdmin })
+  ).find((a) => a.id === uuid);
   if (!area) {
     return {
       ok: false,
@@ -125,7 +137,9 @@ export async function loadReadableArea(
 ): Promise<{ area: ReadableArea; userId: string } | { error: NextResponse }> {
   const auth = await requireAuth(request);
   if (auth instanceof NextResponse) return { error: auth };
-  const r = await findReadableArea(auth.userId, arId);
+  const r = await findReadableArea(auth.userId, arId, {
+    isAdmin: auth.actingAsAdmin,
+  });
   if (!r.ok) {
     return {
       error: NextResponse.json({ error: r.message }, { status: r.status }),

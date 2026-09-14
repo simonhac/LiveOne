@@ -12,7 +12,10 @@ import { Area, Device } from "@/lib/ids";
 /**
  * `GET /api/v4/devices` (clean-sheet §9.2) — the readable device set: exactly the devices visible to
  * the caller (owned ∪ granted ∪ public), which is also the no-escalation set the area create/member
- * routes enforce. It is the TypeID-native twin of `GET /api/areas/candidate-devices` (the area
+ * routes enforce. An admin who sends `x-liveone-admin` gets the whole fleet; being an admin is not
+ * acting as one, so without it this answers exactly as it does for anyone else — which is what keeps
+ * the member picker from quietly becoming a fleet list.
+ * It is the TypeID-native twin of `GET /api/areas/candidate-devices` (the area
  * builder's member picker), and §9.2 already names this resource, so the port lands here rather than
  * under `/areas`.
  *
@@ -53,6 +56,7 @@ export async function GET(request: NextRequest) {
   const visible = await DeviceConfigRegistry.devicesVisibleByUser(
     auth.userId,
     true,
+    { isAdmin: auth.actingAsAdmin },
   );
   // rid → uuid in ONE indexed read. Deliberately not widened into `VisibleDevice` itself: that
   // projection is shared with the device switcher and two other agents are editing this tree.

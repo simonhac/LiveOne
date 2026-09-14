@@ -22,10 +22,38 @@ import {
 // Authorization result with context
 export interface AuthContext {
   userId: string | null;
+  /** Whether this user IS a platform admin. Not "is using it" — see {@link AuthContext.actingAsAdmin}. */
   isAdmin: boolean;
+  /**
+   * Whether this request ASKED to use admin privilege — the `x-liveone-admin` header.
+   *
+   * 🛑 **Being an admin and acting as one are different, and the default is NOT acting.** An admin
+   * browsing the app or running the CLI should see exactly what they own, because that is what they
+   * are usually doing; reaching across owners should be a thing you say, once, and see reported back
+   * to you. A privilege that is always on is a privilege you cannot audit and cannot forget to use.
+   *
+   * Always `false` unless {@link AuthContext.isAdmin} is true, so the header alone grants nothing and
+   * an attacker who can set headers gains nothing by setting it.
+   *
+   * The narrower-by-default rule applies to the CROSS-OWNER widenings only. `requireAdmin` — the
+   * `/api/admin/*` surfaces — deliberately keeps using `isAdmin`: navigating to an admin-only route
+   * IS the explicit act, and requiring a second signal there would be ceremony rather than safety.
+   */
+  actingAsAdmin: boolean;
   isCron: boolean;
   isClaudeDev: boolean;
 }
+
+/**
+ * The opt-in header. A request carrying it asks to exercise admin privilege; anything else is
+ * answered as the plain user, admin or not.
+ */
+export const ADMIN_HEADER = "x-liveone-admin";
+
+const wantsAdmin = (request: NextRequest): boolean => {
+  const v = request.headers.get(ADMIN_HEADER);
+  return v === "1" || v === "true";
+};
 
 // Successful auth result (userId is guaranteed to be defined)
 export interface AuthenticatedContext extends AuthContext {
@@ -80,7 +108,15 @@ export async function getAuthContext(
 
   // Claude-dev bypasses normal auth
   if (isClaudeDev) {
-    return { userId: "claude-dev", isAdmin: true, isCron, isClaudeDev };
+    return {
+      userId: "claude-dev",
+      isAdmin: true,
+      // The dev bypass is already an explicit act (a header you had to set), and its whole purpose is
+      // unimpeded local access — so it acts as admin without a second header.
+      actingAsAdmin: true,
+      isCron,
+      isClaudeDev,
+    };
   }
 
   // An operator CLI token (`Authorization: Bearer lo_cli_…`). The middleware has already let this
@@ -102,12 +138,14 @@ export async function getAuthContext(
       return {
         userId: null,
         isAdmin: false,
+        actingAsAdmin: false,
         isCron: false,
         isClaudeDev: false,
       };
     return {
       userId: verified.userId,
       isAdmin: verified.isAdmin,
+      actingAsAdmin: verified.isAdmin && wantsAdmin(request),
       isCron: false,
       isClaudeDev: false,
     };
@@ -122,7 +160,13 @@ export async function getAuthContext(
       : await isUserAdmin(userId)
     : false;
 
-  return { userId, isAdmin, isCron, isClaudeDev };
+  return {
+    userId,
+    isAdmin,
+    actingAsAdmin: isAdmin && wantsAdmin(request),
+    isCron,
+    isClaudeDev,
+  };
 }
 
 // ===== Authorization Functions =====

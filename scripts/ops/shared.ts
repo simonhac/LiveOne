@@ -146,6 +146,17 @@ export interface WireDevice {
   areaName: string | null;
 }
 
+/**
+ * Every device the caller can see — the FLEET when the session is acting as admin (`--admin`), their
+ * own otherwise.
+ *
+ * 🛑 The widening rides on the `x-liveone-admin` header `withApiSession` attaches, not on the URL, so
+ * there is nothing to remember at each call site and every verb widens or does not widen together.
+ * A CLI newer than the deployment it calls degrades quietly and SAFELY: an older server ignores the
+ * header and answers with the caller's own set. Narrower, never wider — but it does mean "I passed
+ * --admin and still cannot see it" is expected until the deploy catches up. The `target:` line
+ * prints the build sha and whether admin is in use; read it.
+ */
 export async function listDevices(s: ApiSession): Promise<WireDevice[]> {
   const { devices } = await s.get<{ devices: WireDevice[] }>("/api/v4/devices");
   return devices;

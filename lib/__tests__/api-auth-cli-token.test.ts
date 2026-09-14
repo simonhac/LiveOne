@@ -50,13 +50,17 @@ function clerkReturning(user: unknown) {
   }));
 }
 
-const req = (authorization?: string): NextRequest =>
+const req = (authorization?: string, admin?: string): NextRequest =>
   ({
     url: "http://localhost/api/v4/dashboards",
     method: "GET",
     headers: {
-      get: (k: string) =>
-        k.toLowerCase() === "authorization" ? (authorization ?? null) : null,
+      get: (k: string) => {
+        const key = k.toLowerCase();
+        if (key === "authorization") return authorization ?? null;
+        if (key === "x-liveone-admin") return admin ?? null;
+        return null;
+      },
     },
   }) as unknown as NextRequest;
 
@@ -87,6 +91,7 @@ describe("a valid CLI token", () => {
       expect(ctx).toEqual({
         userId: USER_ID,
         isAdmin: false,
+        actingAsAdmin: false,
         isCron: false,
         isClaudeDev: false,
       });
@@ -100,6 +105,26 @@ describe("a valid CLI token", () => {
     mockClerkClient.mockImplementation(clerkReturning(user) as never);
     const ctx = await getAuthContext(req(`Bearer ${token}`));
     expect(ctx.isAdmin).toBe(true);
+    // 🛑 …but does NOT act as one. Being an admin and using admin privilege are different, and the
+    // default is not using it: the cross-owner widenings read `actingAsAdmin`, so an admin who did
+    // not ask is answered exactly as any other user would be.
+    expect(ctx.actingAsAdmin).toBe(false);
+  });
+
+  it("acts as admin only when the request ASKS, and only if it may", async () => {
+    const asAdmin = liveToken({ isAdmin: true });
+    mockClerkClient.mockImplementation(clerkReturning(asAdmin.user) as never);
+    expect(
+      (await getAuthContext(req(`Bearer ${asAdmin.token}`, "1"))).actingAsAdmin,
+    ).toBe(true);
+
+    // 🛑 The header alone grants nothing. It is gated on the user actually being an admin, so
+    // setting it is a REQUEST to use a privilege, never a claim to have one.
+    const plain = liveToken();
+    mockClerkClient.mockImplementation(clerkReturning(plain.user) as never);
+    const ctx = await getAuthContext(req(`Bearer ${plain.token}`, "1"));
+    expect(ctx.isAdmin).toBe(false);
+    expect(ctx.actingAsAdmin).toBe(false);
   });
 });
 

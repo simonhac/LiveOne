@@ -76,6 +76,7 @@ beforeEach(() => {
   mockAuth.mockResolvedValue({
     userId: "user_1",
     isAdmin: false,
+    actingAsAdmin: false,
     isCron: false,
     isClaudeDev: false,
   } as any);
@@ -131,6 +132,41 @@ describe("GET /api/v4/areas", () => {
     await areasGET(new NextRequest("http://localhost/api/v4/areas"));
     expect(mockListAreas).toHaveBeenCalledWith("user_1", {
       withChartCapability: true,
+      isAdmin: false,
+    });
+  });
+
+  it("🛑 answers an admin who did NOT ask with their own areas — the picker must not widen", async () => {
+    // Being an admin is not acting as one. This route is the dashboard's area picker; an admin
+    // composing a dashboard does not want every other owner's areas in the dropdown, and a default
+    // that returned them would make cross-owner reach the thing you get by not thinking about it.
+    mockAuth.mockResolvedValue({
+      userId: "user_1",
+      isAdmin: true,
+      actingAsAdmin: false,
+    } as never);
+    mockListAreas.mockResolvedValue([]);
+    await areasGET(new NextRequest("http://localhost/api/v4/areas"));
+    expect(mockListAreas).toHaveBeenCalledWith("user_1", {
+      withChartCapability: true,
+      isAdmin: false,
+    });
+  });
+
+  it("widens only when the request ASKED to act as admin", async () => {
+    mockAuth.mockResolvedValue({
+      userId: "user_1",
+      isAdmin: true,
+      actingAsAdmin: true,
+    } as never);
+    mockListAreas.mockResolvedValue([]);
+    const res = await areasGET(
+      new NextRequest("http://localhost/api/v4/areas"),
+    );
+    expect(res.status).toBe(200);
+    expect(mockListAreas).toHaveBeenCalledWith("user_1", {
+      withChartCapability: true,
+      isAdmin: true,
     });
   });
 
