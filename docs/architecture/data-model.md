@@ -28,7 +28,7 @@ truth for every column; these are roles, not schemas.
 
 | Table          | One-liner                                                                                                                                                                                         |
 | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `devices`      | One row per monitored device (a vendor connection). Owner, vendor, status, `primary_area_id`, `area_id`, `day_offset_min`, config.                                                                |
+| `devices`      | One row per monitored device (a vendor connection). Owner, vendor, status, `area_id`, `day_offset_min`, config.                                                                |
 | `points`       | Point registry: identity, physical/logical paths, metric type/unit, display name. `control` jsonb: NULL = read-only sensor (almost every row), non-NULL = a writable point that accepts commands. |
 | `device_state` | Per-device collection health (last poll/success/error, streaks, counters). State, never config.                                                                                                   |
 
@@ -36,8 +36,7 @@ truth for every column; these are roles, not schemas.
 
 | Table               | One-liner                                                                                                                                           |
 | ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `areas`             | A site/grouping. Owns display timezone, location, and the day offset for the AREA-keyed derived tables. Every device has exactly one.               |
-| `area_members`      | 🛑 **FROZEN.** The pre-0071 many-to-many membership. Nothing reads or writes it; membership is `devices.area_id`. Dropped by migration 0072.         |
+| `areas`             | A site/grouping holding 0..N devices. Owns display timezone, location, and the day offset for the AREA-keyed derived tables. A device is in 0 or 1.               |
 | `area_bindings`     | Typed role→point **overrides**; absent means the area defaults to the union of its members' points.                                                 |
 | `derivations`       | Persisted derived series (run tracking, HWS model), generalizing the former per-feature tracker tables.                                             |
 | `derived_intervals` | Materialized run/interval records produced by a derivation, with per-interval signal statistics. Its four provenance columns are LEGACY and filled only when a single area can price the run — see below.            |
@@ -119,8 +118,8 @@ These are load-bearing; don't violate them without updating
    `session_id → sessions(id)` (safe because the session row is co-enqueued ahead of its
    readings), and the aggregate tables carry none. The config layer is the opposite: config-v4
    replaced the old FK-less integer joins with hard references (`points.device_id`,
-   `devices.primary_area_id`, `devices.area_id`), which is what makes an orphaned row a
-   loud failure rather than a silent empty result.
+   `devices.area_id`), which is what makes an orphaned row a loud failure rather than a silent
+   empty result.
    ⚠️ **Removing an FK turns any join onto the replacement key into a silent filter.** Prefer a
    replacement join that is itself FK-backed and NOT NULL.
 
@@ -245,39 +244,51 @@ polled, has no credentials and does not nest.
 - **`area_bindings`** — typed role→point **overrides**; when present they _select_ the Area's points,
   otherwise the Area defaults to the **union** of its members' own points.
 
-🛑 **`area_members` is frozen, not current.** It was the many-to-many membership table until
-migration 0071 backfilled `devices.area_id` and the resolver flipped onto it. Nothing reads or writes
-it now; its rows are the pre-flip membership, kept as a record until migration 0072 drops it. Reading
-it will answer, and will answer wrongly.
-
 🛑 **Membership is a MOVE, not an addition**, and the authorization follows from that. While a device
 could be in many Areas, "the caller can READ this device" was a sufficient admission rule: naming
 your device in my Area let me aggregate data I could already see, and your Area kept it. It is not
 sufficient now, because naming a device takes it OUT of wherever it was, deleting that Area's
 bindings onto its points. `assertDevicesRehomable` (`lib/areas/create.ts`) therefore asks ownership
-**or custody** (the device is in an Area the caller owns), and refuses an ownerless device outright.
+**or custody** (the device is in an Area the caller owns), and refuses two kinds of device outright,
+for every caller including an admin: an **ownerless** one (ambient by design — see above) and a
+**`vendor='helper'`** one that would MOVE (an Area's own computed output, whose `vendor_site_id`
+names the Area that mints it; adopting one elsewhere makes that Area serve another site's blend AND
+hides the helper from `ensureHelperDevice`, which then tries to mint a second). A helper RE-STATED
+in the Area it already occupies is fine, and has to be: `PUT …/members` is a full replace, so every
+ordinary membership edit names the Area's existing helper.
 
 An Area is served **area-natively** as its own row (`ServingSubject`, `lib/dashboard/subject.ts`). Before
 config-v4 Phase 13, a multi-device Area was _synthesized_ on demand into a device-shaped object with a
 runtime `vendor_type = 'area'`; that synthesis is deleted.
 
-🛑 **The area-of-one is now VESTIGIAL, and this paragraph used to say the opposite.** Every device
-still has a `primary_area_id` (NOT NULL) naming an Area minted alongside it, and those Areas are still
-kept forever — `point_readings_flow_attr_1d` and `battery_provenance_daily` are keyed by area uuid, so
-deleting one destroys history, and that decision stands. What changed is that it is no longer the
-device's *membership*: `devices.area_id` is, and for most devices the two now name different Areas.
-The column survives only because it is `NOT NULL`, which is the single thing still forcing a new
-device to mint an Area at all; migration 0072 drops it, and only then can a device be created
-unassigned.
+🛑 **The area-of-one is GONE, and this paragraph used to say the opposite.** Until migration 0072
+every device carried a NOT NULL `primary_area_id` naming an Area minted alongside it — 14 of prod's
+17 Areas were such shells — because a device with no Area was not a representable shape. 0072
+dropped the constraint, `DeviceWriter.createDevice` stopped minting, and 0074 dropped the column.
+The shells themselves are **kept forever**: `point_readings_flow_attr_1d` and
+`battery_provenance_daily` are keyed by area uuid, so deleting one destroys history, and they stay
+addressable through `legacy_handles.area_id`.
+
+**Where a new device goes instead.** Removing the mint removed the structural answer, and Home
+Assistant's ("leave it unassigned") does not translate: HA renders fine without an Area, whereas
+here the Area is the sole home of `display_timezone` and `location`, so an ambient onboarding would
+silently discard the site address the Enphase OAuth callback supplies. So
+`lib/areas/onboarding.ts::resolveOnboardingArea` decides, and the rule is asymmetric:
+
+- an **owned** device is always placed — in `users.default_area_id` when that names an active Area
+  the owner still owns, otherwise in a site Area created for this connection and recorded as their
+  default if it is their first. The column therefore self-populates and needs no UI to work.
+- an **ownerless** device is never placed. There is no owner to have a default, and
+  `assertDevicesRehomable` refuses to move one, so an Area minted for it would be a trap.
 
 Two consequences worth stating, because both invert older rules:
 
 - **A zero-device Area is legal.** "An Area must have at least one member" is retired. It is what
   made "hide areas-of-one" a render-time convention rather than the structural "hide Areas with no
   devices".
-- **The Area is still the home for display timezone and location**, but which Area answers for a
-  device is now a question with two candidates, and `lib/areas/placement.ts` owns the resolution
-  chain (`area → owner → platform default`) so an ambient device still has both.
+- **The Area is still the home for display timezone and location**, and now exactly one Area answers
+  for a device. `lib/areas/placement.ts` owns the fallback chain (`area → owner → platform default`)
+  so an ambient device still has both.
 
 🛑 **`devices.day_offset_min` is IMMUTABLE except through one verb.** It is the boundary
 `point_readings_agg_1d` rolls up on, so writing it without rebuilding leaves every daily total the
@@ -292,8 +303,8 @@ Postgres _refuses_ to delete an area that still has flow rows. Today's area dele
 firewall is not currently load-bearing — which is exactly why it is easy to loosen by accident. Any
 future hard-delete path must pre-check `SELECT 1 FROM point_readings_flow_attr_1d WHERE area_id = $1
 LIMIT 1` and refuse if present. The same rule applied to the retired `point_readings_flow_1d` and is the
-reason no flow table has ever cascaded. (`area_members` _does_ cascade; that is deliberate and does not
-loosen this — membership is config, flow rows are history.)
+reason no flow table has ever cascaded. (`devices.area_id` is `ON DELETE SET NULL`; that is
+deliberate and does not loosen this — membership is config, flow rows are history.)
 
 🛑 **Handle precedence is device-first, forever.** An integer handle can legitimately name both a device
 and an Area (handle 13 does). `?systemId=N` resolves **device-first** — that is the behaviour-preserving

@@ -191,11 +191,12 @@ async function main() {
 
     // Eligibility, straight from the data: which areas have a commandable generator.
     const areas = await client.query<{ id: string; name: string }>(
+      // Membership is `devices.area_id` (migration 0071; `area_members` dropped by 0074), so this is
+      // one join shallower than it was.
       `select distinct a.id, a.name
          from areas a
-         join area_members m on m.area_id = a.id
-         join devices d      on d.id = m.device_id
-         join points p       on p.device_id = d.id
+         join devices d on d.area_id = a.id
+         join points p  on p.device_id = d.id
         where p.logical_path = $1 and p.metric_type = $2 and p.active
         order by a.name`,
       [CONTROL_STEM, CONTROL_METRIC],

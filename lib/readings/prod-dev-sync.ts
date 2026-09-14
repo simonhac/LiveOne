@@ -56,7 +56,30 @@ import {
 // Children don't all ON DELETE CASCADE, so id-drift clears them by hand. `point_info` has NO FK
 // children left at all since migration 0047 (config-v4 Phase 12 slice E PR 2a) released
 // `area_bindings`, the last one.
-type FkChild = { table: string; cols: string[] };
+type FkChild = {
+  table: string;
+  /**
+   * ONE foreign key's columns, zipped POSITIONALLY against the parent's PK columns. Two independent
+   * FKs into the same parent are two entries, not one entry with two columns — `repoint` emits
+   * `${col} = b.new_${pk[i]}`, so a mismatched length silently produces `b.new_undefined`.
+   */
+  cols: string[];
+  /**
+   * The column may legitimately be ABSENT from the target database, and the leg is then skipped
+   * rather than emitted (a 42703) or missing (a silent gap).
+   *
+   * Exists for exactly one thing: a column that is being dropped by a migration which, by
+   * expand/contract, lands AFTER the code that stops using it. `devices.primary_area_id` is such a
+   * column — it still has its NO ACTION FK during the deploy window, so the realignment needs the
+   * repoint; once 0074 applies it is gone and the same manifest must not name it.
+   *
+   * 🛑 Opt-IN, deliberately. A blanket "skip anything the catalog does not have" was the first cut
+   * and it turns a TYPO into a silent missing leg — misspell `area_id` and the realignment stops
+   * repointing devices, which with `ON DELETE SET NULL` quietly makes them ambient instead of
+   * aborting. A required column that is missing is a schema mismatch and must be loud.
+   */
+  transitional?: true;
+};
 
 // Resolve a divergent-surrogate collision that the natural-key trick (excludeCols) CAN'T fix because
 // the surrogate PK is itself the FK-join key children carry — so dev must ADOPT prod's PK, not keep its
@@ -222,14 +245,12 @@ const FULL: FullTable[] = [
       children: [],
     },
   },
-  ...["users", "share_tokens"].map(
-    (name): FullTable => ({ name, mode: "full", onConflict: "update" }),
-  ),
+  { name: "share_tokens", mode: "full", onConflict: "update" },
   // areas' uuid PK is generated independently on dev, so dev can hold the same logical Area (same
   // handle / owner+alias) under a different uuid. The by-PK upsert then trips a secondary
   // unique index (areas_owner_alias_unique). `idDrift` clears the mismatched
-  // dev Area (+ its FK children) so prod's uuid lands. FK-first: areas here, then area_members /
-  // area_bindings / the incremental flow legs re-populate under the correct uuid.
+  // dev Area (+ its FK children) so prod's uuid lands. FK-first: areas here, then area_bindings /
+  // the incremental flow legs re-populate under the correct uuid.
   {
     name: "areas",
     mode: "full",
@@ -249,9 +270,6 @@ const FULL: FullTable[] = [
         { table: "legacy_handles", parentCol: "area_id", keyCols: ["handle"] },
       ],
       children: [
-        // `area_members` is deliberately NOT listed: its `area_id` FK is ON DELETE CASCADE, so a cleared
-        // drifted area takes its membership with it, and the `area_members` leg below repopulates under
-        // prod's uuid. (`area_devices` sat here until slice H dropped it.)
         { table: "area_bindings", cols: ["area_id"] },
         { table: "point_readings_flow_attr_1d", cols: ["area_id"] },
         { table: "battery_provenance_daily", cols: ["area_id"] },
@@ -261,10 +279,19 @@ const FULL: FullTable[] = [
         // later leg — it is an ordinary clear-and-repopulate child like the four above.
         { table: "legacy_handles", cols: ["area_id"] },
       ],
-      // Both FKs below are NOT NULL / NO ACTION, so a post-cutover drifted area that owns a device
-      // BLOCKS the parent delete outright: this is the failure that froze liveone-dev from
-      // 2026-07-25 (`devices_primary_area_id_areas_id_fk`). They name the same
-      // LOGICAL area as prod's incoming row, so they are MOVED onto prod's uuid instead of deleted.
+      // A drifted area a device SITS IN must not be deleted out from under it. `devices.area_id` is
+      // ON DELETE SET NULL, so unlike its NOT NULL / NO ACTION predecessor `primary_area_id` it would
+      // not BLOCK the parent delete — it would silently make the device ambient, which is worse: the
+      // sync would report success and dev would quietly lose a placement. (The NO ACTION version of
+      // that failure is what froze liveone-dev from 2026-07-25 on
+      // `devices_primary_area_id_areas_id_fk`; the column went with migration 0074 and this leg
+      // inherits its job.) A device names the same LOGICAL area as prod's incoming row, so it is
+      // MOVED onto prod's uuid instead.
+      //
+      // 🛑 `users.default_area_id` (migration 0073) is likewise SET NULL and is deliberately NOT
+      // repointed: `users` syncs `full`/`update` in its own leg ABOVE this one, so prod's value —
+      // already prod's uuid — overwrites whatever dev held, and a repoint here would write dev's
+      // stale answer over it.
       //
       // 🛑 `derivations` is NOT here, and — more importantly — it is not in `children` either. The
       // argument that moved it out of `children` still holds and must not be lost: a derivation is
@@ -279,7 +306,19 @@ const FULL: FullTable[] = [
       // outright, so there is no longer an `area_id` for a realigning area to strand. The
       // protection it stood for moved to `derivation_sources.point_id`'s FK ("you cannot delete a
       // point a live derivation reads").
-      repoint: [{ table: "devices", cols: ["primary_area_id"] }],
+      // 🛑 TWO ENTRIES, not one with two columns: an entry's `cols` are a single (possibly
+      // composite) foreign key, zipped against the parent PK. `["area_id", "primary_area_id"]`
+      // would emit `primary_area_id = b.new_undefined`.
+      //
+      // The second is the DEPLOY-WINDOW leg — see the catalog filter in `syncTable`. Between this
+      // code deploying and migration 0074 applying, `primary_area_id` is still present WITH its
+      // NO ACTION FK, so a drifted area a dev device still points at cannot be deleted and every
+      // sync run in that window would abort on 23503. The filter drops this entry the moment 0074
+      // lands, which is what makes it safe to leave here rather than needing a third PR.
+      repoint: [
+        { table: "devices", cols: ["area_id"] },
+        { table: "devices", cols: ["primary_area_id"], transitional: true },
+      ],
       // Nullable columns behind areas_owner_alias_unique. Cleared on the drifted dev row so prod's row
       // can be inserted alongside it, which the repoint UPDATE needs as its FK target. The drifted row
       // is deleted moments later, in the same transaction.
@@ -295,12 +334,18 @@ const FULL: FullTable[] = [
   },
   // ── config-v4 v4 registries (Phase 12 slice A) ──────────────────────────────
   // These were populated on dev by scripts/config-v4/registry-sync.ts — cutover scaffolding that Phase 12
-  // DELETES — so without them here dev's registries freeze at the last manual run (they were 4 rows short
-  // of the legacy membership table when this landed; slice H has since made `area_members` primary and
-  // dropped that table). They are also no longer dark: point_readings and both agg
+  // DELETES — so without them here dev's registries freeze at the last manual run. They are also
+  // no longer dark: point_readings and both agg
   // twins FK point_rid → points.rid, so a point minted on prod that never reaches dev's `points` breaks
   // the incremental readings legs outright — the same class of failure as the areas FK that froze dev for
   // three days. FK order within the group: devices (→ areas) → everything else (→ devices).
+  // 🛑 AFTER `areas`, and it used to be before. `users.default_area_id` (migration 0073) FKs
+  // `areas(id)`, so prod's value names an area that must already be in dev or the upsert 23503s.
+  // Running after also REPAIRS the one way this sync can clear it: the `areas` leg above deletes a
+  // drifted dev area, and that FK is ON DELETE SET NULL, so dev's default would silently blank —
+  // this leg then writes prod's answer over the hole. (`users.default_dashboard_id` needs the same
+  // treatment and already has it: `dashboards` is the first leg of all.)
+  { name: "users", mode: "full", onConflict: "update" },
   {
     name: "devices",
     mode: "full",
@@ -320,7 +365,6 @@ const FULL: FullTable[] = [
       children: [],
       repoint: [
         { table: "points", cols: ["device_id"] },
-        { table: "area_members", cols: ["device_id"] },
         { table: "device_state", cols: ["device_id"] },
         { table: "legacy_handles", cols: ["device_id"] },
       ],
@@ -362,7 +406,6 @@ const FULL: FullTable[] = [
     },
   },
   // Natural composite/1:1 PKs, no surrogate — plain by-PK upserts, after both FK parents.
-  { name: "area_members", mode: "full", onConflict: "update" },
   { name: "device_state", mode: "full", onConflict: "update" },
   // Frozen-at-cutover handle→device/area map. Previously left out of the manifest deliberately, but it is
   // also an areas idDrift CHILD — so a realigning area cleared its handle rows with no later leg to restore
@@ -433,7 +476,7 @@ const FULL: FullTable[] = [
   // parent list would be real machinery for a case that cannot occur — but it is the seam to widen
   // if a zero-source derivation ever becomes legal.
   //
-  // No `idDrift`: the PK is the natural key `(derivation_id, slot)` — the `area_members` pattern —
+  // No `idDrift`: the PK is the natural key `(derivation_id, slot)`, no surrogate —
   // and `device_id` needs no repoint of its own, because the `devices` idDrift leg's `points`
   // repoint carries it through the `ON UPDATE CASCADE` on the composite FK into `points`.
   {
@@ -906,7 +949,40 @@ export async function syncTable(
       // A repointed FK must be MOVED to prod's PK, so `_drift` has to carry that PK too — captured as
       // `new_<col>` from the staged prod row. Only selected when repointing, so the no-repoint tables
       // (dashboards, point_info) emit exactly the SQL they always did.
-      const repoint = idDrift.repoint ?? [];
+      // 🛑 FILTERED AGAINST THE LIVE CATALOG, so the manifest can name a column that exists only
+      // on one side of a pending migration.
+      //
+      // This closes the deploy window that expand/contract creates. `devices.primary_area_id` is
+      // listed below alongside `area_id` because between this code deploying and migration 0074
+      // being applied the column is still there WITH its NO ACTION FK — so a drifted area that a
+      // dev device still points at cannot be deleted, and every sync run in that window would abort
+      // on 23503. That window is hours, but the sync runs every two hours and the last time it
+      // aborted it froze liveone-dev for three days. After 0074 the column is gone from
+      // `colsByTable` and the entry silently drops out, which is also what makes it safe to leave
+      // here rather than needing a third PR to remove it.
+      const repoint = (idDrift.repoint ?? []).filter((c) => {
+        // The zip below is positional against the parent PK, so a length mismatch is a manifest
+        // bug that would otherwise emit `b.new_undefined` into production SQL. Asserted, not
+        // trusted: it is invisible to `tsc` and the generated string looks plausible.
+        if (c.cols.length !== pk.length)
+          throw new Error(
+            `repoint ${c.table}(${c.cols.join(", ")}) has ${c.cols.length} column(s) but ${t.name}'s PK has ${pk.length} — an entry is ONE foreign key, zipped against the PK`,
+          );
+        const live = colsByTable.get(c.table);
+        // Unknown table: keep it. Skipping a repoint because we lack information is how a missing
+        // leg becomes a silent failure instead of a loud one.
+        if (!live) return true;
+        const missing = c.cols.filter((col) => !live.includes(col));
+        if (missing.length === 0) return true;
+        // 🛑 Only a column DECLARED transitional may be absent. Anything else is a schema mismatch
+        // — most likely a typo in the manifest — and must abort rather than quietly drop a leg that
+        // is the only thing stopping `ON DELETE SET NULL` from blanking dev's placements.
+        if (!c.transitional)
+          throw new Error(
+            `repoint ${c.table}(${missing.join(", ")}) names column(s) the target does not have; mark the entry \`transitional: true\` if that is expected`,
+          );
+        return false;
+      });
       const newPkCols = repoint.length
         ? ", " + pk.map((c) => `s.${c} AS new_${c}`).join(", ")
         : "";

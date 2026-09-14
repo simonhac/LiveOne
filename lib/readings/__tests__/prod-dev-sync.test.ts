@@ -98,12 +98,11 @@ describe("prod→dev readings transfer", () => {
     expect(names).toEqual([
       // `systems`, `polling_status` and `point_info` left this list when migration 0051 dropped them.
       "dashboards",
-      "users",
       "share_tokens",
       "areas",
+      "users",
       "devices",
       "points",
-      "area_members",
       "device_state",
       "legacy_handles",
       "area_bindings",
@@ -128,6 +127,11 @@ describe("prod→dev readings transfer", () => {
     expect(names.indexOf("dashboards")).toBeLessThan(
       names.indexOf("share_tokens"),
     );
+    // 🛑 And `users.default_area_id` (migration 0073) FKs areas the same way, which is why `users`
+    // moved BELOW `areas`. Copying prod's users first would 23503 on an area dev has not seen yet —
+    // and would also leave the default blanked whenever the `areas` leg realigns a drifted row,
+    // because that FK is ON DELETE SET NULL.
+    expect(names.indexOf("areas")).toBeLessThan(names.indexOf("users"));
     // derivations.area_id FKs areas (nullable since migration 0063), so areas must land first.
     expect(names.indexOf("areas")).toBeLessThan(names.indexOf("derivations"));
     // derivation_sources has FKs into BOTH derivations and points, so both must land first.
@@ -137,16 +141,11 @@ describe("prod→dev readings transfer", () => {
     expect(names.indexOf("points")).toBeLessThan(
       names.indexOf("derivation_sources"),
     );
-    // config-v4 v4 registries. devices.primary_area_id is a NOT NULL FK to areas; points, area_members,
-    // device_state and legacy_handles all FK devices.id (points.device_id NOT NULL). So the group is
-    // strictly ordered areas → devices → the rest.
+    // config-v4 v4 registries. devices.area_id FKs areas; points, device_state and legacy_handles all
+    // FK devices.id (points.device_id NOT NULL). So the group is strictly ordered
+    // areas → devices → the rest. (`area_members` left this list with migration 0074.)
     expect(names.indexOf("areas")).toBeLessThan(names.indexOf("devices"));
-    for (const child of [
-      "points",
-      "area_members",
-      "device_state",
-      "legacy_handles",
-    ]) {
+    for (const child of ["points", "device_state", "legacy_handles"]) {
       expect(names.indexOf("devices")).toBeLessThan(names.indexOf(child));
     }
     // The whole point of the group: point_readings and both agg twins FK point_rid → points.rid, so a
@@ -447,9 +446,11 @@ describe("prod→dev readings transfer", () => {
   });
 
   // Regression: from 2026-07-25 every sync run aborted on
-  // `devices_primary_area_id_areas_id_fk`, freezing liveone-dev. devices.primary_area_id is NOT NULL
-  // / NO ACTION, so a drifted area that owns a dark-mirror device can't be deleted — those rows must
-  // be MOVED to prod's uuid instead.
+  // `devices_primary_area_id_areas_id_fk`, freezing liveone-dev. That column is gone (migration
+  // 0074) and `devices.area_id` inherits the leg — but the failure it now prevents is the OPPOSITE
+  // shape and quieter: `area_id` is ON DELETE SET NULL, so without this repoint a realigning area
+  // would not abort the sync, it would silently make dev's devices AMBIENT and exit 0. A repoint,
+  // not a delete, either way.
   //
   // 🛑 `derivations.area_id` is deliberately NOT in this list any more. Migration 0063 flipped its
   // FK to ON DELETE SET NULL, so the repoint stopped unblocking the delete; it survived one PR
@@ -464,7 +465,14 @@ describe("prod→dev readings transfer", () => {
     expect(table).toMatchObject({
       mode: "full",
       idDrift: {
-        repoint: [{ table: "devices", cols: ["primary_area_id"] }],
+        // Two ENTRIES, not one entry with two columns — an entry is one foreign key, zipped
+        // against the parent PK. `primary_area_id` is the deploy-window leg: still present (with
+        // its NO ACTION FK) between this code deploying and migration 0074 applying, and filtered
+        // out against the live catalog once the column is gone. See the SQL assertions below.
+        repoint: [
+          { table: "devices", cols: ["area_id"] },
+          { table: "devices", cols: ["primary_area_id"], transitional: true },
+        ],
         // config-v4 Phase 13 PR 6: `legacy_system_id` is GONE from here — migration 0052 dropped the
         // column, and `neutralize` becomes a literal `UPDATE areas SET <col> = NULL` at runtime.
         neutralize: ["slug"],
@@ -543,7 +551,7 @@ describe("prod→dev readings transfer", () => {
     // _drift must carry prod's PK too — it is the repoint target.
     expect(sql).toContain("s.id AS new_id");
     expect(sql).toContain(
-      "UPDATE public.devices x SET primary_area_id = b.new_id FROM _drift b WHERE x.primary_area_id = b.id;",
+      "UPDATE public.devices x SET area_id = b.new_id FROM _drift b WHERE x.area_id = b.id;",
     );
     // 🛑 And derivations is NOT repointed — the SQL leg is gone with the manifest entry. A
     // dev-only derivation under a realigning area takes `area_id = NULL` via the FK, which is
@@ -562,9 +570,9 @@ describe("prod→dev readings transfer", () => {
     expect(sql).not.toContain("legacy_system_id");
     expect(at("SET slug = NULL")).toBeLessThan(at("INSERT INTO public.areas"));
     expect(at("INSERT INTO public.areas")).toBeLessThan(
-      at("UPDATE public.devices x SET primary_area_id"),
+      at("UPDATE public.devices x SET area_id"),
     );
-    expect(at("UPDATE public.devices x SET primary_area_id")).toBeLessThan(
+    expect(at("UPDATE public.devices x SET area_id")).toBeLessThan(
       at("DELETE FROM public.areas d USING _drift"),
     );
 
@@ -572,6 +580,109 @@ describe("prod→dev readings transfer", () => {
     // OTHER areas, because area_bindings.point_uid can cross-reference a point under a different area.
     expect(sql).not.toContain("DELETE FROM public.devices");
     expect(sql).not.toContain("DELETE FROM public.points");
+  });
+
+  // 🛑 The repoint list is filtered against the LIVE CATALOG, and that is what lets one manifest
+  // serve both sides of a pending DROP. Between this code deploying and migration 0074 applying,
+  // `devices.primary_area_id` still exists with a NO ACTION FK, so a drifted area a dev device
+  // points at cannot be deleted and the whole sync run aborts on 23503 — which is exactly how
+  // liveone-dev froze for three days in July. After 0074 the column is gone and the leg must
+  // vanish, or every run is a 42703 instead. Neither state is reachable from the manifest alone.
+  it("emits a repoint leg only for columns the target database actually has", async () => {
+    const table = prodDevSyncManifest().find(
+      (entry) => entry.name === "areas",
+    )!;
+    const AREA_COLS = ["id", "owner_user_id", "name", "slug"];
+
+    const during = copyClients();
+    await syncTable(
+      during.prod,
+      during.dev,
+      table,
+      new Map([
+        ["areas", AREA_COLS],
+        ["devices", ["id", "rid", "area_id", "primary_area_id"]],
+      ]),
+      new Map([["areas", ["id"]]]),
+    );
+    const windowSql = during.devSql.at(-1)!;
+    expect(windowSql).toContain("UPDATE public.devices x SET area_id");
+    expect(windowSql).toContain("UPDATE public.devices x SET primary_area_id");
+
+    const after = copyClients();
+    await syncTable(
+      after.prod,
+      after.dev,
+      table,
+      new Map([
+        ["areas", AREA_COLS],
+        ["devices", ["id", "rid", "area_id"]], // 0074 applied
+      ]),
+      new Map([["areas", ["id"]]]),
+    );
+    const droppedSql = after.devSql.at(-1)!;
+    expect(droppedSql).toContain("UPDATE public.devices x SET area_id");
+    expect(droppedSql).not.toContain("primary_area_id");
+    // …and the leg it DOES emit is still complete — a filtered entry must not degrade into a
+    // half-written composite (`b.new_undefined` was the first cut of this).
+    expect(droppedSql).not.toContain("new_undefined");
+    expect(droppedSql).toContain(
+      "UPDATE public.devices x SET area_id = b.new_id FROM _drift b WHERE x.area_id = b.id;",
+    );
+  });
+
+  // 🛑 Absence is OPT-IN. A blanket "skip whatever the catalog lacks" turns a manifest typo into a
+  // silently missing repoint — and a missing repoint on `devices.area_id` does not abort, it lets
+  // `ON DELETE SET NULL` quietly make dev's devices ambient and exit 0.
+  it("ABORTS on a repoint column the target lacks unless the entry says it is transitional", async () => {
+    const areas = prodDevSyncManifest().find((e) => e.name === "areas")!;
+    const typo = {
+      ...areas,
+      idDrift: {
+        ...(areas as { idDrift: Record<string, unknown> }).idDrift,
+        repoint: [{ table: "devices", cols: ["are_id"] }], // typo
+      },
+    } as typeof areas;
+    const { prod, dev } = copyClients();
+    await expect(
+      syncTable(
+        prod,
+        dev,
+        typo,
+        new Map([
+          ["areas", ["id", "owner_user_id", "name", "slug"]],
+          ["devices", ["id", "rid", "area_id"]],
+        ]),
+        new Map([["areas", ["id"]]]),
+      ),
+    ).rejects.toThrow(/transitional/);
+  });
+
+  // The other half of the same invariant: an entry is ONE foreign key, zipped positionally against
+  // the parent PK. Two columns in one entry emitted `primary_area_id = b.new_undefined` — valid
+  // SQL, wrong SQL, and invisible to tsc.
+  it("ABORTS on a repoint entry whose column count does not match the parent PK", async () => {
+    const areas = prodDevSyncManifest().find((e) => e.name === "areas")!;
+    const zipped = {
+      ...areas,
+      idDrift: {
+        ...(areas as { idDrift: Record<string, unknown> }).idDrift,
+        repoint: [{ table: "devices", cols: ["area_id", "primary_area_id"] }],
+      },
+    } as typeof areas;
+    const { prod, dev } = copyClients();
+    await expect(
+      syncTable(
+        prod,
+        dev,
+        zipped,
+        new Map([
+          ["areas", ["id", "owner_user_id", "name", "slug"]],
+          ["devices", ["id", "rid", "area_id", "primary_area_id"]],
+        ]),
+        new Map([["areas", ["id"]]]),
+      ),
+    ).rejects.toThrow(/ONE foreign key/);
   });
 
   it("realigns drifted devices by neutralizing NOT NULL rid to a sentinel, not NULL", async () => {
@@ -585,7 +696,7 @@ describe("prod→dev readings transfer", () => {
       (
         table as { idDrift: { repoint?: Array<{ table: string }> } }
       ).idDrift.repoint?.map((c) => c.table),
-    ).toEqual(["points", "area_members", "device_state", "legacy_handles"]);
+    ).toEqual(["points", "device_state", "legacy_handles"]);
 
     const { prod, dev, devSql } = copyClients();
     await syncTable(
@@ -603,13 +714,9 @@ describe("prod→dev readings transfer", () => {
     expect(sql).toContain("SET rid = -d.rid - 1, slug = NULL");
     expect(sql).not.toContain("rid = NULL");
 
-    // All four children repoint onto prod's uuid; none is deleted.
-    for (const child of [
-      "points",
-      "area_members",
-      "device_state",
-      "legacy_handles",
-    ]) {
+    // Every child repoints onto prod's uuid; none is deleted. (`area_members` left this list with
+    // migration 0074 — membership is `devices.area_id`, a column on the row being realigned.)
+    for (const child of ["points", "device_state", "legacy_handles"]) {
       expect(sql).toContain(
         `UPDATE public.${child} x SET device_id = b.new_id FROM _drift b WHERE x.device_id = b.id;`,
       );

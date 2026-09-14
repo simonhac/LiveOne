@@ -1,11 +1,12 @@
 /**
  * Shared function to fetch admin areas data (server-side rendering + API).
  *
- * Areas are the SEMANTIC layer: an Area is a grouping of 1..N **member devices** (`area_members`). A
- * single-device Area wraps one physical device; a multi-device Area draws points from several (the
- * former vendor_type='composite' fake devices, now areas-backed virtual devices). Membership is read
- * uniformly from `area_members` — there is no `kind` branch. This powers /admin/areas (all areas)
- * and the owner-facing /areas page (the caller's own active areas).
+ * Areas are the SEMANTIC layer: an Area is a grouping of 0..N **member devices**, and membership is
+ * the single column `devices.area_id`. A single-device Area wraps one physical device; a
+ * multi-device Area draws points from several (the former vendor_type='composite' fake devices, now
+ * areas-backed virtual devices); a zero-device Area is legal and is what an emptied area-of-one
+ * became. There is no `kind` branch. This powers /admin/areas (all areas) and the owner-facing
+ * /areas page (the caller's own active areas).
  */
 
 import { clerkClient } from "@clerk/nextjs/server";
@@ -45,7 +46,7 @@ export interface AdminAreaData {
   };
   /** Number of `area_bindings` (role→point overrides). 0 for a plain membership-only Area. */
   bindingCount: number;
-  /** The Area's member devices (from `area_members`); length 1 = single-device, >1 = multi-device. */
+  /** The Area's member devices (`devices.area_id`); length 1 = single-device, >1 = multi-device. */
   memberDevices: AreaSourceDevice[];
 }
 
@@ -152,9 +153,9 @@ async function shapeAreas(
   for (const area of allAreas) {
     const userInfo = area.ownerUserId ? userCache.get(area.ownerUserId) : null;
 
-    // Uniform: an Area's member devices are its `area_members` rows — no single-vs-multi branch.
-    // `resolveDevice` is int-keyed, so the uuid membership converts back; the `!` is safe by the
-    // `area_members.device_id` FK.
+    // Uniform: an Area's member devices are the rows with its `area_id` — no single-vs-multi branch.
+    // `resolveDevice` is int-keyed, so the uuid membership converts back; the `!` is safe because
+    // the ids came from `devices` in the first place.
     const memberDeviceIds = await getAreaMemberDeviceIds(area.id);
     const memberRids = await DeviceRegistry.ridsForDevices(memberDeviceIds);
     const memberIds = memberDeviceIds.map((id) => memberRids.get(id)!);

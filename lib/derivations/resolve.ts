@@ -47,6 +47,7 @@ import {
   points,
 } from "@/lib/db/planetscale/schema";
 import { Point, type PointId } from "@/lib/ids";
+import { resolvePlacement } from "@/lib/areas/placement";
 import { TRACKABLE_ROLE_IDS, type RoleId } from "@/lib/roles/registry";
 import { deriveDerivationId } from "./ids";
 import { HWS_MODEL_KIND, RUN_DETECTOR_KIND } from "./kinds";
@@ -110,8 +111,15 @@ export interface ResolvedRunDetector {
   boundaryPoint: PointId | null;
   detect: DetectConfig;
   detectorVersion: number;
-  /** From the owner device's primary area — the site's clock, not the detector's own. */
+  /**
+   * The owner DEVICE's fixed day offset (`devices.day_offset_min`) — the same key its
+   * `point_readings_agg_1d` rows bucket on, and immutable across a re-home.
+   */
   timezoneOffsetMin: number;
+  /**
+   * The owner device's resolved IANA zone: its area's, else the platform default. A zone is a
+   * property of the PLACE, so unlike the offset above it follows the device between areas.
+   */
   displayTimezone: string;
 }
 
@@ -230,9 +238,25 @@ async function loadRunDetectorRows(conds: SQL[]) {
 /**
  * The owner devices' handles and clocks, in one read.
  *
- * `devices.primary_area_id` is NOT NULL with an FK into `areas`, so both joins are total — which is
- * why a detector can no longer silently vanish from a listing the way the old
- * "area has no legacy handle — skipping" branch let it.
+ * The join is on `devices` alone, which is total, so a detector can no longer silently vanish from a
+ * listing the way the old "area has no legacy handle — skipping" branch let it. The area is a LEFT
+ * join because a device is in 0 or 1 area: an AMBIENT owner resolves to the platform default rather
+ * than dropping out of every listing, which for a `listEnabledRunDetectors` caller would mean a
+ * detector that silently stops being recomputed.
+ *
+ * 🛑 **The two clock fields come from different places, on purpose.**
+ *
+ * `tzOffset` is the DEVICE's `day_offset_min` — the same fixed offset `point_readings_agg_1d` buckets
+ * on since the stage-3b flip, and immutable across a re-home. It used to be read off
+ * `devices.primary_area_id`, the eagerly-minted area-of-one, which stopped being the device's area
+ * the moment anything was re-homed (migration 0071) and which migration 0073 drops. This was the last
+ * live reader of that column.
+ *
+ * `tz` is the IANA zone, which is a property of the PLACE, so it resolves through the area the device
+ * is actually in — `resolvePlacement`'s `area → platform` chain. Its one consumer is the automation
+ * exercise schedule (`lib/automations/evaluate-exercise.ts`), which asks "has the 10am-Melbourne slot
+ * passed"; for a re-homed device the site's zone is the right answer and the shell area-of-one's was
+ * not.
  */
 async function ownerFacts(
   deviceUuids: string[],
@@ -242,16 +266,30 @@ async function ownerFacts(
     .select({
       id: devices.id,
       rid: devices.rid,
-      tzOffset: areas.timezoneOffsetMin,
-      tz: areas.displayTimezone,
+      dayOffsetMin: devices.dayOffsetMin,
+      areaTimezoneOffsetMin: areas.timezoneOffsetMin,
+      areaDisplayTimezone: areas.displayTimezone,
+      areaLocation: areas.location,
     })
     .from(devices)
-    .innerJoin(areas, eq(areas.id, devices.primaryAreaId))
+    .leftJoin(areas, eq(areas.id, devices.areaId))
     .where(inArray(devices.id, deviceUuids));
   return new Map(
     rows.map((r) => [
       r.id,
-      { legacyHandle: r.rid, tzOffset: r.tzOffset, tz: r.tz },
+      {
+        legacyHandle: r.rid,
+        tzOffset: r.dayOffsetMin,
+        tz: resolvePlacement(
+          r.areaDisplayTimezone === null || r.areaTimezoneOffsetMin === null
+            ? null
+            : {
+                timezoneOffsetMin: r.areaTimezoneOffsetMin,
+                displayTimezone: r.areaDisplayTimezone,
+                location: r.areaLocation,
+              },
+        ).displayTimezone,
+      },
     ]),
   );
 }
@@ -354,7 +392,7 @@ export async function listEnabledRunDetectors(
   for (const s of staged) {
     if (ownerMustBe && s.owner.deviceId !== ownerMustBe) continue;
     const f = facts.get(s.owner.deviceId);
-    if (!f) continue; // unreachable: both joins in `ownerFacts` are total.
+    if (!f) continue; // unreachable: `ownerFacts` selects FROM `devices` by the same uuids.
     const params = s.entry.d.params as RunDetectorParams;
     resolved.push({
       id: s.entry.d.id,

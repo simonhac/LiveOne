@@ -16,6 +16,7 @@ type FakeDevice = {
   uuid: string;
   ownerClerkUserId: string | null;
   areaId: string | null;
+  vendorType?: string;
 };
 
 let fleet: Map<number, FakeDevice>;
@@ -67,11 +68,21 @@ beforeEach(() => {
     [3, { uuid: "dev-3", ownerClerkUserId: THEM, areaId: "area-mine" }],
     // an OpenElectricity NEM region
     [4, { uuid: "dev-4", ownerClerkUserId: null, areaId: null }],
+    // an area's own derived output — owned, readable, in an area I own, and still not movable
+    [
+      5,
+      {
+        uuid: "dev-5",
+        ownerClerkUserId: ME,
+        areaId: "area-mine",
+        vendorType: "helper",
+      },
+    ],
   ]);
 });
 
-const run = (rids: number[], isAdmin = false) =>
-  assertDevicesRehomable(ME, isAdmin, rids);
+const run = (rids: number[], isAdmin = false, targetAreaId?: string) =>
+  assertDevicesRehomable(ME, isAdmin, rids, targetAreaId);
 
 describe("assertDevicesRehomable", () => {
   it("allows a device you own, and REPORTS where it saw it", async () => {
@@ -109,6 +120,38 @@ describe("assertDevicesRehomable", () => {
     // two OE regions ended up as members of three areas each before migration 0071.
     await expect(run([4])).rejects.toBeInstanceOf(AreaValidationError);
     await expect(run([4], true)).rejects.toBeInstanceOf(AreaValidationError);
+  });
+
+  it("ALLOWS a helper RE-STATED in the area it already occupies", async () => {
+    // 🛑 The case a blanket refusal broke. `PUT …/members` is a declarative full replace, so every
+    // ordinary edit names the area's existing members — `AreaBuilderDialog` deliberately includes
+    // the server-managed helper "so the replace declares the truth", and `liveone area devices
+    // add/remove` builds the same list. Refusing any named helper 422'd every membership edit on
+    // an area that has one, which is every area with battery provenance. Found in review.
+    await expect(run([1, 5], false, "area-mine")).resolves.toEqual(
+      new Map([
+        ["dev-1", "area-mine"],
+        ["dev-5", "area-mine"],
+      ]),
+    );
+  });
+
+  it("🛑 REFUSES a HELPER that would MOVE, for every caller including admin", async () => {
+    // A helper is the area's own computed output, and `helperSiteId(areaId)` bakes that area into
+    // its `vendor_site_id` permanently. Adopting one elsewhere makes the adopting area's resolver
+    // union another site's blend points — and hides the helper from `ensureHelperDevice`'s lookup,
+    // so the next provenance recompute tries to mint a second one and 500s on
+    // `devices_helper_area_unique`. Note this device passes every other leg: owned by the caller,
+    // and sitting in an area the caller owns.
+    // No target (a brand-new area), a DIFFERENT area, and unassignment are all moves.
+    await expect(run([5])).rejects.toBeInstanceOf(AreaValidationError);
+    await expect(run([5], true)).rejects.toBeInstanceOf(AreaValidationError);
+    await expect(run([5], false, "area-theirs")).rejects.toBeInstanceOf(
+      AreaValidationError,
+    );
+    await expect(run([5], true, "area-theirs")).rejects.toBeInstanceOf(
+      AreaValidationError,
+    );
   });
 
   it("refuses the whole set if any one member fails", async () => {

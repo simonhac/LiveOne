@@ -115,10 +115,9 @@ export async function GET(
     model: row.model,
     serial: row.serial,
     commissionedOn: row.commissionedOn,
-    primaryAreaId: Area.encode(row.primaryAreaId),
-    // The area the device is IN — nullable, because a device is in 0 or 1 area. Distinct from
-    // `primaryAreaId`, which is the eagerly-minted area-of-one it was born with and which the
-    // resolver stopped consulting at migration 0071.
+    // The area the device is IN — nullable, because a device is in 0 or 1 area. This used to sit
+    // beside a `primaryAreaId` naming the eagerly-minted area-of-one; that shell is no longer minted
+    // and its column is dropped by migration 0073, so this is the only area a device has.
     areaId: row.areaId ? Area.encode(row.areaId) : null,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
@@ -217,9 +216,14 @@ export async function PATCH(
     // `loadAreaForOwner` and `requireDeviceAccess` both grant it without asking, and this route
     // would be the lone exception if it did otherwise. Moving the whole write side onto the opt-in
     // is the right end state and is one coherent change; see docs/architecture/api.md.
-    authorized = await assertDevicesRehomable(auth.userId, auth.isAdmin, [
-      row.rid,
-    ]);
+    authorized = await assertDevicesRehomable(
+      auth.userId,
+      auth.isAdmin,
+      [row.rid],
+      // The destination, so re-stating a helper's current area is a no-op rather than a 422. A
+      // helper being moved ANYWHERE else — including to `null` — is still refused.
+      targetAreaUuid ?? undefined,
+    );
   } catch (err) {
     // 🛑 `AreaAccessError` collapses into the SAME 404 as "no such device". Holding a well-formed
     // `dv_` string is not permission to learn whether it names anything: a 403 here would confirm the

@@ -1,0 +1,24 @@
+-- 0073 — `users.default_area_id`: where a newly onboarded device of this user's is placed.
+--
+-- ADDITIVE, nullable, no backfill. Applied to prod BEFORE the code that reads it; until that code
+-- ships the column is unread, and dropping it is the whole of the revert.
+--
+-- WHY IT EXISTS. Retiring the eagerly-minted area-of-one removes the structural answer to "which
+-- area does a new device go in?" — and the obvious replacement, Home Assistant's "leave it
+-- unassigned", does not translate. HA can afford an area-less device because HA is one home and
+-- nothing it shows depends on the area; here the area is the sole home of `display_timezone` and
+-- `location`, so onboarding into no area would silently discard the site address the Enphase OAuth
+-- callback supplies (the coordinates behind sun-times and the NEM region) and place the device on
+-- the platform's +600/Brisbane floor.
+--
+-- NULL is the normal starting state, not a defect. It means "no default recorded", and onboarding
+-- then mints a site area for the connection exactly as it does today — recording it here when it is
+-- the user's FIRST area. The column therefore self-populates and needs no UI before it does
+-- anything useful.
+--
+-- ON DELETE SET NULL rather than RESTRICT: deleting the default area returns the user to "no default
+-- recorded", a state the onboarding path already handles, instead of making an area undeletable.
+-- It is the same rule `users.default_dashboard_id` and `devices.area_id` already follow.
+--> statement-breakpoint
+ALTER TABLE "users" ADD COLUMN "default_area_id" uuid;--> statement-breakpoint
+ALTER TABLE "users" ADD CONSTRAINT "users_default_area_id_areas_id_fk" FOREIGN KEY ("default_area_id") REFERENCES "public"."areas"("id") ON DELETE set null ON UPDATE no action;

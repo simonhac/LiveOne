@@ -1,0 +1,23 @@
+-- 0072 — drop `devices.primary_area_id`'s NOT NULL. The EXPAND half of the area-of-one retirement.
+--
+-- One statement, no data change, fully reversible (`SET NOT NULL` again — nothing is NULL yet, and
+-- nothing writes NULL until the stage-5 code deploys).
+--
+-- 🛑 WHY THIS IS ITS OWN MIGRATION, applied to prod BEFORE the code that needs it.
+--
+-- `primary_area_id`'s NOT NULL is the ONLY thing that still forces `insertDeviceToPg` to mint an
+-- area-of-one for every new device. Nothing READS the column any more, so the obvious move is to
+-- drop it outright — but the two halves cannot land at the same instant and both orders of a single
+-- combined migration break something real:
+--
+--   * drop the column first, then deploy → the DEPLOYED code still inserts `primary_area_id`, so
+--     every device mint 42703s for the length of the deploy. That is `POST /api/devices`, the
+--     Enphase OAuth callback and the Tesla connect callback, all 500ing.
+--   * deploy first, then drop → the deployed code no longer supplies a value for a column that is
+--     still NOT NULL, so every device mint 23502s instead. Same outage, different code.
+--
+-- Relaxing the constraint first removes the conflict: old code keeps writing the column and is
+-- unaffected, new code stops writing it and is accepted. Migration 0073 then drops the column (and
+-- `area_members`) once the new code is live, with gates A–D proving the edge set first.
+--> statement-breakpoint
+ALTER TABLE "devices" ALTER COLUMN "primary_area_id" DROP NOT NULL;

@@ -69,7 +69,7 @@ function pgEnv(url: string): Record<string, string> {
 // `point_info` and `polling_status` were removed again when migration 0051 dropped them.
 //
 // Order is a topological sort of the FK edges: areas/dashboards have no parents;
-// devices → areas; points → devices; area_members → areas + devices; area_bindings → areas + points.
+// devices → areas; points → devices; area_bindings → areas + points.
 const CONFIG_TABLES = [
   "areas",
   "dashboards",
@@ -77,7 +77,6 @@ const CONFIG_TABLES = [
   "devices",
   "points",
   "legacy_handles",
-  "area_members",
   "area_bindings",
   "derivations",
   // 🛑 Invisible to tsc: without this a preview renders run cards EMPTY with no error at all —

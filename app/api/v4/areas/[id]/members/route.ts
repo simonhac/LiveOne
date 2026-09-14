@@ -59,7 +59,15 @@ export async function PUT(
   const { userId, isAdmin, area } = authed;
 
   const body = await request.json().catch(() => null);
-  const members = await resolveMemberDeviceRefs(userId, isAdmin, body?.members);
+  // The target area is threaded in so a helper already in THIS area can be re-stated: a full
+  // replace names every current member, including the server-managed helper, and refusing that
+  // would 422 every membership edit on an area that has one.
+  const members = await resolveMemberDeviceRefs(
+    userId,
+    isAdmin,
+    body?.members,
+    area.id,
+  );
   if (!members.ok)
     return NextResponse.json(
       { error: members.message },

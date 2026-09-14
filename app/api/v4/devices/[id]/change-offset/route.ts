@@ -3,7 +3,7 @@ import { eq } from "drizzle-orm";
 import { requireDeviceAccess } from "@/lib/api-auth";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import { devices as devicesTable } from "@/lib/db/planetscale/schema";
-import { Device } from "@/lib/ids";
+import { Area, Device } from "@/lib/ids";
 import {
   applyChangeDayOffset,
   isValidDayOffsetMin,
@@ -25,13 +25,17 @@ import {
  * device's days across two boundaries with nothing recording where the seam is. The span is measured
  * from the data (`agg1dSpanForPoints`).
  *
- * 🛑 **Refuses when the device's area-of-one has other members.** The area it moves alongside the
- * device is `primary_area_id`'s — the device's own — NOT the site area it belongs to. Since the
- * bucketing flip the rebuild reads `devices.day_offset_min`, so moving the area is no longer what
- * makes the change stick; it is what stops the area's own offset drifting from the device it was
- * minted for. The refusal remains because a SHARED area would re-bucket its other members as
- * collateral, and it asks `devices.area_id` — what lives there today — rather than the frozen
- * `area_members`, which would report a re-homed device as still occupying its old shell.
+ * 🛑 **It writes ONE column and refuses nothing on account of the device's area.** It used to also
+ * move the offset stored on the device's area-of-one, and to refuse when that area had company —
+ * both of which went with the area-of-one itself (migration 0073). The device column is the whole of
+ * the change: since the bucketing flip `recomputeAgg1dForDay` reads `devices.day_offset_min` and
+ * nothing else.
+ *
+ * What replaces the refusal is a REPORT. `area.divergesAfter` says when the device will stop
+ * bucketing on the same boundary as the site it sits in — legal, because the two offsets key
+ * different tables (`point_readings_agg_1d` vs `point_readings_flow_attr_1d`), but not something to
+ * do unknowingly. The CLI prints it; moving the area, if that is what was meant, is a deliberate
+ * separate call to `PATCH /api/v4/areas/{ar_} { dayOffsetMin }`.
  */
 
 // Delete-then-rebuild over a device's whole 1d history. 300 s is the ceiling, not the budget: a
@@ -103,12 +107,6 @@ export async function POST(
       `cannot resume from ${resumeFrom}: not a day in this device's history`,
     );
 
-  if (plan.area && plan.area.otherMembers.length > 0)
-    return err(
-      `area "${plan.area.name}" has other member device(s) — ${plan.area.otherMembers.join(", ")} — ` +
-        `and its offset is shared with them, so changing it here would re-bucket their days too`,
-    );
-
   const head = {
     device: {
       id,
@@ -119,9 +117,13 @@ export async function POST(
     offset: { from: plan.currentOffsetMin, to: newOffsetMin },
     area: plan.area
       ? {
-          id: plan.area.id,
+          // `ar_…`, not the raw uuid: every other v4 surface speaks the opaque id, and the CLI
+          // prints this straight into the `PATCH /api/v4/areas/{id}` it suggests.
+          id: Area.encode(plan.area.id),
           name: plan.area.name,
-          offsetMin: plan.area.offsetMin,
+          dayOffsetMin: plan.area.dayOffsetMin,
+          otherDevices: plan.area.otherDevices,
+          divergesAfter: plan.area.divergesAfter,
         }
       : null,
     span: plan.span,
@@ -130,8 +132,8 @@ export async function POST(
   };
 
   // A dry run resolves and reports, and touches nothing. Everything above — the device exists, you
-  // may write it, the offset is well-formed and different, the area is private to this device — has
-  // already been checked, which is the part worth learning before committing to the delete.
+  // may write it, the offset is well-formed and different — has already been checked, and `area`
+  // carries the divergence the operator should see before committing to the delete.
   if (body.dryRun === true)
     return NextResponse.json({
       ...head,

@@ -214,8 +214,16 @@ async function main() {
           // `default_system_id` was dropped in P6 (migration 0022) — the landing default is now
           // the dashboard. Referencing the dead column here silently failed every sync run (the
           // step was continue-on-error) until this was fixed + the mask removed in the workflow.
+          //
+          // 🛑 EVERY preference the `users` row carries has to be listed, and this list has been
+          // short once already. `default_area_id` (migration 0073) is where a newly onboarded
+          // device is placed; leaving it behind means the dev login has no default even though the
+          // prod user does, so connecting a device on dev mints yet another area instead of using
+          // the site the sync just re-owned to them. It is also how the sync REPAIRS a default the
+          // areas realignment leg blanked (that FK is ON DELETE SET NULL).
           `UPDATE users u
               SET default_dashboard_id = f.default_dashboard_id,
+                  default_area_id      = f.default_area_id,
                   updated_at           = now()
              FROM users f
             WHERE u.clerk_user_id = $1 AND f.clerk_user_id = $2`,

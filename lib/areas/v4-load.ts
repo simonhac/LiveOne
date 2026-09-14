@@ -22,10 +22,10 @@ import type { AreaDetailSource } from "@/lib/areas/v4-shapes";
 /**
  * An area's members, in membership order, each with its own capability set.
  *
- * Membership arrives as device ids (slice H), so the `dv_` TypeIDs come straight off the membership
- * rows — no `legacy_handles` round trip, and no `device-mapping-incomplete` 503, since
- * `area_members.device_id` FKs `devices.id`. The rid hop remains only because `devices`' config columns
- * and `capabilitiesForDevice` are still int-keyed (Phase 13 removes it).
+ * Membership arrives as device ids (slice H), so the `dv_` TypeIDs come straight off the `devices`
+ * rows — no `legacy_handles` round trip, and no `device-mapping-incomplete` 503, since the ids ARE
+ * `devices.id`. The rid hop remains only because `devices`' config columns and
+ * `capabilitiesForDevice` are still int-keyed (Phase 13 removes it).
  */
 export async function loadAreaMembers(
   areaUuid: string,

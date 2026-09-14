@@ -187,6 +187,13 @@ export async function resolveMemberDeviceRefs(
   userId: string,
   isAdmin: boolean,
   refs: unknown,
+  /**
+   * The area the list is being applied to, when it exists. Threaded through to
+   * `assertDevicesRehomable` for one rule only: a `vendor='helper'` member may be RE-STATED in the
+   * area it already occupies (which every full replace does) but not moved into a different one.
+   * Omitted by `POST /api/v4/areas`, where there is no target yet and any named helper IS a move.
+   */
+  targetAreaId?: string,
 ): Promise<MemberRefsResult> {
   if (!Array.isArray(refs)) {
     return {
@@ -235,7 +242,12 @@ export async function resolveMemberDeviceRefs(
   }
   let authorized: AuthorizedPlacements;
   try {
-    authorized = await assertDevicesRehomable(userId, isAdmin, systemIds);
+    authorized = await assertDevicesRehomable(
+      userId,
+      isAdmin,
+      systemIds,
+      targetAreaId,
+    );
   } catch (err) {
     if (err instanceof AreaAccessError)
       return { ok: false, status: 403, message: err.message };

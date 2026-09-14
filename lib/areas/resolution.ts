@@ -153,7 +153,7 @@ export async function resolveAreaSlots(
     .limit(1);
   if (!area) throw new Error(`Area not found: ${areaUuid}`);
   // Membership is uuid-keyed since slice H; the device HANDLE is not, so convert. The `!` is safe
-  // by the `area_members.device_id` FK.
+  // because the ids are `devices.id` values read out of `devices`.
   const memberDeviceIds = await getAreaMemberDeviceIds(areaUuid);
   const memberRids = await DeviceRegistry.ridsForDevices(memberDeviceIds);
   const members = memberDeviceIds.map((id) => memberRids.get(id)!);

@@ -4,8 +4,9 @@
  * shape). Phase C's resolver consumes that membership to default each member's own points (with
  * `area_bindings` as an override), so there is no single-vs-multi special-case.
  *
- * 🛑 `area_members` is no longer read OR written by this module. The table survives only until
- * migration 0072 drops it, holding the pre-flip membership as a frozen record.
+ * 🛑 `area_members` is GONE (migration 0074) and so is `ordinal`. It was the many-to-many
+ * predecessor, frozen from Stage 4 and dropped once nothing had read it for a release; the history
+ * below describes how membership got here, not where it lives.
  *
  * Config-v4 Phase 12 slice H moved this off `area_devices` (`(area_id, system_id int)`, no FK) onto
  * `area_members` (`(area_id, device_id uuid)` → `devices.id`). Membership is now stated in device uuids:
@@ -36,8 +37,8 @@ type Exec = Db | Tx;
 /**
  * The member device ids of an Area, ordered helper-last then by `devices.rid`. Empty if none.
  *
- * 🛑 READS `devices.area_id` (migration 0071), not `area_members`, which as of Stage 4 nothing writes
- * either. The table holds the pre-flip membership as a frozen record until migration 0072 drops it.
+ * 🛑 READS `devices.area_id` (migration 0071). Its predecessor `area_members` was dropped by
+ * migration 0074.
  *
  * The ordering reproduces the old `(area_members.ordinal, devices.rid)` exactly, and that was checked
  * rather than assumed: every helper carried `ordinal = 99` so that it sorted last, and no other

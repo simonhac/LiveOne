@@ -20,6 +20,8 @@ import { Area, Device } from "@/lib/ids";
 const OWNER = "user_owner";
 const OTHER = "user_other";
 const DASHBOARD_ID = "db_00000000000000000000000001";
+/** The same id as a raw uuid — what the referential-integrity gate's uuid columns need. */
+const DASHBOARD_UUID = "00000000-0000-0000-0000-000000000001";
 
 jest.mock("@/lib/api-auth", () => ({
   requireAuth: jest.fn(),
@@ -414,12 +416,16 @@ describe("DELETE /api/v4/dashboards/{id}", () => {
 
   // The FKs clean up (grants + share tokens CASCADE, users.default_dashboard_id SET NULL) and tell
   // nobody. This is the only delete in the tree that is HARD, so the gate is the only warning.
-  it("consults the referential-integrity gate first", async () => {
+  it("consults the referential-integrity gate first, with the UUID", async () => {
     await DELETE(req("DELETE"), params);
+    // 🛑 The raw uuid, not `DASHBOARD_ID`'s `db_…` form — this assertion asserted the TypeID and so
+    // pinned a bug rather than a contract. `refuseIfReliedUpon` queries `users.default_dashboard_id`
+    // and `dashboard_grants.dashboard_id`, both `uuid` columns, so the TypeID made every delete a
+    // 22P02 → 500. Nothing here caught it because the gate is mocked; `v4-surface-smoke` did.
     expect(mockRelied).toHaveBeenCalledWith(
       expect.anything(),
       "dashboard",
-      DASHBOARD_ID,
+      DASHBOARD_UUID,
     );
   });
 

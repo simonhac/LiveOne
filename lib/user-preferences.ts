@@ -1,10 +1,13 @@
 import { eq } from "drizzle-orm";
 import { clerkClient } from "@clerk/nextjs/server";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
-import { users as pgUsers } from "@/lib/db/planetscale/schema";
+import {
+  areas as pgAreas,
+  users as pgUsers,
+} from "@/lib/db/planetscale/schema";
 import { getDashboard } from "@/lib/dashboard/dashboards";
 import { dashboardHref } from "@/lib/dashboard/href";
-import { Dashboard } from "@/lib/ids";
+import { Area, Dashboard } from "@/lib/ids";
 
 /**
  * User preferences (the `users` config table) — Postgres only.
@@ -12,11 +15,21 @@ import { Dashboard } from "@/lib/ids";
  * The default landing page is a composition **dashboard** (`default_dashboard_id` → `/dashboard/{id}`).
  * The legacy per-device default (`default_system_id`) was retired in P6: a device is no longer a
  * default target — you star a dashboard, and every area already has one.
+ *
+ * The SECOND default (`default_area_id`, migration 0073) is unrelated to landing: it is where a
+ * newly onboarded device is PLACED, and it exists because retiring the eagerly-minted area-of-one
+ * removed the structural answer to that question (`lib/areas/onboarding.ts`). It self-populates
+ * from a user's first area, which is enough for a new account and nothing at all for an existing
+ * one — an owner who already has several areas never gets a default written for them, because
+ * guessing which of their sites a new inverter belongs to would be worse than asking. So it is
+ * settable here.
  */
 
 export interface UserPreferences {
   clerkUserId: string;
   defaultDashboardId: string | null; // dashboards.id (uuid)
+  /** `areas.id` (uuid) — where a newly onboarded device of this user's is placed. */
+  defaultAreaId: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -39,6 +52,9 @@ export async function getOrCreateUserPreferences(
       defaultDashboardId: existing[0].defaultDashboardId
         ? Dashboard.encode(existing[0].defaultDashboardId)
         : null,
+      defaultAreaId: existing[0].defaultAreaId
+        ? Area.encode(existing[0].defaultAreaId)
+        : null,
       createdAt: existing[0].createdAt,
       updatedAt: existing[0].updatedAt,
     };
@@ -58,6 +74,9 @@ export async function getOrCreateUserPreferences(
     clerkUserId: newUser.clerkUserId,
     defaultDashboardId: newUser.defaultDashboardId
       ? Dashboard.encode(newUser.defaultDashboardId)
+      : null,
+    defaultAreaId: newUser.defaultAreaId
+      ? Area.encode(newUser.defaultAreaId)
       : null,
     createdAt: newUser.createdAt,
     updatedAt: newUser.updatedAt,
@@ -84,6 +103,26 @@ async function writeDefaultDashboard(
 }
 
 /**
+ * The authorization half of {@link setDefaultDashboardById}, without the write.
+ *
+ * Exists so `PATCH /api/user/preferences` can validate EVERY field before writing ANY of them: it
+ * can set the default area and the default dashboard in one request, and those are two separate
+ * UPDATEs, so a dashboard that turns out to be unknown or not-yours must be discovered before the
+ * area is committed rather than after. Same predicate as the writer, deliberately — a second
+ * check that could disagree with the one that matters is worse than no check.
+ */
+export async function checkDefaultDashboard(
+  clerkUserId: string,
+  dashboardId: string,
+): Promise<{ success: boolean; error?: string }> {
+  const dash = await getDashboard(dashboardId);
+  if (!dash) return { success: false, error: "not_found" };
+  if (dash.ownerClerkUserId !== clerkUserId)
+    return { success: false, error: "Not your dashboard" };
+  return { success: true };
+}
+
+/**
  * Set the user's default landing dashboard by its id. Owner-only. Lands the `/dashboard` redirect on
  * `/dashboard/id/{id}`.
  */
@@ -92,12 +131,87 @@ export async function setDefaultDashboardById(
   dashboardId: string,
 ): Promise<{ success: boolean; error?: string }> {
   await getOrCreateUserPreferences(clerkUserId);
-  const dash = await getDashboard(dashboardId);
-  if (!dash) return { success: false, error: "not_found" };
-  if (dash.ownerClerkUserId !== clerkUserId) {
-    return { success: false, error: "Not your dashboard" };
-  }
+  const check = await checkDefaultDashboard(clerkUserId, dashboardId);
+  if (!check.success) return check;
   await writeDefaultDashboard(clerkUserId, dashboardId);
+  return { success: true };
+}
+
+/**
+ * Set BOTH defaults in one statement.
+ *
+ * 🛑 Exists so a combined `PATCH /api/user/preferences` cannot half-apply. Two sequential writers
+ * could not deliver that however carefully the route validated first: the dashboard is re-resolved
+ * inside `setDefaultDashboardById`, so another request deleting it between the preflight and the
+ * write still produced a 404 with the AREA already committed. One UPDATE, one outcome.
+ *
+ * Both values must already be validated — this writes what it is given.
+ */
+export async function writeBothDefaults(
+  clerkUserId: string,
+  areaUuid: string | null,
+  dashboardId: string | null,
+): Promise<void> {
+  await getOrCreateUserPreferences(clerkUserId);
+  await requirePlanetscaleDb()
+    .update(pgUsers)
+    .set({
+      defaultAreaId: areaUuid,
+      defaultDashboardId: dashboardId
+        ? Dashboard.toUuidOrNull(dashboardId)
+        : null,
+      updatedAt: new Date(),
+    })
+    .where(eq(pgUsers.clerkUserId, clerkUserId));
+}
+
+/**
+ * Validate an `ar_` ref as a default-area target: owned by this user and active. Returns the raw
+ * uuid to write, or a refusal. Split from the writer so a combined PATCH can check every field
+ * before writing any.
+ */
+export async function checkDefaultArea(
+  clerkUserId: string,
+  areaId: string | null,
+): Promise<
+  { success: true; uuid: string | null } | { success: false; error: string }
+> {
+  if (areaId === null) return { success: true, uuid: null };
+  const uuid = Area.toUuidOrNull(areaId);
+  if (!uuid) return { success: false, error: "not_found" };
+  const [area] = await requirePlanetscaleDb()
+    .select({ owner: pgAreas.ownerUserId, status: pgAreas.status })
+    .from(pgAreas)
+    .where(eq(pgAreas.id, uuid))
+    .limit(1);
+  // Unknown and not-yours collapse into one answer, as everywhere else: a well-formed `ar_` string
+  // is not permission to learn whether it names anything.
+  if (!area || area.owner !== clerkUserId)
+    return { success: false, error: "not_found" };
+  if (area.status !== "active")
+    return { success: false, error: "That area is not active" };
+  return { success: true, uuid };
+}
+
+/**
+ * Set (or clear, with `null`) the area a newly onboarded device of this user's is placed in.
+ *
+ * Owner-only, and re-checked here rather than trusted from the wire: the area is where the next
+ * device this user connects will LAND, so pointing it at somebody else's site would place their
+ * device in it. `status` is checked too — `resolveOnboardingArea` treats an archived default as
+ * absent, so accepting one would be accepting something that silently does nothing.
+ */
+export async function setDefaultArea(
+  clerkUserId: string,
+  areaId: string | null,
+): Promise<{ success: boolean; error?: string }> {
+  await getOrCreateUserPreferences(clerkUserId);
+  const check = await checkDefaultArea(clerkUserId, areaId);
+  if (!check.success) return check;
+  await requirePlanetscaleDb()
+    .update(pgUsers)
+    .set({ defaultAreaId: check.uuid, updatedAt: new Date() })
+    .where(eq(pgUsers.clerkUserId, clerkUserId));
   return { success: true };
 }
 

@@ -417,7 +417,8 @@ export class PointManager {
 
     // No bindings → default to the union of the area's member devices' own points.
     // Membership is uuid-keyed since slice H; `point_info.system_id` is not, so convert. The `!` is
-    // safe by `area_members.device_id`'s FK into `devices` — see DeviceRegistry.ridsForDevices.
+    // safe because the ids are `devices.id` values read out of `devices` — see
+    // DeviceRegistry.ridsForDevices.
     const memberIds = await getAreaMemberDeviceIds(area.id);
     const memberRids = await DeviceRegistry.ridsForDevices(memberIds);
     const memberSystemIds = memberIds.map((id) => memberRids.get(id)!);

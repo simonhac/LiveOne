@@ -364,8 +364,8 @@ export async function claimExerciseSlot(
  * never express. It is NOT an authorization check on its own — the caller's read access to the
  * derivation's device set is checked beside it, in `checkReferences`.
  *
- * Membership is `devices.area_id` since migration 0071 — one column on the device, not a row in
- * `area_members` — so "is a member of" is now a property of the device row itself.
+ * Membership is `devices.area_id` since migration 0071 — one column on the device, not a row in a
+ * join table — so "is a member of" is a property of the device row itself.
  */
 export async function derivationBelongsToArea(
   derivationUuid: string,

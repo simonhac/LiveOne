@@ -76,15 +76,16 @@ describe("preview readings transfer", () => {
       expect(order).toContain(child);
       expect(order.indexOf(parent)).toBeLessThan(order.indexOf(child));
     };
-    before("areas", "devices"); // devices.primary_area_id
+    before("areas", "devices"); // devices.area_id
     before("devices", "points"); // points.device_id
     before("devices", "device_state"); // device_state.device_id
     before("devices", "legacy_handles"); // legacy_handles.device_id
-    before("areas", "area_members");
-    before("devices", "area_members");
+    // `before("*", "area_members")` retired with migration 0074: membership is `devices.area_id`,
+    // a column on a row already ordered after `areas`.
     // `before("devices", "point_info")` retired: migration 0051 dropped both tables.
     before("areas", "area_bindings"); // area_bindings.area_id
-    before("dashboards", "users"); // users.default dashboard
+    before("dashboards", "users"); // users.default_dashboard_id
+    before("areas", "users"); // users.default_area_id (migration 0073)
     before("points", "point_readings"); // the hot-table rid FK — the copy this fix unblocks
     before("sessions", "point_readings");
     // Config first, then the time-series slice.
