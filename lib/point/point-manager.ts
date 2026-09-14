@@ -20,6 +20,7 @@ import { PointInfo } from "@/lib/point/point-info";
 import {
   SeriesInfo,
   createSeriesInfos,
+  isWithheldFromListing,
   getSeriesPath,
 } from "@/lib/point/series-info";
 import { SystemIdentifier } from "@/lib/identifiers";
@@ -319,15 +320,20 @@ export class PointManager {
 
       // Determine aggregation fields based on metric type
       let aggregationFields: string[];
-      let onDemandFields: ReadonlySet<string> | undefined;
+      let onDemandFields:
+        | ReadonlyMap<string, ReadonlySet<"5m" | "1d">>
+        | undefined;
       if (point.metricType === "energy") {
         // Energy: delta (+ quality for data source tracking), and the raw counter behind them —
         // see `getSupportedIntervals`. `last` is ON DEMAND: reachable by name, never offered.
         aggregationFields = ["delta", "quality", "last"];
         onDemandFields = PointManager.ENERGY_ON_DEMAND;
       } else if (point.metricType === "soc") {
-        // SOC: last for 5m, avg/min/max/last for 1d (+ quality)
+        // SOC: last + quality at 5m, and avg/min/max at BOTH — but on demand at 5m only, where
+        // `last` is the answer and three more series per soc point would be listing noise fleet
+        // wide. At 1d they are ordinary listed series, exactly as they always have been.
         aggregationFields = ["last", "avg", "min", "max", "quality"];
+        onDemandFields = PointManager.SOC_ON_DEMAND;
       } else {
         // Power and other: avg/min/max/last (+ quality)
         aggregationFields = ["avg", "min", "max", "last", "quality"];
@@ -441,11 +447,27 @@ export class PointManager {
    * @returns Series matching the criteria
    */
   /**
-   * Series an energy point HAS but does not advertise. See `SeriesInfo.onDemand`.
+   * Series an energy point HAS but does not advertise, and where. See
+   * `SeriesInfo.onDemandIntervals` — a counter's `.last` is withheld at every interval.
    */
-  private static readonly ENERGY_ON_DEMAND: ReadonlySet<string> = new Set([
-    "last",
-  ]);
+  private static readonly ENERGY_ON_DEMAND: ReadonlyMap<
+    string,
+    ReadonlySet<"5m" | "1d">
+  > = new Map([["last", new Set(["5m", "1d"] as const)]]);
+
+  /**
+   * A SoC point's `avg`/`min`/`max` are withheld at 5m ONLY — listed at 1d, reachable by name at
+   * 5m. `agg_5m.avg` is the column the battery-provenance fold reads, so it has to be askable.
+   */
+  private static readonly SOC_ON_DEMAND: ReadonlyMap<
+    string,
+    ReadonlySet<"5m" | "1d">
+  > = new Map(
+    (["avg", "min", "max"] as const).map((f) => [
+      f,
+      new Set(["5m"] as const) as ReadonlySet<"5m" | "1d">,
+    ]),
+  );
 
   async getSeriesForDevice(
     handle: number,
@@ -487,12 +509,18 @@ export class PointManager {
       });
     } else {
       // 🛑 No patterns means "what does this device have?", and an ON DEMAND series is not part of
-      // that answer — it is reachable only by asking for it by name. Today that is an energy
-      // counter's `.last`: a real stored value, and the wrong one for almost every question, since
-      // `.delta` is the quantity an energy point means and a lifetime counter renders as a straight
-      // line climbing to 200 MWh. Filtering here rather than at the call sites keeps "unasked-for"
-      // a property of the series rather than something each consumer has to remember.
-      seriesInfos = seriesInfos.filter((series) => !series.onDemand);
+      // that answer — it is reachable only by asking for it by name. An energy counter's `.last`:
+      // a real stored value, and the wrong one for almost every question, since `.delta` is the
+      // quantity an energy point means and a lifetime counter renders as a straight line climbing
+      // to 200 MWh. A SoC `avg`/`min`/`max` at 5m: real, and noise beside `last`.
+      //
+      // The judgement is per-INTERVAL (`isWithheldFromListing`), which is why the soc stats keep
+      // their long-standing place in the 1d listing. Filtering here rather than at the call sites
+      // keeps "unasked-for" a property of the series rather than something each consumer has to
+      // remember.
+      seriesInfos = seriesInfos.filter(
+        (series) => !isWithheldFromListing(series, interval),
+      );
     }
 
     return seriesInfos;
