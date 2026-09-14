@@ -144,8 +144,11 @@ export async function POST(request: NextRequest) {
       location,
       memberSystemIds: members.systemIds,
     });
-    // 🛑 Membership, KV and the point-series cache all key off this — never return before it runs.
+    // 🛑 Membership, KV and the point-series cache all key off this — never return before it runs,
+    // and refresh the areas the new members were taken OUT of too, or each goes on serving a device
+    // it no longer holds.
     await refreshAreaServing(created.id);
+    for (const other of created.vacatedAreaIds) await refreshAreaServing(other);
     return NextResponse.json(
       { id: Area.encode(created.id), legacySystemId: created.legacySystemId },
       { status: 201 },

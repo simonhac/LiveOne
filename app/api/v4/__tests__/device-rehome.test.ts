@@ -204,11 +204,20 @@ describe("PATCH /api/v4/devices/{id}", () => {
     expect(mockVisible).not.toHaveBeenCalled();
   });
 
-  it("404s an unreadable device the same as an unknown one", async () => {
-    mockVisible.mockResolvedValue([]);
-    expect((await call({ areaId: AREA })).status).toBe(404);
+  it("404s only when there is NO SUCH DEVICE", async () => {
     mockDb.mockReturnValue(selectChain([]) as any);
     expect((await call({ areaId: AREA })).status).toBe(404);
+  });
+
+  it("🛑 does NOT gate on the picker's visible set", async () => {
+    // `devicesVisibleByUser` is owned ∪ public ∪ granted, ACTIVE only — the wrong question for this
+    // verb in three ways, each of which 404'd an entitled caller: an admin is not in it; an area
+    // owner with CUSTODY of someone else's device is not in it (custody is precisely what the picker
+    // cannot express); and a DISABLED device is filtered out, so a device could not be re-homed
+    // exactly when you most want to tidy it away. `assertDevicesRehomable` is the whole
+    // authorization. Found in review.
+    mockVisible.mockResolvedValue([]);
+    expect((await call({ areaId: AREA })).status).toBe(200);
   });
 
   it("propagates a 401 from requireAuth before reading anything", async () => {

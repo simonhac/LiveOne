@@ -8,7 +8,7 @@
  * can grow from one member to many WITHOUT ever re-keying (see `lib/areas/handles.ts` and
  * docs/architecture/areas-and-dashboards.md).
  */
-import { and, asc, eq, inArray, max, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull } from "drizzle-orm";
 import { uuidv7 } from "uuidv7";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import { isUniqueViolationOn } from "@/lib/db/pg-error";
@@ -150,10 +150,13 @@ export interface CreateAreaInput {
  */
 export async function createArea(
   input: CreateAreaInput,
-): Promise<{ id: string; legacySystemId: number }> {
+): Promise<{ id: string; legacySystemId: number; vacatedAreaIds: string[] }> {
   const db = requirePlanetscaleDb();
   const id = uuidv7();
   const members = [...new Set(input.memberSystemIds)];
+  // The areas the new members LEFT — the caller refreshes serving for each, or they go on serving a
+  // device they no longer hold.
+  const vacatedAreas = new Set<string>();
 
   for (let attempt = 0; attempt < 5; attempt++) {
     const handle = await allocateAreaHandle(db);
@@ -184,17 +187,19 @@ export async function createArea(
           for (const systemId of members) {
             deviceIds.push(await DeviceRegistry.uuidForRid(systemId, tx));
           }
-          // 🛑 A MOVE. Each named device leaves whatever area it was in — its eagerly-minted
-          // area-of-one, normally, but possibly a site area someone else owns, which is why the route
-          // runs `assertDevicesRehomable` before it gets here. Ordinal is gone with the membership row.
-          await tx
-            .update(devices)
-            .set({ areaId: id, updatedAt: new Date() })
-            .where(inArray(devices.id, deviceIds));
+          // 🛑 A MOVE, and it cleans up BOTH ends. Each named device leaves whatever area it was in
+          // — its eagerly-minted area-of-one, normally, but possibly a site area someone else owns,
+          // which is why the route runs `assertDevicesRehomable` before it gets here — and that
+          // area's bindings onto its points go with it. Ordinal is gone with the membership row.
+          for (const vacated of await moveDevicesInto(tx, id, deviceIds))
+            vacatedAreas.add(vacated);
         }
       });
-      return { id, legacySystemId: handle };
+      return { id, legacySystemId: handle, vacatedAreaIds: [...vacatedAreas] };
     } catch (err) {
+      // A retry re-runs the whole transaction, so anything the aborted attempt recorded is not a fact
+      // about the database any more.
+      vacatedAreas.clear();
       if (err instanceof HandleAreaConflictError) continue; // lost a handle race — re-allocate
       if (isUniqueViolationOn(err, AREA_ALIAS_UNIQUE))
         throw new AreaAliasTakenError();
@@ -245,22 +250,111 @@ export async function updateAreaMeta(
 }
 
 /**
- * Move a device INTO an area. Idempotent (it is an UPDATE of one column).
+ * Move a device INTO an area. Idempotent (a device already there is left alone entirely).
  *
- * Named `addMember` for its callers' sake, but it is a re-home: the device leaves whatever area it was
- * in. The `max(ordinal)` read and its transaction are gone with `area_members` — with one area per
- * device, intra-area order is presentation, reproduced by `getAreaMemberDeviceIds`' sort.
+ * Named `addMember` for its callers' sake, but it is a re-home: the device leaves whatever area it
+ * was in, and that area's bindings onto its points go with it. Returns the area it left, if any, so
+ * the caller can refresh serving at both ends.
  */
 export async function addMember(
   areaId: string,
   systemId: number,
-): Promise<void> {
+): Promise<string[]> {
   const db = requirePlanetscaleDb();
   const deviceId = await DeviceRegistry.uuidForRid(systemId, db);
-  await db
-    .update(devices)
-    .set({ areaId, updatedAt: new Date() })
-    .where(eq(devices.id, deviceId));
+  return db.transaction(async (tx) => [
+    ...(await moveDevicesInto(tx, areaId, [deviceId])),
+  ]);
+}
+
+/**
+ * Delete every binding of `areaId` whose point lives on `deviceUuid` — "this device's bindings in
+ * this area", the one predicate every membership change needs.
+ *
+ * 🛑 It has to run on the SOURCE side of a move as well as the destination side. A device is in at
+ * most one area, so pulling it into B takes it out of A — and A's `area_bindings` rows onto its
+ * points survive that move, because nothing about them mentions membership. They are not inert: the
+ * resolver treats bindings as the OVERRIDE that SELECTS an area's points, so A would go on serving a
+ * device it no longer holds, with no error and nothing to grep for. Found in review; the first cut
+ * of this change cleaned only the departing side.
+ *
+ * Addressed through `points.device_id` since slice E PR 2a — no `devices.rid` hop.
+ */
+async function detachBindings(
+  tx: Parameters<Parameters<Db["transaction"]>[0]>[0],
+  areaId: string,
+  deviceUuid: string,
+): Promise<void> {
+  await tx
+    .delete(areaBindings)
+    .where(
+      and(
+        eq(areaBindings.areaId, areaId),
+        inArray(
+          areaBindings.pointUid,
+          tx
+            .select({ id: points.id })
+            .from(points)
+            .where(eq(points.deviceId, deviceUuid)),
+        ),
+      ),
+    );
+}
+
+/**
+ * Where each of these devices is RIGHT NOW — read once, so a move can clean up the area each one is
+ * actually leaving. Only devices that have an area appear.
+ */
+async function currentAreaOf(
+  exec: Db | Parameters<Parameters<Db["transaction"]>[0]>[0],
+  deviceUuids: string[],
+): Promise<Map<string, string>> {
+  if (deviceUuids.length === 0) return new Map();
+  const rows = await exec
+    .select({ id: devices.id, areaId: devices.areaId })
+    .from(devices)
+    .where(inArray(devices.id, deviceUuids));
+  return new Map(
+    rows
+      .filter((r): r is typeof r & { areaId: string } => r.areaId != null)
+      .map((r) => [r.id, r.areaId]),
+  );
+}
+
+/**
+ * Move `deviceUuids` into `areaId`, detaching each from whatever area it was in — bindings and all.
+ * Returns the areas they LEFT, so the caller can refresh serving at both ends.
+ *
+ * 🛑 The UPDATE is scoped on the area the device was read in (`area_id IS NOT DISTINCT FROM …`), so a
+ * device that moved between the read and the write is left alone rather than clobbered. Without it a
+ * caller whose custody lapsed mid-request would still take the device.
+ */
+async function moveDevicesInto(
+  tx: Parameters<Parameters<Db["transaction"]>[0]>[0],
+  areaId: string,
+  deviceUuids: string[],
+): Promise<Set<string>> {
+  const vacated = new Set<string>();
+  if (deviceUuids.length === 0) return vacated;
+  const before = await currentAreaOf(tx, deviceUuids);
+  for (const uuid of deviceUuids) {
+    const from = before.get(uuid) ?? null;
+    if (from === areaId) continue; // already here — no detach, no write
+    if (from) {
+      await detachBindings(tx, from, uuid);
+      vacated.add(from);
+    }
+    await tx
+      .update(devices)
+      .set({ areaId, updatedAt: new Date() })
+      .where(
+        and(
+          eq(devices.id, uuid),
+          from === null ? isNull(devices.areaId) : eq(devices.areaId, from),
+        ),
+      );
+  }
+  return vacated;
 }
 
 /**
@@ -286,24 +380,13 @@ export async function removeMember(
   if (!target) return; // not a member — no-op
   const deviceUuid = Device.toUuid(target);
   await db.transaction(async (tx) => {
-    // "Every binding whose point lives on the departing device", by uuid since slice E PR 2a.
-    // `deviceUuid` is already in hand, so this addresses `points.device_id` DIRECTLY and needs no
-    // `devices.rid` hop at all — one fewer legacy-id round trip than the predicate it replaces.
+    await detachBindings(tx, areaId, deviceUuid);
+    // 🛑 Scoped on THIS area. Membership was read before the transaction opened, so a device that has
+    // since moved elsewhere must not be orphaned by a removal aimed at the area it has already left.
     await tx
-      .delete(areaBindings)
-      .where(
-        and(
-          eq(areaBindings.areaId, areaId),
-          inArray(
-            areaBindings.pointUid,
-            tx
-              .select({ id: points.id })
-              .from(points)
-              .where(eq(points.deviceId, deviceUuid)),
-          ),
-        ),
-      );
-    await setDeviceArea(tx, target, null);
+      .update(devices)
+      .set({ areaId: null, updatedAt: new Date() })
+      .where(and(eq(devices.id, deviceUuid), eq(devices.areaId, areaId)));
   });
 }
 
@@ -341,22 +424,21 @@ export async function rehomeDevice(
   if (fromAreaId === toAreaId) return { fromAreaId, moved: false };
 
   await db.transaction(async (tx) => {
-    if (fromAreaId)
-      await tx
-        .delete(areaBindings)
-        .where(
-          and(
-            eq(areaBindings.areaId, fromAreaId),
-            inArray(
-              areaBindings.pointUid,
-              tx
-                .select({ id: points.id })
-                .from(points)
-                .where(eq(points.deviceId, deviceUuid)),
-            ),
-          ),
-        );
-    await setDeviceArea(tx, deviceId, toAreaId);
+    if (fromAreaId) await detachBindings(tx, fromAreaId, deviceUuid);
+    // 🛑 Scoped on the area the device was read in. The authorization above was decided against THAT
+    // state, so a device that moved in between must not be taken on the strength of a custody claim
+    // that has since lapsed — the write becomes a no-op instead.
+    await tx
+      .update(devices)
+      .set({ areaId: toAreaId, updatedAt: new Date() })
+      .where(
+        and(
+          eq(devices.id, deviceUuid),
+          fromAreaId === null
+            ? isNull(devices.areaId)
+            : eq(devices.areaId, fromAreaId),
+        ),
+      );
   });
   return { fromAreaId, moved: true };
 }
@@ -378,7 +460,9 @@ export async function rehomeDevice(
  *
  * Members that leave become AMBIENT (`area_id = NULL`), not deleted, and take their now-orphaned
  * bindings with them, by exactly the predicate `removeMember` uses, so the resolver never
- * dereferences a point on a device that is no longer a member.
+ * dereferences a point on a device that is no longer a member. Members that JOIN are detached from
+ * their previous area the same way; the areas they vacated are RETURNED so the caller can refresh
+ * serving at both ends.
  *
  * 🛑 The removal leg is the half that fails SILENTLY when it is wrong, in BOTH directions: an
  * under-delete leaves a ghost member, an over-delete quietly drops bindings that should have survived,
@@ -405,7 +489,7 @@ export async function rehomeDevice(
 export async function replaceMembers(
   areaId: string,
   desired: DeviceId[],
-): Promise<void> {
+): Promise<string[]> {
   const wanted = [...new Set(desired)];
   if (wanted.length !== desired.length)
     throw new AreaValidationError("Duplicate member in the members list");
@@ -436,40 +520,28 @@ export async function replaceMembers(
   );
   const departing = candidates.filter((id) => !serverManaged.has(id));
 
-  await db.transaction(async (tx) => {
+  return db.transaction(async (tx) => {
     for (const leaving of departing) {
       const deviceUuid = Device.toUuid(leaving);
-      // Same predicate as `removeMember`: "every binding of this area whose point lives on the
-      // departing device", addressed through `points.device_id` (no `devices.rid` hop).
-      await tx
-        .delete(areaBindings)
-        .where(
-          and(
-            eq(areaBindings.areaId, areaId),
-            inArray(
-              areaBindings.pointUid,
-              tx
-                .select({ id: points.id })
-                .from(points)
-                .where(eq(points.deviceId, deviceUuid)),
-            ),
-          ),
-        );
-      await setDeviceArea(tx, leaving, null);
-    }
-    // One UPDATE for the whole wanted set, not an upsert per member: `area_id` is a column on the
-    // device, so "is a member" and "stays a member" are the same write and a member that stays is
-    // simply written its own value again.
-    if (wanted.length > 0)
+      await detachBindings(tx, areaId, deviceUuid);
+      // 🛑 Scoped on THIS area — `current` was read before the transaction opened, so a device that
+      // has since moved must not be orphaned by a removal aimed at the area it already left.
       await tx
         .update(devices)
-        .set({ areaId, updatedAt: new Date() })
-        .where(
-          inArray(
-            devices.id,
-            wanted.map((id) => Device.toUuid(id)),
-          ),
-        );
+        .set({ areaId: null, updatedAt: new Date() })
+        .where(and(eq(devices.id, deviceUuid), eq(devices.areaId, areaId)));
+    }
+    // 🛑 Joining members are a MOVE, not an assignment: each leaves whatever area it was in, and that
+    // area's bindings onto its points go with it. The first cut of this wrote `area_id` and stopped,
+    // which left the source area still SELECTING the device's points through bindings nothing had
+    // removed — serving a device it no longer held, silently.
+    return [
+      ...(await moveDevicesInto(
+        tx,
+        areaId,
+        wanted.map((id) => Device.toUuid(id)),
+      )),
+    ];
   });
 }
 

@@ -34,6 +34,17 @@ export interface ApiSession {
    * anyone who is not already entitled.
    */
   actingAsAdmin: boolean;
+  /**
+   * The headers every request of this session must carry — today, `x-liveone-admin` when and only
+   * when `--admin` was given and honoured.
+   *
+   * 🛑 Exposed because the WRITE verbs call `apiFetch` directly rather than through `get`, and the
+   * first cut of this attached the header inside `get` alone. The consequence was silent and exactly
+   * backwards: `liveone device area` and the two area-wiring PUTs would have been authorized as a
+   * plain user while the reads that chose their arguments were fleet-wide. Spread this into every
+   * `apiFetch` init a session makes.
+   */
+  headers: Record<string, string>;
   /** GET `path`, returning the parsed body. Non-2xx maps through `apiFetch`'s vocabulary. */
   get<T>(path: string, init?: Omit<ApiInit, "token" | "method">): Promise<T>;
 }
@@ -105,10 +116,15 @@ export async function withApiSession<T>(
       "the flag asks to exercise admin privilege, and this identity does not have it — the server would refuse it",
       "drop --admin, or check `liveone auth whoami` for which identity you are signed in as",
     );
+  // 🛑 Sent ONLY when asked, and only when the ask was honoured. The server gates it on the caller
+  // actually being an admin, so this is a request, not a claim.
+  const headers: Record<string, string> =
+    asked && isAdmin ? { [ADMIN_HEADER]: "1" } : {};
   const session: ApiSession = {
     origin,
     token: entry.token,
     actingAsAdmin: asked && isAdmin,
+    headers,
     get: async <T>(
       path: string,
       init?: Omit<ApiInit, "token" | "method">,
@@ -117,12 +133,7 @@ export async function withApiSession<T>(
         await apiFetch<T>(origin, path, {
           ...init,
           token: entry.token,
-          // 🛑 Sent ONLY when asked. The server gates it on the caller actually being an admin, so
-          // this is a request, not a claim.
-          headers: {
-            ...init?.headers,
-            ...(asked && isAdmin ? { [ADMIN_HEADER]: "1" } : {}),
-          },
+          headers: { ...headers, ...init?.headers },
         })
       ).body,
   };

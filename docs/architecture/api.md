@@ -125,11 +125,20 @@ Two deliberate non-participants:
   not own would mint a doc that fails its own later edit check. Admin widens what you may address,
   not what you may embed.
 
-⚠️ **Still on `isAdmin` rather than `actingAsAdmin`, and worth revisiting deliberately:**
-`requireDeviceAccess`'s `canRead`/`canWrite` and `loadAreaForOwner`'s write gate. Both predate this
-distinction and both are unconditional — so an admin still writes across owners without asking. That
-is pre-existing behaviour, not a regression, and narrowing it is its own change with its own blast
-radius. The web app's "act as admin" toggle belongs with it.
+🛑 **The rule as it stands: READS are opt-in, WRITES are not** — and the split is a staging decision,
+not a principle.
+
+Every cross-owner **read** now goes through `actingAsAdmin`. Every cross-owner **write** —
+`requireDeviceAccess`'s `canWrite`, `loadAreaForOwner`'s gate, `resolveMemberDeviceRefs` /
+`assertDevicesRehomable`, `PATCH /api/v4/devices/{id}` — still uses plain `isAdmin` and is
+unconditional, exactly as it was before. That is pre-existing behaviour rather than a regression, and
+it is uniform: no write route is the odd one out.
+
+Moving the write side onto the opt-in is the right end state and should be **one** change, because a
+half-converted write surface is worse than either end — an admin would be able to reach a route and
+then be refused halfway through it, for reasons that differ per route. The web app's "act as admin"
+toggle belongs with it: until that exists there is no way for a browser to send the header, so
+converting writes first would lock admins out of the UI.
 | `/api/data`                   | Live values for one subject (KV-backed) — the serving endpoint for card "now" values                                                                                                     |
 | `/api/history`                | All historical series, OpenNEM format, plus `?include=sankey` for the flow matrix. One endpoint for every window                                                                         |
 | `/api/device[s]/*`            | Per-device reads (points, series, run-periods) and device management (credentials, location, Tesla commands)                                                                             |

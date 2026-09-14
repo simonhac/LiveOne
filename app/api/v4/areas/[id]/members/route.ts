@@ -61,8 +61,9 @@ export async function PUT(
       { status: members.status },
     );
 
+  let vacated: string[] = [];
   try {
-    await replaceMembers(area.id, members.deviceIds);
+    vacated = await replaceMembers(area.id, members.deviceIds);
   } catch (err) {
     if (err instanceof AreaValidationError)
       return NextResponse.json({ error: err.message }, { status: 422 });
@@ -70,7 +71,12 @@ export async function PUT(
   }
   // 🛑 Membership IS the point set for a binding-less area, and the KV subscription registry is derived
   // from it — a PUT that skipped this would leave the area serving its OLD members' latest values.
+  //
+  // And it is BOTH ENDS: a joining member was taken out of some OTHER area, whose registry and
+  // point-series cache still name the device's points. Refreshing only this area leaves that one
+  // serving a device it no longer holds.
   await refreshAreaServing(area.id);
+  for (const other of vacated) await refreshAreaServing(other);
   return NextResponse.json({
     members: areaMembersWire(await loadAreaMembers(area.id)),
   });

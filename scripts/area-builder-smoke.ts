@@ -241,7 +241,9 @@ async function main() {
     // Put every borrowed device back where it was, FIRST. `devices.area_id` is ON DELETE SET NULL,
     // so deleting the throwaway area below would otherwise silently leave them ambient — and a
     // wrapped cleanup means the operator would see the smoke run pass while dev quietly lost its
-    // membership. Wrapped so a restore failure cannot impersonate a test failure, but LOUD.
+    // membership. Wrapped so a restore failure cannot impersonate a test failure — but LOUD, and it
+    // vetoes the delete below.
+    let restored = true;
     for (const [uuid, was] of originalArea) {
       try {
         await db
@@ -253,9 +255,20 @@ async function main() {
           `⚠️  could not restore device ${uuid} to area ${was}:`,
           err,
         );
+        restored = false;
       }
     }
-    if (areaId) {
+    // 🛑 A failed restore VETOES the area delete. `devices.area_id` is ON DELETE SET NULL, so
+    // removing the throwaway area would turn "a real device is parked somewhere clearly named" into
+    // "a real device is in no area at all" — losing the only remaining record of where it is.
+    // Leaving the area behind is ugly and recoverable; deleting it is tidy and is not.
+    if (!restored) {
+      console.error(
+        `\n❌ NOT deleting area ${areaId}: it still holds a borrowed device that could not be ` +
+          `restored. Put the device(s) back, then delete the area by hand.`,
+      );
+      process.exitCode = 1;
+    } else if (areaId) {
       // `legacy_handles.area_id` is NO ACTION, not CASCADE, so the handle row must go first — without
       // this the delete throws and, being in a `finally`, MASKS whatever the body actually failed on.
       // The cleanup is also wrapped: a cleanup failure must never impersonate a test failure.

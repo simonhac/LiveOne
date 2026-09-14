@@ -78,7 +78,7 @@ jest.mock("@/lib/areas/create", () => {
     AreaAccessError,
     createArea: jest.fn(),
     updateAreaMeta: jest.fn(),
-    replaceMembers: jest.fn(),
+    replaceMembers: jest.fn(async () => []),
     replaceBindings: jest.fn(),
     refreshAreaServing: jest.fn(),
     assertDevicesRehomable: jest.fn(),
@@ -173,7 +173,11 @@ beforeEach(() => {
   mockBindings.mockResolvedValue([]);
   mockRelied.mockResolvedValue({ forced: [] } as any);
   mockCaps.mockResolvedValue(new Set<string>() as any);
-  mockCreate.mockResolvedValue({ id: AREA_UUID, legacySystemId: 1000009 });
+  mockCreate.mockResolvedValue({
+    id: AREA_UUID,
+    legacySystemId: 1000009,
+    vacatedAreaIds: [],
+  });
   mockDeviceByHandle.mockResolvedValue(null as any);
   areaRow = {
     id: AREA_UUID,

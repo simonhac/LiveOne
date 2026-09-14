@@ -56,7 +56,7 @@ type DevicePatch = {
   config?: DeviceConfig | null;
   metadata?: unknown;
   commissionedOn?: string | null;
-  /** Placement — written to the device's area-of-one, the sole home for it. */
+  /** Placement — written to the device's CURRENT area (`devices.area_id`), the home for it. */
   location?: AreaLocation | null;
   timezoneOffsetMin?: number;
   displayTimezone?: string;
@@ -213,8 +213,15 @@ async function insertDeviceToPg(
         // newly-minted device landed AMBIENT — `area_id` NULL — because the only writer of membership
         // was the `area_members` insert this replaces. A new device is placed in its own area-of-one,
         // which is exactly the shape it had before the flip; Stage 5 stops minting that area at all,
-        // at which point a new device is genuinely unassigned and the UI has a bucket for it.
-        areaId,
+        // at which point every new device is genuinely unassigned and the UI has a bucket for it.
+        //
+        // 🛑 …EXCEPT an OWNERLESS device, which is born ambient and stays that way. An ownerless
+        // device is Home Assistant's `entry_type=SERVICE` — an OpenElectricity NEM region, consumed
+        // by every area in its state and contained by none — and `assertDevicesRehomable` refuses to
+        // place one. Minting it INSIDE an area would therefore trap it there: nothing, not even an
+        // admin, could take it out again. Found in review; `seed-devices.ts` is the caller that would
+        // have done it on the next region seeded.
+        areaId: data.ownerClerkUserId == null ? null : areaId,
         // Same value the area gets, which is what migration 0070's backfill wrote for every existing
         // device. IMMUTABLE from here: `point_readings_agg_1d` buckets on this, so re-homing a device
         // between areas must never move it. Only an explicit re-bucket op may change it.
@@ -321,8 +328,8 @@ async function createHelperDevice(params: {
  * Update a device, addressed by its integer handle.
  *
  * Splits across the two tables that now hold what `systems` used to: descriptive/config columns go to
- * `devices`, placement (tz + location) to the device's area-of-one. Both in ONE transaction, so a
- * placement edit can never be half-applied. `updatedAt` is always stamped to now; a caller-supplied one
+ * `devices`, placement (tz + location) to the device's CURRENT area (`devices.area_id`). Both in ONE
+ * transaction, so a placement edit can never be half-applied. `updatedAt` is always stamped to now; a caller-supplied one
  * is ignored.
  *
  * ⚠️ `areas.name` is deliberately NOT updated when `displayName` changes. The pre-1a mirror copied
@@ -367,13 +374,27 @@ async function updateDevice(
     await tx.update(devices).set(deviceSet).where(eq(devices.rid, systemId));
     if (Object.keys(areaSet).length > 0) {
       areaSet.updatedAt = new Date();
-      // config-v4 Phase 13 PR 5: the target area is located through `legacy_handles`, not the dropped
-      // `areas.legacy_system_id`. An UPDATE cannot join, so the handle is resolved to a uuid first —
-      // inside the SAME transaction, so it cannot race the `ensureAreaForHandle` in `ensureAreaOfOne`.
-      // A handle naming no area updates nothing, exactly as the old 0-row-match predicate did.
-      const targets = await DeviceRegistry.resolveHandle(systemId, tx);
-      if (targets?.areaId) {
-        await tx.update(areas).set(areaSet).where(eq(areas.id, targets.areaId));
+      // 🛑 The device's CURRENT area (`devices.area_id`) — the same one `DeviceConfigRegistry`
+      // resolves placement from. It used to be the handle's area (`legacy_handles`), i.e. the
+      // eagerly-minted area-of-one, and once the placement READ moved to `devices.area_id` that
+      // became a silent no-op: for any re-homed device, `PATCH /api/admin/devices/{id}/settings`
+      // would answer 200, echo the new timezone, and the next GET would return the old one. Found in
+      // review — the read moved and the write did not.
+      //
+      // An AMBIENT device has no area, so a placement edit on one updates nothing. That is correct
+      // rather than a gap: an ambient device has no place, which is what ambient means.
+      //
+      // ⚠️ The area may be SHARED. Editing a member's timezone or location through a per-device
+      // dialog now edits the site, for every device in it. That is the honest consequence of
+      // placement being an area property, and it is why the plan splits `DeviceSettingsDialog`;
+      // until it does, the surface is at least consistent with what it reads back.
+      const [current] = await tx
+        .select({ areaId: devices.areaId })
+        .from(devices)
+        .where(eq(devices.rid, systemId))
+        .limit(1);
+      if (current?.areaId) {
+        await tx.update(areas).set(areaSet).where(eq(areas.id, current.areaId));
       }
     }
   });

@@ -454,12 +454,21 @@ async function sweepScratchAreas(): Promise<number> {
       .select({ name: devicesTable.name, rid: devicesTable.rid })
       .from(devicesTable)
       .where(eq(devicesTable.areaId, row.id));
-    if (stranded.length > 0)
+    if (stranded.length > 0) {
+      // 🛑 DO NOT DELETE IT. `devices.area_id` is ON DELETE SET NULL, so removing this area would
+      // turn "a real device is parked in a clearly-named scratch area" into "a real device is in no
+      // area at all" — trading a visible, reversible state for an invisible one, and destroying the
+      // only remaining record of where the device currently is. Leaving the area is the conservative
+      // half of a bad situation: the devices keep a home, the name says what happened, and an
+      // operator can move them back and re-run.
       console.error(
-        `  ! ${stranded.length} device(s) were left in a crashed run's scratch area and are now ` +
-          `AMBIENT (in no area): ${stranded.map((d) => `${d.name} (${d.rid})`).join(", ")} — ` +
-          `put them back with \`liveone device area <device> <area> --apply\``,
+        `  ! NOT deleting scratch area ${row.id}: ${stranded.length} real device(s) are still in it ` +
+          `(${stranded.map((d) => `${d.name} (${d.rid})`).join(", ")}). A previous run died before ` +
+          `restoring them. Move each back with \`liveone device area <device> <area> --apply\`, ` +
+          `then re-run — this sweep will remove the empty area.`,
       );
+      continue;
+    }
     await db.delete(legacyHandles).where(eq(legacyHandles.areaId, row.id));
     await db.delete(areas).where(eq(areas.id, row.id)); // area_bindings cascade
   }
@@ -491,8 +500,9 @@ async function captureDeviceAreas(
 
 async function restoreBorrowedDevices(
   original: Map<string, string | null>,
-): Promise<void> {
+): Promise<boolean> {
   const db = requirePlanetscaleDb();
+  let allOk = true;
   for (const [uuid, areaId] of original) {
     try {
       await db
@@ -500,11 +510,15 @@ async function restoreBorrowedDevices(
         .set({ areaId })
         .where(eq(devicesTable.id, uuid));
     } catch (err) {
-      // Loud, never silent: a failed restore leaves a real device out of its real site on a shared
-      // database, and the run would otherwise print PASS over the top of it.
+      // 🛑 Loud, and it FAILS THE RUN. A restore that silently gave up would leave a real device out
+      // of its real site on a shared database while the script printed PASS over the top of it —
+      // and the teardown below would then delete the scratch area, turning a recoverable state into
+      // an unrecoverable one.
       console.error(`  ! could not restore device ${uuid} to ${areaId}:`, err);
+      allOk = false;
     }
   }
+  return allOk;
 }
 
 interface BindingFixture {
@@ -2764,8 +2778,9 @@ async function main(): Promise<void> {
     // ==================================================================
   } finally {
     // 🛑 BEFORE the area delete. `devices.area_id` is ON DELETE SET NULL, so deleting the scratch
-    // area after this would leave every borrowed device ambient — see `captureDeviceAreas`.
-    await restoreBorrowedDevices(borrowedAreas);
+    // area after this would leave every borrowed device ambient — see `captureDeviceAreas`. If it
+    // fails, the sweep below refuses to delete the area that still holds them, and the run fails.
+    if (!(await restoreBorrowedDevices(borrowedAreas))) failures++;
     await trash();
     // 🛑 The backstop, and it must run even when `trash()` reported success — that is the whole point.
     // A non-zero count here means the HTTP teardown believed it had deleted something it had not.

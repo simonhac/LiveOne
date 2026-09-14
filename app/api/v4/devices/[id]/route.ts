@@ -69,7 +69,9 @@ export async function GET(
   // The readable set is keyed by rid (the list route's `VisibleDevice.id`), so the row must resolve
   // first — but a missing row and an unreadable one exit through the SAME response (see header).
   const visible = row
-    ? await DeviceConfigRegistry.devicesVisibleByUser(auth.userId, true)
+    ? await DeviceConfigRegistry.devicesVisibleByUser(auth.userId, true, {
+        isAdmin: auth.actingAsAdmin,
+      })
     : [];
   if (!row || !visible.some((d) => d.id === row.rid))
     return NextResponse.json({ error: "Device not found" }, { status: 404 });
@@ -147,9 +149,12 @@ export async function GET(
  *
  * `areaId: null` needs only the first, since there is no destination to authorize.
  *
- * Unknown device and unreadable device are the SAME 404 as on `GET`, for the same reason (an
- * existence oracle over other owners' devices). 400 malformed id · 403 not yours · 404 unknown ·
- * 422 bad body / ambient device.
+ * 400 malformed id · 403 not yours to move · 404 no such device · 422 bad body / ambient device.
+ * Unlike `GET`, "not yours" is a 403 rather than being folded into the 404: this verb is addressed by
+ * a `dv_` id the caller already holds, and `assertDevicesRehomable` has to be able to say WHICH of
+ * its two legs refused — "you do not own it and it is not in an area you own" is actionable, and a
+ * bare 404 for a device you can see in a picker is not. That is the same split `requireDeviceAccess`
+ * makes (404 for no row, 403 for no access).
  */
 export async function PATCH(
   request: NextRequest,
@@ -194,13 +199,22 @@ export async function PATCH(
     .from(devicesTable)
     .where(eq(devicesTable.id, uuid))
     .limit(1);
-  const visible = row
-    ? await DeviceConfigRegistry.devicesVisibleByUser(auth.userId, true)
-    : [];
-  if (!row || !visible.some((d) => d.id === row.rid))
+  if (!row)
     return NextResponse.json({ error: "Device not found" }, { status: 404 });
 
+  // 🛑 `assertDevicesRehomable` is the WHOLE authorization here, and there is deliberately no
+  // `devicesVisibleByUser` precheck in front of it. That set is the PICKER's — owned ∪ public ∪
+  // dashboard-granted, ACTIVE only — and it is the wrong question for this verb in three ways, each
+  // of which 404'd a caller who was entitled: an admin acting as admin is not in it; an area owner
+  // with CUSTODY of someone else's device is not in it (custody is exactly the case the picker
+  // cannot express); and a DISABLED device is filtered out of it, so a device could not be re-homed
+  // precisely when you most want to tidy it away. Found in review.
   try {
+    // 🛑 `isAdmin`, not `actingAsAdmin`, and deliberately. This PR's rule is that READS are opt-in
+    // (`x-liveone-admin`) while WRITES keep the unconditional admin they have always had —
+    // `loadAreaForOwner` and `requireDeviceAccess` both grant it without asking, and this route
+    // would be the lone exception if it did otherwise. Moving the whole write side onto the opt-in
+    // is the right end state and is one coherent change; see docs/architecture/api.md.
     await assertDevicesRehomable(auth.userId, auth.isAdmin, [row.rid]);
   } catch (err) {
     if (err instanceof AreaAccessError)
