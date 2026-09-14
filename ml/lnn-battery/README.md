@@ -27,7 +27,7 @@ All series come from `point_readings_agg_5m` (`avg` column; interval-END, **UTC*
 | `stored_kwh`     | 15.6 | `bidi.battery` / stored-energy | kWh | **derived, continuous** — the fold's own coulomb-counted SoC. Use as the SoC proxy through the gap. |
 | `amber_import_c` | 9.2  | `bidi.grid.import` / rate | c/kWh | 30-min native (rows every 30 min → forward-fill to 5-min) |
 | `amber_export_c` | 9.1  | `bidi.grid.export` / rate | c/kWh | feed-in price; **can be negative** |
-| `oe_emissions`   | 12.x | `grid.emissionsIntensity` / intensity | tCO2e/MWh | ×1000 → gCO2/kWh (optional CO₂ variant) |
+| `oe_emissions`   | 12.x | `bidi.grid.emissionsIntensity` / intensity | tCO2e/MWh | ×1000 → gCO2/kWh (optional CO₂ variant) |
 
 **Derived:** `solar_w = solar_local_w + solar_remote_w`;
 **`load_w = solar_w + grid_power_w + batt_power_w`** (energy balance with the signs above — verified on

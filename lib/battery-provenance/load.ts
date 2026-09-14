@@ -31,6 +31,7 @@ import {
   type LogicalSystem,
 } from "@/lib/aggregation/logical-system";
 import { nemRegionForLocation } from "@/lib/vendors/openelectricity/region";
+import { OE_STEMS } from "@/lib/vendors/openelectricity/point-metadata";
 import type { AreaLocation } from "@/lib/areas/types";
 import { resolveGeneratorIntensity } from "./generator-source";
 import { DEFAULT_RESERVE_PCT } from "./reserve-floor";
@@ -114,8 +115,8 @@ export async function resolveOeRegionPoints(
       and(
         eq(devices.rid, oeSys.id),
         or(
-          eq(points.logicalPath, "grid.emissionsIntensity"),
-          eq(points.logicalPath, "grid.renewables"),
+          eq(points.logicalPath, OE_STEMS.emissionsIntensity),
+          eq(points.logicalPath, OE_STEMS.renewables),
         ),
       ),
     );
@@ -150,9 +151,10 @@ async function loadOeRawSeries(
   );
   return {
     emissions:
-      results.find((r) => r.stem === "grid.emissionsIntensity")?.series ?? null,
+      results.find((r) => r.stem === OE_STEMS.emissionsIntensity)?.series ??
+      null,
     renewable:
-      results.find((r) => r.stem === "grid.renewables")?.series ?? null,
+      results.find((r) => r.stem === OE_STEMS.renewables)?.series ?? null,
   };
 }
 

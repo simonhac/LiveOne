@@ -2,10 +2,27 @@
  * OpenElectricity point definitions + response→reading mapper.
  *
  * Four stored points per region, all under the `grid` subsystem:
- *   - grid.emissionsIntensity (tCO2e/MWh) — COMPUTED: emissions ÷ energy
- *   - grid.price ($/MWh)                  — direct (market `price`)
- *   - grid.renewables (%)                 — direct (market `renewable_proportion`)
- *   - grid.demand (MW)                    — direct (market `demand`)
+ *   - bidi.grid.emissionsIntensity (tCO2e/MWh) — COMPUTED: emissions ÷ energy
+ *   - bidi.grid.spot ($/MWh)                   — direct (market `price`)
+ *   - bidi.grid.renewables (%)                 — direct (market `renewable_proportion`)
+ *   - grid.demand (MW)                         — direct (market `demand`)
+ *
+ * 🛑 The first three deliberately share Amber's `bidi.grid.*` namespace, which is the GRID-CONNECTION
+ * namespace rather than a directionality claim (the directional split lives one level down, at
+ * `.import`/`.export`). That is what makes them match role `grid` through the ordinary
+ * `stemMatchesRole` anchor — `ROLES.grid.stem` is `bidi.grid` — instead of through a carve-out in
+ * `bindingShapeMatches`, which is now deleted.
+ *
+ * `grid.demand` stays OUT of that namespace on purpose: state-wide operational demand is a property
+ * of the region, not of this connection, and its metric type is `power`, in MW. Its serving key
+ * (`grid.demand/power`) is its own — the site meters are `bidi.grid/power` — but the SLOT is what
+ * would be shared: role `grid` at metric `power` is where the real meters bind, in watts. Keeping
+ * demand outside `bidi.grid.*` makes it unbindable to that role by construction, so the MW-into-a-W-
+ * slot hazard cannot arise by accident.
+ *
+ * None of the three is a flow stem: `classifyEnergyStem` admits `bidi.grid` exactly plus the
+ * `.import`/`.export`/`.controlled` pairs, so a rate/intensity/proportion can never enter the
+ * Sankey or make an area flow-eligible.
  *
  * The same mapper is used by the live adapter, the backfill downloader, and the bulk
  * ingestor so the paths produce identical readings.
@@ -16,9 +33,21 @@ import type { PointReadingAgg5mInput } from "@/lib/vendors/types";
 import { getBasisMetric } from "./client";
 import type { OeInterval, OeMetric, OeNetworkResponse } from "./types";
 
+/** The stored logical-path stems, exported as one object so a consumer that must address these
+ *  points BY PATH — the battery-provenance loader reads two of them out of `points.logical_path` —
+ *  shares a literal with the writer instead of restating it. Not read back off the `PointMetadata`
+ *  objects below, because `PointMetadata.logicalPathStem` is `string | null` and that loses both the
+ *  literal type and the non-nullness at every call site. */
+export const OE_STEMS = {
+  emissionsIntensity: "bidi.grid.emissionsIntensity",
+  spot: "bidi.grid.spot",
+  renewables: "bidi.grid.renewables",
+  demand: "grid.demand",
+} as const;
+
 export const EMISSIONS_INTENSITY_POINT: PointMetadata = {
   physicalPathTail: "nem/emissionsIntensity",
-  logicalPathStem: "grid.emissionsIntensity",
+  logicalPathStem: OE_STEMS.emissionsIntensity,
   defaultName: "Emissions intensity",
   subsystem: "grid",
   metricType: "intensity",
@@ -28,7 +57,7 @@ export const EMISSIONS_INTENSITY_POINT: PointMetadata = {
 
 export const PRICE_POINT: PointMetadata = {
   physicalPathTail: "nem/price",
-  logicalPathStem: "grid.price",
+  logicalPathStem: OE_STEMS.spot,
   defaultName: "Spot price",
   subsystem: "grid",
   metricType: "rate",
@@ -38,7 +67,7 @@ export const PRICE_POINT: PointMetadata = {
 
 export const RENEWABLE_PROPORTION_POINT: PointMetadata = {
   physicalPathTail: "nem/renewableProportion",
-  logicalPathStem: "grid.renewables",
+  logicalPathStem: OE_STEMS.renewables,
   defaultName: "Renewable proportion",
   subsystem: "grid",
   metricType: "proportion",
@@ -48,7 +77,7 @@ export const RENEWABLE_PROPORTION_POINT: PointMetadata = {
 
 export const DEMAND_POINT: PointMetadata = {
   physicalPathTail: "nem/demand",
-  logicalPathStem: "grid.demand",
+  logicalPathStem: OE_STEMS.demand,
   defaultName: "Operational demand",
   subsystem: "grid",
   metricType: "power",

@@ -40,11 +40,32 @@ NEM dispatch boundaries are fixed AEST year-round; never use `Australia/Sydney`)
 Three points, all under the **`grid`** subsystem (`transform: null`). Defined once in
 `point-metadata.ts` and shared by the live adapter, the backfill route, and the bulk ingestor.
 
-| logicalPathStem           | metricType   | metricUnit  | source                                           |
-| ------------------------- | ------------ | ----------- | ------------------------------------------------ |
-| `grid.emissionsIntensity` | `intensity`  | `tCO2e/MWh` | **computed** `emissions ÷ energy`                |
-| `grid.price`              | `rate`       | `$/MWh`     | direct (`price`, market endpoint)                |
-| `grid.renewables`         | `proportion` | `%`         | direct (`renewable_proportion`, market endpoint) |
+| logicalPathStem                | metricType   | metricUnit  | source                                           |
+| ------------------------------ | ------------ | ----------- | ------------------------------------------------ |
+| `bidi.grid.emissionsIntensity` | `intensity`  | `tCO2e/MWh` | **computed** `emissions ÷ energy`                |
+| `bidi.grid.spot`               | `rate`       | `$/MWh`     | direct (`price`, market endpoint)                |
+| `bidi.grid.renewables`         | `proportion` | `%`         | direct (`renewable_proportion`, market endpoint) |
+
+(A fourth point, `grid.demand` / `power` / `MW`, is stored but deliberately sits outside the
+`bidi.grid.*` namespace — see below.)
+
+**Why `bidi.grid.*`, and why demand is not.** `bidi.grid` is the role `grid` anchor stem
+(`lib/roles/registry.ts`), and it names the grid CONNECTION rather than asserting bidirectionality —
+the directional split lives one level down at `.import` / `.export`, and Amber already publishes a
+price and a renewable proportion there. Putting the three market signals on that anchor is what lets
+them match role `grid` through the ordinary `stemMatchesRole` rule; before 2026-09, they sat on
+`grid.*` and were bindable only through a carve-out in `bindingShapeMatches`, now deleted.
+
+`grid.demand` stays outside it on purpose. State-wide operational demand is a property of the NEM
+region, not of this connection, and its metric type is `power`, in **MW**. Its serving key is its own
+(`grid.demand/power`; the site meters are `bidi.grid/power`), but the **slot** would be shared — role
+`grid` at metric `power` is where the real meters bind, in watts. Keeping demand out of
+`bidi.grid.*` makes it unbindable to that role by construction, so a megawatt cannot land in a watt
+slot by accident. Admitting it later is a decision, not a side effect.
+
+None of the four is a flow stem: `classifyEnergyStem` admits `bidi.grid` exactly plus the
+`.import`/`.export`/`.controlled` pairs, so these points can never enter the Sankey or make an area
+flow-eligible.
 
 ### Emissions intensity is computed, not fetched
 

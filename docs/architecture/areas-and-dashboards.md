@@ -105,6 +105,28 @@ never a silent pick; `GET /api/v4/areas/{id}/resolution` reports what resolved a
 point whose `(logical_path, metric_type)` doesn't fit the role is **rejected at bind time**, not
 flagged with an advisory dot.
 
+**What "fits the role" means is one rule, with no exceptions: `stemMatchesRole`** — the point's
+logical-path stem equals the role's anchor stem or is a dotted descendant of it. There used to be a
+carve-out in `bindingShapeMatches` admitting any `grid.*` stem to role `grid`, for the
+OpenElectricity regional market signals, which anchor on `bidi.grid` and so could never match. It is
+gone: those three points were **renamed into `bidi.grid.*`** (2026-09-14) and now match by the
+ordinary rule.
+
+The renaming is the point, not a workaround. `bidi.grid` names the grid **connection** rather than
+asserting bidirectionality — the directional split lives one level down, at `.import` / `.export` —
+and Amber already publishes a spot price and a renewable proportion there. Sharing the namespace is
+what lets an area's `grid` role take its market signals from Amber or from the ambient
+OpenElectricity region device without either being a special case.
+
+One point was deliberately left behind. `grid.demand` — state-wide NEM operational demand — is a
+property of the region, not of this connection, and its metric type is `power`, in **MW**. Its
+serving key is its own (`grid.demand/power`; the site meters are `bidi.grid/power`), but the **slot**
+would be shared: role `grid` at metric `power` is where the real meters bind, in watts. Keeping
+demand outside `bidi.grid.*` makes it unbindable to that role by construction, so a megawatt cannot
+reach a watt slot by accident; admitting it later has to be written down as a decision. (None of the four is a flow stem in any case:
+`classifyEnergyStem` admits `bidi.grid` exactly plus the `.import`/`.export`/`.controlled` pairs, so
+a rate, an intensity or a proportion can never enter the Sankey or make an area flow-eligible.)
+
 **`priority` is a fallback chain, and what it orders is the SERVING KEY — not the slot.** A slot
 legitimately holds several points with different logical paths (`load.hvac/power`, `load.pool/power`,
 …): those are separate circuits and all of them serve. Two bindings sharing

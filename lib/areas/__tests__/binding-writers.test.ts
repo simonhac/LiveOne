@@ -190,7 +190,7 @@ describe("replaceBindings: ambient (ownerless) points may be bound without membe
       {
         systemId: 77,
         pointUid: AMBIENT_UID,
-        logicalPathStem: "grid.price",
+        logicalPathStem: "bidi.grid.spot",
         metricType: "rate",
         ownerUserId: null,
       },
@@ -236,7 +236,7 @@ describe("replaceBindings: ambient (ownerless) points may be bound without membe
       {
         systemId: 77,
         pointUid: AMBIENT_UID,
-        logicalPathStem: "grid.price",
+        logicalPathStem: "bidi.grid.spot",
         metricType: "rate",
       },
     ]);
