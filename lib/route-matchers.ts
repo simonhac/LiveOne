@@ -241,6 +241,9 @@ const cliTokenRoutes = [
   // table is empty, so deletion there is a supported operation rather than damage.
   "/api/v4/areas/:id/flows",
   "/api/v4/areas/:id/provenance",
+  // Read-only, and the reason `area archive`/`area delete` can preview honestly instead of printing
+  // "would delete" and then handing you a 409. Owner-gated in the handler like its siblings.
+  "/api/v4/areas/:id/dependents",
   // The observations queue — `liveone queue`. A SEPARATE address from
   // `/api/admin/observations/info` precisely so this bypass does not have to widen to
   // `/api/admin`; the handler is `requireAdmin`, so a non-admin token 403s here.
@@ -272,6 +275,12 @@ const cliTokenRoutes = [
   // grows later is judged on its own rather than inheriting the bypass by being a sibling.
   "/api/v4/automations",
   "/api/v4/automations/:id",
+  // Judged on its own, per the rule above. It is ADMINISTRATION, not dispatch: it changes which
+  // area a rule is scoped to and cannot arm, re-aim or re-time one. It re-runs `checkReferences`
+  // against the destination, so the `requireOwner` firewall on the action point's device applies to
+  // it exactly as it does to create — a move cannot land a rule the caller could not have authored
+  // there. Needed by `liveone automation move`, which is the prerequisite for `area delete`.
+  "/api/v4/automations/:id/move",
   // Ownership transfer — `liveone owner transfer`. `requireAdmin` in-handler, so a non-admin token
   // gets past the edge and 403s there.
   //

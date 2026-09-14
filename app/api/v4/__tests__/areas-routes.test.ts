@@ -132,6 +132,7 @@ describe("GET /api/v4/areas", () => {
     await areasGET(new NextRequest("http://localhost/api/v4/areas"));
     expect(mockListAreas).toHaveBeenCalledWith("user_1", {
       withChartCapability: true,
+      includeArchived: false,
       isAdmin: false,
     });
   });
@@ -149,6 +150,7 @@ describe("GET /api/v4/areas", () => {
     await areasGET(new NextRequest("http://localhost/api/v4/areas"));
     expect(mockListAreas).toHaveBeenCalledWith("user_1", {
       withChartCapability: true,
+      includeArchived: false,
       isAdmin: false,
     });
   });
@@ -166,8 +168,65 @@ describe("GET /api/v4/areas", () => {
     expect(res.status).toBe(200);
     expect(mockListAreas).toHaveBeenCalledWith("user_1", {
       withChartCapability: true,
+      includeArchived: false,
       isAdmin: true,
     });
+  });
+
+  it("passes includeArchived through when the query param is exactly 'true'", async () => {
+    mockAuth.mockResolvedValue({
+      userId: "user_1",
+      isAdmin: false,
+      actingAsAdmin: false,
+    } as never);
+    mockListAreas.mockResolvedValue([]);
+    await areasGET(
+      new NextRequest("http://localhost/api/v4/areas?includeArchived=true"),
+    );
+    expect(mockListAreas).toHaveBeenCalledWith("user_1", {
+      withChartCapability: true,
+      includeArchived: true,
+      isAdmin: false,
+    });
+  });
+
+  it.each(["1", "yes", "TRUE", ""])(
+    "reads %p as NO — a typo must fail closed, not widen the list",
+    async (value) => {
+      mockAuth.mockResolvedValue({
+        userId: "user_1",
+        isAdmin: false,
+        actingAsAdmin: false,
+      } as never);
+      mockListAreas.mockResolvedValue([]);
+      await areasGET(
+        new NextRequest(
+          `http://localhost/api/v4/areas?includeArchived=${value}`,
+        ),
+      );
+      expect(mockListAreas).toHaveBeenCalledWith(
+        "user_1",
+        expect.objectContaining({ includeArchived: false }),
+      );
+    },
+  );
+
+  /**
+   * 🛑 Being an admin widens WHOSE areas are listed. It must not also resurrect archived ones —
+   * those are two different questions, and an admin opening a picker is not asking the second one.
+   */
+  it("does NOT infer includeArchived from admin", async () => {
+    mockAuth.mockResolvedValue({
+      userId: "user_1",
+      isAdmin: true,
+      actingAsAdmin: true,
+    } as never);
+    mockListAreas.mockResolvedValue([]);
+    await areasGET(new NextRequest("http://localhost/api/v4/areas"));
+    expect(mockListAreas).toHaveBeenCalledWith(
+      "user_1",
+      expect.objectContaining({ isAdmin: true, includeArchived: false }),
+    );
   });
 
   it("propagates a 401 from requireAuth", async () => {

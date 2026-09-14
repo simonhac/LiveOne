@@ -15,7 +15,7 @@ describe("tree renderer", () => {
     expect(output).toContain("Derivation reference → Charging sessions");
     expect(output).toContain("[owner: craig@example.com]");
     expect(output).toContain("Owned device #2: EV → High Street");
-    expect(output).toContain("[removed]");
+    expect(output).toContain("[archived]");
     expect(output).toContain("[archived] [no devices in scope]");
     expect(output).toContain("No owner / public");
     expect(output).toContain("craig@example.com (viewer)");

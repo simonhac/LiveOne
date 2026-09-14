@@ -23,6 +23,11 @@ export interface ReadableArea {
    *  for it (`withChartCapability`); undefined otherwise. Lets a dashboard render thread this fact to
    *  `SiteChartsGroup` without waiting on `/api/data`'s live `latest` map. */
   chartCapable?: boolean;
+  /**
+   * `'active'` unless the caller passed `includeArchived`. Present always — a list that can contain
+   * archived rows and does not say which is worse than one that cannot contain them at all.
+   */
+  status: string;
 }
 
 /** Attach `chartCapable` to each row when `with` is true — concurrent, best-effort (a per-area failure
@@ -60,7 +65,20 @@ async function withChartCapabilityIfRequested<
  */
 export async function listReadableAreas(
   userId: string,
-  opts: { withChartCapability?: boolean; isAdmin?: boolean } = {},
+  opts: {
+    withChartCapability?: boolean;
+    isAdmin?: boolean;
+    /**
+     * Include `status='archived'` rows. OFF by default, because every UI caller means "areas I can
+     * use" and an archived one is exactly what should not appear in a picker.
+     *
+     * It exists for the operator path. An archived area was, until this flag, unreachable by every
+     * `area` verb — `resolveArea` in the CLI resolves a ref against this list, so even passing the
+     * literal `ar_…` id failed with "no area matches". That made archiving a one-way door into a
+     * state you could not inspect, purge or delete, which is not a safe place to leave a row.
+     */
+    includeArchived?: boolean;
+  } = {},
 ): Promise<ReadableArea[]> {
   // An ADMIN asking for the fleet needs neither leg — see `devicesVisibleByUser`'s docstring for why
   // this is opt-in rather than a blanket widening, and for the asymmetry it closes (admin could
@@ -99,6 +117,7 @@ export async function listReadableAreas(
       id: areas.id,
       displayName: areas.name,
       legacySystemId: legacyHandles.handle,
+      status: areas.status,
     })
     .from(areas)
     // config-v4 Phase 13 PR 5: the handle comes from `legacy_handles`, not the dropped
@@ -108,10 +127,16 @@ export async function listReadableAreas(
     // still match an owned area that happens to carry no handle — an inner join would silently narrow
     // the readable set, which is the direction that REMOVES access.
     .leftJoin(legacyHandles, eq(legacyHandles.areaId, areas.id))
-    // 🛑 `status = 'active'` survives the admin leg. Admin widens WHOSE areas are listed; it does
-    // not resurrect archived ones, which leave this set by design (`PATCH {status:"archived"}` is a
-    // delete by another name).
-    .where(and(eq(areas.status, "active"), accessCond));
+    // 🛑 `status = 'active'` survives the ADMIN leg, and always has: admin widens WHOSE areas are
+    // listed, it does not resurrect archived ones. `includeArchived` is the separate, explicit
+    // opt-out — a different question from "whose", asked by a different caller (the operator CLI),
+    // and deliberately not something being an admin grants you by accident.
+    .where(
+      and(
+        opts.includeArchived ? undefined : eq(areas.status, "active"),
+        accessCond,
+      ),
+    );
 
   const present = rows
     .filter(
@@ -122,6 +147,7 @@ export async function listReadableAreas(
       id: r.id,
       displayName: r.displayName,
       legacySystemId: r.legacySystemId,
+      status: r.status,
     }))
     .sort((a, b) => a.displayName.localeCompare(b.displayName));
   return withChartCapabilityIfRequested(
@@ -146,6 +172,7 @@ export async function resolveAreasByIds(
       id: areas.id,
       displayName: areas.name,
       legacySystemId: legacyHandles.handle,
+      status: areas.status,
     })
     .from(areas)
     // LEFT: `legacySystemId` stays nullable for the `.filter` below (see `listReadableAreas`).
@@ -160,6 +187,7 @@ export async function resolveAreasByIds(
       id: r.id,
       displayName: r.displayName,
       legacySystemId: r.legacySystemId,
+      status: r.status,
     }));
   return withChartCapabilityIfRequested(
     present,

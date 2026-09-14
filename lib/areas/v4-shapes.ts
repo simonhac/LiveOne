@@ -51,7 +51,7 @@ export interface AreaDetailSource {
  * `GET /api/device/{handle}/points` — the only way to enumerate a member's bindable points. Emitting a
  * `dv_` alone forced the client to re-derive the handle by joining against `GET /api/v4/devices`, which
  * silently loses any member that route filters out: `devicesVisibleByUser` is `activeOnly`, and a
- * `status='removed'` member IS still a member (two of them are on `liveone-dev` today). Those members'
+ * `status='archived'` member IS still a member (two of them are on `liveone-dev` today). Those members'
  * points would have vanished from the picker with no error — so the number is carried, not re-derived.
  *
  * NOT a narrowing, by contrast: `timezoneOffsetMin` is deliberately absent because clean-sheet §7 /

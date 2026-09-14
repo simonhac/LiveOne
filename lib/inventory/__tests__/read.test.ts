@@ -54,9 +54,9 @@ beforeEach(() => {
       {
         id: device,
         handle: 9,
-        name: "Removed device",
+        name: "Archived device",
         vendor: "amber",
-        status: "removed",
+        status: "archived",
         ownerId: "owner",
         areaId: null,
       },
@@ -126,7 +126,7 @@ describe("inventory read scope", () => {
     ).toBe(false);
     expect(result.sharing).toBeUndefined();
     expect(result.areas[0].status).toBe("archived");
-    expect(result.devices[0].status).toBe("removed");
+    expect(result.devices[0].status).toBe("archived");
     expect(result.devices[0].areaId).toBeNull();
     expect(getUserList).not.toHaveBeenCalled();
   });

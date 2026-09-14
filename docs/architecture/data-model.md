@@ -299,12 +299,26 @@ the new boundary. Re-homing a device between areas must never change it.
 
 🛑 **Never put `ON DELETE CASCADE` on `point_readings_flow_attr_1d.area_id`.** Its plain `NO ACTION` FK
 (`lib/db/planetscale/schema.ts`, the `pointReadingsFlowAttr1d` definition) is the **data-loss firewall**:
-Postgres _refuses_ to delete an area that still has flow rows. Today's area delete is soft, so the
-firewall is not currently load-bearing — which is exactly why it is easy to loosen by accident. Any
-future hard-delete path must pre-check `SELECT 1 FROM point_readings_flow_attr_1d WHERE area_id = $1
-LIMIT 1` and refuse if present. The same rule applied to the retired `point_readings_flow_1d` and is the
-reason no flow table has ever cascaded. (`devices.area_id` is `ON DELETE SET NULL`; that is
-deliberate and does not loosen this — membership is config, flow rows are history.)
+Postgres _refuses_ to delete an area that still has flow rows. The same rule applied to the retired
+`point_readings_flow_1d` and is the reason no flow table has ever cascaded. (`devices.area_id` is
+`ON DELETE SET NULL`; that is deliberate and does not loosen this — membership is config, flow rows
+are history.)
+
+The hard-delete path this paragraph used to anticipate now **exists** — `DELETE /api/v4/areas/{id}`
+(`lib/areas/delete.ts`), reached by `liveone area delete`. It does the pre-check this section asked
+for, and does it by NAMING the rows rather than by catching a 23503: `areaDependents`
+(`lib/integrity/relied-upon.ts`) reports the day count and window, with the `liveone area purge flows`
+command that clears them. Two things about that path are load-bearing and easy to undo:
+
+- **It is refused, not forced.** There is no `?force=true` leg and no `--force` flag. `derivation delete`
+  has one because its dependents are reproducible by recompute; an area's mostly are not.
+- **`legacy_handles.area_id` is UPDATEd to NULL, never DELETEd.** That row can name a device *and* an
+  area (see handle precedence below), so deleting it would take a live device's `?systemId=N` with it.
+  On prod, 16 of the 17 empty area-of-one shells were in exactly that state.
+
+Archiving (`PATCH { status: 'archived' }`) is the separate, reversible verb, and it deliberately does
+NOT consult the destructive legs — it destroys nothing, so refusing it over history that survives it
+would only make the one safe step impossible.
 
 🛑 **Handle precedence is device-first, forever.** An integer handle can legitimately name both a device
 and an Area (handle 13 does). `?systemId=N` resolves **device-first** — that is the behaviour-preserving

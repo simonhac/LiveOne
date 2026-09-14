@@ -1482,7 +1482,7 @@ async function main(): Promise<void> {
     // only the `dv_`, but the Bindings tab addresses `/api/device/{handle}/points` — the ONLY way to
     // enumerate a member's bindable points — and re-deriving that handle by joining
     // `GET /api/v4/devices` silently drops every member that route filters out (it is `activeOnly`, and
-    // two `status='removed'` members exist on liveone-dev today). So the number is carried.
+    // two `status='archived'` members exist on liveone-dev today). So the number is carried.
     await call("PUT", `/api/v4/areas/${areaId}/members`, {
       body: { members: [fixture.deviceA, fixture.deviceB] },
     });

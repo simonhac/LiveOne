@@ -57,7 +57,7 @@ interface DeviceViewerProps {
  * Read-only per-device viewer ("Device"), served at /device/{id}. Renders the SERVER-built default
  * document via the SAME v4 renderer the composition dashboards use (`<DashboardV4View>`): one group
  * bound to this DEVICE, no area. No Customise / Share / Location controls (those live on Dashboards).
- * This component owns only the device-level chrome (loading / error / removed banners); every card
+ * This component owns only the device-level chrome (loading / error / archived banners); every card
  * self-fetches inside `<DashboardV4View>`.
  */
 export default function DeviceViewer({
@@ -71,7 +71,7 @@ export default function DeviceViewer({
   const { isAnyModalOpen } = useModalContext();
 
   // Device-level chrome payload via React Query (latest values + device). Polls every 30s and on
-  // focus; paused while a modal is open. Used here only for the loading/error/removed banners — the
+  // focus; paused while a modal is open. Used here only for the loading/error/archived banners — the
   // cards inside <DashboardV4View> self-fetch the same (deduped) query. The doc comes from the server.
   const {
     data: queryData,
@@ -101,7 +101,7 @@ export default function DeviceViewer({
     const r = queryData as { latest?: unknown; error?: string };
     if (r.latest) return "";
     if (r.error) return r.error;
-    return device?.status !== "removed" ? "POINT_READINGS_NO_CHARTS" : "";
+    return device?.status !== "archived" ? "POINT_READINGS_NO_CHARTS" : "";
   }, [isError, dataError, queryData, device?.status]);
 
   if (!hasAccess || !deviceExists) {
@@ -141,13 +141,13 @@ export default function DeviceViewer({
 
   return (
     <main className="max-w-7xl mx-auto px-1 py-4">
-      {/* Removed Device Banner — shown regardless of data availability. */}
-      {device?.status === "removed" && (
+      {/* Archived Device Banner — shown regardless of data availability. */}
+      {device?.status === "archived" && (
         <div className="mb-4 p-4 bg-orange-900/50 border border-orange-700 text-orange-300 rounded-lg flex items-center gap-3">
           <AlertTriangle className="w-5 h-5 flex-shrink-0" />
           <div>
             <span className="font-semibold">
-              This device has been marked as removed.
+              This device has been archived.
             </span>
           </div>
         </div>

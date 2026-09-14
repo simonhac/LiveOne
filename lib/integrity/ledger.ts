@@ -363,11 +363,21 @@ export const REFERENCE_LEDGER: LedgerEntry[] = [
   },
   {
     column: pointReadingsFlowAttr1d.areaId,
-    verdict: { protectedBy: "fk", onDelete: "no action" },
+    verdict: {
+      protectedBy: "refuseIfReliedUpon",
+      subject: "area",
+      reason:
+        "🛑 The FK is NO ACTION and stays that way — but an FK that refuses is not the same as an outcome anyone can read. Untreated, deleting an area with flow rows surfaces as a 23503 and a constraint name. This is the SANKEY for every complete area and NOTHING heals it: `rehealStaleAttrDays` finds work by SELECTing from this table, so a deleted day is absent rather than stale and the backlog never looks for it again. Named (destructive scope only) so the refusal carries the day window and the purge command that clears it.",
+    },
   },
   {
     column: batteryProvenanceDaily.areaId,
-    verdict: { protectedBy: "fk", onDelete: "no action" },
+    verdict: {
+      protectedBy: "refuseIfReliedUpon",
+      subject: "area",
+      reason:
+        "Same NO ACTION firewall as the flow matrix, and named for the same reason — but the consequence is milder and the fix says so: the battery learn rebuilds from a fixed anchor whenever its table is empty, so this is a purge-then-delete, not a loss. Destructive scope only; archiving destroys none of it.",
+    },
   },
   {
     column: batteryProvenanceDaily.foldState,
@@ -437,6 +447,9 @@ export const REFERENCE_LEDGER: LedgerEntry[] = [
     // delete. That is not weaker than the `primary_area_id` NO ACTION it replaced: nothing derived
     // hangs off this column. The area-keyed derived tables key on their OWN `area_id`, and
     // `point_readings_flow_attr_1d`'s NO ACTION firewall is untouched.
+    // ⚠️ Also named by `areaDependents` under BOTH scopes — archiving strands the devices in an
+    // unserved area, deleting empties the column — because "set null" describes the mechanism and
+    // says nothing about the device going quiet.
     column: devices.areaId,
     verdict: { protectedBy: "fk", onDelete: "set null" },
   },
@@ -546,7 +559,12 @@ export const REFERENCE_LEDGER: LedgerEntry[] = [
     // and nothing else, so once the area is gone the token grants nothing. Leaving it behind would
     // be a live credential pointing at a row that cannot be read — revocable by nobody, because
     // every management verb is scoped through the area that no longer exists.
-    verdict: { protectedBy: "fk", onDelete: "cascade" },
+    verdict: {
+      protectedBy: "refuseIfReliedUpon",
+      subject: "area",
+      reason:
+        "🛑 This entry is why the area dependent list was widened at all. The CASCADE is correct and unchanged, but it is SILENT: a hard delete would destroy a live, in-use feed credential with no refusal, no warning and — per the iCloud behaviour — no symptom at the subscriber beyond 'Last updated: Never'. Named in the destructive scope only (archiving keeps the feed working), and only for tokens that are neither revoked nor expired, since a dead link costs nothing to lose.",
+    },
   },
   {
     // Migration 0070. Identical interior to `areas.location`, and identical reasoning: it is the
@@ -574,6 +592,11 @@ export const REFERENCE_LEDGER: LedgerEntry[] = [
     // "no default recorded" and mints a site for the next connection, so the outcome of deleting
     // the area is an extra area, not a user stranded somewhere they did not choose.
     column: users.defaultAreaId,
+    // ⚠️ The reasoning above survives the arrival of a HARD delete, and the verdict is deliberately
+    // left as the FK: emptying this column is still recoverable by design. But `areaDependents`
+    // names it anyway in the destructive scope, because the recovery works by MINTING A FRESH AREA
+    // on the next device connect — so a cleanup that does not clear this first partly undoes itself,
+    // which is a thing worth one sentence in a refusal rather than a surprise a fortnight later.
     verdict: { protectedBy: "fk", onDelete: "set null" },
   },
 
@@ -661,7 +684,12 @@ export const REFERENCE_LEDGER: LedgerEntry[] = [
     // this is derived output ABOUT an area (what a run cost through its meters), fully reproducible
     // by a recompute, so deleting the area should take its answers with it rather than block on them.
     // An automation, by contrast, is configuration a user authored and would not expect to vanish.
-    verdict: { protectedBy: "fk", onDelete: "cascade" },
+    verdict: {
+      protectedBy: "refuseIfReliedUpon",
+      subject: "area",
+      reason:
+        "The CASCADE above is still the right mechanism and is unchanged — reproducible derived output should follow its area rather than block on it. What the cascade cannot do is SAY SO. Named in the destructive scope only, so a hard delete reports how many runs were priced through this area and over what window before it takes them; archiving leaves every row in place.",
+    },
   },
   {
     column: automations.areaId,

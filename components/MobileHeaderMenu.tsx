@@ -30,7 +30,7 @@ interface MobileHeaderMenuProps {
   vendorType?: string;
   supportsPolling?: boolean;
   isAdmin?: boolean;
-  deviceStatus?: "active" | "disabled" | "removed";
+  deviceStatus?: "active" | "disabled" | "archived";
   onTestConnection?: () => void;
   onViewData?: () => void;
   onPollNow?: (dryRun?: boolean) => void;
@@ -145,10 +145,10 @@ export default function MobileHeaderMenu({
                   </button>
                 )}
 
-                {/* Test Connection - Only show for vendors that support polling and for admin or non-removed devices */}
+                {/* Test Connection - Only show for vendors that support polling and for admin or non-archived devices */}
                 {onTestConnection &&
                   supportsPolling &&
-                  (isAdmin || deviceStatus !== "removed") && (
+                  (isAdmin || deviceStatus !== "archived") && (
                     <button
                       onClick={() => {
                         onClose();

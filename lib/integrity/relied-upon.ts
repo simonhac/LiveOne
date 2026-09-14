@@ -31,20 +31,47 @@
  * reference must be classified there, and a test fails by name when one is not. Without it this
  * file is a list of the references someone happened to remember.
  */
-import { and, eq, isNull, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
+
+type PgDb = ReturnType<typeof requirePlanetscaleDb>;
+type PgTx = Parameters<Parameters<PgDb["transaction"]>[0]>[0];
+/**
+ * A connection OR an open transaction — the same seam `DeviceRegistryExec` uses.
+ *
+ * 🛑 This exists so the destructive caller can run the scan INSIDE its delete transaction, after
+ * locking the subject row. Scanning on the pool and then deleting on a different connection is a
+ * TOCTOU window: between the two, a concurrent `POST …/calendar-tokens` can commit a live feed
+ * credential that the delete then CASCADEs away, having refused nothing. Found in review, not by a
+ * test — the window is real but small, which is exactly the kind that survives.
+ */
+export type ReliedUponExec = PgDb | PgTx;
 import {
+  areaBindings,
+  areaCalendarTokens,
   areas,
   automations,
+  batteryProvenanceDaily,
   dashboardGrants,
   dashboards,
   derivations,
+  derivedIntervalProvenance,
   derivedIntervals,
+  devices,
   points,
+  pointReadingsFlowAttr1d,
   shareTokens,
   users,
 } from "@/lib/db/planetscale/schema";
-import { Area, Automation, Dashboard, Point } from "@/lib/ids";
+import { Area, Automation, Dashboard, Device, Point } from "@/lib/ids";
+import { helperSiteId } from "@/lib/areas/helper-site-id";
+
+/**
+ * The pre-0053 helper `vendor_site_id` form, kept here rather than imported because
+ * `helper-site-id.ts` deliberately exposes only the MINTING direction for the current encoding —
+ * nothing should be able to write this form again, only recognise one already stored.
+ */
+const LEGACY_HELPER_PREFIX = "helper:area:";
 import { scanDocRefs } from "@/lib/dashboard/doc-refs";
 
 /** The kinds of row a delete can be refused for. */
@@ -87,8 +114,11 @@ export interface Dependent {
 }
 
 /** Dashboards whose doc names `typeId` (`ar_…`), found by the raw-JSON walker so it fails OPEN. */
-async function dashboardsReferencing(typeId: string): Promise<Dependent[]> {
-  const rows = await requirePlanetscaleDb()
+async function dashboardsReferencing(
+  typeId: string,
+  db: ReliedUponExec,
+): Promise<Dependent[]> {
+  const rows = await db
     .select({ id: dashboards.id, name: dashboards.name, doc: dashboards.doc })
     .from(dashboards);
   const hits: Dependent[] = [];
@@ -106,9 +136,35 @@ async function dashboardsReferencing(typeId: string): Promise<Dependent[]> {
   return hits;
 }
 
-async function areaDependents(uuid: string): Promise<Dependent[]> {
-  const db = requirePlanetscaleDb();
-  const out = await dashboardsReferencing(Area.encode(uuid));
+/**
+ * Everything that references an Area.
+ *
+ * ## Why this is longer than it was
+ *
+ * It used to name dashboards and automations only, which was the right list for the one caller that
+ * existed: `DELETE /api/v4/areas/{id}` ARCHIVED, and archiving breaks no FK and destroys no row. A
+ * genuine delete is a different question, and the difference is not academic — `area_calendar_tokens`
+ * is `ON DELETE CASCADE`, so a hard delete would have silently destroyed a live, in-use feed
+ * credential with nothing anywhere naming it. That is precisely the failure this module exists to
+ * make impossible, and the old list could not see it.
+ *
+ * So every edge in `./ledger.ts` that points at `areas.id` now has a leg here, and the legs divide
+ * by WHY they are named rather than by mechanism:
+ *
+ *   - `no action` FKs (`point_readings_flow_attr_1d`, `battery_provenance_daily`) — untreated these
+ *     surface as a raw Postgres 23503, a five-digit code and a constraint name. Naming them is what
+ *     turns that into a sentence with a fix in it.
+ *   - `cascade` FKs (calendar tokens, interval provenance) — no error at all, just silent loss.
+ *   - `set null` FKs (`devices.area_id`, `users.default_area_id`) — the row survives, missing a
+ *     field it used to have, and nothing says why.
+ *   - no FK at all (`devices.vendor_site_id` holding `helper:area:ar_…`) — nothing notices, ever.
+ */
+async function areaDependents(
+  uuid: string,
+  destructive: boolean,
+  db: ReliedUponExec,
+): Promise<Dependent[]> {
+  const out = await dashboardsReferencing(Area.encode(uuid), db);
 
   for (const a of await db
     .select({ id: automations.id, name: automations.name })
@@ -120,7 +176,202 @@ async function areaDependents(uuid: string): Promise<Dependent[]> {
       name: a.name,
       via: "automations.area_id",
       effect: "dangles",
-      fix: "delete the automation, or move it to another area",
+      fix: "move it with `liveone automation move`, or delete it",
+    });
+
+  // Named under BOTH scopes, but the outcome differs and so does the wording. Archiving leaves the
+  // column alone and simply stops serving the area, so the devices go quiet where they stand; the
+  // delete's `ON DELETE SET NULL` actually empties the column and they go ambient.
+  const memberIds = new Set<string>();
+  for (const d of await db
+    .select({ id: devices.id, name: devices.name })
+    .from(devices)
+    .where(eq(devices.areaId, uuid))) {
+    memberIds.add(d.id);
+    out.push({
+      kind: "device",
+      id: Device.encode(d.id),
+      name: d.name,
+      via: "devices.area_id",
+      effect: destructive ? "cleared" : "silently-dropped",
+      fix: "re-home it with `liveone area devices` first",
+    });
+  }
+
+  // ---------------------------------------------------------------------------------------------
+  // Everything below is DESTRUCTIVE-ONLY.
+  //
+  // 🛑 The distinction is the whole reason this function takes a scope. Archiving destroys nothing:
+  // the row stays, every FK stays satisfied, and the history below is exactly as readable the day
+  // after as the day before. Reporting it as an obstacle to an ARCHIVE would refuse the one
+  // reversible step — and, worse, would make archiving an area with history impossible, which is
+  // the state every area you would ever want to retire is already in.
+  // ---------------------------------------------------------------------------------------------
+  if (!destructive) return out;
+
+  // No FK — `devices.vendor_site_id` holds `helper:area:<area>` as a STRING. Nothing would notice it
+  // dangling, and `ensureHelperDevice` dedupes on exactly this predicate, so the orphan would be
+  // adopted by nothing and rebuilt by nothing.
+  //
+  // 🛑 Both halves of the predicate, including `vendor = 'helper'` — that half is the security
+  // boundary described at `lib/areas/helper.ts:40`, because `vendor_site_id` is caller-supplied at
+  // `POST /api/devices` and matching it alone would let one account name another's area.
+  //
+  // 🛑 BOTH ENCODINGS. `lib/areas/helper-site-id.ts` mints the `ar_` form and documents that the
+  // raw-uuid form (`helper:area:<uuid>`, pre-migration-0053) is still accepted on read and still
+  // exists in any environment that has not had 0053 applied. Matching only the minted form is the
+  // classic half of a dual-accept seam: the orphan this leg exists to catch is precisely a helper
+  // that is NOT also a member (a member is already named above), and a legacy-form helper outside
+  // its area escapes both.
+  for (const h of await db
+    .select({ id: devices.id, name: devices.name })
+    .from(devices)
+    .where(
+      and(
+        inArray(devices.vendorSiteId, [
+          helperSiteId(uuid),
+          `${LEGACY_HELPER_PREFIX}${uuid}`,
+        ]),
+        eq(devices.vendor, "helper"),
+      ),
+    )) {
+    if (memberIds.has(h.id)) continue; // already named by the membership leg above
+    out.push({
+      kind: "helper-device",
+      id: Device.encode(h.id),
+      name: h.name,
+      via: "devices.vendor_site_id → helper:area:ar_…",
+      effect: "dangles",
+      fix: "delete the helper device — its site id would name an area that no longer exists",
+    });
+  }
+
+  // CASCADE, and it took a review to notice it was missing from this list. A binding is AUTHORED
+  // configuration — which point fills each (role, metric) slot, with its priority and transform —
+  // not derived output, so it is not reproducible by any recompute. `area purge provenance` does not
+  // restore it and nothing else writes it. An area can hold bindings while holding no devices at all
+  // (a binding names a point, and that point's device can live elsewhere), so the membership leg
+  // above does not imply this one.
+  const [bindings] = await db
+    .select({ n: sql<number>`count(*)::int` })
+    .from(areaBindings)
+    .where(eq(areaBindings.areaId, uuid));
+  if (bindings && bindings.n > 0)
+    out.push({
+      kind: "bindings",
+      id: `${bindings.n}`,
+      name: null,
+      via: "area_bindings.area_id (ON DELETE CASCADE)",
+      effect: "cascade-deleted",
+      fix: "record them first (`liveone area show <area>`) — no recompute rebuilds an authored binding",
+    });
+
+  // 🛑 THE FLOW FIREWALL. `point_readings_flow_attr_1d` is the Sankey for every complete area, and
+  // NOTHING heals it: `rehealStaleAttrDays` finds work by SELECTing from this table, so a deleted
+  // day is absent rather than stale and the backlog never looks for it again. The FK is NO ACTION
+  // precisely so this cannot happen by accident. Report the window, not just the count.
+  const [flow] = await db
+    .select({
+      n: sql<number>`count(*)::int`,
+      first: sql<string | null>`min(${pointReadingsFlowAttr1d.day})`,
+      last: sql<string | null>`max(${pointReadingsFlowAttr1d.day})`,
+    })
+    .from(pointReadingsFlowAttr1d)
+    .where(eq(pointReadingsFlowAttr1d.areaId, uuid));
+  if (flow && flow.n > 0)
+    out.push({
+      kind: "flow-matrix",
+      id: `${flow.n} row(s)`,
+      name: flow.first && flow.last ? `${flow.first} … ${flow.last}` : null,
+      via: "point_readings_flow_attr_1d.area_id (NO ACTION)",
+      effect: "cascade-deleted",
+      fix: `clear it deliberately first: liveone area purge flows <area> --start=${flow.first ?? "YYYY-MM-DD"} --end=${flow.last ?? "YYYY-MM-DD"} --apply`,
+    });
+
+  const [prov] = await db
+    .select({
+      n: sql<number>`count(*)::int`,
+      first: sql<string | null>`min(${batteryProvenanceDaily.day})`,
+      last: sql<string | null>`max(${batteryProvenanceDaily.day})`,
+    })
+    .from(batteryProvenanceDaily)
+    .where(eq(batteryProvenanceDaily.areaId, uuid));
+  if (prov && prov.n > 0)
+    out.push({
+      kind: "battery-provenance",
+      id: `${prov.n} day(s)`,
+      name: prov.first && prov.last ? `${prov.first} … ${prov.last}` : null,
+      via: "battery_provenance_daily.area_id (NO ACTION)",
+      effect: "cascade-deleted",
+      // Unlike the flow matrix this one DOES rebuild itself — the learn re-derives from a fixed
+      // anchor whenever its table is empty — so the fix is a command, not a warning.
+      fix: "clear it first: liveone area purge provenance <area> --apply (the learn rebuilds it)",
+    });
+
+  // CASCADE, and the reason this whole widening happened: a live credential, in use, with no
+  // refusal anywhere naming it. Only LIVE tokens count — an expired or revoked one is already dead,
+  // and padding a refusal with rows whose loss costs nothing is how a refusal becomes skimmable.
+  for (const t of await db
+    .select({
+      token: areaCalendarTokens.token,
+      label: areaCalendarTokens.label,
+    })
+    .from(areaCalendarTokens)
+    .where(
+      and(
+        eq(areaCalendarTokens.areaId, uuid),
+        isNull(areaCalendarTokens.revokedAt),
+        sql`(${areaCalendarTokens.expiresAt} IS NULL OR ${areaCalendarTokens.expiresAt} > now() AT TIME ZONE 'UTC')`,
+      ),
+    ))
+    out.push({
+      kind: "calendar-feed",
+      // Never the token itself — a refusal is not a place to reprint a live credential.
+      id: `…${t.token.slice(-6)}`,
+      name: t.label,
+      via: "area_calendar_tokens.area_id (ON DELETE CASCADE)",
+      effect: "cascade-deleted",
+      // The URL carries the area id in its PATH and the feed checks path and token agree, so no
+      // re-point can save the subscription; the honest fix is to stand the new one up first.
+      fix: "mint the replacement feed on the destination area and check it renders, THEN revoke this one",
+    });
+
+  const [ip] = await db
+    .select({
+      n: sql<number>`count(*)::int`,
+      first: sql<Date | null>`min(${derivedIntervalProvenance.startTime})`,
+      last: sql<Date | null>`max(${derivedIntervalProvenance.startTime})`,
+    })
+    .from(derivedIntervalProvenance)
+    .where(eq(derivedIntervalProvenance.areaId, uuid));
+  if (ip && ip.n > 0)
+    out.push({
+      kind: "interval-provenance",
+      id: `${ip.n} record(s)`,
+      name:
+        isoDay(ip.first) && isoDay(ip.last)
+          ? `${isoDay(ip.first)} … ${isoDay(ip.last)}`
+          : null,
+      via: "derived_interval_provenance.area_id (ON DELETE CASCADE)",
+      effect: "cascade-deleted",
+      fix: "what each run cost through this area's meters; rebuild with `liveone derivation recompute` if it is still wanted",
+    });
+
+  // `ON DELETE SET NULL`, and deliberately NOT the same verdict as `users.default_dashboard_id`'s
+  // refusal used to imply: a blank default is a state onboarding handles. But it handles it by
+  // MINTING A FRESH AREA on the next device connect (`resolveOnboardingArea`), so a cleanup that
+  // does not clear this first partly undoes itself. That is worth a sentence, not a silence.
+  for (const u of await db
+    .select({ id: users.clerkUserId })
+    .from(users)
+    .where(eq(users.defaultAreaId, uuid)))
+    out.push({
+      kind: "user",
+      id: u.id,
+      name: null,
+      via: "users.default_area_id",
+      effect: "cleared",
+      fix: "set that user another default area, or their next device connect mints a replacement",
     });
 
   // 🛑 There is deliberately NO derivation leg. `derivations.area_id` was the last thing that made
@@ -133,8 +384,10 @@ async function areaDependents(uuid: string): Promise<Dependent[]> {
   return out;
 }
 
-async function dashboardDependents(uuid: string): Promise<Dependent[]> {
-  const db = requirePlanetscaleDb();
+async function dashboardDependents(
+  uuid: string,
+  db: ReliedUponExec,
+): Promise<Dependent[]> {
   const out: Dependent[] = [];
 
   // FK `ON DELETE SET NULL`. The row survives; the user simply lands somewhere else next login,
@@ -217,8 +470,10 @@ function isoDay(value: unknown): string | null {
   return Number.isNaN(d.getTime()) ? null : d.toISOString().slice(0, 10);
 }
 
-async function derivationDependents(uuid: string): Promise<Dependent[]> {
-  const db = requirePlanetscaleDb();
+async function derivationDependents(
+  uuid: string,
+  db: ReliedUponExec,
+): Promise<Dependent[]> {
   const out: Dependent[] = [];
 
   // The one that matters. `derived_intervals.derivation_id` is ON DELETE CASCADE, so the run
@@ -302,14 +557,19 @@ async function derivationDependents(uuid: string): Promise<Dependent[]> {
 export async function findDependents(
   subject: Subject,
   uuid: string,
+  opts: { destructive?: boolean; exec?: ReliedUponExec } = {},
 ): Promise<Dependent[]> {
+  const db = opts.exec ?? requirePlanetscaleDb();
   switch (subject) {
     case "area":
-      return areaDependents(uuid);
+      // Defaults to the ARCHIVE scope, because that is what every pre-existing caller means. Only
+      // `DELETE /api/v4/areas/{id}` passes `destructive`, and it is the only caller that destroys a
+      // row rather than hiding one.
+      return areaDependents(uuid, opts.destructive === true, db);
     case "dashboard":
-      return dashboardDependents(uuid);
+      return dashboardDependents(uuid, db);
     case "derivation":
-      return derivationDependents(uuid);
+      return derivationDependents(uuid, db);
     case "automation":
       // Nothing references an automation today. Wired anyway, so that the NEXT thing to reference
       // one has an obviously wrong-looking empty case to fill in rather than a missing file.

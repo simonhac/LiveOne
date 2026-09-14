@@ -50,7 +50,7 @@ interface DeviceData {
     userId: string | null; // Vendor-specific user ID
     supportsPolling?: boolean;
   };
-  status: "active" | "disabled" | "removed"; // Device status
+  status: "active" | "disabled" | "archived"; // Device status
   location?: any; // Location data
   metadata?: any; // Vendor-specific metadata
   timezoneOffsetMin: number; // Timezone offset in minutes
@@ -91,7 +91,7 @@ export default function AdminDashboardClient({
   // Track if we need to fetch latest values
   const [needsLatestValues, setNeedsLatestValues] =
     useState(!latestValuesIncluded);
-  const [activeTab, setActiveTab] = useState<"active" | "removed">("active");
+  const [activeTab, setActiveTab] = useState<"active" | "archived">("active");
   const [testModal, setTestModal] = useState<{
     isOpen: boolean;
     systemId: number | null;
@@ -108,7 +108,7 @@ export default function AdminDashboardClient({
     systemId: number | null;
     deviceName: string;
     vendorType: string;
-    status: "active" | "disabled" | "removed" | null;
+    status: "active" | "disabled" | "archived" | null;
     stats: DeviceData["polling"] | null;
   }>({
     isOpen: false,
@@ -286,7 +286,7 @@ export default function AdminDashboardClient({
 
   const updateDeviceStatus = async (
     systemId: number,
-    newStatus: "active" | "disabled" | "removed",
+    newStatus: "active" | "disabled" | "archived",
   ) => {
     try {
       const response = await fetch(`/api/admin/devices/${systemId}/status`, {
@@ -372,14 +372,14 @@ export default function AdminDashboardClient({
                     Active Devices
                   </button>
                   <button
-                    onClick={() => setActiveTab("removed")}
+                    onClick={() => setActiveTab("archived")}
                     className={`px-4 md:px-6 py-3 text-sm font-medium transition-colors border-b-2 ${
-                      activeTab === "removed"
+                      activeTab === "archived"
                         ? "text-white border-blue-500 bg-gray-700/50"
                         : "text-gray-400 border-transparent hover:text-gray-300 hover:border-gray-600"
                     }`}
                   >
-                    Removed
+                    Archived
                   </button>
                 </div>
                 <button
@@ -418,7 +418,7 @@ export default function AdminDashboardClient({
                       activeTab === "active"
                         ? device.status === "active" ||
                           device.status === "disabled"
-                        : device.status === "removed",
+                        : device.status === "archived",
                     )
                     .map((device, index, filteredDevices) => (
                       <tr
@@ -429,7 +429,7 @@ export default function AdminDashboardClient({
                           device.status === "disabled" ? "opacity-40" : ""
                         }`}
                         style={
-                          device.status === "removed"
+                          device.status === "archived"
                             ? {
                                 backgroundImage:
                                   "repeating-linear-gradient(135deg, transparent, transparent 10px, rgba(251,146,60,0.15) 10px, rgba(251,146,60,0.15) 20px)",

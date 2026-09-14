@@ -235,7 +235,8 @@ and the HWS model: list, create, set, enable/disable, delete, recompute, interva
 `dx_`/name/role, never by an area; `create` names the DEVICE the detector is about), `sync` (re-fetch
 a window from a device's vendor), and `device` / `area` / `user` (list, show, latest values, history;
 `area flows` downloads the rolled-up Sankey matrix for a period — read-only except
-`device recompute`, `device config clean` and `area purge`). Run `-- <domain> --help` for verbs;
+`device recompute`, `device config clean`, `area purge` and `area archive`/`area delete`). Run
+`-- <domain> --help` for verbs;
 the generated reference is `docs/cli-reference.md`, the architecture doc is `docs/cli.md`.
 
 - **First run:** `npm run liveone -- auth login` — a browser hand-off mints a `lo_cli_` token,
@@ -278,6 +279,25 @@ the generated reference is `docs/cli-reference.md`, the architecture doc is `doc
   round-trips (read-only, and it needs nothing of the server, so run it after ANY change to the
   config shape); `config clean` evicts what it found, dry-run by default. `clean` also fixes the
   `areas.config` mirror of `batteryProvenance` and names the areas it touched.
+- **Retiring an area is TWO verbs, and `delete` has no `--force`.** `area archive` is the reversible
+  one: every row survives, the area leaves every listing and the KV subscription registry, `--undo`
+  puts it back. `area delete` destroys the row, and refuses unless (a) the area is already archived
+  and (b) nothing references it — naming each dependent, the column it lives in, and the verb that
+  clears it (`automation move`, `area purge flows`, `calendar revoke`). Clearing what it names IS the
+  confirmation; there is deliberately no force, because an area's dependents are mostly NOT
+  reproducible (a calendar token cannot be re-minted at the same URL; `point_readings_flow_attr_1d`
+  is the Sankey and nothing heals it). The area's integer handle survives — `legacy_handles.area_id`
+  is nulled, not deleted, so a handle shared with a device keeps resolving `?systemId=N`.
+- 🛑 **An archived area is hidden from EVERY listing, and refs resolve against the listing** — so
+  without `--include-archived` you cannot address one even by its literal `ar_…` id. Pass it to
+  `area list`, `area show`, `area provenance`, `area purge` and `area delete`. Being an admin does
+  not imply it: admin widens *whose* areas you see, not *which statuses*.
+- **`automation move <area> <automation> --to <area>`** re-homes a rule, in place. Pass
+  `--include-archived` when the SOURCE is already archived (the destination may not be). Not
+  delete-and-recreate: the automation's id IS its calendar `UID`, so subscribers keep their events,
+  and the consumed-slot record survives (a recreated exercise rule can re-fire a slot that already
+  ran). It does NOT change when an exercise fires — the schedule resolves through the derivation's
+  owner device's area, not the automation's.
 - 🛑 **`area purge` deletes derived rows, and its two verbs are NOT equally safe.**
   `area purge provenance` drops the battery fold, its blend series and their bindings — safe,
   because the learn rebuilds from a fixed anchor whenever its table is empty. `area purge flows`
@@ -417,6 +437,18 @@ npm run db:pg:migrate    # apply pending migrations (needs PLANETSCALE_DATABASE_
 - **Never use `drizzle-kit push`** — destructive diff with no transaction or validation (the migration-0016 failure mode). See `drizzle-planetscale/README.md`.
 - The Safety Guidelines below (backup/snapshot first, test on a copy, validate row counts before any DROP) apply to PG too. PG backup = PITR schedules + `pscale backup create`.
 - Applying to a specific branch (`main` vs `sydney`), `pscale role` connections, the table-ownership pitfall, and parallel-agent number collisions: see **Applying Postgres (PlanetScale) migrations** below.
+
+#### 🛑 A migration that changes a CONSTRAINT must be applied to BOTH databases
+
+`assertManifestSchemaParity` (`lib/readings/prod-dev-sync.ts`) compares `pg_get_constraintdef` for
+every table in the sync manifest before staging any data. So a CHECK/FK/unique that differs between
+prod and `liveone-dev` is a schema mismatch and the 2-hourly `sync-prod-to-dev` Action aborts
+**wholesale** — not just the affected table. The dev mirror then silently stops advancing.
+
+This does not apply to a plain additive column (the manifest copies columns generically); it is
+specifically constraint *definitions*. Migration 0075 (`devices.status` `removed`→`archived`) is the
+worked example. Apply to prod with `npm run pg-migrate -- --apply` and to `liveone-dev` with
+`npm run db:pg:migrate`, in the same sitting.
 
 ### Migration Safety Guidelines
 

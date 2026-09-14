@@ -6,10 +6,10 @@
  * pairing, the unit check on the load point) is all server-side in `checkReferences`, and a direct
  * write would be a way to store a rule none of it had ever seen.
  */
-import { EXIT, num, str, type Ctx } from "@/lib/cli/cli";
+import { EXIT, bool, num, str, type Ctx } from "@/lib/cli/cli";
 import { withApiSession, type ApiSession } from "@/lib/cli-kit/api-session";
-import { apiFetch } from "@/lib/cli-kit/http";
-import { resolveArea, usage, type WireArea } from "../shared";
+import { apiFetch, type ErrorOverride } from "@/lib/cli-kit/http";
+import { dependentLines, resolveArea, usage, type WireArea } from "../shared";
 import { listDerivations, resolveDerivation } from "../derivation/model";
 import {
   actionWords,
@@ -54,12 +54,22 @@ async function listAutomations(
   return { rows: automations, timezone };
 }
 
-/** Resolve `<area> <automation>` — the shape five of the eight verbs take. */
+/**
+ * Resolve `<area> <automation>` — the shape most of the verbs take.
+ *
+ * `includeArchived` exists for `move`, and it is not a convenience: an automation on an ARCHIVED
+ * area was unreachable by every verb here, because a ref resolves against the active-only listing
+ * and not even the literal `ar_` id gets past that. Since `area delete` refuses while an area still
+ * owns automations, and archiving is its prerequisite, the obvious order — archive, then evacuate —
+ * was impossible. The listing endpoint itself was never the problem; it uses `loadAreaForOwner`,
+ * which ignores status.
+ */
 async function resolveTarget(
   s: ApiSession,
   ctx: Ctx,
+  opts: { includeArchived?: boolean } = {},
 ): Promise<{ area: WireArea; row: WireAutomation; timezone: string }> {
-  const area = await resolveArea(s, ctx.args[0]);
+  const area = await resolveArea(s, ctx.args[0], opts);
   const { rows, timezone } = await listAutomations(s, area);
   return { area, row: resolveAutomation(rows, ctx.args[1], area), timezone };
 }
@@ -486,6 +496,103 @@ function runSetEnabled(enabled: boolean): (ctx: Ctx) => Promise<number> {
     );
 }
 
+/**
+ * The server's own refusal, rendered. The one that actually happens in practice is 422 — the
+ * destination does not own the trigger's derivation — and saying only "422" would send the operator
+ * to the body of the rule when the fix is a device's membership.
+ */
+const MOVE_ERRORS: Record<number, ErrorOverride> = {
+  403: {
+    exit: EXIT.FINDINGS,
+    what: "the destination area is not yours",
+    why: () =>
+      "owning the automation is not permission to put it somewhere — a rule in an area appears in that area's calendar feed",
+    next: "move it to an area you own, or ask its owner",
+  },
+  422: {
+    exit: EXIT.FINDINGS,
+    what: "the automation does not belong in that area",
+    why: (b: Record<string, unknown>) =>
+      [String(b.error ?? "unprocessable"), ...(dependentLines(b) ?? [])].join(
+        "\n",
+      ),
+    next: "the destination must contain the trigger derivation's OWNER device — check `liveone area devices list <area>`",
+  },
+};
+
+async function runMove(ctx: Ctx): Promise<number> {
+  const to = str(ctx, "to");
+  if (!to)
+    throw usage(
+      "no destination given",
+      "a move needs somewhere to move TO, and there is no sensible default",
+      "pass --to=<area> (its ar_ id, integer handle, or display name)",
+    );
+
+  return withApiSession(
+    ctx,
+    async (s) => {
+      // The SOURCE may be archived (that is the whole point); the DESTINATION may not — placing a
+      // rule into an area that is not served would be a silent way to disable it.
+      const { area, row } = await resolveTarget(s, ctx, {
+        includeArchived: bool(ctx, "includeArchived") === true,
+      });
+      const dest = await resolveArea(s, to);
+
+      if (dest.id === area.id) {
+        ctx.emit(
+          { automation: row, applied: false, moved: false },
+          () =>
+            `${row.name} (${row.id}) is already on ${dest.displayName} — nothing to do.`,
+        );
+        return EXIT.OK;
+      }
+
+      // 🛑 The dry run POSTs too — with `?dryRun=true`, which runs every check and returns before
+      // the write. Previewing by printing "would move" without asking the server would promise a
+      // move the destination's `derivationBelongsToArea` check deterministically refuses, which is
+      // the failure this verb is most likely to hit.
+      const { body } = await apiFetch<{ automation: WireAutomation }>(
+        s.origin,
+        `/api/v4/automations/${encodeURIComponent(row.id)}/move${ctx.dryRun ? "?dryRun=true" : ""}`,
+        {
+          method: "POST",
+          body: { areaId: dest.id },
+          token: s.token,
+          errors: MOVE_ERRORS,
+        },
+      );
+      const moved = ctx.dryRun ? undefined : body.automation;
+
+      ctx.emit(
+        {
+          automation: moved ?? row,
+          from: { id: area.id, name: area.displayName },
+          to: { id: dest.id, name: dest.displayName },
+          applied: !ctx.dryRun,
+          moved: true,
+        },
+        () =>
+          [
+            `${ctx.dryRun ? "would" : "WRITE"} move ${row.name} (${row.id})`,
+            `  from ${area.displayName} (${area.id})`,
+            `    to ${dest.displayName} (${dest.id})`,
+            `  ${triggerWords(row.trigger)} → ${actionWords(row.action)}`,
+            "  the id is unchanged, so calendar subscribers keep the same events, and the record of",
+            "  which slot has already run survives — this is not a delete and recreate",
+            "  it does NOT change when the rule fires: an exercise schedule resolves through the",
+            "  derivation's owner device's area, not this one",
+            ctx.dryRun
+              ? "Re-run with --apply to move it."
+              : `moved to ${dest.displayName}.`,
+          ].join("\n"),
+      );
+      return EXIT.OK;
+    },
+    ctx.dryRun ? "dry-run" : "APPLY",
+  );
+}
+
 async function runDelete(ctx: Ctx): Promise<number> {
   return withApiSession(
     ctx,
@@ -519,6 +626,7 @@ export const HANDLERS: Record<string, (ctx: Ctx) => Promise<number>> = {
   "create-exercise": runCreateExercise,
   upcoming: runUpcoming,
   skip: runSkip,
+  move: runMove,
   enable: runSetEnabled(true),
   disable: runSetEnabled(false),
   delete: runDelete,

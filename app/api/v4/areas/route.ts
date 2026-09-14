@@ -40,9 +40,16 @@ export async function GET(request: NextRequest) {
   const auth = await requireAuth(request);
   if (auth instanceof NextResponse) return auth;
 
+  // Exact string "true", like every other boolean query param in this codebase (`?force=true`), so
+  // a typo reads as "no" rather than as "yes" — the safe direction for a flag that widens a list to
+  // include rows the UI must never offer.
+  const includeArchived =
+    request.nextUrl.searchParams.get("includeArchived") === "true";
+
   const areas = await listReadableAreas(auth.userId, {
     withChartCapability: true,
     isAdmin: auth.actingAsAdmin,
+    includeArchived,
   });
   return NextResponse.json({
     areas: areas.map((a) => ({
@@ -52,6 +59,9 @@ export async function GET(request: NextRequest) {
       // re-pointing `readableAreasQuery` is a one-line URL change and nothing downstream moves.
       legacySystemId: a.legacySystemId,
       chartCapable: a.chartCapable ?? false,
+      // Always emitted, not only when `includeArchived` was asked for: a consumer that can receive
+      // an archived row must be able to tell without having to remember what it requested.
+      status: a.status,
     })),
   });
 }

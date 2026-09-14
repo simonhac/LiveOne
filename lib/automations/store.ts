@@ -110,6 +110,45 @@ export async function patch(
   return row ?? null;
 }
 
+/**
+ * Re-home an automation onto another area.
+ *
+ * SEPARATE from `patch`, and `AutomationPatch` deliberately still cannot name `areaId`. The PATCH
+ * route 422s a present `areaId` ("moving one is delete + recreate") and a test pins that; this does
+ * not weaken it, because the reason for that refusal was never that a move is wrong — it was that
+ * the route's area-owner check had already been evaluated against the OLD area by the time the body
+ * was read. A verb that authorizes both areas up front does not have that problem, and delete +
+ * recreate has a cost the refusal never priced: the automation's uuid IS its calendar `UID`
+ * (`<uuid>@liveone.energy`), so recreating it makes every subscribed client drop the events and
+ * re-add them, and it discards `last_triggered_run_start` — the record of which slot has already
+ * been consumed, i.e. the thing that stops a re-run firing the generator twice.
+ *
+ * `stamped()` like every other writer, so `revision` stays a true row version for
+ * `claimExerciseSlot`'s CAS.
+ */
+export async function moveToArea(
+  uuid: string,
+  areaUuid: string,
+  expectedRevision: number,
+): Promise<AutomationRow | null> {
+  const [row] = await requirePlanetscaleDb()
+    .update(automations)
+    .set({ areaId: areaUuid, ...stamped() })
+    // 🛑 COMPARE-AND-SET on `revision`, not a bare id match.
+    //
+    // The caller validated a SPECIFIC version of this row against the destination — its trigger's
+    // derivation must be owned by a device there, its action point must be owned by the caller. A
+    // concurrent PATCH can replace both between that check and this write, at which point an
+    // id-only `WHERE` files a rule nobody ever validated into the destination area. The device move
+    // carries its observed state into the write for exactly this reason; a zero-row result here is
+    // a 409, not a 404.
+    .where(
+      and(eq(automations.id, uuid), eq(automations.revision, expectedRevision)),
+    )
+    .returning();
+  return row ?? null;
+}
+
 export async function remove(uuid: string): Promise<boolean> {
   const rows = await requirePlanetscaleDb()
     .delete(automations)

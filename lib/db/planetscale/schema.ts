@@ -1364,9 +1364,12 @@ export const devices = pgTable(
   (table) => ({
     ridUnique: uniqueIndex("devices_rid_unique").on(table.rid),
     areaIdx: index("devices_area_idx").on(table.areaId),
+    // 'archived', not 'removed' (migration 0075). The word is shared with `areas.status` on
+    // purpose: both mean "retained but retired", and `liveone tree` prints the two side by side, so
+    // two spellings for one state was a thing every reader had to translate and nothing gained.
     statusCheck: check(
       "devices_status_check",
-      sql`${table.status} IN ('active','disabled','removed')`,
+      sql`${table.status} IN ('active','disabled','archived')`,
     ),
     ownerSlugUnique: uniqueIndex("devices_owner_slug_unique").on(
       table.ownerUserId,

@@ -44,6 +44,18 @@ jest.mock("@/lib/db/planetscale", () => ({
 // so these tests keep asserting the ROUTE's behaviour; that the route calls it at all is asserted
 // below, and that it can refuse is asserted with an explicit refusal.
 jest.mock("@/lib/integrity/http", () => ({ refuseIfReliedUpon: jest.fn() }));
+// DELETE is the HARD delete now, and it deliberately does NOT go through the adapter above — it
+// calls the pure read directly so that `?force=true` cannot waive an irreversible delete. Both
+// collaborators are mocked; `lib/areas/__tests__/delete.test.ts` owns the statement order.
+jest.mock("@/lib/areas/delete", () => {
+  class AreaNotArchivedError extends Error {
+    constructor(readonly areaId: string) {
+      super(`area ${areaId} is not archived`);
+      this.name = "AreaNotArchivedError";
+    }
+  }
+  return { hardDeleteArea: jest.fn(), AreaNotArchivedError };
+});
 jest.mock("@/lib/areas/http", () => {
   const actual = jest.requireActual("@/lib/areas/http") as object;
   return {
@@ -98,6 +110,7 @@ import { loadAreaMembers, loadAreaBindings } from "@/lib/areas/v4-load";
 import { capabilitiesForDevice } from "@/lib/capabilities/server";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import { refuseIfReliedUpon } from "@/lib/integrity/http";
+import { AreaNotArchivedError, hardDeleteArea } from "@/lib/areas/delete";
 import { DeviceConfigRegistry } from "@/lib/registry/device-config";
 import {
   createArea,
@@ -124,6 +137,7 @@ const mockCaps = jest.mocked(capabilitiesForDevice);
 const mockDb = jest.mocked(requirePlanetscaleDb);
 const mockDeviceByHandle = jest.mocked(DeviceConfigRegistry.deviceByHandle);
 const mockRelied = jest.mocked(refuseIfReliedUpon);
+const mockHardDelete = jest.mocked(hardDeleteArea);
 const mockCreate = jest.mocked(createArea);
 const mockUpdateMeta = jest.mocked(updateAreaMeta);
 const mockReplaceMembers = jest.mocked(replaceMembers);
@@ -165,6 +179,10 @@ beforeEach(() => {
       location: { country: "AU", state: "VIC" },
     },
   } as any);
+  mockHardDelete.mockResolvedValue({
+    ok: true,
+    deleted: { id: AREA_UUID, name: "Area", handle: 1000002 },
+  });
   mockResolveMembers.mockResolvedValue({
     ok: true,
     deviceIds: [DEVICE_A, DEVICE_B],
@@ -396,46 +414,128 @@ describe("PATCH /api/v4/areas/{id}", () => {
 });
 
 // ---------------------------------------------------------------------------
+/**
+ * DELETE is the HARD delete: the row goes. Archiving is `PATCH {status:"archived"}`, covered by the
+ * block below this one.
+ *
+ * The two interlocks are archived-first and nothing-depends-on-it, and NEITHER is waivable — so the
+ * assertions worth making here are the negative ones: that a refusal reaches no writer at all.
+ */
 describe("DELETE /api/v4/areas/{id}", () => {
-  it("archives rather than deleting, and refreshes serving", async () => {
+  /** The loader's row, archived — the only state in which the delete is even considered. */
+  const archived = () =>
+    mockLoadOwner.mockResolvedValue({
+      userId: "user_1",
+      isAdmin: false,
+      area: {
+        id: AREA_UUID,
+        ownerClerkUserId: "user_1",
+        legacySystemId: 1000002,
+        status: "archived",
+        displayName: "Area",
+        location: { country: "AU", state: "VIC" },
+      },
+    } as any);
+
+  it("deletes an archived area nothing depends on", async () => {
+    archived();
     const res = await areaDELETE(req(), params);
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ success: true, forced: [] });
-    expect(mockUpdateMeta).toHaveBeenCalledWith(AREA_UUID, {
-      status: "archived",
+    expect(await res.json()).toEqual({
+      success: true,
+      deleted: { id: AREA_UUID, name: "Area", handle: 1000002 },
     });
-    expect(mockRefresh).toHaveBeenCalledWith(AREA_UUID);
+    expect(mockHardDelete).toHaveBeenCalledWith(AREA_UUID);
+    // 🛑 It must NOT archive. The bug this pins is the verb quietly reverting to the soft path.
+    expect(mockUpdateMeta).not.toHaveBeenCalled();
   });
 
-  it("409s a device's own area (its handle names a real device)", async () => {
-    mockDeviceByHandle.mockResolvedValueOnce({ id: 1000002 } as any);
+  it("409s an area that is not archived, and writes nothing", async () => {
+    const res = await areaDELETE(req(), params); // fixture status is "active"
+    expect(res.status).toBe(409);
+    expect((await res.json()).detail.code).toBe("area-active");
+    expect(mockHardDelete).not.toHaveBeenCalled();
+  });
+
+  /**
+   * 🛑 The dependency scan is NOT in this route any more, and that is the point: it lives inside
+   * `hardDeleteArea`, under a `FOR UPDATE` lock, because a scan here and a delete there is a
+   * committable gap. The route's job is to render the refusal the writer hands back.
+   */
+  it("409s naming every dependent when the writer refuses", async () => {
+    archived();
+    mockHardDelete.mockResolvedValueOnce({
+      ok: false,
+      dependents: [
+        {
+          kind: "calendar-feed",
+          id: "…abc123",
+          name: "simon",
+          via: "area_calendar_tokens.area_id (ON DELETE CASCADE)",
+          effect: "cascade-deleted",
+          fix: "mint the replacement first",
+        },
+      ],
+    } as never);
     const res = await areaDELETE(req(), params);
     expect(res.status).toBe(409);
-    expect(mockUpdateMeta).not.toHaveBeenCalled();
-    expect(mockRefresh).not.toHaveBeenCalled();
+    const body = await res.json();
+    expect(body.detail.code).toBe("relied-upon");
+    expect(body.detail.dependents).toHaveLength(1);
+    // 🛑 The refusal must not OFFER a force. It may (and does) say it has none — what it must never
+    // do is suggest `?force=true`, which is what the shared `refuseIfReliedUpon` adapter says and
+    // which would be a lie here, since this route never reads that param.
+    expect(JSON.stringify(body)).not.toMatch(/force=true|repeat with/i);
+    expect(body.detail.fix).toMatch(/no force/);
   });
 
-  // 🛑 The archive is the path the `automations.area_id` NO ACTION FK never covered: every
-  // constraint stays satisfied and the area simply stops being served, so a dashboard node naming
-  // it renders nothing with no error. These two pin that the gate runs, and that a refusal from it
-  // stops the write — not merely that it was consulted.
-  it("consults the referential-integrity gate before archiving", async () => {
-    await areaDELETE(req(), params);
-    expect(mockRelied).toHaveBeenCalledWith(
-      expect.anything(),
-      "area",
-      AREA_UUID,
+  /**
+   * 🛑 The whole point of splitting the verbs. `refuseIfReliedUpon` parses `?force=true` and waives;
+   * an irreversible delete must not offer that, so the route calls the pure read instead. If someone
+   * "tidies" this back onto the shared adapter, a `?force=true` would start destroying rows the
+   * refusal had just named — silently, because the status code would not change.
+   */
+  it("does not consult the force-waivable adapter at all", async () => {
+    archived();
+    await areaDELETE(
+      new NextRequest(`http://localhost/api/v4/areas/${AREA}?force=true`, {
+        method: "POST",
+      }),
+      params,
     );
+    expect(mockRelied).not.toHaveBeenCalled();
   });
 
-  it("writes nothing when something still relies on the area", async () => {
-    mockRelied.mockResolvedValueOnce({
-      response: NextResponse.json({ error: "relied upon" }, { status: 409 }),
-    } as any);
+  it("honours no force: ?force=true still refuses", async () => {
+    archived();
+    mockHardDelete.mockResolvedValueOnce({
+      ok: false,
+      dependents: [
+        {
+          kind: "automation",
+          id: "au_x",
+          name: "Generator exercise",
+          via: "automations.area_id",
+          effect: "dangles",
+          fix: "move it",
+        },
+      ],
+    } as never);
+    const res = await areaDELETE(
+      new NextRequest(`http://localhost/api/v4/areas/${AREA}?force=true`, {
+        method: "POST",
+      }),
+      params,
+    );
+    expect(res.status).toBe(409);
+  });
+
+  it("409s the un-archived-mid-decision race rather than 500ing", async () => {
+    archived();
+    mockHardDelete.mockRejectedValueOnce(new AreaNotArchivedError(AREA_UUID));
     const res = await areaDELETE(req(), params);
     expect(res.status).toBe(409);
-    expect(mockUpdateMeta).not.toHaveBeenCalled();
-    expect(mockRefresh).not.toHaveBeenCalled();
+    expect((await res.json()).detail.code).toBe("area-active");
   });
 });
 
@@ -637,13 +737,17 @@ describe("🛑 every mutation refreshes derived serving state", () => {
   // these handlers write. A handler that returned before calling it would pass every payload assertion
   // and still leave the area serving its previous point set. Asserted here per handler, once, so the
   // omission cannot slip into a new one unnoticed.
+  //
+  // 🛑 DELETE is absent DELIBERATELY, and is not an omission to be "fixed" by adding it back. It
+  // cannot use `refreshAreaServing`, which resolves the handle FROM `legacy_handles.area_id` — the
+  // column the delete has just nulled — so it would find nothing and invalidate nothing. The delete
+  // captures the handle first and refreshes itself; `lib/areas/__tests__/delete.test.ts` pins that.
   it.each([
     [
       "POST /areas",
       () => areasPOST(req({ name: "Site", members: [DEVICE_A] })),
     ],
     ["PATCH /areas/{id}", () => areaPATCH(req({ name: "New" }), params)],
-    ["DELETE /areas/{id}", () => areaDELETE(req(), params)],
     [
       "PUT /areas/{id}/members",
       () => membersPUT(req({ members: [DEVICE_A] }), params),

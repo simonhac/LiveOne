@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { refuseIfReliedUpon } from "@/lib/integrity/http";
+import { AreaNotArchivedError, hardDeleteArea } from "@/lib/areas/delete";
 import { eq } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import { areas } from "@/lib/db/planetscale/schema";
@@ -20,7 +21,6 @@ import {
 import { capabilitiesForDevice } from "@/lib/capabilities/server";
 import { loadAreaBindings, loadAreaMembers } from "@/lib/areas/v4-load";
 import { areaDetailResponse } from "@/lib/areas/v4-shapes";
-import { DeviceConfigRegistry } from "@/lib/registry/device-config";
 import { isValidTimezone } from "@/lib/timezones";
 
 /**
@@ -29,7 +29,8 @@ import { isValidTimezone } from "@/lib/timezones";
  * (`ar_`/`dv_`/`bn_`/`pt_`).
  *   GET    → the aggregate. Readable (owner ∪ visible-device areas).
  *   PATCH  → rename / re-slug / retime / relocate / set status. OWNER or admin.
- *   DELETE → soft-delete (`status = 'archived'`); refuses a device's own area. OWNER or admin.
+ *   DELETE → HARD delete (the row). Refuses unless already archived and nothing depends on it.
+ *            Archiving is `PATCH { status: 'archived' }` — a separate verb, deliberately.
  *
  * The GET is READABLE and the writes are OWNED, and that asymmetry is why they use different loaders:
  * `loadReadableArea` (400 malformed / 403 unknown-or-not-yours — §8.4 collapses the two) vs
@@ -108,7 +109,13 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params;
-  const r = await loadReadableArea(request, id);
+  const r = await loadReadableArea(request, id, {
+    // So an archived area can still be INSPECTED. Reading one changes nothing, and an area you
+    // cannot read is one you cannot decide about — which is the state that made archiving a
+    // one-way door before `area delete` existed.
+    includeArchived:
+      request.nextUrl.searchParams.get("includeArchived") === "true",
+  });
   if ("error" in r) return r.error;
   return areaAggregateResponse(r.area.id, r.area.legacySystemId);
 }
@@ -243,25 +250,59 @@ export async function PATCH(
 }
 
 /**
- * DELETE — soft-delete (`status = 'archived'`). The v4 twin of `DELETE /api/areas/{areaId}`.
+ * DELETE — a GENUINE delete. The row goes.
  *
- * SOFT, deliberately: an area's uuid keys its flow/provenance history (`point_readings_flow_attr_1d`,
- * `battery_provenance_daily`), so a hard delete would destroy data the row does not own. Archiving
- * drops it out of `listReadableAreas` (which filters `status = 'active'`) and out of the KV subscription
- * registry, which is what "deleted" means to every consumer.
+ * ## Archive and delete are two verbs now, and this is the destructive one
  *
- * A legacy Area addressed by a REAL device handle is refused with 409: it is that device's own area and
- * is load-bearing for the device page.
+ * This used to be the soft archive, on the reasoning that an area's uuid keys its flow and
+ * provenance history so the row could never safely go. That reasoning was right about the DATA and
+ * wrong about the CONCLUSION: it left the system with no way to retire a row at all, and prod
+ * accumulated 17 empty area-of-one shells that nothing could remove. The history is still protected
+ * — by refusing while it exists, below, rather than by refusing forever.
  *
- * ## The second refusal, and why archiving needs one at all
+ * So: archiving is `PATCH { status: 'archived' }`, which is where it always really lived (the
+ * transition gate is on the PATCH, not here). This verb deletes.
  *
- * `automations.area_id` is a NO ACTION FK, so a HARD delete is already blocked by Postgres.
- * (`derivations.area_id` was the other one until 0069 dropped it — a derivation's site is its owner
- * device now, so deleting an area is not a fact about a detector at all.) The soft archive is
- * precisely the path that FK never covered: the row stays,
- * every FK stays satisfied, and the area simply stops being served — so a dashboard node naming it
- * renders nothing, with no error anywhere. `refuseIfReliedUpon` names what would go quiet.
- * `?force=true` proceeds and returns the list in the body, so an override is legible in a log.
+ * ## Two interlocks, and NEITHER is waivable
+ *
+ * 1. **Archived first.** Restated inside the DELETE's own `WHERE` by `hardDeleteArea`, so an area
+ *    un-archived mid-decision fails rather than races. Same shape as `derivation delete`'s
+ *    disabled-first rule, and the same reasoning: archiving is one reversible command, and it makes
+ *    you watch the thing stop being served before it is destroyed.
+ *
+ * 2. **Nothing may still reference it** → 409 naming every dependent, its `via` and its `effect`.
+ *
+ * 🛑 Neither interlock is evaluated HERE. Both live inside `hardDeleteArea`, which takes a row lock
+ * and re-scans under it — because a scan on the pool followed by a delete on another connection is
+ * a committable gap, and a calendar token minted inside it would be CASCADEd away by a delete that
+ * had just reported nothing depended on the area. The `status` check below is a friendly fast path,
+ * not the guarantee.
+ *
+ * 🛑 It uses `findDependents`, NOT `refuseIfReliedUpon`. Every other delete route reaches for the
+ * adapter, so the divergence is worth stating: the adapter parses `?force=true` and waives the
+ * refusal, and an irreversible delete has no business offering that. The dependents each carry a
+ * `fix` naming the verb that clears them (`liveone automation move`, `liveone area purge flows`,
+ * `liveone calendar revoke`); clearing them is the confirmation step.
+ *
+ * ## What is NOT checked any more, and why it was not merely moved
+ *
+ * The old `deviceByHandle(legacySystemId)` 409 — "this is a device's own area" — is gone, from here
+ * and from the PATCH archive transition it was briefly going to move to.
+ *
+ * It is a PRE-0074 PROXY for a question that now has a real column. Back when membership lived in
+ * `area_members`, "the handle names a device" was the closest available test for "a device lives
+ * here". Since 0074 that is `devices.area_id`, asked directly, and the two answers have diverged
+ * completely: on prod all 17 empty area-of-one shells have a handle that names a live device and no
+ * devices in them at all. Keeping the proxy would have refused the archive of every single area
+ * this work exists to retire, while still not answering whether anything was in them.
+ *
+ * The thing it was protecting is protected better now:
+ *   - devices in the area are a named dependent under BOTH scopes (`areaDependents`);
+ *   - `?systemId=N` survives the delete regardless, because `hardDeleteArea` nulls
+ *     `legacy_handles.area_id` and keeps the row, so the device leg keeps resolving;
+ *   - the flow view was never the shell's to lose — `listFlowEligibleAreaHandles`
+ *     (`lib/areas/members.ts`) already excludes an area whose handle names a device that belongs to
+ *     a DIFFERENT active area, which is exactly the shells.
  */
 export async function DELETE(
   request: NextRequest,
@@ -272,21 +313,48 @@ export async function DELETE(
   if ("error" in authed) return authed.error;
   const { area } = authed;
 
-  if (
-    area.legacySystemId != null &&
-    (await DeviceConfigRegistry.deviceByHandle(area.legacySystemId))
-  ) {
+  // A cheap, friendly pre-check ONLY. The authoritative one is inside `hardDeleteArea`, under a row
+  // lock — see its docstring. This exists so the common case gets a 409 naming the archive verb
+  // without opening a transaction, and it is deliberately NOT the thing being relied on.
+  if (area.status !== "archived")
     return NextResponse.json(
-      { error: "This is a device's own area and cannot be deleted" },
+      {
+        error: "That area is not archived, and delete is not the archive verb",
+        detail: {
+          code: "area-active",
+          status: area.status,
+          fix: "PATCH { status: 'archived' } first, confirm nothing misses it, then delete",
+        },
+      },
       { status: 409 },
     );
+
+  try {
+    const result = await hardDeleteArea(area.id);
+    if (!result.ok)
+      return NextResponse.json(
+        {
+          error: `That area is still relied upon by ${result.dependents.length} thing(s)`,
+          detail: {
+            code: "relied-upon",
+            dependents: result.dependents,
+            // Deliberately NOT "…or repeat with ?force=true", which is what the shared adapter says.
+            fix: "clear each of them first — this delete has no force",
+          },
+        },
+        { status: 409 },
+      );
+    return NextResponse.json({ success: true, deleted: result.deleted });
+  } catch (err) {
+    if (err instanceof AreaNotArchivedError)
+      return NextResponse.json(
+        {
+          error:
+            "That area stopped being archived while the delete was deciding",
+          detail: { code: "area-active", fix: "re-read it and try again" },
+        },
+        { status: 409 },
+      );
+    throw err;
   }
-
-  const relied = await refuseIfReliedUpon(request, "area", area.id);
-  if ("response" in relied) return relied.response;
-
-  await updateAreaMeta(area.id, { status: "archived" });
-  // The archived area must leave the KV subscription registry, or its bindings keep being served.
-  await refreshAreaServing(area.id);
-  return NextResponse.json({ success: true, forced: relied.forced });
 }

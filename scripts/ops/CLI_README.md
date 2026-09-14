@@ -92,6 +92,8 @@ Data goes to stdout; all diagnostics go to stderr. Mutating commands are **dry b
     - [liveone area purge](#liveone-area-purge)
       - [liveone area purge flows](#liveone-area-purge-flows)  _(writes)_
       - [liveone area purge provenance](#liveone-area-purge-provenance)  _(writes)_
+    - [liveone area archive](#liveone-area-archive)  _(writes)_
+    - [liveone area delete](#liveone-area-delete)  _(writes)_
   - [liveone derivation](#liveone-derivation)
     - [liveone derivation list](#liveone-derivation-list)
     - [liveone derivation create](#liveone-derivation-create)  _(writes)_
@@ -111,6 +113,7 @@ Data goes to stdout; all diagnostics go to stderr. Mutating commands are **dry b
     - [liveone automation upcoming](#liveone-automation-upcoming)
     - [liveone automation skip](#liveone-automation-skip)  _(writes)_
     - [liveone automation enable](#liveone-automation-enable)  _(writes)_
+    - [liveone automation move](#liveone-automation-move)  _(writes)_
     - [liveone automation disable](#liveone-automation-disable)  _(writes)_
     - [liveone automation delete](#liveone-automation-delete)  _(writes)_
   - [liveone calendar](#liveone-calendar)
@@ -2283,7 +2286,7 @@ Usage:
 Options:
   --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
   --vendor <vendor>          Only this vendor's devices
-  --status <status>          Only devices with this status (active, disabled, removed)
+  --status <status>          Only devices with this status (active, disabled, archived)
 
 Common options:
   --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
@@ -3010,6 +3013,11 @@ The reads (list, show, latest, history, flows) change nothing. The two WIRING su
 `devices` sets which devices an area is made of, and `role` sets which point fills each
 (role, metric) slot. Both are dry-run by default and state their change as a diff.
 
+Retiring an area is TWO verbs, and they are not synonyms: `archive` stops it being served and
+keeps every row (reversible, `--undo`); `delete` destroys the row, refuses unless the area is
+already archived, and has no --force. An archived area is hidden from every listing — pass
+--include-archived to address one at all.
+
 Usage:
   liveone area <subcommand> [options]
 
@@ -3025,6 +3033,8 @@ Subcommands:
   role                   Which point fills an area's (role, metric) slot, and in what order (writes: set, clear).
   provenance             What derived rows an area actually holds — the flow matrix and the battery fold.
   purge                  Delete an area's derived rows — the flow matrix, or the battery fold.
+  archive                Retire an area: keep every row, stop serving it.  (writes)
+  delete                 Destroy an archived area's row. Irreversible, and refuses rather than forces.  (writes)
 
 Run `liveone area <subcommand> --help` for a subcommand's own options.
 
@@ -3070,6 +3080,7 @@ Usage:
 
 Options:
   --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
+  --include-archived         Also consider archived areas (they are hidden from every listing by default)
 
 Common options:
   --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
@@ -3089,6 +3100,7 @@ External access:
 
 Examples:
   liveone area list
+  liveone area list --include-archived
   liveone area list --format json
 
 Exit codes:
@@ -3123,6 +3135,7 @@ Arguments:
 
 Options:
   --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
+  --include-archived         Also consider archived areas (they are hidden from every listing by default)
 
 Common options:
   --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
@@ -3143,6 +3156,7 @@ External access:
 Examples:
   liveone area show daylesford
   liveone area show ar_01kx8km3a3fh5v2csryvhskzep
+  liveone area show kuti-house --include-archived
 
 Exit codes:
   0    success
@@ -3852,6 +3866,7 @@ Options:
   --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
   --start <YYYY-MM-DD>       Window start (local days)
   --end <YYYY-MM-DD>         Window end, inclusive (local days)
+  --include-archived         Also consider archived areas (they are hidden from every listing by default)
 
 Common options:
   --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
@@ -3973,6 +3988,7 @@ Options:
   --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
   --start <YYYY-MM-DD>       Window start (local days)
   --end <YYYY-MM-DD>         Window end, inclusive (local days)
+  --include-archived         Also consider archived areas (they are hidden from every listing by default)
 
 Common options:
   --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
@@ -4039,6 +4055,7 @@ Arguments:
 
 Options:
   --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
+  --include-archived         Also consider archived areas (they are hidden from every listing by default)
 
 Common options:
   --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
@@ -4066,6 +4083,138 @@ Examples:
 Exit codes:
   0    success
   1    the area had no battery provenance to delete
+  2    usage error
+  3    authentication failure
+  5    upstream failure
+  130  interrupted
+```
+
+#### liveone area archive
+
+Retire an area: keep every row, stop serving it.
+
+```
+Retire an area: keep every row, stop serving it.
+
+When to use:
+  Use this when an area should stop appearing and stop being served, but its history must stay
+  readable. It is also the required first step before `area delete`.
+
+REVERSIBLE. The row, its bindings and all of its derived history survive untouched; the area
+leaves every listing and the KV subscription registry. `--undo` puts it back.
+
+Archiving is still gated: a dashboard naming the area would render nothing, with no error
+anywhere, so anything that would go quiet is named first.
+
+Usage:
+  liveone area archive <area>... [options]
+
+  This command WRITES. It is dry by default: nothing changes without --apply.
+
+Arguments:
+  <area>                 One or more areas: ar_… id, integer handle, or display name
+
+Options:
+  --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
+  --undo                     Un-archive instead: set the area back to active
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
+  --apply                    Actually write. Without it nothing is changed.
+  --dry-run                  Report what would change and write nothing (the default)
+  --yes                      Skip the confirmation prompt. Required with --apply off a terminal.
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
+
+Examples:
+  liveone area archive kinkora-fronius
+  liveone area archive kinkora-fronius --apply
+  liveone area archive kinkora-fronius --undo --apply
+
+Exit codes:
+  0    success
+  1    the server refused (the reason names what would go quiet)
+  2    usage error
+  3    authentication failure
+  5    upstream failure
+  130  interrupted
+```
+
+#### liveone area delete
+
+Destroy an archived area's row. Irreversible, and refuses rather than forces.
+
+```
+Destroy an archived area's row. Irreversible, and refuses rather than forces.
+
+When to use:
+  Use this to finally remove an area you have already archived and cleared. If you only want it
+  to stop being served, `area archive` is the whole operation.
+
+🛑 IRREVERSIBLE, and there is deliberately NO --force.
+
+Two interlocks, neither waivable:
+  1. the area must already be ARCHIVED (`liveone area archive <area> --apply`);
+  2. nothing may still reference it — the refusal names every dependent, the column it lives
+     in, what would happen to it, and the verb that clears it.
+
+Clearing what it names IS the confirmation step. Typical order for a legacy shell area:
+  liveone automation move <area> <automation> --to <other> --apply
+  liveone calendar mint <other>    # then re-subscribe, check it renders, then revoke the old
+  liveone area purge flows <area> --include-archived --start=… --end=… --apply
+
+The area's integer handle SURVIVES: `legacy_handles.area_id` is nulled, not deleted, so a
+handle shared with a device keeps answering `?systemId=N` through the device.
+
+Usage:
+  liveone area delete <area>... [options]
+
+  This command WRITES. It is dry by default: nothing changes without --apply.
+
+Arguments:
+  <area>                 One or more areas: ar_… id, integer handle, or display name
+
+Options:
+  --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
+  --include-archived         Also consider archived areas (they are hidden from every listing by default)
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
+  --apply                    Actually write. Without it nothing is changed.
+  --dry-run                  Report what would change and write nothing (the default)
+  --yes                      Skip the confirmation prompt. Required with --apply off a terminal.
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
+
+Examples:
+  liveone area delete kinkora-fronius --include-archived
+  liveone area delete kinkora-fronius --include-archived --apply
+
+Exit codes:
+  0    success
+  1    the server refused (the reason names every dependent)
   2    usage error
   3    authentication failure
   5    upstream failure
@@ -4889,6 +5038,7 @@ Subcommands:
   upcoming               Every scheduled occurrence on an area, dated, for the next N days.
   skip                   Skip one occurrence of a repeating rule, leaving the rule itself alone.  (writes)
   enable                 Re-enable a disabled automation.  (writes)
+  move                   Re-home an automation onto another area.  (writes)
   disable                Stop an automation being evaluated, without deleting it.  (writes)
   delete                 Delete an automation.  (writes)
 
@@ -5289,6 +5439,75 @@ External access:
 Exit codes:
   0    success
   1    completed, with findings or no results
+  2    usage error
+  3    authentication failure
+  5    upstream failure
+  130  interrupted
+```
+
+#### liveone automation move
+
+Re-home an automation onto another area.
+
+```
+Re-home an automation onto another area.
+
+When to use:
+  Use this when a rule sits on the wrong area — typically a legacy area-of-one shell whose
+  device has since moved to a real site. It is also the prerequisite for `area delete`, which
+  refuses while an area still owns automations.
+
+An IN-PLACE move, not delete + recreate, and the difference matters twice:
+  • the automation's id is its calendar UID, so subscribers keep the same events rather than
+    seeing them all vanish and reappear;
+  • the record of which schedule slot has already been consumed survives, so a slot that has
+    already run cannot arm again.
+
+The destination must own the trigger's derivation — i.e. the derivation's owner device must
+be a member of it — or the server refuses. Moving does NOT change when an exercise fires:
+the schedule resolves through the derivation's owner device's area, not this one.
+
+Usage:
+  liveone automation move <area> <automation> [options]
+
+  This command WRITES. It is dry by default: nothing changes without --apply.
+
+Arguments:
+  <area>                 The area: ar_… id, legacy handle, slug or name
+  <automation>           The automation: au_… id or name
+
+Options:
+  --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
+  --include-archived         Also consider archived areas (they are hidden from every listing by default)
+  --to <area>                Destination area: its ar_… id, integer handle, or display name
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
+  --apply                    Actually write. Without it nothing is changed.
+  --dry-run                  Report what would change and write nothing (the default)
+  --yes                      Skip the confirmation prompt. Required with --apply off a terminal.
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
+
+Examples:
+  liveone automation move daylesford-selectronic au_6ws9rd8vwk98nsc4bytnjd02zt --to=daylesford
+  liveone automation move daylesford-selectronic au_6ws9rd8vwk98nsc4bytnjd02zt --to=daylesford --apply
+  liveone automation move old-shell au_… --to=daylesford --include-archived --apply
+
+Exit codes:
+  0    success
+  1    the server refused (the reason names why it does not belong there)
   2    usage error
   3    authentication failure
   5    upstream failure

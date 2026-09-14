@@ -157,7 +157,12 @@ beforeEach(() => {
   } as any);
   mockGet.mockResolvedValue(dashboardRow());
   mockAreas.mockResolvedValue([
-    { id: Area.toUuid(AREA), displayName: "Area", legacySystemId: 1 },
+    {
+      id: Area.toUuid(AREA),
+      displayName: "Area",
+      legacySystemId: 1,
+      status: "active",
+    },
   ]);
   mockDevices.mockResolvedValue([
     {

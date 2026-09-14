@@ -526,6 +526,13 @@
       "when": 1789358441122,
       "tag": "0074_drop_area_members",
       "breakpoints": true
+    },
+    {
+      "idx": 75,
+      "version": "7",
+      "when": 1789391731082,
+      "tag": "0075_device_status_archived",
+      "breakpoints": true
     }
   ]
 }
