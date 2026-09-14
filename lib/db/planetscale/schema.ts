@@ -870,6 +870,16 @@ export const areas = pgTable(
     // `areas_legacy_system_unique` dropped with its column in migration 0052. Its job — one Area per
     // integer handle — is now `legacy_handles_area_unique` (a partial UNIQUE on `legacy_handles.area_id`)
     // plus `legacy_handles`' own PK on `handle`.
+    //
+    // TWO values, not `devices`' three — there is no `disabled` for an area. Added by migration 0076,
+    // and the column went without any constraint until then, which is exactly how it came to hold a
+    // `'removed'` row that nothing in the code could produce: `createArea` writes `'active'`, PATCH
+    // 422s anything but `'active'`/`'archived'`, and `hardDeleteArea` requires `'archived'`. The
+    // stray value was found by VERIFYING migration 0075 rather than by anything failing.
+    statusCheck: check(
+      "areas_status_check",
+      sql`${table.status} IN ('active','archived')`,
+    ),
   }),
 );
 
