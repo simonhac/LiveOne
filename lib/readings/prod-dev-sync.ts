@@ -283,7 +283,19 @@ const FULL: FullTable[] = [
       // outright, so there is no longer an `area_id` for a realigning area to strand. The
       // protection it stood for moved to `derivation_sources.point_id`'s FK ("you cannot delete a
       // point a live derivation reads").
-      repoint: [{ table: "devices", cols: ["area_id"] }],
+      // 🛑 TWO ENTRIES, not one with two columns: an entry's `cols` are a single (possibly
+      // composite) foreign key, zipped against the parent PK. `["area_id", "primary_area_id"]`
+      // would emit `primary_area_id = b.new_undefined`.
+      //
+      // The second is the DEPLOY-WINDOW leg — see the catalog filter in `syncTable`. Between this
+      // code deploying and migration 0074 applying, `primary_area_id` is still present WITH its
+      // NO ACTION FK, so a drifted area a dev device still points at cannot be deleted and every
+      // sync run in that window would abort on 23503. The filter drops this entry the moment 0074
+      // lands, which is what makes it safe to leave here rather than needing a third PR.
+      repoint: [
+        { table: "devices", cols: ["area_id"] },
+        { table: "devices", cols: ["primary_area_id"] },
+      ],
       // Nullable columns behind areas_owner_alias_unique. Cleared on the drifted dev row so prod's row
       // can be inserted alongside it, which the repoint UPDATE needs as its FK target. The drifted row
       // is deleted moments later, in the same transaction.
@@ -914,7 +926,27 @@ export async function syncTable(
       // A repointed FK must be MOVED to prod's PK, so `_drift` has to carry that PK too — captured as
       // `new_<col>` from the staged prod row. Only selected when repointing, so the no-repoint tables
       // (dashboards, point_info) emit exactly the SQL they always did.
-      const repoint = idDrift.repoint ?? [];
+      // 🛑 FILTERED AGAINST THE LIVE CATALOG, so the manifest can name a column that exists only
+      // on one side of a pending migration.
+      //
+      // This closes the deploy window that expand/contract creates. `devices.primary_area_id` is
+      // listed below alongside `area_id` because between this code deploying and migration 0074
+      // being applied the column is still there WITH its NO ACTION FK — so a drifted area that a
+      // dev device still points at cannot be deleted, and every sync run in that window would abort
+      // on 23503. That window is hours, but the sync runs every two hours and the last time it
+      // aborted it froze liveone-dev for three days. After 0074 the column is gone from
+      // `colsByTable` and the entry silently drops out, which is also what makes it safe to leave
+      // here rather than needing a third PR to remove it.
+      const repoint = (idDrift.repoint ?? []).filter((c) => {
+        const live = colsByTable.get(c.table);
+        // Unknown table: keep it. Skipping a repoint because we lack information is how a missing
+        // leg becomes a silent failure instead of a loud one.
+        if (!live) return true;
+        // 🛑 ALL-OR-NOTHING per entry, because an entry's `cols` are ONE foreign key — they are
+        // zipped positionally against the parent's PK below (`b.new_${pk[i]}`). Filtering
+        // individual columns out of a composite FK would emit `b.new_undefined`.
+        return c.cols.every((col) => live.includes(col));
+      });
       const newPkCols = repoint.length
         ? ", " + pk.map((c) => `s.${c} AS new_${c}`).join(", ")
         : "";

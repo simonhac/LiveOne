@@ -27,23 +27,31 @@
 -- gate on it is a gate that is false on purpose — which only teaches the next person to delete
 -- gates.
 --
--- So what remains below are the two invariants that make the columns unnecessary in the first
--- place, both of which are 0 on dev and must stay 0.
+-- So what remains below are the two invariants that survive scrutiny, both measured at 0 on dev and
+-- both of which must stay 0. Note what is NOT there: "every owned device has an area". That is an
+-- onboarding policy, not an invariant — see gate A.
 
 --> statement-breakpoint
--- GATE A: the placement invariant. An ACTIVE device has an owner and an area, or neither.
+-- GATE A: no OWNERLESS device is in an area.
 --
--- This is what replaces both dropped columns, so it is the thing to prove before they go. An owned
--- device with no area is the failure the drop makes unrecoverable: afterwards nothing records where
--- it used to be. An OWNERLESS device WITH an area is the opposite failure and is worse than it looks
--- — `assertDevicesRehomable` refuses to move one, so it is trapped in that area permanently, and
--- nothing, not even an admin, can free it.
+-- The ambient invariant, and the only half of "owned XOR ambient" that is actually an invariant. An
+-- ownerless device is an OpenElectricity NEM region — Home Assistant's `entry_type=SERVICE`, an
+-- ambient producer consumed by every area in its state and contained by none — and
+-- `assertDevicesRehomable` refuses to place one. So a placed ownerless device is not merely odd, it
+-- is TRAPPED: nothing, not even an admin, can take it out again.
+--
+-- 🛑 The converse is deliberately NOT gated, and an earlier cut of this file got that wrong. An
+-- OWNED device with no area is a supported, first-class state, not a defect:
+-- `PATCH /api/v4/devices/{id} { "areaId": null }` exists precisely to produce it and is documented
+-- as "the ONLY way to say not assigned", and `PUT …/members` orphans a device by omission. Gating
+-- on it would mean a user's deliberate unassignment blocks this migration until somebody undoes it.
+-- "An owned device is placed" is an ONBOARDING policy (`resolveOnboardingArea`), not a property of
+-- the data model.
 DO $$ DECLARE n int; BEGIN
   SELECT count(*) INTO n FROM devices
-   WHERE status = 'active'
-     AND (owner_user_id IS NOT NULL) IS DISTINCT FROM (area_id IS NOT NULL);
+   WHERE owner_user_id IS NULL AND area_id IS NOT NULL;
   IF n > 0 THEN
-    RAISE EXCEPTION 'GATE A: % active device(s) violate the placement invariant (owned XOR ambient). Owned-but-ambient loses its last record of where it belonged; ownerless-but-placed is trapped there for ever.', n;
+    RAISE EXCEPTION 'GATE A: % ownerless device(s) are placed in an area. `assertDevicesRehomable` refuses to move an ownerless device, so each is trapped there permanently — free them before dropping.', n;
   END IF;
 END $$;
 

@@ -14,12 +14,15 @@ const AREA_NEW = "bbbbbbbb-0000-7000-8000-000000000002";
 const AREA_OTHER = "cccccccc-0000-7000-8000-000000000003";
 
 /**
- * Queued answers for the two reads, in call order: the default-area lookup, then the has-other-area
+ * Queued answers for the two reads, in call order: the default-area lookup, then the has-any-area
  * lookup. A queue rather than a table fake — the module asks two specific questions and the thing
  * worth pinning is what it does with each answer, not that drizzle composes.
  */
-let reads: Array<Array<{ id: string }>> = [];
+let reads: Array<Array<{ id: string; location?: unknown }>> = [];
 const upserts: Array<{ clerkUserId: string; defaultAreaId: string }> = [];
+/** `onConflictDoUpdate`'s options, so the `WHERE default IS NULL` guard can be asserted present. */
+const upsertOpts: Array<Record<string, unknown>> = [];
+const locationFills: Array<unknown> = [];
 
 const chain = () => {
   const self: Record<string, unknown> = {};
@@ -31,10 +34,18 @@ const chain = () => {
 jest.mock("@/lib/db/planetscale", () => ({
   requirePlanetscaleDb: () => ({
     select: () => chain(),
+    update: () => ({
+      set: (v: { location?: unknown }) => ({
+        where: async () => {
+          locationFills.push(v.location);
+        },
+      }),
+    }),
     insert: () => ({
       values: (v: { clerkUserId: string; defaultAreaId: string }) => ({
-        onConflictDoUpdate: async () => {
+        onConflictDoUpdate: async (opts: Record<string, unknown>) => {
           upserts.push(v);
+          upsertOpts.push(opts);
         },
       }),
     }),
@@ -63,12 +74,14 @@ const SITE = {
 beforeEach(() => {
   reads = [];
   upserts.length = 0;
+  upsertOpts.length = 0;
+  locationFills.length = 0;
   createArea.mockClear();
 });
 
 describe("resolveOnboardingArea", () => {
   it("reuses the owner's default area, and creates nothing", async () => {
-    reads = [[{ id: AREA_DEFAULT }]];
+    reads = [[{ id: AREA_DEFAULT, location: { country: "AU" } }]];
     expect(await resolveOnboardingArea("user_1", SITE)).toEqual({
       areaId: AREA_DEFAULT,
       createdAreaId: null,
@@ -119,6 +132,44 @@ describe("resolveOnboardingArea", () => {
     // connection", which is the pre-0073 behaviour and is never surprising.
     expect(upserts).toEqual([]);
     expect(out.areaId).toBe(AREA_NEW);
+  });
+
+  it("🛑 fills a BLANK location on a reused default from the vendor's address", async () => {
+    // Tesla first (its callback passes `location: null`), Enphase second. Without this the address
+    // Enphase supplies — the only source of the sun-times window and the NEM region — is discarded
+    // by the very mechanism whose reason for existing is not discarding it.
+    reads = [[{ id: AREA_DEFAULT, location: null }]];
+    await resolveOnboardingArea("user_1", SITE);
+    expect(locationFills).toEqual([SITE.location]);
+  });
+
+  it("…and never OVERWRITES a location the default already has", async () => {
+    reads = [[{ id: AREA_DEFAULT, location: { country: "AU", state: "NSW" } }]];
+    await resolveOnboardingArea("user_1", SITE);
+    expect(locationFills).toEqual([]);
+  });
+
+  it("🛑 guards the default write on it still being blank", async () => {
+    // The concurrency rule, pinned at the only place it can be: two first-ever connections both
+    // decide to record, and the WHERE is what stops the second silently re-pointing the first.
+    reads = [[], []];
+    await resolveOnboardingArea("user_1", SITE);
+    expect(upsertOpts[0]).toHaveProperty("setWhere");
+    expect(upsertOpts[0].setWhere).toBeDefined();
+  });
+
+  it("asks 'does this owner have any area' BEFORE creating one", async () => {
+    // Asking afterwards (excluding the one just made) is what let two racing first connections each
+    // see the other's new area and record no default at all. The queue order IS the assertion: the
+    // second read is consumed before `createArea` is called.
+    let sawAreaCountFirst = false;
+    reads = [[], []];
+    createArea.mockImplementationOnce(async () => {
+      sawAreaCountFirst = reads.length === 0;
+      return { id: AREA_NEW, legacySystemId: 42, vacatedAreaIds: [] };
+    });
+    await resolveOnboardingArea("user_1", SITE);
+    expect(sawAreaCountFirst).toBe(true);
   });
 
   it("creates a fresh site when the recorded default is archived or re-owned", async () => {

@@ -46,6 +46,8 @@ import { Device, type DeviceId } from "@/lib/ids";
 const ops: string[] = [];
 const store = {
   areas: new Set<string>(),
+  /** Areas in this set answer the status precheck with `archived` rather than `active`. */
+  archivedAreas: new Set<string>(),
   devices: new Map<string, { rid: number; areaId: string | null }>(),
   handles: new Map<
     number,
@@ -67,7 +69,22 @@ const exec = {
     from: () =>
       Object.assign(Promise.resolve([{ maxRid: null }]), {
         where: () =>
-          Object.assign(Promise.resolve([]), { limit: async () => [] }),
+          Object.assign(Promise.resolve([]), {
+            // 🛑 The area-status precheck reads `.limit(1).for("share")` and it MUST resolve to the
+            // area the fake store holds, not to `[]` — a fake that answered "no such area" would
+            // make the placement assertions below pass for the wrong reason (they would never reach
+            // the insert). `ops` does not record it: it is a read, and the step-order assertion is
+            // about writes.
+            limit: () => {
+              const rows = [...store.areas].map((id) => ({
+                id,
+                status: store.archivedAreas.has(id) ? "archived" : "active",
+              }));
+              return Object.assign(Promise.resolve(rows), {
+                for: async () => rows,
+              });
+            },
+          }),
       }),
   }),
   insert: (table: unknown) => ({
@@ -145,15 +162,21 @@ jest.mock("@/lib/registry/device-registry", () => ({
 // has its own tests — but it PRE-CREATES the area in the fake store, so the FK the writer's insert
 // is subject to is real: a writer that placed a device in an area nobody created would 23503 here.
 const ONBOARDING_AREA = "11111111-1111-7111-8111-111111111111";
-const resolveOnboardingArea = jest.fn(async () => {
-  ops.push("resolveOnboardingArea");
-  store.areas.add(ONBOARDING_AREA);
-  return {
-    areaId: ONBOARDING_AREA,
-    createdAreaId: ONBOARDING_AREA,
-    recordedAsDefault: true,
-  };
-});
+const resolveOnboardingArea = jest.fn(
+  async (): Promise<{
+    areaId: string;
+    createdAreaId: string | null;
+    recordedAsDefault: boolean;
+  }> => {
+    ops.push("resolveOnboardingArea");
+    store.areas.add(ONBOARDING_AREA);
+    return {
+      areaId: ONBOARDING_AREA,
+      createdAreaId: ONBOARDING_AREA,
+      recordedAsDefault: true,
+    };
+  },
+);
 jest.mock("@/lib/areas/onboarding", () => ({
   resolveOnboardingArea: (...args: unknown[]) =>
     (resolveOnboardingArea as (...a: unknown[]) => unknown)(...args),
@@ -165,6 +188,7 @@ import { specFromLegacyText } from "@/lib/capabilities/config";
 beforeEach(() => {
   ops.length = 0;
   store.areas.clear();
+  store.archivedAreas.clear();
   store.devices.clear();
   store.handles.clear();
   resolveOnboardingArea.mockClear();
@@ -241,6 +265,40 @@ describe("DeviceWriter.createSystem — the two-step insert order", () => {
     // default, and an area minted here would trap a device `assertDevicesRehomable` refuses to move.
     expect(resolveOnboardingArea).not.toHaveBeenCalled();
     expect(ops).toEqual(["devices", "legacy_handles.device_id"]);
+  });
+
+  it("🛑 REFUSES to create a device in an area that has been archived", async () => {
+    // The race the in-transaction `FOR SHARE` precheck closes: `resolveOnboardingArea` validated
+    // the owner's default in its OWN transaction, and the FK on `devices.area_id` checks existence,
+    // not status. Without this the device is created active, in an archived site, invisible — and
+    // with `primary_area_id` gone there is nothing left recording where it should have gone.
+    resolveOnboardingArea.mockImplementationOnce(async () => {
+      ops.push("resolveOnboardingArea");
+      store.areas.add(ONBOARDING_AREA);
+      store.archivedAreas.add(ONBOARDING_AREA);
+      return {
+        areaId: ONBOARDING_AREA,
+        createdAreaId: null,
+        recordedAsDefault: false,
+      };
+    });
+    await expect(DeviceWriter.createDevice(CREATE)).rejects.toThrow(/archived/);
+    expect(store.devices.size).toBe(0);
+  });
+
+  it("a HELPER opts out of the active-area precheck — its area may be archived", async () => {
+    // `recomputeAreaProvenance` on an archived area must not start failing because the area's own
+    // derived-output device does not exist yet.
+    store.areas.add(ONBOARDING_AREA);
+    store.archivedAreas.add(ONBOARDING_AREA);
+    const created = await DeviceWriter.createHelperDevice({
+      ownerClerkUserId: "user_test",
+      areaId: ONBOARDING_AREA,
+      vendorSiteId: "helper:area:ar_archived",
+      displayName: "Archived · derived",
+      timezoneOffsetMin: 600,
+    });
+    expect(created.areaId).toBe(ONBOARDING_AREA);
   });
 
   it("places a HELPER directly in the area it serves, without consulting onboarding", async () => {

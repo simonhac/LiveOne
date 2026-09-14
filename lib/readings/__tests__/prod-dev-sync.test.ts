@@ -465,7 +465,14 @@ describe("prod→dev readings transfer", () => {
     expect(table).toMatchObject({
       mode: "full",
       idDrift: {
-        repoint: [{ table: "devices", cols: ["area_id"] }],
+        // Two ENTRIES, not one entry with two columns — an entry is one foreign key, zipped
+        // against the parent PK. `primary_area_id` is the deploy-window leg: still present (with
+        // its NO ACTION FK) between this code deploying and migration 0074 applying, and filtered
+        // out against the live catalog once the column is gone. See the SQL assertions below.
+        repoint: [
+          { table: "devices", cols: ["area_id"] },
+          { table: "devices", cols: ["primary_area_id"] },
+        ],
         // config-v4 Phase 13 PR 6: `legacy_system_id` is GONE from here — migration 0052 dropped the
         // column, and `neutralize` becomes a literal `UPDATE areas SET <col> = NULL` at runtime.
         neutralize: ["slug"],
@@ -573,6 +580,55 @@ describe("prod→dev readings transfer", () => {
     // OTHER areas, because area_bindings.point_uid can cross-reference a point under a different area.
     expect(sql).not.toContain("DELETE FROM public.devices");
     expect(sql).not.toContain("DELETE FROM public.points");
+  });
+
+  // 🛑 The repoint list is filtered against the LIVE CATALOG, and that is what lets one manifest
+  // serve both sides of a pending DROP. Between this code deploying and migration 0074 applying,
+  // `devices.primary_area_id` still exists with a NO ACTION FK, so a drifted area a dev device
+  // points at cannot be deleted and the whole sync run aborts on 23503 — which is exactly how
+  // liveone-dev froze for three days in July. After 0074 the column is gone and the leg must
+  // vanish, or every run is a 42703 instead. Neither state is reachable from the manifest alone.
+  it("emits a repoint leg only for columns the target database actually has", async () => {
+    const table = prodDevSyncManifest().find(
+      (entry) => entry.name === "areas",
+    )!;
+    const AREA_COLS = ["id", "owner_user_id", "name", "slug"];
+
+    const during = copyClients();
+    await syncTable(
+      during.prod,
+      during.dev,
+      table,
+      new Map([
+        ["areas", AREA_COLS],
+        ["devices", ["id", "rid", "area_id", "primary_area_id"]],
+      ]),
+      new Map([["areas", ["id"]]]),
+    );
+    const windowSql = during.devSql.at(-1)!;
+    expect(windowSql).toContain("UPDATE public.devices x SET area_id");
+    expect(windowSql).toContain("UPDATE public.devices x SET primary_area_id");
+
+    const after = copyClients();
+    await syncTable(
+      after.prod,
+      after.dev,
+      table,
+      new Map([
+        ["areas", AREA_COLS],
+        ["devices", ["id", "rid", "area_id"]], // 0074 applied
+      ]),
+      new Map([["areas", ["id"]]]),
+    );
+    const droppedSql = after.devSql.at(-1)!;
+    expect(droppedSql).toContain("UPDATE public.devices x SET area_id");
+    expect(droppedSql).not.toContain("primary_area_id");
+    // …and the leg it DOES emit is still complete — a filtered entry must not degrade into a
+    // half-written composite (`b.new_undefined` was the first cut of this).
+    expect(droppedSql).not.toContain("new_undefined");
+    expect(droppedSql).toContain(
+      "UPDATE public.devices x SET area_id = b.new_id FROM _drift b WHERE x.area_id = b.id;",
+    );
   });
 
   it("realigns drifted devices by neutralizing NOT NULL rid to a sentinel, not NULL", async () => {

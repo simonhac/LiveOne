@@ -189,10 +189,40 @@ async function allocateRid(exec: DeviceRegistryExec): Promise<number> {
 async function insertDeviceToPg(
   data: CreateDeviceData,
   areaId: string | null,
+  /**
+   * Re-check, inside this transaction, that `areaId` names an ACTIVE area before placing a device
+   * in it. Onboarding asks for this; `createHelperDevice` does not.
+   *
+   * 🛑 It closes a real gap rather than being belt-and-braces. `resolveOnboardingArea` reads the
+   * owner's default in its own transaction, and the FK on `devices.area_id` checks EXISTENCE, not
+   * status — so an area archived between the two would be accepted, and the device would be
+   * created active, in an archived site, invisible, with nothing recording where it should have
+   * gone. `FOR SHARE` is what makes the check mean something: it conflicts with the row UPDATE an
+   * archive performs, so the archiver waits for this insert or this insert sees the archive.
+   *
+   * Helpers opt out because their area is the one currently being recomputed, and a helper for an
+   * archived area is legitimate — `recomputeAreaProvenance` on an archived area must not start
+   * failing because its derived-output device does not exist yet.
+   */
+  opts: { requireActiveArea: boolean },
 ): Promise<CreatedDevice> {
   const pg = requirePlanetscaleDb();
   try {
     return await pg.transaction(async (tx) => {
+      if (areaId && opts.requireActiveArea) {
+        const [target] = await tx
+          .select({ status: areas.status })
+          .from(areas)
+          .where(eq(areas.id, areaId))
+          .limit(1)
+          .for("share");
+        if (!target)
+          throw new Error(`createDevice: area ${areaId} no longer exists`);
+        if (target.status !== "active")
+          throw new Error(
+            `createDevice: area ${areaId} is ${target.status}, not active — refusing to create a device nothing can see`,
+          );
+      }
       const rid = await allocateRid(tx);
       const uuid = Device.toUuid(Device.generate());
       const now = new Date();
@@ -315,7 +345,13 @@ async function createDevice(
         location: deviceData.location ?? null,
       })
     : null;
-  const created = await insertDeviceToPg(deviceData, placement?.areaId ?? null);
+  const created = await insertDeviceToPg(
+    deviceData,
+    placement?.areaId ?? null,
+    {
+      requireActiveArea: true,
+    },
+  );
   console.log(
     `[DeviceWriter] Created device ${created.id} (${deviceData.vendorType}) for user ${deviceData.ownerClerkUserId} in area ${
       placement
@@ -358,6 +394,9 @@ async function createHelperDevice(params: {
       timezoneOffsetMin: params.timezoneOffsetMin,
     },
     params.areaId,
+    // See the parameter's docstring: a helper for an archived area is legitimate, because the area
+    // being recomputed is the caller's business, not this writer's.
+    { requireActiveArea: false },
   );
   console.log(
     `[DeviceWriter] Created helper device ${created.id} (${params.vendorSiteId})`,

@@ -36,7 +36,7 @@
  * its state and contained by none — and `assertDevicesRehomable` refuses to place one, so minting an
  * area for it would trap it somewhere nothing could free it from.
  */
-import { and, eq, ne } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import { areas, users } from "@/lib/db/planetscale/schema";
 import type { AreaLocation } from "@/lib/areas/types";
@@ -61,7 +61,8 @@ export interface OnboardingPlacement {
 }
 
 /**
- * The area the owner's default points at, if it is still usable.
+ * The area the owner's default points at, if it is still usable — and its location, so a blank one
+ * can be filled from what the vendor just told us.
  *
  * Re-validated rather than trusted: the FK is `ON DELETE SET NULL`, so a dangling id is not possible,
  * but an ARCHIVED area is — and placing a new device into an archived site is how a device becomes
@@ -70,9 +71,9 @@ export interface OnboardingPlacement {
  */
 async function usableDefaultArea(
   ownerClerkUserId: string,
-): Promise<string | null> {
+): Promise<{ id: string; location: AreaLocation | null } | null> {
   const [row] = await requirePlanetscaleDb()
-    .select({ id: areas.id })
+    .select({ id: areas.id, location: areas.location })
     .from(users)
     .innerJoin(areas, eq(areas.id, users.defaultAreaId))
     .where(
@@ -83,26 +84,41 @@ async function usableDefaultArea(
       ),
     )
     .limit(1);
-  return row?.id ?? null;
+  return row ? { id: row.id, location: row.location ?? null } : null;
 }
 
-/** Does this owner have any area other than `exceptId`? Decides whether a new area becomes the default. */
-async function hasOtherArea(
-  ownerClerkUserId: string,
-  exceptId: string,
-): Promise<boolean> {
+/** Does this owner have any active area at all? Decides whether a new area becomes the default. */
+async function hasAnyArea(ownerClerkUserId: string): Promise<boolean> {
   const [row] = await requirePlanetscaleDb()
     .select({ id: areas.id })
     .from(areas)
     .where(
-      and(
-        eq(areas.ownerUserId, ownerClerkUserId),
-        eq(areas.status, "active"),
-        ne(areas.id, exceptId),
-      ),
+      and(eq(areas.ownerUserId, ownerClerkUserId), eq(areas.status, "active")),
     )
     .limit(1);
   return !!row;
+}
+
+/**
+ * Fill a blank `location` on an area from what the vendor just supplied. Never overwrites.
+ *
+ * The case: connect a Tesla first (its callback passes `location: null`), and the default area it
+ * creates has no location. Connect an Enphase second and the default is REUSED — so without this,
+ * the site address Enphase supplies, which is the only source of the sun-times window and the NEM
+ * region, would be discarded by the very mechanism whose stated reason for existing is not
+ * discarding it. Filling a blank is safe in a way overwriting is not: it cannot move a site the
+ * user has placed, and it cannot let one vendor's idea of an address overrule another's.
+ */
+async function fillBlankLocation(
+  areaId: string,
+  location: AreaLocation,
+): Promise<void> {
+  await requirePlanetscaleDb()
+    .update(areas)
+    .set({ location, updatedAt: new Date() })
+    // Re-stated as a predicate, not just checked by the caller: two concurrent connects both
+    // reading "blank" must not have the second overwrite the first.
+    .where(and(eq(areas.id, areaId), isNull(areas.location)));
 }
 
 /**
@@ -126,6 +142,13 @@ async function recordDefaultArea(
     .onConflictDoUpdate({
       target: users.clerkUserId,
       set: { defaultAreaId: areaId, updatedAt: new Date() },
+      // 🛑 Only fills a BLANK, and that is what makes the decision safe under concurrency. Two
+      // first-ever connections racing each other both see no default and both create a site; with
+      // an unconditional SET the second would silently re-point the default at its own area, and an
+      // earlier cut that asked "is this my only area?" AFTER creating produced the worse outcome
+      // still — each saw the other's area, neither recorded anything, and the user was left with no
+      // default for ever. First writer wins; the loser is a no-op.
+      setWhere: isNull(users.defaultAreaId),
     });
 }
 
@@ -139,8 +162,23 @@ export async function resolveOnboardingArea(
   site: OnboardingSite,
 ): Promise<OnboardingPlacement> {
   const existing = await usableDefaultArea(ownerClerkUserId);
-  if (existing)
-    return { areaId: existing, createdAreaId: null, recordedAsDefault: false };
+  if (existing) {
+    if (!existing.location && site.location)
+      await fillBlankLocation(existing.id, site.location);
+    return {
+      areaId: existing.id,
+      createdAreaId: null,
+      recordedAsDefault: false,
+    };
+  }
+
+  // 🛑 Asked BEFORE the create, so it is a question about the world the caller found rather than one
+  // the caller has already changed. An earlier cut asked afterwards, excluding the area just made,
+  // on the theory that it avoided a race; it created a worse one — two concurrent first connections
+  // each saw the OTHER's new area, so neither recorded a default and the user never got one. Asking
+  // first means both racers decide "record it", and `recordDefaultArea`'s `WHERE default IS NULL`
+  // settles which.
+  const isFirst = !(await hasAnyArea(ownerClerkUserId));
 
   // No usable default: mint the site this connection implies. `memberSystemIds: []` because the
   // device does not exist yet — the writer places it by setting `devices.area_id` on insert, which
@@ -157,10 +195,6 @@ export async function resolveOnboardingArea(
     authorized: new Map(),
   });
 
-  // 🛑 "First area" is asked AFTER the create and EXCLUDES the one just made, which is the only
-  // phrasing that is also correct for a user whose areas were all archived. Asking before would race
-  // a concurrent connect into recording two different defaults.
-  const isFirst = !(await hasOtherArea(ownerClerkUserId, created.id));
   if (isFirst) await recordDefaultArea(ownerClerkUserId, created.id);
 
   return {

@@ -123,20 +123,26 @@ export type AuthorizedPlacements = Map<string, string | null>;
  *    ambient producer that many areas consume by REFERENCE and none contains. It was admissible
  *    under the read rule, and that is exactly how OE regions ended up as members of three areas
  *    each before migration 0071 made them ambient.
- *  - **A `vendor='helper'` device.** A helper is an area's own COMPUTED output — it owns the
- *    battery-provenance blend points of the area that minted it, and `helperSiteId(areaId)` bakes
- *    that area into its `vendor_site_id` permanently. Adopting one into a second area makes that
- *    area's resolver union another site's blend, which is the "serving points of a device you do
- *    not hold" class this whole change exists to close. `replaceMembers` has always refused to
+ *  - **A `vendor='helper'` device that would MOVE.** A helper is an area's own COMPUTED output — it
+ *    owns the battery-provenance blend points of the area that minted it, and `helperSiteId(areaId)`
+ *    bakes that area into its `vendor_site_id` permanently. Adopting one into a second area makes
+ *    that area's resolver union another site's blend, which is the "serving points of a device you
+ *    do not hold" class this whole change exists to close. `replaceMembers` has always refused to
  *    EVICT a helper by omission; this is the missing other half, and without it the two rules
  *    contradict — you could not drop a helper you had just been allowed to steal.
  *
  *    🛑 It is also how `ensureHelperDevice` broke. Adopt Daylesford's helper into another area and
- *    the dedupe (which looks in the area) misses, so the next provenance recompute tries to MINT a
- *    second helper and dies on `devices_helper_area_unique` — a 500 on
- *    `POST /api/v4/areas/{id}/recompute-provenance`, reproduced on `origin/main` by
- *    `v4-surface-smoke`. The dedupe now heals that too, but the adoption should not have been
- *    possible.
+ *    the dedupe misses, so the next provenance recompute tries to MINT a second helper and dies on
+ *    `devices_helper_area_unique` — a 500 on `POST /api/v4/areas/{id}/recompute-provenance`,
+ *    reproduced on `origin/main` by `v4-surface-smoke`.
+ *
+ *    🛑 **"Would move" is the whole of it, and a blanket refusal is WRONG.** `PUT …/members` is a
+ *    declarative full replace, so every ordinary edit RE-STATES the area's existing members —
+ *    `AreaBuilderDialog` deliberately includes the server-managed helper "so the replace declares
+ *    the truth", and `liveone area devices add/remove` builds the same list. Refusing any named
+ *    helper would therefore 422 every membership edit on an area that has one, which is every area
+ *    with battery provenance. So the refusal is scoped to `helper.area_id !== targetAreaId`, and a
+ *    helper restated in the area it already occupies passes.
  *
  * A fourth `user_systems` viewer-grant term was dropped with that table in migration 0045 (slice F).
  */
@@ -144,6 +150,12 @@ export async function assertDevicesRehomable(
   userId: string,
   isAdmin: boolean,
   systemIds: number[],
+  /**
+   * The area these devices are being placed IN, when there is one. `undefined` means "an area that
+   * does not exist yet" (`POST /api/v4/areas`), for which every named device is by definition a
+   * move. Only the helper rule consults it — see the docstring.
+   */
+  targetAreaId?: string,
 ): Promise<AuthorizedPlacements> {
   const observed: AuthorizedPlacements = new Map();
   for (const sid of systemIds) {
@@ -153,7 +165,7 @@ export async function assertDevicesRehomable(
       throw new AreaValidationError(
         `Device ${sid} is ambient (no owner) and cannot be placed in an area — reference it by id instead`,
       );
-    if (dev.vendorType === "helper")
+    if (dev.vendorType === "helper" && dev.areaId !== targetAreaId)
       throw new AreaValidationError(
         `Device ${sid} is an area's derived output and belongs to the area that mints it — it cannot be moved`,
       );

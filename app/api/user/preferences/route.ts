@@ -4,6 +4,7 @@ import {
   getOrCreateUserPreferences,
   setDefaultDashboardById,
   clearDefaultDashboard,
+  setDefaultArea,
 } from "@/lib/user-preferences";
 import { makeTimer, serverTimingHeaders } from "@/lib/server-timing";
 
@@ -43,12 +44,45 @@ export async function PATCH(request: NextRequest) {
     const { userId } = authResult;
 
     const body = await request.json();
-    const { defaultDashboardId } = body;
+    const { defaultDashboardId, defaultAreaId } = body;
+
+    // 🛑 `defaultAreaId` is a SEPARATE preference from the landing dashboard and is handled first,
+    // independently: it is where a newly onboarded device is PLACED (migration 0073,
+    // `lib/areas/onboarding.ts`), not where the user lands. It only self-populates from a first
+    // area, so for an owner who already has several this route is the only way to set one —
+    // deliberately, because guessing which of their sites a new inverter belongs to would be worse
+    // than asking.
+    if (defaultAreaId !== undefined) {
+      if (defaultAreaId !== null && typeof defaultAreaId !== "string") {
+        return NextResponse.json(
+          { error: "defaultAreaId must be an ar_ id or null" },
+          { status: 400 },
+        );
+      }
+      const areaResult = await setDefaultArea(userId, defaultAreaId);
+      if (!areaResult.success) {
+        const status = areaResult.error === "not_found" ? 404 : 400;
+        const error =
+          areaResult.error === "not_found"
+            ? "Area not found"
+            : areaResult.error;
+        return NextResponse.json({ error }, { status });
+      }
+      // Area-only patch: the dashboard half is genuinely optional here.
+      if (defaultDashboardId === undefined)
+        return NextResponse.json({
+          success: true,
+          message: "Default area updated",
+        });
+    }
 
     // The default landing is a composition dashboard: set it by id, or pass null to clear.
     if (defaultDashboardId === undefined) {
       return NextResponse.json(
-        { error: "defaultDashboardId is required (use null to clear)" },
+        {
+          error:
+            "defaultDashboardId or defaultAreaId is required (use null to clear)",
+        },
         { status: 400 },
       );
     }
