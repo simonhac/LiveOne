@@ -251,9 +251,11 @@ sufficient now, because naming a device takes it OUT of wherever it was, deletin
 bindings onto its points. `assertDevicesRehomable` (`lib/areas/create.ts`) therefore asks ownership
 **or custody** (the device is in an Area the caller owns), and refuses two kinds of device outright,
 for every caller including an admin: an **ownerless** one (ambient by design — see above) and a
-**`vendor='helper'`** one (an Area's own computed output, whose `vendor_site_id` names the Area that
-mints it; adopting one elsewhere makes that Area serve another site's blend AND hides the helper
-from `ensureHelperDevice`, which then tries to mint a second).
+**`vendor='helper'`** one that would MOVE (an Area's own computed output, whose `vendor_site_id`
+names the Area that mints it; adopting one elsewhere makes that Area serve another site's blend AND
+hides the helper from `ensureHelperDevice`, which then tries to mint a second). A helper RE-STATED
+in the Area it already occupies is fine, and has to be: `PUT …/members` is a full replace, so every
+ordinary membership edit names the Area's existing helper.
 
 An Area is served **area-natively** as its own row (`ServingSubject`, `lib/dashboard/subject.ts`). Before
 config-v4 Phase 13, a multi-device Area was _synthesized_ on demand into a device-shaped object with a
