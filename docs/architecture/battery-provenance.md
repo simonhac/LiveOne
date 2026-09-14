@@ -648,7 +648,7 @@ living in `devices.config` jsonb with its own effective-dated plan selector
 (`ScheduleTariffProvider`) and a time-of-use half that threw on use. Two representations of one fact,
 free to disagree. A site whose feed-in is **not measured** will publish it from a **tariff device** —
 a producer of an ordinary `bidi.grid.export/rate` point, bound like Amber's (see
-[block-model.md](../plans/block-model.md)) — which is the same drop-in the deleted design anticipated,
+[20260910-block-model.md](../plans/20260910-block-model.md)) — which is the same drop-in the deleted design anticipated,
 minus the jsonb. Deferred until a residence needs one: no site had `mode: "schedule"`.
 
 That also makes history immutable in a way config was not. A schedule was re-selected from *current*

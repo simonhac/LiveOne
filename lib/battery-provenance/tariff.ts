@@ -10,7 +10,7 @@
  * `mode: "amber"` carried no information whatsoever, since it resolved to the very
  * `bidi.grid.export/rate` series the area already binds. An area's feed-in tariff is now simply that
  * bound point, and a site whose tariff is NOT measured will publish one from a tariff device (see
- * docs/plans/block-model.md) rather than describe it in config. Deferred until a residence needs it:
+ * docs/plans/20260910-block-model.md) rather than describe it in config. Deferred until a residence needs it:
  * no site in the fleet had `mode: "schedule"`, and its time-of-use half threw on use.
  *
  * That deletion also removed a live inconsistency worth recording. Amber's measured

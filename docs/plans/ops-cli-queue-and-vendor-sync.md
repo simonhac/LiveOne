@@ -182,7 +182,7 @@ derivation at all — see the note under the table.) Every gap is a reference th
 block model's increment 1 replaced `derivations.source_points` with `derivation_sources`, a row per
 typed slot whose composite FK `(point_id, device_id) → points(id, device_id)` makes a dangling
 reference unrepresentable rather than merely detectable (migrations 0063 → 0068 → 0069, and
-`docs/plans/block-model.md`). `derivations.area_id` went with it, which is why the FK inventory
+`docs/plans/20260910-block-model.md`). `derivations.area_id` went with it, which is why the FK inventory
 above no longer names it: a derivation's site is DERIVED from that wiring, so there is no area
 reference left to protect.
 
