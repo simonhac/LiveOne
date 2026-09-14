@@ -73,10 +73,10 @@ describe("loadPointPool", () => {
   it("asks for archived devices explicitly", async () => {
     const seen: string[] = [];
     await loadPointPool(session([], seen), members.slice(0, 1));
-    // Both params matter: `include=points` or the pool is silently empty, `includeArchived` or a
+    // Both params matter: `include=points` or the pool is silently empty, `includeInactive` or a
     // retired member 404s.
     expect(seen[0]).toContain("include=points");
-    expect(seen[0]).toContain("includeArchived=true");
+    expect(seen[0]).toContain("includeInactive=true");
   });
 
   it("keeps the readable members and NAMES the ones it lost", async () => {

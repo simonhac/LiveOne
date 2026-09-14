@@ -22,7 +22,7 @@ import { EXIT, V, num, type CommandSpec, type Ctx } from "@/lib/cli/cli";
 import { withApiSession, type ApiSession } from "@/lib/cli-kit/api-session";
 import {
   BASE_URL_FLAG,
-  INCLUDE_ARCHIVED_DEVICES_FLAG,
+  INCLUDE_INACTIVE_FLAG,
   bool,
   resolveDevice,
   str,
@@ -77,8 +77,8 @@ export const coverageSpec: CommandSpec = {
     "window. The basis is always printed — a push vendor (fusher, gusher) declares no cadence, so\n" +
     "its expectation is `observed` and is a floor, not an authority.\n" +
     "\n" +
-    "Works on an ARCHIVED device with --include-archived: coverage is exactly what you ask about a\n" +
-    "device that has stopped.\n" +
+    "Works on a disabled or archived device with --include-inactive: coverage is exactly what you\n" +
+    "ask about a device that has stopped.\n" +
     "\n" +
     "--gaps collapses the per-day table to runs of short days. --against <device> joins another\n" +
     "device's points on (logical path, metric) and diffs them day by day.\n" +
@@ -89,7 +89,7 @@ export const coverageSpec: CommandSpec = {
   args: [DEVICE_ARG],
   flags: {
     ...BASE_URL_FLAG,
-    ...INCLUDE_ARCHIVED_DEVICES_FLAG,
+    ...INCLUDE_INACTIVE_FLAG,
     last: {
       type: "string",
       placeholder: "30d",
@@ -198,7 +198,7 @@ async function fetchCoverage(
   window: string,
 ): Promise<WireCoverage> {
   const device = await resolveDevice(s, ref, {
-    includeArchived: bool(ctx, "includeArchived"),
+    includeInactive: bool(ctx, "includeInactive") === true,
   });
   const globs = (ctx.flags.series as string[] | undefined) ?? [];
   const cadence = num(ctx, "cadence");

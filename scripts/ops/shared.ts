@@ -63,27 +63,26 @@ export const BASE_URL_FLAG = {
  * address one at all — refs resolve against `/api/v4/areas`, so an omitted row is unaddressable even
  * by its literal `ar_…` id.
  */
+/**
+ * Reach a device that is not `active` — `disabled` or `archived`.
+ *
+ * 🛑 Deliberately a DIFFERENT name from {@link INCLUDE_ARCHIVED_FLAG}. `areas.status` is
+ * `active | archived`, so there "include archived" and "include everything" coincide;
+ * `devices.status` is `active | disabled | archived`, so a device flag called `--include-archived`
+ * would also return `disabled` devices and be wrong in the widening direction. Two vocabularies,
+ * two honest names.
+ */
+export const INCLUDE_INACTIVE_FLAG = {
+  includeInactive: {
+    type: "boolean",
+    help: "Also consider disabled and archived devices (only active ones are listed by default)",
+  },
+} as const satisfies Record<string, FlagSpec>;
+
 export const INCLUDE_ARCHIVED_FLAG = {
   includeArchived: {
     type: "boolean",
     help: "Also consider archived areas (they are hidden from every listing by default)",
-  },
-} as const satisfies Record<string, FlagSpec>;
-
-/**
- * The same escape hatch, for DEVICES.
- *
- * Separate from {@link INCLUDE_ARCHIVED_FLAG} only because the help text names a different noun —
- * the mechanism is identical, and so is the trap it opens: `GET /api/v4/devices` is `activeOnly`,
- * a ref is matched against that list, so an archived device could not be named at all, not even by
- * its literal `dv_…` id. An area aggregate meanwhile DOES return its archived members, so anything
- * that walked an area's members into a per-device read failed outright — which is what
- * `liveone area role list` did on any area whose devices had been retired.
- */
-export const INCLUDE_ARCHIVED_DEVICES_FLAG = {
-  includeArchived: {
-    type: "boolean",
-    help: "Also consider archived devices (they are hidden from every listing by default)",
   },
 } as const satisfies Record<string, FlagSpec>;
 
@@ -191,11 +190,11 @@ export interface WireDevice {
  */
 export async function listDevices(
   s: ApiSession,
-  opts: { includeArchived?: boolean } = {},
+  opts: { includeInactive?: boolean } = {},
 ): Promise<WireDevice[]> {
   const { devices } = await s.get<{ devices: WireDevice[] }>(
-    opts.includeArchived
-      ? "/api/v4/devices?includeArchived=true"
+    opts.includeInactive
+      ? "/api/v4/devices?includeInactive=true"
       : "/api/v4/devices",
   );
   return devices;
@@ -211,11 +210,16 @@ export async function listDevices(
 export async function resolveDevice(
   s: ApiSession,
   ref: string,
-  opts: { includeArchived?: boolean } = {},
+  opts: { includeInactive?: boolean } = {},
 ): Promise<WireDevice> {
+  // A ref is matched against the LIST, never sent to the server, so a device the list omits is
+  // unaddressable — including by its literal `dv_` id or integer handle. That is why this option
+  // has to reach here and not only the route.
   return resolveRef(await listDevices(s, opts), ref, {
     noun: "device",
-    listCmd: "liveone device list",
+    listCmd: opts.includeInactive
+      ? "liveone device list --include-inactive"
+      : "liveone device list",
   });
 }
 

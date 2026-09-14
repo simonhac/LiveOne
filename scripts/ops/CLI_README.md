@@ -2294,9 +2294,9 @@ Usage:
 
 Options:
   --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
-  --include-archived         Also consider archived devices (they are hidden from every listing by default)
   --vendor <vendor>          Only this vendor's devices
-  --status <status>          Only devices with this status (active, disabled, archived)
+  --status <status>          Only devices with this status (active, disabled, archived) — implies --include-inactive
+  --include-inactive         Also consider disabled and archived devices (only active ones are listed by default)
 
 Common options:
   --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
@@ -2353,7 +2353,7 @@ Arguments:
 
 Options:
   --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
-  --include-archived         Also consider archived devices (they are hidden from every listing by default)
+  --include-inactive         Also consider disabled and archived devices (only active ones are listed by default)
 
 Common options:
   --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
@@ -2374,6 +2374,7 @@ External access:
 Examples:
   liveone device show daylesford
   liveone device show dv_01kybrhzkmfyxvz63d15rscj19
+  liveone device show 4 --include-inactive
 
 Exit codes:
   0    success
@@ -2405,7 +2406,7 @@ Arguments:
 
 Options:
   --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
-  --include-archived         Also consider archived devices (they are hidden from every listing by default)
+  --include-inactive         Also consider disabled and archived devices (only active ones are listed by default)
 
 Common options:
   --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
@@ -2506,8 +2507,8 @@ soc.avg/min/max share one point and one stored row, so --series selects and the 
 window. The basis is always printed — a push vendor (fusher, gusher) declares no cadence, so
 its expectation is `observed` and is a floor, not an authority.
 
-Works on an ARCHIVED device with --include-archived: coverage is exactly what you ask about a
-device that has stopped.
+Works on a disabled or archived device with --include-inactive: coverage is exactly what you
+ask about a device that has stopped.
 
 --gaps collapses the per-day table to runs of short days. --against <device> joins another
 device's points on (logical path, metric) and diffs them day by day.
@@ -2526,7 +2527,7 @@ Arguments:
 
 Options:
   --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
-  --include-archived         Also consider archived devices (they are hidden from every listing by default)
+  --include-inactive         Also consider disabled and archived devices (only active ones are listed by default)
   --last <30d>               Relative window ending today, in whole days, e.g. 90d (default: 30d)
   --start <YYYY-MM-DD>       Window start — whole LOCAL days (the device's fixed day offset)
   --end <YYYY-MM-DD>         Window end, inclusive (local days)
@@ -2598,7 +2599,7 @@ Arguments:
 
 Options:
   --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
-  --include-archived         Also consider archived devices (they are hidden from every listing by default)
+  --include-inactive         Also consider disabled and archived devices (only active ones are listed by default)
   --interval <string>        Series resolution (range caps per request: 5m ≤ 31 days, 30m/1d ≤ 13 months)  (one of: 5m, 30m, 1d; default: 5m)
   --last <7d>                Relative window ending now, e.g. 3h, 7d (default: 1d; the server owns the grammar)
   --start <YYYY-MM-DD>       Window start — whole LOCAL days (the subject's fixed day offset)
@@ -5880,6 +5881,7 @@ Arguments:
 
 Options:
   --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
+  --include-archived         Also consider archived areas (they are hidden from every listing by default)
 
 Common options:
   --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
@@ -5940,6 +5942,7 @@ Arguments:
 
 Options:
   --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
+  --include-archived         Also consider archived areas (they are hidden from every listing by default)
   --label <simon's phone>    Who or what this URL is for — required, so it can be revoked knowingly  (required)
   --expires-days <90>        Stop working after this many days (default: never)
 
@@ -5996,6 +5999,7 @@ Arguments:
 
 Options:
   --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
+  --include-archived         Also consider archived areas (they are hidden from every listing by default)
 
 Common options:
   --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)

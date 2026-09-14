@@ -53,17 +53,21 @@ export async function GET(request: NextRequest) {
   const auth = await requireAuth(request);
   if (auth instanceof NextResponse) return auth;
 
-  // `?includeArchived=true` widens WHICH STATUSES are listed, never WHOSE devices — the same
-  // distinction `GET /api/v4/areas` draws, and the reason it is a separate opt-in rather than
-  // something `x-liveone-admin` implies. Without it an archived device is unaddressable: a CLI ref
-  // is matched against this LIST, so nothing the list omits can be named, not even by its literal
-  // `dv_…` id. That is what made `liveone area role list` fail outright on an area whose members
-  // had been retired.
-  const includeArchived =
-    request.nextUrl.searchParams.get("includeArchived") === "true";
+  // `?includeInactive=true` widens the list to every status, not just `active`.
+  //
+  // 🛑 Named `includeInactive`, NOT `includeArchived` like the areas twin, and the difference is not
+  // an oversight. `areas.status` is `active | archived` (migration 0076), so there "not active" and
+  // "archived" are the same set and one name is true of both. `devices.status` is
+  // `active | disabled | archived`, so a flag called `includeArchived` that also returned `disabled`
+  // devices would be quietly wrong — and quietly wrong in the widening direction.
+  //
+  // Exact string "true", like every other boolean query param here, so a typo fails closed.
+  const includeInactive =
+    request.nextUrl.searchParams.get("includeInactive") === "true";
+
   const visible = await DeviceConfigRegistry.devicesVisibleByUser(
     auth.userId,
-    !includeArchived,
+    !includeInactive,
     { isAdmin: auth.actingAsAdmin },
   );
   // rid → uuid in ONE indexed read. Deliberately not widened into `VisibleDevice` itself: that

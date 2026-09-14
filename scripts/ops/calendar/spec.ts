@@ -2,7 +2,7 @@
  * The `calendar` command tree — declaration only, no I/O.
  */
 import { type CommandSpec } from "@/lib/cli/cli";
-import { BASE_URL_FLAG } from "../shared";
+import { BASE_URL_FLAG, INCLUDE_ARCHIVED_FLAG } from "../shared";
 import { AREA_ARG } from "../automation/model";
 
 export const CALENDAR_SUBCOMMANDS = {
@@ -18,7 +18,7 @@ export const CALENDAR_SUBCOMMANDS = {
       "`last used` is how a forgotten subscription is spotted: a token nothing has fetched in\n" +
       "months is one nobody would miss, and is the safe thing to revoke.",
     args: [AREA_ARG],
-    flags: { ...BASE_URL_FLAG },
+    flags: { ...BASE_URL_FLAG, ...INCLUDE_ARCHIVED_FLAG },
     exitCodes: { 1: "the area has no calendar tokens" },
     examples: ["liveone calendar list daylesford"],
   },
@@ -44,6 +44,7 @@ export const CALENDAR_SUBCOMMANDS = {
     args: [AREA_ARG],
     flags: {
       ...BASE_URL_FLAG,
+      ...INCLUDE_ARCHIVED_FLAG,
       label: {
         type: "string",
         required: true,
@@ -76,7 +77,7 @@ export const CALENDAR_SUBCOMMANDS = {
         help: "The token itself, or its label",
       },
     ],
-    flags: { ...BASE_URL_FLAG },
+    flags: { ...BASE_URL_FLAG, ...INCLUDE_ARCHIVED_FLAG },
     exitCodes: { 1: "no live token matched" },
     examples: ["liveone calendar revoke daylesford 'simon iphone' --apply"],
   },

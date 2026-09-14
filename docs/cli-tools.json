@@ -1980,6 +1980,10 @@
             "type": "string",
             "description": "Target origin (default: your stored default, else https://www.liveone.energy) (origin)"
           },
+          "include-archived": {
+            "type": "boolean",
+            "description": "Also consider archived areas (they are hidden from every listing by default)"
+          },
           "format": {
             "type": "string",
             "enum": [
@@ -1993,7 +1997,7 @@
           "area"
         ]
       },
-      "signature": "liveone calendar list <area> { --base-url?: string }",
+      "signature": "liveone calendar list <area> { --base-url?: string; --include-archived?: boolean }",
       "invocation": "npm run liveone -- calendar list",
       "file": "scripts/ops/liveone.ts",
       "writes": false,
@@ -2023,6 +2027,10 @@
           "base-url": {
             "type": "string",
             "description": "Target origin (default: your stored default, else https://www.liveone.energy) (origin)"
+          },
+          "include-archived": {
+            "type": "boolean",
+            "description": "Also consider archived areas (they are hidden from every listing by default)"
           },
           "label": {
             "type": "string",
@@ -2054,7 +2062,7 @@
           "label"
         ]
       },
-      "signature": "liveone calendar mint <area> { --base-url?: string; --label: string; --expires-days?: number }",
+      "signature": "liveone calendar mint <area> { --base-url?: string; --include-archived?: boolean; --label: string; --expires-days?: number }",
       "invocation": "npm run liveone -- calendar mint",
       "file": "scripts/ops/liveone.ts",
       "writes": true,
@@ -2089,6 +2097,10 @@
             "type": "string",
             "description": "Target origin (default: your stored default, else https://www.liveone.energy) (origin)"
           },
+          "include-archived": {
+            "type": "boolean",
+            "description": "Also consider archived areas (they are hidden from every listing by default)"
+          },
           "format": {
             "type": "string",
             "enum": [
@@ -2111,7 +2123,7 @@
           "token"
         ]
       },
-      "signature": "liveone calendar revoke <area> <token> { --base-url?: string }",
+      "signature": "liveone calendar revoke <area> <token> { --base-url?: string; --include-archived?: boolean }",
       "invocation": "npm run liveone -- calendar revoke",
       "file": "scripts/ops/liveone.ts",
       "writes": true,
@@ -4501,8 +4513,8 @@
       "summary": "How many 5-minute readings each of a device's points holds, per local day.",
       "when": "Use this for 'is this series actually complete?', and to scope a backfill before running one.\n`device history --list-series` reports EXTENTS — the first and last row, which say nothing\nabout the interior — and this is the verb that answers density instead.",
       "parentWhen": "Reach for this for the PHYSICAL/vendor layer: what a device IS and what it reports. For the\nsemantic grouping (areas, bindings, flows) use `area`; for what a dashboard shows use\n`dashboard`.",
-      "details": "--start/--end are whole LOCAL days at the device's fixed day offset (the boundaries the daily\naggregates roll up on); --last=Nd is whole days too. Counts are per POINT, not per series:\nsoc.avg/min/max share one point and one stored row, so --series selects and the answer folds.\n\n`expected` per day comes from --cadence, else the vendor's declared poll cadence (amber 30min\n→ 48/day; openelectricity and sigenergy 5min → 288/day), else the point's own best day in the\nwindow. The basis is always printed — a push vendor (fusher, gusher) declares no cadence, so\nits expectation is `observed` and is a floor, not an authority.\n\nWorks on an ARCHIVED device with --include-archived: coverage is exactly what you ask about a\ndevice that has stopped.\n\n--gaps collapses the per-day table to runs of short days. --against <device> joins another\ndevice's points on (logical path, metric) and diffs them day by day.\n🛑 --against is DAY-granularity: the interval counts it reports are a LOWER BOUND on the true\nset difference (they cancel where each side holds rows the other lacks on the same day), and\nit never compares VALUES. For the exact rows, pull both series with\n`device history --series … --format csv` over the days it names.",
-      "description": "npm run liveone -- device coverage — How many 5-minute readings each of a device's points holds, per local day.\n\nUse this for 'is this series actually complete?', and to scope a backfill before running one.\n`device history --list-series` reports EXTENTS — the first and last row, which say nothing\nabout the interior — and this is the verb that answers density instead.\n\nAbout `device` generally: Reach for this for the PHYSICAL/vendor layer: what a device IS and what it reports. For the\nsemantic grouping (areas, bindings, flows) use `area`; for what a dashboard shows use\n`dashboard`.\n\n--start/--end are whole LOCAL days at the device's fixed day offset (the boundaries the daily\naggregates roll up on); --last=Nd is whole days too. Counts are per POINT, not per series:\nsoc.avg/min/max share one point and one stored row, so --series selects and the answer folds.\n\n`expected` per day comes from --cadence, else the vendor's declared poll cadence (amber 30min\n→ 48/day; openelectricity and sigenergy 5min → 288/day), else the point's own best day in the\nwindow. The basis is always printed — a push vendor (fusher, gusher) declares no cadence, so\nits expectation is `observed` and is a floor, not an authority.\n\nWorks on an ARCHIVED device with --include-archived: coverage is exactly what you ask about a\ndevice that has stopped.\n\n--gaps collapses the per-day table to runs of short days. --against <device> joins another\ndevice's points on (logical path, metric) and diffs them day by day.\n🛑 --against is DAY-granularity: the interval counts it reports are a LOWER BOUND on the true\nset difference (they cancel where each side holds rows the other lacks on the same day), and\nit never compares VALUES. For the exact rows, pull both series with\n`device history --series … --format csv` over the days it names.\n\nRead-only. This command changes nothing.\n\nCalls the deployed LiveOne API as the signed-in user. A missing, expired or revoked CLI token is exit 3.\n\nExit codes: 0, 1, 2, 3, 5, 130. For this command, 1 = at least one day is short of expected (or, with --against, the two devices differ).\n\nExamples:\n  liveone device coverage kinkora --last=90d\n  liveone device coverage kinkora --series='bidi.battery/soc.avg' --start=2025-09-22 --end=2026-09-15 --gaps\n  liveone device coverage kink_fron --series='bidi.battery/soc.avg' --last=365d --against=kink_mondo\n  liveone device coverage kinkora --last=30d --format=csv --out=coverage.csv",
+      "details": "--start/--end are whole LOCAL days at the device's fixed day offset (the boundaries the daily\naggregates roll up on); --last=Nd is whole days too. Counts are per POINT, not per series:\nsoc.avg/min/max share one point and one stored row, so --series selects and the answer folds.\n\n`expected` per day comes from --cadence, else the vendor's declared poll cadence (amber 30min\n→ 48/day; openelectricity and sigenergy 5min → 288/day), else the point's own best day in the\nwindow. The basis is always printed — a push vendor (fusher, gusher) declares no cadence, so\nits expectation is `observed` and is a floor, not an authority.\n\nWorks on a disabled or archived device with --include-inactive: coverage is exactly what you\nask about a device that has stopped.\n\n--gaps collapses the per-day table to runs of short days. --against <device> joins another\ndevice's points on (logical path, metric) and diffs them day by day.\n🛑 --against is DAY-granularity: the interval counts it reports are a LOWER BOUND on the true\nset difference (they cancel where each side holds rows the other lacks on the same day), and\nit never compares VALUES. For the exact rows, pull both series with\n`device history --series … --format csv` over the days it names.",
+      "description": "npm run liveone -- device coverage — How many 5-minute readings each of a device's points holds, per local day.\n\nUse this for 'is this series actually complete?', and to scope a backfill before running one.\n`device history --list-series` reports EXTENTS — the first and last row, which say nothing\nabout the interior — and this is the verb that answers density instead.\n\nAbout `device` generally: Reach for this for the PHYSICAL/vendor layer: what a device IS and what it reports. For the\nsemantic grouping (areas, bindings, flows) use `area`; for what a dashboard shows use\n`dashboard`.\n\n--start/--end are whole LOCAL days at the device's fixed day offset (the boundaries the daily\naggregates roll up on); --last=Nd is whole days too. Counts are per POINT, not per series:\nsoc.avg/min/max share one point and one stored row, so --series selects and the answer folds.\n\n`expected` per day comes from --cadence, else the vendor's declared poll cadence (amber 30min\n→ 48/day; openelectricity and sigenergy 5min → 288/day), else the point's own best day in the\nwindow. The basis is always printed — a push vendor (fusher, gusher) declares no cadence, so\nits expectation is `observed` and is a floor, not an authority.\n\nWorks on a disabled or archived device with --include-inactive: coverage is exactly what you\nask about a device that has stopped.\n\n--gaps collapses the per-day table to runs of short days. --against <device> joins another\ndevice's points on (logical path, metric) and diffs them day by day.\n🛑 --against is DAY-granularity: the interval counts it reports are a LOWER BOUND on the true\nset difference (they cancel where each side holds rows the other lacks on the same day), and\nit never compares VALUES. For the exact rows, pull both series with\n`device history --series … --format csv` over the days it names.\n\nRead-only. This command changes nothing.\n\nCalls the deployed LiveOne API as the signed-in user. A missing, expired or revoked CLI token is exit 3.\n\nExit codes: 0, 1, 2, 3, 5, 130. For this command, 1 = at least one day is short of expected (or, with --against, the two devices differ).\n\nExamples:\n  liveone device coverage kinkora --last=90d\n  liveone device coverage kinkora --series='bidi.battery/soc.avg' --start=2025-09-22 --end=2026-09-15 --gaps\n  liveone device coverage kink_fron --series='bidi.battery/soc.avg' --last=365d --against=kink_mondo\n  liveone device coverage kinkora --last=30d --format=csv --out=coverage.csv",
       "input_schema": {
         "type": "object",
         "properties": {
@@ -4514,9 +4526,9 @@
             "type": "string",
             "description": "Target origin (default: your stored default, else https://www.liveone.energy) (origin)"
           },
-          "include-archived": {
+          "include-inactive": {
             "type": "boolean",
-            "description": "Also consider archived devices (they are hidden from every listing by default)"
+            "description": "Also consider disabled and archived devices (only active ones are listed by default)"
           },
           "last": {
             "type": "string",
@@ -4567,7 +4579,7 @@
           "device"
         ]
       },
-      "signature": "liveone device coverage <device> { --base-url?: string; --include-archived?: boolean; --last?: string; --start?: string; --end?: string; --series?: string[]; …",
+      "signature": "liveone device coverage <device> { --base-url?: string; --include-inactive?: boolean; --last?: string; --start?: string; --end?: string; --series?: string[]; …",
       "invocation": "npm run liveone -- device coverage",
       "file": "scripts/ops/liveone.ts",
       "writes": false,
@@ -4598,9 +4610,9 @@
             "type": "string",
             "description": "Target origin (default: your stored default, else https://www.liveone.energy) (origin)"
           },
-          "include-archived": {
+          "include-inactive": {
             "type": "boolean",
-            "description": "Also consider archived devices (they are hidden from every listing by default)"
+            "description": "Also consider disabled and archived devices (only active ones are listed by default)"
           },
           "interval": {
             "type": "string",
@@ -4657,7 +4669,7 @@
           "device"
         ]
       },
-      "signature": "liveone device history <device> { --base-url?: string; --include-archived?: boolean; --interval?: \"5m\"|\"30m\"|\"1d\"; --last?: string; --start?: string; --end?: …",
+      "signature": "liveone device history <device> { --base-url?: string; --include-inactive?: boolean; --interval?: \"5m\"|\"30m\"|\"1d\"; --last?: string; --start?: string; --end?: …",
       "invocation": "npm run liveone -- device history",
       "file": "scripts/ops/liveone.ts",
       "writes": false,
@@ -4728,17 +4740,17 @@
             "type": "string",
             "description": "Target origin (default: your stored default, else https://www.liveone.energy) (origin)"
           },
-          "include-archived": {
-            "type": "boolean",
-            "description": "Also consider archived devices (they are hidden from every listing by default)"
-          },
           "vendor": {
             "type": "string",
             "description": "Only this vendor's devices (vendor)"
           },
           "status": {
             "type": "string",
-            "description": "Only devices with this status (active, disabled, archived) (status)"
+            "description": "Only devices with this status (active, disabled, archived) — implies --include-inactive (status)"
+          },
+          "include-inactive": {
+            "type": "boolean",
+            "description": "Also consider disabled and archived devices (only active ones are listed by default)"
           },
           "format": {
             "type": "string",
@@ -4750,7 +4762,7 @@
           }
         }
       },
-      "signature": "liveone device list { --base-url?: string; --include-archived?: boolean; --vendor?: string; --status?: string }",
+      "signature": "liveone device list { --base-url?: string; --vendor?: string; --status?: string; --include-inactive?: boolean }",
       "invocation": "npm run liveone -- device list",
       "file": "scripts/ops/liveone.ts",
       "writes": false,
@@ -4781,9 +4793,9 @@
             "type": "string",
             "description": "Target origin (default: your stored default, else https://www.liveone.energy) (origin)"
           },
-          "include-archived": {
+          "include-inactive": {
             "type": "boolean",
-            "description": "Also consider archived devices (they are hidden from every listing by default)"
+            "description": "Also consider disabled and archived devices (only active ones are listed by default)"
           },
           "format": {
             "type": "string",
@@ -4798,7 +4810,7 @@
           "device"
         ]
       },
-      "signature": "liveone device points <device> { --base-url?: string; --include-archived?: boolean }",
+      "signature": "liveone device points <device> { --base-url?: string; --include-inactive?: boolean }",
       "invocation": "npm run liveone -- device points",
       "file": "scripts/ops/liveone.ts",
       "writes": false,
@@ -4938,7 +4950,7 @@
       "when": "Use this to see everything the platform knows about one device — its vendor identity,\nconfig overrides, derived capabilities and point inventory.",
       "parentWhen": "Reach for this for the PHYSICAL/vendor layer: what a device IS and what it reports. For the\nsemantic grouping (areas, bindings, flows) use `area`; for what a dashboard shows use\n`dashboard`.",
       "details": "The aggregate is an OBJECT, so the human rendering is the pretty-printed JSON — a table\nwould only hide its shape. `points` renders the point inventory alone, as a table.\n`capabilities` are DERIVED (a point scan + compound predicates), and `area show` remains\nthe authoritative place to read them in context — its members carry the same list.",
-      "description": "npm run liveone -- device show — A device's full aggregate: metadata, config, adapter state, capabilities, points.\n\nUse this to see everything the platform knows about one device — its vendor identity,\nconfig overrides, derived capabilities and point inventory.\n\nAbout `device` generally: Reach for this for the PHYSICAL/vendor layer: what a device IS and what it reports. For the\nsemantic grouping (areas, bindings, flows) use `area`; for what a dashboard shows use\n`dashboard`.\n\nThe aggregate is an OBJECT, so the human rendering is the pretty-printed JSON — a table\nwould only hide its shape. `points` renders the point inventory alone, as a table.\n`capabilities` are DERIVED (a point scan + compound predicates), and `area show` remains\nthe authoritative place to read them in context — its members carry the same list.\n\nRead-only. This command changes nothing.\n\nCalls the deployed LiveOne API as the signed-in user. A missing, expired or revoked CLI token is exit 3.\n\nExit codes: 0, 1, 2, 3, 5, 130.\n\nExamples:\n  liveone device show daylesford\n  liveone device show dv_01kybrhzkmfyxvz63d15rscj19",
+      "description": "npm run liveone -- device show — A device's full aggregate: metadata, config, adapter state, capabilities, points.\n\nUse this to see everything the platform knows about one device — its vendor identity,\nconfig overrides, derived capabilities and point inventory.\n\nAbout `device` generally: Reach for this for the PHYSICAL/vendor layer: what a device IS and what it reports. For the\nsemantic grouping (areas, bindings, flows) use `area`; for what a dashboard shows use\n`dashboard`.\n\nThe aggregate is an OBJECT, so the human rendering is the pretty-printed JSON — a table\nwould only hide its shape. `points` renders the point inventory alone, as a table.\n`capabilities` are DERIVED (a point scan + compound predicates), and `area show` remains\nthe authoritative place to read them in context — its members carry the same list.\n\nRead-only. This command changes nothing.\n\nCalls the deployed LiveOne API as the signed-in user. A missing, expired or revoked CLI token is exit 3.\n\nExit codes: 0, 1, 2, 3, 5, 130.\n\nExamples:\n  liveone device show daylesford\n  liveone device show dv_01kybrhzkmfyxvz63d15rscj19\n  liveone device show 4 --include-inactive",
       "input_schema": {
         "type": "object",
         "properties": {
@@ -4950,9 +4962,9 @@
             "type": "string",
             "description": "Target origin (default: your stored default, else https://www.liveone.energy) (origin)"
           },
-          "include-archived": {
+          "include-inactive": {
             "type": "boolean",
-            "description": "Also consider archived devices (they are hidden from every listing by default)"
+            "description": "Also consider disabled and archived devices (only active ones are listed by default)"
           },
           "format": {
             "type": "string",
@@ -4967,7 +4979,7 @@
           "device"
         ]
       },
-      "signature": "liveone device show <device> { --base-url?: string; --include-archived?: boolean }",
+      "signature": "liveone device show <device> { --base-url?: string; --include-inactive?: boolean }",
       "invocation": "npm run liveone -- device show",
       "file": "scripts/ops/liveone.ts",
       "writes": false,

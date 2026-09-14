@@ -1,8 +1,8 @@
 /**
- * `?includeArchived=true` on the device reads.
+ * `?includeInactive=true` on the device reads.
  *
  * 🛑 Why it exists. `devicesVisibleByUser` is `activeOnly` by default, and a CLI ref is matched
- * against the LIST — so an archived device could not be named at all, not even by its literal
+ * against the LIST — so a non-active device could not be named at all, not even by its literal
  * `dv_…` id. Meanwhile an area aggregate DOES return its archived members on purpose
  * (`lib/areas/v4-shapes.ts`), so anything that walked an area's members into a per-device read hit
  * a 404: `liveone area role list` on an area whose devices had been retired answered
@@ -56,9 +56,9 @@ describe("GET /api/v4/devices", () => {
     expect(activeOnlyArg()).toBe(true);
   });
 
-  it("includes archived devices when asked", async () => {
+  it("includes non-active devices when asked", async () => {
     await devicesGET(
-      new NextRequest("http://localhost/api/v4/devices?includeArchived=true"),
+      new NextRequest("http://localhost/api/v4/devices?includeInactive=true"),
     );
     expect(activeOnlyArg()).toBe(false);
   });
@@ -67,13 +67,13 @@ describe("GET /api/v4/devices", () => {
     for (const v of ["1", "yes", "", "TRUE"]) {
       mockVisible.mockClear();
       await devicesGET(
-        new NextRequest(`http://localhost/api/v4/devices?includeArchived=${v}`),
+        new NextRequest(`http://localhost/api/v4/devices?includeInactive=${v}`),
       );
       expect(activeOnlyArg()).toBe(true);
     }
   });
 
-  it("🛑 does NOT infer includeArchived from admin — admin widens WHOSE, not WHICH STATUSES", async () => {
+  it("🛑 does NOT infer includeInactive from admin — admin widens WHOSE, not WHICH STATUSES", async () => {
     mockAuth.mockResolvedValue({
       userId: "user_1",
       isAdmin: true,
@@ -84,9 +84,9 @@ describe("GET /api/v4/devices", () => {
     expect(optsArg()).toEqual({ isAdmin: true });
   });
 
-  it("🛑 and includeArchived does NOT confer admin — it widens WHICH STATUSES, not WHOSE", async () => {
+  it("🛑 and includeInactive does NOT confer admin — it widens WHICH STATUSES, not WHOSE", async () => {
     await devicesGET(
-      new NextRequest("http://localhost/api/v4/devices?includeArchived=true"),
+      new NextRequest("http://localhost/api/v4/devices?includeInactive=true"),
     );
     expect(optsArg()).toEqual({ isAdmin: false });
   });
@@ -96,7 +96,7 @@ describe("GET /api/v4/devices", () => {
       NextResponse.json({ error: "no" }, { status: 401 }) as never,
     );
     const res = await devicesGET(
-      new NextRequest("http://localhost/api/v4/devices?includeArchived=true"),
+      new NextRequest("http://localhost/api/v4/devices?includeInactive=true"),
     );
     expect(res.status).toBe(401);
     expect(mockVisible).not.toHaveBeenCalled();

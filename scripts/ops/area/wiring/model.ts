@@ -111,8 +111,8 @@ export interface PointPool {
  * "no point matching …" and every `role list` into a wall of raw `pt_` ids. So an empty pool from a
  * non-empty membership is treated as the bug it is, rather than as an area with nothing to bind.
  *
- * 🛑 `includeArchived=true`, and a per-member failure is RECORDED rather than thrown. An area
- * aggregate returns its archived members (`lib/areas/v4-shapes.ts` says so explicitly), while the
+ * 🛑 `includeInactive=true`, and a per-member failure is RECORDED rather than thrown. An area
+ * aggregate returns its non-active members (`lib/areas/v4-shapes.ts` says so explicitly), while the
  * per-device route is `activeOnly` — so this loop used to 404 on the first retired member and take
  * the whole verb down with it. `liveone area role list` on Craig Unified, whose job is to report an
  * area's wiring, answered `error: Device not found` and exit 1: an area whose devices had been
@@ -129,7 +129,7 @@ export async function loadPointPool(
   for (const m of members) {
     try {
       const dev = await s.get<{ name: string; points?: WirePoint[] }>(
-        `/api/v4/devices/${encodeURIComponent(m.id)}?include=points&includeArchived=true`,
+        `/api/v4/devices/${encodeURIComponent(m.id)}?include=points&includeInactive=true`,
       );
       for (const p of dev.points ?? [])
         points.push({ ...p, deviceId: m.id, deviceName: dev.name ?? m.name });

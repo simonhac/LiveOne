@@ -27,9 +27,9 @@ import { withApiSession, type ApiSession } from "@/lib/cli-kit/api-session";
 import { apiFetch } from "@/lib/cli-kit/http";
 import {
   BASE_URL_FLAG,
-  HISTORY_FLAGS,
-  INCLUDE_ARCHIVED_DEVICES_FLAG,
   bool,
+  HISTORY_FLAGS,
+  INCLUDE_INACTIVE_FLAG,
   listDevices,
   resolveArea,
   resolveDevice,
@@ -115,7 +115,6 @@ export const deviceCommand = defineCommand({
       when: "Start here when you do not yet know a device's id.",
       flags: {
         ...BASE_URL_FLAG,
-        ...INCLUDE_ARCHIVED_DEVICES_FLAG,
         vendor: {
           type: "string",
           placeholder: "vendor",
@@ -124,8 +123,9 @@ export const deviceCommand = defineCommand({
         status: {
           type: "string",
           placeholder: "status",
-          help: "Only devices with this status (active, disabled, archived)",
+          help: "Only devices with this status (active, disabled, archived) — implies --include-inactive",
         },
+        ...INCLUDE_INACTIVE_FLAG,
       },
       examples: ["liveone device list", "liveone device list --vendor=amber"],
     },
@@ -142,10 +142,11 @@ export const deviceCommand = defineCommand({
         "`capabilities` are DERIVED (a point scan + compound predicates), and `area show` remains\n" +
         "the authoritative place to read them in context — its members carry the same list.",
       args: [DEVICE_ARG],
-      flags: { ...BASE_URL_FLAG, ...INCLUDE_ARCHIVED_DEVICES_FLAG },
+      flags: { ...BASE_URL_FLAG, ...INCLUDE_INACTIVE_FLAG },
       examples: [
         "liveone device show daylesford",
         "liveone device show dv_01kybrhzkmfyxvz63d15rscj19",
+        "liveone device show 4 --include-inactive",
       ],
     },
     points: {
@@ -155,7 +156,7 @@ export const deviceCommand = defineCommand({
         "Use this to find a point's id or path — e.g. before wiring a binding or reading a\n" +
         "specific series.",
       args: [DEVICE_ARG],
-      flags: { ...BASE_URL_FLAG, ...INCLUDE_ARCHIVED_DEVICES_FLAG },
+      flags: { ...BASE_URL_FLAG, ...INCLUDE_INACTIVE_FLAG },
       examples: ["liveone device points daylesford"],
     },
     latest: {
@@ -188,7 +189,7 @@ export const deviceCommand = defineCommand({
       args: [DEVICE_ARG],
       flags: {
         ...BASE_URL_FLAG,
-        ...INCLUDE_ARCHIVED_DEVICES_FLAG,
+        ...INCLUDE_INACTIVE_FLAG,
         ...HISTORY_FLAGS,
       },
       formats: ["human", "json", "csv"],
@@ -339,8 +340,17 @@ async function runList(ctx: Ctx): Promise<number> {
   return withApiSession(ctx, async (s) => {
     const vendor = str(ctx, "vendor");
     const status = str(ctx, "status");
+    // 🛑 `--status` IMPLIES the widening. The filter is applied client-side over whatever the server
+    // returned, and the server returns only `active` by default — so `--status=archived` matched an
+    // active-only list and returned zero, every time, while the flag's own help advertised
+    // `archived` and `disabled` as valid values. It was a filter that could only ever answer
+    // "nothing" for two of the three values it documented.
     const devices = (
-      await listDevices(s, { includeArchived: bool(ctx, "includeArchived") })
+      await listDevices(s, {
+        includeInactive:
+          bool(ctx, "includeInactive") === true ||
+          (status !== undefined && status !== "active"),
+      })
     ).filter(
       (d) =>
         (vendor === undefined || d.vendor === vendor) &&
@@ -362,16 +372,21 @@ async function runList(ctx: Ctx): Promise<number> {
   });
 }
 
+/** The read verbs' shared opt-in to non-active devices. */
+const inactiveOpts = (ctx: Ctx) => ({
+  includeInactive: bool(ctx, "includeInactive") === true,
+});
+
 async function fetchAggregate(
   s: ApiSession,
   ref: string,
-  includeArchived = false,
+  opts: { includeInactive?: boolean } = {},
 ): Promise<Record<string, unknown> & { points?: WirePoint[] }> {
-  const device = await resolveDevice(s, ref, { includeArchived });
-  // 🛑 The flag has to reach the AGGREGATE too, not just the ref lookup: the per-device route is
-  // `activeOnly` on its own account, so resolving an archived ref and then fetching it without the
+  const device = await resolveDevice(s, ref, opts);
+  // 🛑 The widening has to reach the AGGREGATE too, not just the ref lookup. The per-device route
+  // applies its own `activeOnly`, so resolving an inactive ref and then fetching it without the
   // param trades "cannot name it" for a 404 — the same failure one step later.
-  const q = includeArchived ? "&includeArchived=true" : "";
+  const q = opts.includeInactive ? "&includeInactive=true" : "";
   return s.get(
     `/api/v4/devices/${encodeURIComponent(device.id!)}?include=points,capabilities${q}`,
   );
@@ -379,11 +394,7 @@ async function fetchAggregate(
 
 async function runShow(ctx: Ctx): Promise<number> {
   return withApiSession(ctx, async (s) => {
-    const body = await fetchAggregate(
-      s,
-      ctx.args[0],
-      bool(ctx, "includeArchived"),
-    );
+    const body = await fetchAggregate(s, ctx.args[0], inactiveOpts(ctx));
     // Object-heavy payload: the pretty JSON IS the human rendering (a table would hide the shape).
     ctx.emit(body, () => JSON.stringify(body, null, 2));
     return EXIT.OK;
@@ -392,11 +403,7 @@ async function runShow(ctx: Ctx): Promise<number> {
 
 async function runPoints(ctx: Ctx): Promise<number> {
   return withApiSession(ctx, async (s) => {
-    const body = await fetchAggregate(
-      s,
-      ctx.args[0],
-      bool(ctx, "includeArchived"),
-    );
+    const body = await fetchAggregate(s, ctx.args[0], inactiveOpts(ctx));
     const points = body.points ?? [];
     ctx.emit(
       {
@@ -438,9 +445,7 @@ async function runLatest(ctx: Ctx): Promise<number> {
 
 async function runHistory(ctx: Ctx): Promise<number> {
   return withApiSession(ctx, async (s) => {
-    const device = await resolveDevice(s, ctx.args[0], {
-      includeArchived: bool(ctx, "includeArchived"),
-    });
+    const device = await resolveDevice(s, ctx.args[0], inactiveOpts(ctx));
     return runHistoryVerb(
       ctx,
       s,
