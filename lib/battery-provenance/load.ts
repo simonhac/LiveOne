@@ -40,6 +40,10 @@ const FIVE_MIN_MS = 5 * 60 * 1000;
 
 type PgDb = NonNullable<typeof planetscaleDb>;
 
+// 🛑 Assumes the source is OpenElectricity in tCO2e/MWh and checks NOTHING. A source already in
+// gCO2/kWh — the generator's `emissionsIntensity: 1000`, once it publishes as a point (bindings plan
+// Unit 3) — would be scaled to 1,000,000 here. Retired by the unit-class registry (Unit 2), which
+// converts by the point's declared unit; do not bind a generator intensity into this path before then.
 const oeEmissionsToGPerKwh = (v: number | null) =>
   v === null ? null : v * 1000; // OE tCO2e/MWh → gCO2/kWh
 const toKw = (v: number | null, unit: string | null) =>

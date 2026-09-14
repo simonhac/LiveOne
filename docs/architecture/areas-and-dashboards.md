@@ -121,6 +121,12 @@ fallbacks publish alongside the winner under `"{path}#{rank}"`, and `resolveChai
 `CHAIN_FALLBACK_STALE_MS`. Precedence is settled at READ time on purpose: it keeps the ingest path
 free of a read-modify-write, and staleness can only be judged honestly at the moment it is asked.
 
+> **Decided 2026-09-14, not yet built: the chain is being retired.** One or zero wires per serving
+> key, enforced in the writer. Measured, exactly one chain exists in the fleet (Kinkora
+> `bidi.battery/soc`, two devices reporting one battery). The paragraphs above describe what the code
+> does today; see [`../plans/20260914-bindings-and-area-settings.md`](../plans/20260914-bindings-and-area-settings.md)
+> Unit 1 for the retirement and the reasons.
+
 Until this existed, only `resolveSlotsFromData` — reachable solely through the read-only
 `/resolution` report — read `priority` at all. Every serving path took the bindings as an unordered
 set, so binding two points to one slot produced a coin flip: Kinkora's `bidi.battery/soc` answered
@@ -272,8 +278,14 @@ Recorded explicitly, because they were stated confidently here and people rememb
   §3, so an area's point set simply *is* its bindings — one resolution mode instead of two that
   disagree, and the silent-narrowing cliff becomes unrepresentable. Also deletes
   `lib/grid/context.ts`: grid signals become an ordinary binding to the ambient OpenElectricity
-  device rather than a location walk run inline on the dashboard server render. See
+  device rather than a location walk run inline on the dashboard server render. The same unit
+  retires the priority chain: one or zero wires per serving key. See
   [`../plans/20260914-bindings-and-area-settings.md`](../plans/20260914-bindings-and-area-settings.md).
+- **Unit classes on wires (decided, not built).** Compatibility becomes same unit *class*; input
+  ports declare the unit they compute in; conversion happens at the sink on read; readings stay
+  native. Replaces five converters that today don't know each other and let MW through unscaled. The
+  model is in [`../plans/20260910-block-model.md`](../plans/20260910-block-model.md) "The type";
+  scheduled as bindings-plan Unit 2.
 - **Point-level share narrowing** (§5) — the one remaining access tightening.
 - **Nobody consumes the resolver yet.** `GET /api/v4/areas/{id}/resolution` serves the deterministic
   per-slot resolution described in §3, but the battery-provenance fold still picks its inputs by

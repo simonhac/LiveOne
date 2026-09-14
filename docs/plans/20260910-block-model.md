@@ -3,7 +3,10 @@
 > **Status:** ADOPTED · drafted 2026-09-10 · reviewed against the code 2026-09-10 · **increment 1
 > shipped 2026-09-13** (migrations 0063 + 0068 expand / 0069 contract); increments 2–7 not started ·
 > successor framing for [fold-on-the-resolver.md](fold-on-the-resolver.md) and
-> [ha-parity-and-leapfrog.md](ha-parity-and-leapfrog.md) §11
+> [ha-parity-and-leapfrog.md](ha-parity-and-leapfrog.md) §11 · **reconciled with the bindings plan
+> 2026-09-14** — this document owns the MODEL (looms, unit classes, one-or-zero wires, modes reduced
+> to explicit | absent); the execution sequence lives in
+> [20260914-bindings-and-area-settings.md](20260914-bindings-and-area-settings.md)
 
 ## The idea
 
@@ -30,6 +33,20 @@ A port's type is a tuple over four axes. Two exist today; two are implicit and d
 The last is HA's `state_class`, and it is why their Energy dashboard demands `device_class: energy`
 **plus** `state_class: total_increasing`: "energy in kWh" is not a type; "monotonic counter of kWh"
 is. We have the same distinction, hiding in `transform`.
+
+**The unit axis has rules now, not just a column.** Compatibility is same unit *class*, not same
+unit. An *output* port carries the source's native unit; an *input* port declares the unit it
+computes in; a wire is legal iff the two share a class; and the reader that follows a wire converts
+at the sink, on read. **Stored readings stay native, always.** An unknown unit belongs to no class,
+so the wire is refused at bind time — never passed through unscaled at read time. Nine classes cover
+the fleet: `power {W, kW, MW}` · `energy {Wh, kWh, MWh}` · `energy-price {c/kWh, $/kWh, $/MWh}` ·
+`emissions-intensity {gCO₂/kWh, kgCO₂/kWh, tCO₂e/MWh}` · `proportion {%, fraction}` · `temperature
+{°C, °F — affine}` · `speed {mph, mi/hr, km/h; rpm is NOT speed}` · `time {epoch_s, epochMs}` · and
+the identity-only categoricals. The class must derive from the **unit**, not the metric: the fleet's
+`metric_type: rate` already spans an energy price (`$/MWh`, `cents_kWh`) and a speed (`mi/hr`),
+which is the data confirming metric and unit are separate axes. The graph report renders a conversion
+as an annotation on the edge (`×0.1: $/MWh → c/kWh`), never as a node — see *What to resist*.
+Accumulation is untouched by this: `transform: 'd'` is a different axis, not a conversion.
 
 **Role is not a type axis.** It is the namespace: it lives on the binding (`area_bindings.role`),
 not on the point, and the scope rule below depends on that. The port type answers *can this wire
@@ -89,20 +106,100 @@ port)**. So the model has one edge shape, and every increment conforms to it:
 `automations.trigger.source = {kind:"derivation"} | {kind:"point"}` is already this shape. It is the
 precedent, not the future.
 
+🛑 **One or zero wires per port — there is no precedence.** The priority chain
+(`lib/areas/binding-chain.ts`; `priority`, `#rank` fields, `resolveChainFields`,
+`CHAIN_FALLBACK_STALE_MS`) is retired. It was live-map-only failover — history, charts, the Sankey
+and the fold all took rank 0 regardless — and it was three things this model cannot carry: implicit
+resolution at read time ("Mondo, unless stale, then Fronius" is not an edge the report can draw); a
+type hole, because the comparator never looked at units, so c/kWh chained silently behind $/MWh; and
+a permitted ambiguity made deterministic instead of forbidden — its one real user in the fleet was
+the very case that produced the coin-flip bug it was written to order. If failover is ever wanted, it
+is an explicit `switch` block with N typed inputs and one output, declared in the graph.
+
+**On an area, the port is the serving key, not the slot.** A `(role, metric)` slot legitimately
+holds several wires with different logical paths — `load.hvac/power`, `load.pool/power` are separate
+circuits and all serve. What is one-or-zero is the wire per `{logical_path}/{metric_type}` within an
+area: two instruments claiming one serving key are two claimants of one series id, and exactly one
+may hold it.
+
+**One shape, several tables.** The four encodings above conform to one shape; they do not merge into
+one `edges` table. The sinks are `ar_`, `dx_` and `au_` — different tables — so a unified sink is
+`(kind, id, port)` with no foreign key, and `area_bindings.point_uid` is `NO ACTION` today: a bound
+point cannot be deleted from under its binding. That integrity is worth more than the uniformity, and
+the graph report unions across the tables without needing them merged.
+
+## Looms
+
+A **loom** is a named, typed bundle of ports that has a function together — Simulink's *bus*,
+LabVIEW's cluster. The fleet has them already, unnamed: Amber publishes `{import-rate, export-rate,
+spot-rate, renewables, import-energy, export-energy}`; OpenElectricity publishes `{rate, intensity,
+proportion, demand}`; the fold's six blend points are one; a run detector's `{signal, energy?,
+boundary?}` inputs are one. Naming them is what makes "plug this source into that area" one
+operation instead of six.
+
+**Looms are type + authoring; wires are storage.** A loom has three lives and no fourth:
+
+- **type** — a named subset of the ports a block already declares, so a plug type-checks as a unit
+  and the graph report can group by it;
+- **authoring** — the create-time command matches a source loom to a sink loom and writes N wires
+  atomically, at one moment;
+- **presentation** — the builder draws one wire.
+
+At runtime only wires exist. This is Simulink's *virtual* bus exactly: it vanishes when compiled. A
+loom plug leaves no trace that it was plugged as a loom, and needs none — "this area's market loom is
+3/4 filled from OE" and "unplug OE's market loom" are both derivable from the wires. Four reasons the
+wire must stay the stored edge: looms are **partial** (OE has no energy, Amber has no intensity — a
+3-of-4 plug is normal); **per-port properties** are per-port (`pinned`, `transform`); the
+**type-check is per element** (Amber's rate is c/kWh, OE's is $/MWh — the class check cannot be
+coarser than the wire); and with one-or-zero wires there is nothing loom-level to order.
+
+**Loom ≠ role.** It is tempting to say role `grid` *is* the grid loom. It contains two:
+
+| loom | elements | Amber | OpenElectricity | generator |
+| --- | --- | --- | --- | --- |
+| `flow` | power, import-energy, export-energy | ✅ | — | — (power is the inverter's AC-input) |
+| `market` | rate, intensity, proportion | partial | ✅ | ✅ |
+
+Role is the namespace; a role contains looms. That is what makes the retailer, the NEM region and the
+off-grid generator *comparable* — all three publish a `market` loom, and plugging it is the same
+operation whichever role it lands on. It is also what exposes the fold's real requirement, which was
+inexpressible wire-by-wire: not "grid/rate" but *"the market loom of whichever role feeds the site's
+external source"* — a port predicate of `market on role ∈ {grid, generator}`.
+
+**A plug is one suggestion and one atomic write.** On a port already taken it refuses or explicitly
+replaces — there is no "plug at a lower priority", because there is no priority. Two candidate
+sources for one loom is ambiguity, reported with evidence, never resolved by guess.
+
+**Keep the catalogue small and derived.** Four or five loom types (`flow`, `market`, `battery`,
+`blend`, …), each a named subset of declared ports, so it cannot become another hand-maintained
+predicate table of the kind `lib/capabilities/catalog.ts` is — which this model exists to retire.
+
 ## How a port gets bound
 
 Four modes, in precedence order. This is `resolveSlotsFromData` (`lib/areas/resolution.ts`), which is
 already built, pure, tested and served at `GET /api/v4/areas/{id}/resolution` — **and called by
 nobody** except that route:
 
-1. **explicit** — a stored binding names the point; lowest `priority` wins.
-2. **auto** — exactly one candidate in scope shape-matches. Sole match only: two candidates is
-   reported as `absent` with `reason: "ambiguous"` and the candidate list, never a guess.
-3. **config** — the port is satisfied by a value in config rather than a stream. Already real:
-   `batteryProvenance.generatorSource.pricePerKwh` satisfies `grid/rate`.
-4. **absent** — the block degrades or does not run.
+1. **explicit** — a stored binding names the point. One wire or none (see *The edge*); there is no
+   "lowest priority wins" any more.
+2. **absent** — the block degrades or does not run.
 
-So a port's source is `point | config | null`, and ambiguity is modelled as absence-with-evidence.
+So a port's source is `point | null`. **Two modes, not four — revised 2026-09-14.** The earlier draft
+listed *auto* and *config* as further resolution modes, and both are gone, for different reasons:
+
+- **Auto is materialisation, not resolution.** "Exactly one candidate in scope shape-matches" is
+  still exactly the rule — but it runs in the **create-time command**, which writes an explicit wire
+  once, on user action, and never re-asserts. It is not evaluated at read time. Two candidates is
+  still reported as `absent` with `reason: "ambiguous"` and the list, never guessed — the command
+  refuses rather than picks. This is what reconciles the model with explicit-only bindings: every
+  edge the graph has is a stored row, and *auto* is how most of them get written.
+- **Config is retired.** "The port is satisfied by a value in config rather than a stream" had one
+  live instance — `batteryProvenance.generatorSource.pricePerKwh` satisfying `grid/rate` — and it is
+  the same anti-pattern the export tariff already removed: a second implementation of "a value over
+  time" beside the one the system has, a bound point. The generator now *publishes* its rate,
+  intensity and proportion as points and the area binds them (bindings plan, Unit 3). A block's
+  genuine constants — a threshold, an efficiency, a reserve floor — are `params`, not ports, and
+  were never this mode.
 
 **Extend the slot catalogue to interval shapes.** `generator/runs` and `ev/runs` (shape: intervals)
 resolve by role exactly as `generator/power` does, with an explicit `dx_` pin available for the
@@ -180,6 +277,17 @@ a broken helper reference is discovered when the entity goes `unavailable`.
   return-to-grid by hand. Two solar inverters and "obvious" stops being obvious — which is precisely
   what the resolver's `ambiguous` verdict already models.
 - **Putting role or cadence in the port type.** See *The type*.
+- **A unified `edges` table.** One shape, several tables — see *The edge*. The FK is the point.
+- **Wiring params as ports.** A block's constants are `params`. Turn every number into a wire and you
+  get Simulink's Constant-block-everywhere failure. The test is *"is it a value over time?"* — a
+  generator's cost is, so it became a point; a detector's hysteresis threshold isn't.
+- **Modelling unit conversion or `transform` as blocks.** They are type axes. The graph report
+  annotates a conversion on the edge; it does not insert a node for it.
+- **Pulling cards into the registry to make their edges rows.** Cards conform to the edge *shape*
+  (increment 6) and stay in `dashboards.doc`: atomic whole-document PUT, nothing querying cards in
+  SQL, and the share-scope invariant that every scope-bearing ref sits in an envelope field one tree
+  walk can find. Two sources of truth for what a card reads is worse than one table's worth of
+  uniformity.
 
 ## What it buys
 
@@ -284,7 +392,17 @@ Two selectors, two columns: the fold picks its inputs by `Array.find` over bindi
 `ordinal`; the resolver picks by `priority`. They are independent columns on the same table, so the
 `/resolution` report and the fold can disagree today and nothing notices. Adopting the resolver is a
 semantic change on real sites, not a refactor — [fold-on-the-resolver.md](fold-on-the-resolver.md)
-has the enumeration.
+has the enumeration. Under one-or-zero wires the *per-serving-key* half of that disagreement
+collapses — there is one wire to pick — and what remains is which serving key within a slot the fold
+takes (import vs spot for `grid/rate`, say). Re-measure that set after the chain is retired, before
+increment 4.
+
+**Measured 2026-09-14, and worth keeping in view.** Exactly one priority chain exists in the fleet
+(Kinkora `bidi.battery/soc`, two devices reporting one battery). Five W→kW-style converters exist and
+do not know each other (`site-data-processor`, `lines-data`, and three inline in the fold's
+`load.ts`, one of which multiplies by 1000 with no unit check at all); MW passes through all five
+unscaled; and there is no dimensional unit layer anywhere — `lib/point/unit-typography.ts` is
+typographic and says so.
 
 ## Increments, in order of payoff
 
@@ -330,3 +448,23 @@ has the enumeration.
    uses. Retires the role→capability map, the mirrored role lists, the pinning contradiction, and
    the int-addressed `run-periods` endpoint.
 7. The `flow_attr_1d` rollup — hardest, because it is per-area rather than per-point.
+
+### Relationship to the bindings plan
+
+[20260914-bindings-and-area-settings.md](20260914-bindings-and-area-settings.md) is the execution
+sequence for the parts of this model that are scheduled; the increments above are not duplicated
+there and this list is not duplicated here.
+
+- **Bindings Unit 1** delivers explicit-only bindings and **retires the chain** — the one-or-zero
+  rule in *The edge*. Its create-time command is where *auto* now lives.
+- **Bindings Unit 2** delivers the **unit axis** rules in *The type* — the registry and the single
+  converter.
+- **Bindings Unit 3** delivers the **retirement of mode 3** — the generator publishes a market loom.
+- **Increment 2 (the graph report) should land early**, ahead of the fold's move: it is the
+  verification artefact for Unit 1's riskiest step (the KV registry shrink is that report restricted
+  to one question) and it is what renders looms and edge-annotated conversions.
+- **Increment 4 (the fold adopts the resolver) sequences AFTER bindings Unit 1**, because the
+  resolver's semantics change underneath it — see the re-measure note above.
+- **Increment 3 may make `ensureHelperBindings` unnecessary**: once the fold is a registered
+  derivation with typed `derivation_sources` ports, it no longer reads bindings, and Unit 1's one
+  awkward machine-writer case disappears rather than needing an exemption.

@@ -189,6 +189,14 @@ automatic device-class-driven conversion, per-user overrides held in the entity 
 point and no conversion anywhere in the model — so W vs kW is decided at write time and at render
 time independently, by convention.
 
+> **2026-09-14: designed and scheduled.** The unit model now lives in
+> [20260910-block-model.md](20260910-block-model.md) "The type" — unit *classes*, ports declaring
+> the unit they compute in, conversion at the sink, native storage — and is scheduled as Unit 2 of
+> [20260914-bindings-and-area-settings.md](20260914-bindings-and-area-settings.md). Measured that
+> day: five W→kW-style converters that don't know each other, MW passing through all of them
+> unscaled, and `metric_type: rate` spanning both an energy price and a speed (`mi/hr`). The
+> `suggested_display_precision` half of this item stays here; it is a card concern, not a wire one.
+
 **This has already cost us.** The generator run-period columns were named `*_power_w` and rendered as
 `kW` by dividing by 1000, which silently displayed engine **rpm** as ~1.5 kW when the detector was
 re-pointed at a speed signal. That's a units-are-just-strings bug.

@@ -1,8 +1,10 @@
 # Bindings and area settings — one sequenced plan
 
-> **Status:** active. Consolidates two 2026-09-14 handoffs — `device-naming-and-area-settings` and
-> `explicit-bindings` — into a single sequenced plan, because they collide on the same writers and
-> the order between them matters. Product decisions in both are agreed; no application change here
+> **Status:** active — the EXECUTION SEQUENCE. Consolidates two 2026-09-14 handoffs
+> (`device-naming-and-area-settings`, `explicit-bindings`) and, as of the same day, the design
+> discussion that reconciled them with [20260910-block-model.md](20260910-block-model.md): one-or-zero
+> wires, unit classes on wires, looms, the generator publishing a market loom. **The block model owns
+> the model; this document owns the order.** Product decisions are agreed; no application change here
 > has been implemented.
 >
 > This document is self-contained. No other plan or conversation is required.
@@ -10,7 +12,7 @@
 > **Device naming is no longer part of this plan.** It was Unit 1 (Amber name generation,
 > name-at-creation, `PATCH /api/v4/devices/{dv_}` for name/slug, `liveone device rename`) and is being
 > delivered separately — removed 2026-09-14 once that work was underway elsewhere. Two things it owed
-> the rest of this plan, which must still be true when Unit 2 lands: the v4 device PATCH must accept
+> the rest of this plan, which must still be true when Unit 4 lands: the v4 device PATCH must accept
 > `{ name, slug }` so `DeviceSettingsDialog` can stop posting to the admin-only
 > `/api/admin/devices/{systemId}/settings`, and a device rename must never rename its area.
 >
@@ -20,7 +22,7 @@
 
 ## Why these are one plan
 
-They are not independent. Unit 3 requires that *"membership/binding changes that affect materialized
+They are not independent. Unit 5 requires that *"membership/binding changes that affect materialized
 area history mark affected areas"* and that *"rehome, member replacement, onboarding, and binding
 edits cannot bypass tracking."* Unit 1 **changes what those writers mean** — it deletes the implicit
 union, adds a create-time binding command, and converts `ensureHelperBindings` from a machine
@@ -31,27 +33,43 @@ binding change alters an area's serving set **depends on whether it is the first
 that silently narrows the area from member-union to just-that-point. Tracking built before Unit 1
 has to special-case that; tracking built after cannot encounter it.
 
-## The three units, in order
+A second dependency is a live bug waiting to be triggered. **Unit 3 (the generator publishes a market
+loom) must follow Unit 2 (the unit-class registry).** `lib/battery-provenance/load.ts:44`
+(`oeEmissionsToGPerKwh`) multiplies emissions intensity by 1000 with NO unit check — it assumes the
+source is OpenElectricity in tCO₂e/MWh. The generator's intensity is already in gCO₂/kWh
+(`emissionsIntensity: 1000`). Bind it into that port before the registry exists and it becomes
+1,000,000. The registry is what makes Unit 3 safe.
+
+And chain retirement lives inside Unit 1 rather than beside it, because the create-time binding
+command must write one-or-zero wires from its very first row.
+
+## The five units, in order
 
 | # | Unit | Ships as | Depends on |
 | --- | --- | --- | --- |
-| 1 | **Explicit bindings** — retire the implicit membership union | one PR (5 stages) | nothing; must precede 3 |
-| 2 | **Area Settings** — settings ownership, standard-time derivation, route deletions | one PR | the device-naming PATCH, shipping separately |
-| 3 | **Durable rebuild state and repairs** | one PR | 1 and 2 |
+| 1 | **Explicit bindings** — union retired, priority chain retired, OE path rename, loom-aware create command | one PR (7 stages) | nothing; must precede 3 and 5 |
+| 2 | **Unit-class registry** — ports declare units, wires convert, one converter replaces five | one PR | nothing; must precede 3 |
+| 3 | **The generator publishes a market loom** — `generatorSource` config retires | one PR | 1 and 2 |
+| 4 | **Area Settings** — settings ownership, standard-time derivation, route deletions | one PR | the device-naming PATCH, shipping separately |
+| 5 | **Durable rebuild state and repairs** | one PR | 1 and 4 |
 
-Units 1 and 2 barely overlap and may run in parallel. Unit 2 was the second half of the original
+**Order of execution: 1 → 2 → 3 (the bindings thread), with 4 in parallel, then 5.** The bindings
+thread goes first because Unit 3 is unsafe without Unit 2, and because a durable job system (Unit 5)
+should not be built on a model still changing underneath it.
+
+Units 1 and 4 barely overlap and may run in parallel. Unit 4 was the second half of the original
 "PR B"; it is split out here because a dialog refactor and a durable job system fail in completely
 different ways and should not be reviewed together.
 
-⚠️ **Unit 2 has already partly landed, out of order.** PR #507 ("Move site settings to areas and
+⚠️ **Unit 4 has already partly landed, out of order.** PR #507 ("Move site settings to areas and
 harden area data handling") removed timezone/location editing from `DeviceSettingsDialog` and reworked
-`AreaBuilderDialog`. What remains of Unit 2 is the rest: `AreaSettingsDialog` (absent),
+`AreaBuilderDialog`. What remains of Unit 4 is the rest: `AreaSettingsDialog` (absent),
 `standardOffsetMin` (absent), and deleting the two legacy routes (`app/api/admin/devices/[systemId]/settings`
 and `app/api/devices/[systemId]/location`, both still present). Note the half that landed is the half
 that does **not** fix the original complaint — the dialog still saves the device name through the
 admin-only route, which is what the separate naming work unblocks.
 
-Unit 2 also **closes Stage 6 of the device→0..1-area epic** — the `areas.timezone_offset_min` vs
+Unit 4 also **closes Stage 6 of the device→0..1-area epic** — the `areas.timezone_offset_min` vs
 `day_offset_min` duplication (~12 readers), which its "no independently editable area offset"
 decision resolves.
 
@@ -73,7 +91,7 @@ decision resolves.
 - Boundary incompatibility and incomplete rebuilding are separate concepts.
 - Available daily data remains visible with persistent warnings until repair succeeds.
 - Operators initiate resumable repairs through the CLI.
-- Unit 3 includes an authorized additive database migration for dedicated rebuild state.
+- Unit 5 includes an authorized additive database migration for dedicated rebuild state.
 - Include a dry-run/apply audit to find and mark existing mismatches. Deployment itself does not run
   that audit or repairs.
 
@@ -92,9 +110,33 @@ decision resolves.
 - **Empty areas: archive, don't delete.** `areas.status` already carries `active | archived | removed`
   and both non-active values are in use.
 - **Unit handling fails closed** — an unrecognised or missing unit is never scaled on a guess.
-  (Shipped in #506.)
+  (Shipped in #506.) Unit 2 upgrades this from read-time passthrough to bind-time refusal.
+- **One or zero wires per serving key.** The priority chain (`lib/areas/binding-chain.ts`) is retired.
+  It was live-map-only failover, implicit resolution at read time, a type hole (no unit check across
+  a chain), and it has exactly one real user in the fleet — the very case that produced the coin-flip
+  bug it was written to order. Cardinality is per **serving key** `(area, logical_path, metric_type)`,
+  NOT per slot: a `load` slot legitimately holds many circuits. Failover, if ever wanted, is an
+  explicit `switch` block in the graph, which would type-check its inputs.
+- **Unit classes on wires.** Compatibility is same unit *class*, not same unit. Input ports declare
+  the unit they compute in; a wire is valid iff source and sink share a class; conversion happens at
+  the sink on read; stored readings stay native, always. Unknown unit → refused at bind time.
+- **Looms are an authoring concept; wires are the storage.** A loom is a named, typed bundle of
+  ports — Simulink's *virtual* bus — with zero runtime footprint. A loom plug is one suggestion and
+  one atomic write of N wires. **Loom ≠ role**: role `grid` contains a `flow` loom and a `market`
+  loom; Amber publishes both, OpenElectricity and the generator publish `market` only.
+- **The generator publishes a market loom.** `generatorSource` config is the same anti-pattern the
+  export tariff already retired (`lib/battery-provenance/tariff.ts` header: a second implementation
+  of "a price over time" beside the one the system has — a bound point). Its three scalars become
+  three points on the `generator` role. This retires the block model's binding mode 3 ("config
+  satisfies a port"), which had exactly this one live instance.
+- **Every dependency is an explicit edge; not every relationship is an edge row.** Three lines hold:
+  params are not ports (don't wire constants); types are not blocks (`transform` and unit conversion
+  are type axes, never nodes); shape is not storage (cards conform to the edge shape but stay in
+  `dashboards.doc`). And **one shape, several tables** — no unified `edges` table, because sinks are
+  `ar_`/`dx_`/`au_` in different tables and a polymorphic sink loses the FK `area_bindings.point_uid`
+  has today.
 
-### Decided but NOT approved — the OpenElectricity path rename
+### ✅ APPROVED (2026-09-14) — the OpenElectricity path rename — Unit 1, stage 1.1
 
 `ROLES.grid.stem` is `"bidi.grid"` and `stemMatchesRole` matches the anchor or a dotted descendant, so
 `grid.*` points are bindable **only** via a carve-out at `lib/areas/slots.ts:215`
@@ -102,15 +144,18 @@ decision resolves.
 
 | point | verdict |
 | --- | --- |
-| `grid.renewables` → `bidi.grid.renewables` | yes — both `%`; chains with Amber's identical path |
-| `grid.emissionsIntensity` → `bidi.grid.emissionsIntensity` | yes — no Amber twin, nothing to reconcile |
-| `grid.price` | **no** — Amber's `bidi.grid.spot` is `cents_kWh`, OE's is `$/MWh`. Needs the serving edge to convert (`ha-parity-and-leapfrog.md` #6), not a data rewrite |
+| `grid.renewables` → `bidi.grid.renewables` | yes — both `%` |
+| `grid.emissionsIntensity` → `bidi.grid.emissionsIntensity` | yes |
+| `grid.price` → `bidi.grid.spot` | **yes** — the earlier objection (Amber `cents_kWh` vs OE `$/MWh`) is answered by Unit 2: the wire converts. Note the rationale has changed: with no chains, "shares Amber's serving key" no longer buys a fallback; the reason is now solely the carve-out below |
 | `grid.demand` | **no** — MW, and `grid`/`power` is where the real site meters live |
 
-Doing the rename lets the `slots.ts:215` carve-out be deleted. **Do it before any binding seed** —
-nothing binds those points yet, so this is the cheapest it will ever be. `lib/grid/latest.ts`
-hardcodes all four serving keys and must change with it; definitions are in
-`lib/vendors/openelectricity/point-metadata.ts`.
+The whole point of the rename is that it lets the `slots.ts:215` carve-out be **deleted** — the
+three market signals then match role `grid` through ordinary `stemMatchesRole`. **Do it before any
+binding seed** — nothing binds those points yet, so this is the cheapest it will ever be. Six rows of
+`points.logical_path` (2 regions × 3 signals), no DDL; `lib/grid/latest.ts` hardcodes all four
+serving keys and must change with it; definitions are in
+`lib/vendors/openelectricity/point-metadata.ts`. Readings key on `point_rid`, so no history is
+orphaned; zero dashboard documents name a logical path.
 
 ---
 
@@ -137,6 +182,18 @@ Measured 2026-09-14. Re-verify before acting.
   member is the *retired* `Kutis · derived` helper; dev: `Craig (legacy)`.
 - **There is no auto-binder.** Only two writers of `area_bindings`: `replaceBindings` (user-initiated)
   and `ensureHelperBindings` (battery-provenance recompute).
+- **Exactly one priority chain exists in the fleet.** One serving key with more than one wire:
+  Kinkora Unified `bidi.battery/soc` — `Kinkora Mondo`@0, `Kinkora Fronius`@1. Every other
+  multi-priority slot (`grid/rate` at 0, 1, 2) is import/export/spot: different serving keys that
+  never contend, numbered sequentially only because the writer numbered them.
+- **The unit census** (active points): `power` is `W` (34), `kW` (Tesla), `MW` (OE); `rate` is
+  `$/MWh` (OE), `cents_kWh` (Amber) **and `mi/hr` (Tesla)** — one metric type spanning an energy
+  price and a speed, so unit class must derive from the unit, not the metric. Spelling varies where
+  it must be exact: `cents_kWh`/`c/kWh`/`cents`, `mph`/`mi/hr`, `bool`/`boolean`, `epochMs`/`epoch_s`.
+  **Five converters that do not know each other**: `convertUnits` (site-data-processor),
+  `convertToKw` (lines-data), and `toKw`/`toKwh`/`oeEmissionsToGPerKwh` inline in
+  `lib/battery-provenance/load.ts`. **MW passes through all five unscaled.** There is no dimensional
+  unit layer anywhere — `lib/point/unit-typography.ts` is typographic and says so.
 - Empty areas are otherwise inert in both environments: zero dashboard-document references, zero
   automations, zero `users.default_area_id` pointers.
 
@@ -216,6 +273,19 @@ row they fetched. That is a convention held in the client, not an invariant held
    onboarding produces an area that serves nothing.
 5. **`ensureHelperBindings` becomes a command too**, or keeps a narrow, *stated* exemption. Once
    nothing else writes bindings, `replaceBindings`' full-replace is correct by construction.
+   (Block-model increment 3 — the fold becomes a registered derivation with typed ports — may make
+   it unnecessary altogether; decide which when sequencing.)
+6. **One or zero wires per serving key**, enforced in `replaceBindings` (the only user-facing
+   writer). Retire the chain: `lib/areas/binding-chain.ts`, `resolveChainFields` and
+   `chainFallbackField` (`lib/latest-values-store.ts`), `CHAIN_FALLBACK_STALE_MS`, and the `#rank`
+   fields the KV registry publishes. The comparator's active-first rule goes with it — a deactivated
+   bound point is a dead port until a human or a command rebinds it, which is the consistent answer
+   under "commands, not reconcilers".
+7. **The OpenElectricity path rename** (stage 1.1, above) — first, before anything binds those points.
+8. **The create-time command is loom-aware.** It matches a source's loom to the sink's loom shape,
+   writes N wires atomically at a single moment, and on a port that is already taken it refuses or
+   explicitly replaces — never "plugs at priority 1". Ambiguity (two candidate sources for one loom)
+   is reported as absent-with-evidence, never guessed.
 
 ### What it buys
 
@@ -273,7 +343,11 @@ to rewrite downstream.
 
 **What Unit 1 does about it.** An area names its grid feed by BINDING the ambient OpenElectricity
 device's points (role `grid`; metrics `rate` / `intensity` / `proportion` — never `power`, where the
-real site meters live). `grid-signals` then derives from the presence of those bindings, with no
+real site meters live). In loom terms: the OE device publishes a `market` loom and the area plugs it
+into its `grid` role. An off-grid site plugs the *generator's* market loom into its `generator` role
+instead (Unit 3) — **not** into `grid`, which an earlier draft of this plan suggested. The fold's
+input is therefore not "grid/rate"; it is *"the market loom of whichever role feeds the site's
+external source"*, with a port predicate of `market on role ∈ {grid, generator}`. `grid-signals` then derives from the presence of those bindings, with no
 location lookup, no region derivation and no global device search at render time.
 `lib/grid/context.ts` and `lib/grid/types.ts` are deleted along with both `resolveGridContextForDevice`
 calls, and the three separate null-returns inside it collapse into "no binding".
@@ -312,26 +386,155 @@ entry as a bug.
 **Kutis is a genuinely odd case.** Its one member is a retired helper with frozen provenance. Confirm
 what it actually serves before materialising it — the honest answer may be "nothing, archive it".
 
+🛑 **`priority` cannot simply be set to a constant.** `area_bindings_slot_priority_unique` is on
+`(area, role, metric_type, priority)`, and Kinkora's `load/power` circuits sit at 0–3 *not because
+they contend but because the writer numbered them*. Make priority constant and that index forbids a
+second load circuit. So the column and the index go together, and that is a **schema change → Backlog,
+needs approval**. Until it is approved: keep writing `priority` exactly as today, and enforce
+one-per-serving-key in `replaceBindings`.
+
+**Kinkora's SoC needs a human decision before stage 1.2** — Mondo or Fronius. It should have been a
+decision all along; the chain let it not be. The right answer is whichever device is the battery's
+own controller rather than an inverter's view of it.
+
 ### Stage order
 
 | # | Stage | Ship | Revert |
 | --- | --- | --- | --- |
-| 2.1 | Backfill the union-mode area's bindings (dev, then prod) | data | delete the rows |
-| 2.2 | Create-time binding command | code | revert |
-| 2.3 | Delete the union fallback in `PointManager` | code | revert |
-| 2.4 | Drop the KV member-union leg + registry rebuild | code | revert + rebuild |
-| 2.5 | `ensureHelperBindings` → command; state the `replaceBindings` invariant | code | revert |
+| 1.1 | OE path rename — 6 `points.logical_path` rows; `point-metadata.ts`; `lib/grid/latest.ts`; delete the `slots.ts:215` carve-out; KV rebuild | data + code | rename back + rebuild |
+| 1.2 | Kinkora SoC decision (one row), then retire the chain and enforce one-per-serving-key in `replaceBindings` | code + 1 row | revert |
+| 1.3 | Backfill the union-mode area's bindings (prod `Kutis`; dev `Craig (legacy)`) | data | delete the rows |
+| 1.4 | Loom-aware create-time binding command | code | revert |
+| 1.5 | Delete the union fallback in `PointManager` | code | revert |
+| 1.6 | Drop the KV member-union leg + registry rebuild (the `#rank` fields went in 1.2) | code | revert + rebuild |
+| 1.7 | `ensureHelperBindings` → command, or defer to block-model increment 3; state the `replaceBindings` invariant | code | revert |
 
 ### Verification
 
 - 🥇 The area point-set parity harness ([area-point-set-parity-harness.md](area-point-set-parity-harness.md)):
   every area's resolved point set byte-identical before/after, all 17.
-- KV subscription-registry diff, pre/post — strict subset, every removed entry accounted for.
+- KV subscription-registry diff, pre/post — strict subset, every removed entry accounted for, and
+  after 1.2 **no `#rank` field anywhere** in it.
+- After 1.2, re-run the chain census (serving keys with >1 wire per area) — must return zero rows.
+- After 1.1, `grep -rn "grid\.\(price\|renewables\|emissionsIntensity\)"` must find only
+  `grid.demand`'s siblings gone and the carve-out deleted.
 - Re-run `scripts/area-builder-smoke.ts` and `scripts/utils/v4-surface-smoke.ts`.
 
 ---
 
-## Unit 2 — Area Settings and timezone behavior
+## Unit 2 — The unit-class registry
+
+This is [ha-parity-and-leapfrog.md](ha-parity-and-leapfrog.md) #6 made concrete, landed on the
+`unit` axis of the block model's port type. The census that makes it urgent is under Measured facts.
+
+**The rule.** Compatibility is same unit *class*, not same unit. An input port declares the unit it
+computes in. A wire is valid iff source and sink units share a class, and the reader that follows a
+wire into a port converts at the sink, on read. **Stored readings stay native, always** — the same
+principle that protected history through the export-tariff cleanup. An unknown unit is in no class,
+so the wire is refused at bind time rather than passed through unscaled at read time (which is what
+#506's fix does today; this supersedes it).
+
+**The registry** — `lib/point/units.ts`, beside `unit-typography.ts` (which disclaims the
+dimensional job in its own header). Nine classes, from the data:
+
+| class | units | note |
+| --- | --- | --- |
+| `power` | W, kW, MW | today MW passes through every converter unscaled |
+| `energy` | Wh, kWh, MWh | |
+| `energy-price` | c/kWh, $/kWh, $/MWh | |
+| `emissions-intensity` | gCO₂/kWh, kgCO₂/kWh, tCO₂e/MWh | replaces `load.ts:44`'s blind ×1000 |
+| `proportion` | %, fraction | the fold already does this implicitly for renewables |
+| `temperature` | °C, °F | **affine** — offset, not just factor |
+| `speed` | mph, mi/hr, km/h | `rpm` is NOT speed; `rate/mi/hr` on Tesla is a speed mislabelled as rate |
+| `time` | epoch_s, epochMs | |
+| categorical | bool, text | identity only |
+
+Plus an **alias table** so `cents_kWh`, `c/kWh`, `boolean`, `mi/hr` resolve to canonical spellings —
+without it the registry refuses valid wires.
+
+**The change.**
+
+1. `lib/point/units.ts`: classes, canonical units, factors (affine where needed), aliases, and ONE
+   `convert(value, from, to)`.
+2. Ports and the slot catalogue (`lib/areas/slots.ts`) gain a declared `unit` beside `metricType`.
+3. `bindingShapeMatches` gains the class check. Unknown → refuse.
+4. Replace the five converters with registry calls: `convertUnits` (`lib/site-data-processor.ts`),
+   `convertToKw` (`lib/charts/lines-data.ts`), `toKw` / `toKwh` / `oeEmissionsToGPerKwh`
+   (`lib/battery-provenance/load.ts`). The MW hole closes as a side effect.
+5. The graph report (block-model increment 2) renders the factor on the edge — `×0.1: $/MWh →
+   c/kWh` — never as a node.
+
+**Lines to hold.** Accumulation is its own type axis — `transform: 'd'` is not a unit conversion and
+must not be modelled as one. Display precision is a card concern even though #6 bundles it. And
+convertible ≠ the same quantity: 70 $/MWh *is* 7 c/kWh and the wire should convert it; whether the
+NEM spot is this site's tariff is a provenance judgement made visible by what you bind, not a units
+problem to refuse.
+
+**No schema change** — `points.unit` exists and stays native.
+
+**Verification.** Unit tests per class including the affine case and every alias; a grep proving no
+`/ 1000`-style scaling survives outside the registry; the five call sites replaced; an OE `MW`
+series charting as MW, not as kW.
+
+---
+
+## Unit 3 — The generator publishes a market loom
+
+`generatorSource` is the last `"a value over time" described in config` in the codebase, and it is
+the same anti-pattern the export tariff retired. One site uses it: Daylesford,
+`{pricePerKwh: 70, renewableFraction: 0, emissionsIntensity: 1000}`, on `Daylesford Selectronic` with
+a mirror in `areas.config`. It has two consumers that were extracted into
+`lib/battery-provenance/generator-source.ts` precisely so they could not disagree — and both still
+read config where every other source is a bound point.
+
+**First decision, to be stated rather than assumed: which device publishes.** The config sits on the
+inverter because that is where the fold looked. The fact belongs to the genset — `Daylesford
+Generator`, a DeepSea device pushed from the hub. Publishing from the inverter is the smaller change;
+publishing from the genset is the truer one. Name the choice in the PR.
+
+**Second decision, before any point is written: the sign convention.** `lib/battery-provenance/tariff.ts`
+records what happens otherwise — Amber's export rate is negative when you are paid, a schedule plan's
+was a positive receipt, and the resulting discriminator made the fold floor one site's solar
+opportunity cost to zero and not another's. Decide "positive = cost to us" (or otherwise) first.
+
+**The change.**
+
+1. The publishing device emits three points from its config: `source.generator/rate` (c/kWh),
+   `source.generator/intensity` (gCO₂/kWh), `source.generator/proportion` (%). Real points, real
+   readings at the device's existing cadence — no "config point that materialises on read".
+2. The area binds them to its **`generator`** role via the loom-aware command (Unit 1). Not to
+   `grid`: Daylesford's external source is role `generator` by config, which is the block model's
+   scope rule.
+3. The fold's and run-provenance's input becomes *"the market loom of whichever role feeds the
+   AC-input"* — port predicate `market on role ∈ {grid, generator}`. `resolveGeneratorIntensity`
+   and its "fall back to the OE/Amber region signal" branch collapse into "read the bound loom".
+4. **Retire**: `generatorSource` from `lib/capabilities/config.ts` and `parse-config.ts` (⚠️
+   `parseDeviceConfig` is a WHITELIST rebuild and the PATCH REPLACES the column — run
+   `liveone device config lint --all` then `config clean` after, and the `areas.config` mirror goes
+   with it); the `config:` escape hatch on `grid/rate` in `lib/areas/slots.ts`;
+   `lib/battery-provenance/generator-source.ts`; `oeEmissionsToGPerKwh` in `load.ts` (Unit 2's
+   registry converts).
+5. **The master gate survives as a loom rule.** Today `emissionsIntensity` being finite is the
+   statement "this site's AC-input is a generator" and it gates all three factors, so price never
+   applies without emissions. Restate it: a `market` loom on the `generator` role is present iff its
+   `intensity` wire is bound; `rate` without `intensity` is refused at plug time.
+
+**Behaviour change to state.** Today, editing `pricePerKwh` silently reprices all of Daylesford's
+history. As a point, a config change takes effect from now on. That is strictly better and it is a
+change; say so in the PR and decide whether the existing constant is backfilled as a series.
+
+**Cross-references.** This retires block-model binding mode 3 ("config satisfies a port") — it had
+exactly this one instance. It also makes the on-grid NEM region, the retailer and the off-grid
+generator the same kind of block: a market-signal source, plugged by the same command.
+
+**Verification.** Daylesford's fold output byte-identical before/after (the constant series must
+reproduce the constant); `config lint` reports zero `generatorSource` keys after `clean`;
+run-period provenance for a generator run prices identically; an intensity of 1000 gCO₂/kWh arrives
+at the fold as 1000, not 1,000,000.
+
+---
+
+## Unit 4 — Area Settings and timezone behavior
 
 ### Dialogs and access
 
@@ -416,7 +619,7 @@ preference.
 
 ---
 
-## Unit 3 — Durable health state and repairs
+## Unit 5 — Durable health state and repairs
 
 ### Storage and public health model
 
@@ -545,7 +748,12 @@ replay alongside local pending work.
 
 **Unit 1** — see its Verification section. The parity harness is the acceptance gate.
 
-**Units 2 and 3**
+**Unit 2** — see its Verification section. The affine and alias cases are where a registry is
+usually wrong.
+
+**Unit 3** — see its Verification section. The byte-identical fold output is the gate.
+
+**Units 4 and 5**
 
 - Dialog loading/saving as owner and admin, including inactive devices and lack of area-edit
   permission.
@@ -575,13 +783,17 @@ verify persisted state and representative rebuilt outputs, including an interrup
 
 ## Rollout
 
-1. Ship Unit 1 by its stage order, gated on the parity harness and the KV registry diff.
-2. Apply Unit 3's additive rebuild-state migration through repository procedures **before** deploying
+1. Ship Unit 1 by its stage order — 1.1 first, before anything binds the OE points — gated on the
+   parity harness, the KV registry diff, and a zero-row chain census.
+2. Ship Unit 2. No data change; verify the five converter call sites and the MW case.
+3. Ship Unit 3, gated on Daylesford's fold output being byte-identical, then `config clean`.
+4. Unit 4 may run in parallel with 1–3; deploy it, verify owner/admin settings.
+5. Apply Unit 5's additive rebuild-state migration through repository procedures **before** deploying
    code that requires the table.
-3. Deploy Units 2 and 3; verify owner/admin settings, compatibility indicators and pending warnings.
-4. Run the boundary audit as a dry run. Review exact targets, then explicitly apply marking and run
+6. Deploy Unit 5; verify compatibility indicators and pending warnings.
+7. Run the boundary audit as a dry run. Review exact targets, then explicitly apply marking and run
    scoped repairs. There is no automatic fleet repair at deploy.
-5. Verify completion from durable state and rebuilt data. Failed repairs remain visible and resumable.
+8. Verify completion from durable state and rebuilt data. Failed repairs remain visible and resumable.
 
 Update `docs/architecture/api.md`, `docs/architecture/data-model.md`, `docs/cli.md` and
 `docs/outage-catchup.md`, plus generated CLI references. Document: removal of the legacy device
@@ -595,7 +807,7 @@ that an area's point set is now exactly its bindings.
 🛑 **This plan is disposable; the architecture doc is not.** Every unit below names what it must write
 into `docs/architecture/` **in the same PR that lands it**. A unit is not done when its code merges —
 it is done when the invariant it establishes is recorded somewhere that outlives this file. When all
-three have landed, delete this document; git is the archive.
+five have landed, delete this document; git is the archive.
 
 **The survivor is [`../architecture/areas-and-dashboards.md`](../architecture/areas-and-dashboards.md)**,
 not a new file. Its §3 "Semantic: areas, membership, bindings" already owns this territory, and a
@@ -609,15 +821,17 @@ entirely. Whichever of those is intended, the doc and the code currently disagre
 
 | Unit | Must be recorded in `areas-and-dashboards.md` when it lands |
 | --- | --- |
-| 1 Bindings | **The core invariant: an area's serving set IS its bindings.** Placement (`devices.area_id`) vs serving (`area_bindings`) as separate concepts; the slot `(area, role, metric_type)` vs the **serving key** `{logical_path}/{metric_type}` that actually contends; that an ambient device can be BOUND but never PLACED; that grid signals are a binding, not a location walk. Add the retired member-union to §7 |
-| 2 Area Settings | Area owns timezone and location; the aggregation offset is DERIVED from standard time and is not independently editable; the device keeps its own offset; Enphase is the one remaining device→area location writer |
-| 3 Rebuild tracking | `boundaryCompatible` vs `needsRebuild` as distinct states, and that offset equality never proves a rebuild completed; that repair is operator-initiated and resumable, never automatic |
+| 1 Bindings | **The core invariant: an area's serving set IS its bindings.** Placement (`devices.area_id`) vs serving (`area_bindings`) as separate concepts; the slot `(area, role, metric_type)` vs the **serving key** `{logical_path}/{metric_type}` that actually contends; **one or zero wires per serving key — the chain is gone and `priority` is vestigial**; that an ambient device can be BOUND but never PLACED; that grid signals are a binding, not a location walk. Add the retired member-union AND the retired chain to §7 |
+| 2 Unit classes | Compatibility is same unit class; ports declare units; wires convert at the sink; readings are stored native; unknown units are refused at bind. Where the registry lives and that it is the only converter |
+| 3 Generator loom | The generator is a market-signal source of the same kind as OE and Amber; the fold's port predicate is `market on role ∈ {grid, generator}`; "config satisfies a port" no longer exists — add it to §7 |
+| 4 Area Settings | Area owns timezone and location; the aggregation offset is DERIVED from standard time and is not independently editable; the device keeps its own offset; Enphase is the one remaining device→area location writer |
+| 5 Rebuild tracking | `boundaryCompatible` vs `needsRebuild` as distinct states, and that offset equality never proves a rebuild completed; that repair is operator-initiated and resumable, never automatic |
 
 Also owed on landing, per the Rollout section: `api.md` (route contracts and the deleted legacy
 routes), `data-model.md` (the offset columns and the rebuild-state table), `cli.md` and the generated
 CLI reference.
 
-**Why not write it now.** The architecture doc describes what IS. Three of the four invariants above
+**Why not write it now.** The architecture doc describes what IS. Most of the invariants above
 are not true yet — writing them today would produce a doc that is wrong until the code catches up,
 which is precisely the rot the repo's conventions warn about. The exception is the §3 correction
 flagged above, which describes today and can be fixed whenever.
@@ -632,14 +846,23 @@ flagged above, which describes today and can be fixed whenever.
 - **`liveone area orphans`** — a read-only census (areas with data but no devices, bindings whose
   point's device has left, handle rows with a dangling area leg). Useful on its own for detecting the
   dev drift described above.
-- **The OpenElectricity path rename** — decided, not approved; see above.
+- **Drop `area_bindings.priority` and `area_bindings_slot_priority_unique`** — a schema change
+  (needs approval). Not before Unit 1.2 has enforced cardinality in the writer, and see the Risks note
+  on why the index cannot be left behind with a constant priority.
+- **An explicit `switch` block** for failover, if it is ever wanted — N typed inputs, one output,
+  declared in the graph and type-checked, which is what the retired chain was not.
 
 ## Guardrails
 
 - No production rename, schema migration, audit apply or rebuild is performed merely by adding this
   document.
-- **Any schema change needs explicit approval first.** Only Unit 3 requires one.
+- **Any schema change needs explicit approval first.** Only Unit 5 requires one; the `priority` drop is a second, unscheduled one.
 - **Do not purge anything on prod** — measured at zero; the orphans visible on dev are mirror
   artifacts, not defects.
 - The retired `finish-grid-signals-retirement.md` proposed an `areas.config.gridSignals` jsonb
   pointer. Unit 1 uses a binding instead; do not reintroduce the pointer.
+- **Never rewrite stored readings to change a unit.** Store native; convert at the sink. A migration
+  that rescales `point_readings` is the wrong answer to every unit question.
+- **No unified `edges` table.** One edge shape, several tables — the FK on `area_bindings.point_uid`
+  is worth more than the uniformity.
+- **Do not reintroduce a priority/fallback chain on bindings.** If failover is needed, it is a block.
