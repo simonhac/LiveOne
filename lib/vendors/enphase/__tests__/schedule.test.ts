@@ -61,10 +61,15 @@ describe("EnphaseAdapter.isEligible", () => {
     // Perth is ~2700 km west, so in AEST terms its dawn is nearly 2 h later (08:49 vs 07:05 on this
     // date). At 07:30 AEST the Melbourne default is in daylight and a Perth device is not — the
     // whole point of reading `device.location` rather than assuming everyone is in Victoria.
-    const perth = {
+    //
+    // 🛑 `lng`, not `lon`. This fixture spelled it `lon` behind an `as unknown as` cast, which is
+    // exactly how the adapter's own `loc.lon` typo survived: the test asserted the buggy shape, the
+    // cast stopped `tsc` objecting, and the branch therefore passed here while being unreachable in
+    // production — `AreaLocation` has only ever declared `lng`, so no real device ever took it.
+    const perth: DeviceConfigView = {
       ...device,
-      location: { lat: -31.95, lon: 115.86 },
-    } as unknown as DeviceConfigView;
+      location: { country: "AU", state: "WA", lat: -31.95, lng: 115.86 },
+    };
     expect(await adapter.gate(device, localAest(7, 30))).toBe(true);
     expect(await adapter.gate(perth, localAest(7, 30))).not.toBe(true);
   });

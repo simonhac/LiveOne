@@ -31,7 +31,6 @@ import { alias } from "drizzle-orm/pg-core";
 import type { planetscaleDb } from "@/lib/db/planetscale";
 import {
   areaBindings,
-  areaMembers,
   areas,
   devices,
   legacyHandles,
@@ -387,24 +386,33 @@ interface DetectorSite {
  * that area's member devices, and only then fan out — because a detector was FILED under an area
  * rather than owned by a device. `det.ownerDeviceId` is that device directly, so the `member` alias
  * and its join are gone; nothing else about the resolution changed.
+ *
+ * 🛑 Since migration 0071 the membership hop is `devices.area_id`, so the owner device has AT MOST
+ * ONE area and this can return at most one site. The list shape is kept deliberately: an area may
+ * still carry a fallback CHAIN of `battery/power` bindings, so the query still yields more than one
+ * row per area and the `byArea` dedupe below is still what picks the first by ordinal. What the list
+ * no longer needs to express is a device priced by two areas at once — and the caller is unchanged,
+ * because "one row per site" was always the contract `derived_interval_provenance` is keyed on.
  */
 async function listSitesForDetector(
   db: PgDb,
   det: ResolvedRunDetector,
 ): Promise<DetectorSite[]> {
-  const sibling = alias(areaMembers, "sibling");
+  // The detector's OWNER device, aliased because `devices` below is a different row — the battery
+  // binding's device, reached through the binding's point.
+  const owner = alias(devices, "owner");
   const rows = await db
     .select({
       config: devices.config,
       handle: legacyHandles.handle,
-      areaId: sibling.areaId,
+      areaId: areaBindings.areaId,
       location: areas.location,
     })
-    .from(sibling)
+    .from(owner)
     .innerJoin(
       areaBindings,
       and(
-        eq(areaBindings.areaId, sibling.areaId),
+        eq(areaBindings.areaId, owner.areaId),
         eq(areaBindings.role, "battery"),
         eq(areaBindings.metricType, "power"),
       ),
@@ -419,12 +427,12 @@ async function listSitesForDetector(
     .innerJoin(devices, eq(devices.id, points.deviceId))
     // LEFT, so a site area without a `legacy_handles` row still yields its battery config (the
     // generator leg needs only that). Only the load leg, which is handle-keyed, then degrades.
-    .leftJoin(legacyHandles, eq(legacyHandles.areaId, sibling.areaId))
-    // INNER, and total: `area_members.area_id` is an FK into `areas`, so this cannot drop a row.
-    .innerJoin(areas, eq(areas.id, sibling.areaId))
+    .leftJoin(legacyHandles, eq(legacyHandles.areaId, areaBindings.areaId))
+    // INNER, and total: `area_bindings.area_id` is an FK into `areas`, so this cannot drop a row.
+    .innerJoin(areas, eq(areas.id, areaBindings.areaId))
     .where(
       and(
-        eq(sibling.deviceId, det.ownerDeviceId),
+        eq(owner.id, det.ownerDeviceId),
         // See the doc comment: an ARCHIVED area is not a site. Without this an archived area with a
         // stale `battery/power` binding would price live runs.
         eq(areas.status, "active"),
@@ -436,7 +444,7 @@ async function listSitesForDetector(
     // columns are independent, so a site with two battery bindings could price its runs off one
     // device and its Sankey off the other. That still decides WHICH BATTERY DEVICE within an area;
     // it no longer decides which area, because every area is now returned.
-    .orderBy(asc(areaBindings.ordinal), asc(sibling.areaId));
+    .orderBy(asc(areaBindings.ordinal), asc(areaBindings.areaId));
 
   // One row per (area, battery/power binding), so an area with a fallback chain appears more than
   // once. First-by-ordinal wins WITHIN an area — the fold's own rule, which is why the ordering

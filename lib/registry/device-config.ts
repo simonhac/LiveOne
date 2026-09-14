@@ -70,9 +70,9 @@ type DevicePollingState = typeof pgDeviceState.$inferSelect;
  * `devices` genuinely has no counterpart: `ratings`, `solarSize`, `batterySize` → `config.spec`.
  *
  * `location`, `timezoneOffsetMin` and `displayTimezone` are PLACEMENT: they come from the device's
- * area, resolved through `resolvePlacement` (lib/areas/placement.ts), which falls back to the platform
- * default for a device that has no area. They are never nullable on this shape — a caller should not
- * have to know whether the device is placed.
+ * area (`devices.area_id`), resolved through `resolvePlacement` (lib/areas/placement.ts), which falls
+ * back to the platform default for an AMBIENT device — one in no area. They are never nullable on
+ * this shape — a caller should not have to know whether the device is placed.
  */
 export interface DeviceConfigView {
   // --- DeviceWithPolling-compatible surface (see module header) ---
@@ -124,8 +124,20 @@ export interface DeviceRecord extends DeviceConfigView {
   readonly deviceId: DeviceId;
   /** Raw `devices.id`. Data-layer only; above this seam use `deviceId`. */
   readonly uuid: string;
-  /** The device's area-of-one (`devices.primary_area_id`, NOT NULL). */
+  /**
+   * The device's area-of-one (`devices.primary_area_id`, NOT NULL) — VESTIGIAL. It is not the
+   * device's area and nothing resolves through it any more; it survives only because the column is
+   * still NOT NULL, which is the one thing forcing a new device to mint an area. Migration 0072
+   * drops both.
+   */
   readonly primaryAreaId: string;
+  /**
+   * The Area this device is IN (`devices.area_id`, migration 0071) — nullable, because a device is in
+   * 0 or 1 Area. Not to be confused with `primaryAreaId`: that is the eagerly-minted area-of-one the
+   * device was born with, which since the Stage 3 flip means nothing to the resolver and survives
+   * only because its column is still NOT NULL.
+   */
+  readonly areaId: string | null;
 }
 
 /** The trimmed shape the device switcher renders — mirrors `getDevicesVisibleByUser`'s projection. */
@@ -160,6 +172,17 @@ type JoinRow = {
  * not aggregated, invisible in admin, and no error raised anywhere. That was survivable only while
  * `devices.primary_area_id` was NOT NULL. It is the single highest-risk line in the device→0..1-area
  * change; `resolvePlacement` exists so the LEFT join costs nothing downstream.
+ *
+ * 🛑 And it joins `devices.area_id` — the area the device IS IN — not `primary_area_id`, the
+ * eagerly-minted area-of-one it was born with. Placement is a fact about where a device sits, so it
+ * has to come from the same area membership does; joining the shell would mean a device's timezone
+ * and its site's timezone could disagree with nothing to reconcile them. This is the LAST live read
+ * of `primary_area_id`, which is what makes the column droppable.
+ *
+ * Moving it was a data change as well as a code one, and the data went FIRST: two prod site areas
+ * carried no location of their own while their members' areas-of-one did, so the move would have
+ * silently dropped Craig Enphase's postcode and both Craig's and Daylesford Selectronic's
+ * coordinates. Those were merged up into `Craig Unified` and `Daylesford` before this line changed.
  */
 function baseSelect(db = requirePlanetscaleDb()) {
   return db
@@ -169,7 +192,7 @@ function baseSelect(db = requirePlanetscaleDb()) {
       device_state: getTableColumns(pgDeviceState),
     })
     .from(pgDevices)
-    .leftJoin(pgAreas, eq(pgAreas.id, pgDevices.primaryAreaId))
+    .leftJoin(pgAreas, eq(pgAreas.id, pgDevices.areaId))
     .leftJoin(pgDeviceState, eq(pgDeviceState.deviceId, pgDevices.id));
 }
 
@@ -181,6 +204,7 @@ function toRecord(row: JoinRow): DeviceRecord {
     deviceId: Device.encode(d.id),
     uuid: d.id,
     primaryAreaId: d.primaryAreaId,
+    areaId: d.areaId,
     id: d.rid,
     ownerClerkUserId: d.ownerUserId,
     vendorType: d.vendor,
@@ -301,7 +325,20 @@ async function devicesByOwner(userId: string): Promise<DeviceRecord[]> {
 
 /**
  * Devices visible to a user for the switcher: OWNED, PUBLIC (ownerless, readable by everyone), or
- * reached by a DASHBOARD GRANT. ← `getDevicesVisibleByUser`.
+ * reached by a DASHBOARD GRANT — or, for an ADMIN who asks, every device. ← `getDevicesVisibleByUser`.
+ *
+ * 🛑 **`opts.isAdmin` closes a real asymmetry, and it is OPT-IN for a reason.** `requireDeviceAccess`
+ * has always granted an admin read AND write on any single device (`canRead = ctx.isAdmin || …`), so
+ * an admin could already fetch anyone's device by handle — they simply could not ENUMERATE. That made
+ * `PATCH /api/v4/areas/{id}` (admin-gated, allowed) reachable for an area `GET /api/v4/areas` would
+ * not name: you could write what you could not read, which is backwards.
+ *
+ * 🛑 **Being an admin is not acting as one**, so this is a parameter and the routes pass
+ * `AuthContext.actingAsAdmin` — did this REQUEST ask (`x-liveone-admin`) — rather than `isAdmin`.
+ * The device/area PICKERS are this same query, and an admin composing a dashboard does not want
+ * every other owner's devices in the dropdown; worse, a default that returned them would make
+ * cross-owner reach the thing you get by not thinking about it. In the CLI the ask is `--admin`, and
+ * the `target:` line says which answer you got.
  *
  * The granted leg stays HANDLE-TYPED on purpose: `grantedDeviceScopeForUser` returns integer handles
  * and keeps doing so until Phase 13 makes the grant scope TypeID-native. Converting it here would be a
@@ -318,30 +355,39 @@ async function devicesByOwner(userId: string): Promise<DeviceRecord[]> {
 async function devicesVisibleByUser(
   userId: string,
   activeOnly: boolean = true,
+  opts: { isAdmin?: boolean } = {},
 ): Promise<VisibleDevice[]> {
   const db = requirePlanetscaleDb();
 
-  const ownedOrPublic = await baseSelect(db).where(
-    or(eq(pgDevices.ownerUserId, userId), isNull(pgDevices.ownerUserId)),
-  );
+  // An admin asking for the fleet skips both legs: the owner/public predicate AND the grant probe,
+  // which can only ever ADD to a set that is already everything.
+  const rows = opts.isAdmin
+    ? await baseSelect(db)
+    : await baseSelect(db).where(
+        or(eq(pgDevices.ownerUserId, userId), isNull(pgDevices.ownerUserId)),
+      );
 
   const byHandle = new Map<number, DeviceRecord>();
-  for (const r of ownedOrPublic) {
+  for (const r of rows) {
     const rec = toRecord(r);
     byHandle.set(rec.id, rec);
   }
 
-  const { grantedDeviceScopeForUser } = await import("@/lib/dashboard/grants");
-  const grantedHandles = [...(await grantedDeviceScopeForUser(userId))].filter(
-    (h) => !byHandle.has(h),
-  );
-  if (grantedHandles.length > 0) {
-    const granted = await baseSelect(db).where(
-      inArray(pgDevices.rid, grantedHandles),
+  if (!opts.isAdmin) {
+    const { grantedDeviceScopeForUser } = await import(
+      "@/lib/dashboard/grants"
     );
-    for (const r of granted) {
-      const rec = toRecord(r);
-      byHandle.set(rec.id, rec);
+    const grantedHandles = [
+      ...(await grantedDeviceScopeForUser(userId)),
+    ].filter((h) => !byHandle.has(h));
+    if (grantedHandles.length > 0) {
+      const granted = await baseSelect(db).where(
+        inArray(pgDevices.rid, grantedHandles),
+      );
+      for (const r of granted) {
+        const rec = toRecord(r);
+        byHandle.set(rec.id, rec);
+      }
     }
   }
 

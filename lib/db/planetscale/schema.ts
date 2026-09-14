@@ -792,9 +792,9 @@ export type NewDashboardGrant = typeof dashboardGrants.$inferInsert;
 // Areas - the SEMANTIC layer (P3). A named role-set that binds physical points
 // into a coherent energy site. Replaced vendor_type='composite' fake devices rows.
 //
-// An Area is a grouping of 1..N member devices (`area_members`):
-//   area-of-one   → 1:1 wrapper over a single physical device (its sole `area_members` member).
-//   multi-device  → points drawn from across ≥2 member devices (via `area_bindings`).
+// An Area is a grouping of 0..N member devices, and a device is in 0 or 1 Area — Home Assistant's
+// shape. Membership is the single nullable column `devices.area_id` (migration 0071); `area_members`
+// is FROZEN and read by nothing. A zero-device Area is legal.
 // The single-vs-multi distinction is STRUCTURAL (membership), not a stored `kind` — the
 // `kind` column was dropped in migration 0019, and the `source_system_id` seam in P6.
 //
@@ -1449,21 +1449,16 @@ export const points = pgTable(
   }),
 );
 
-// area_members — explicit area→member-device membership, and since Phase 12 slice H the ONLY one
-// (it replaced `area_devices`, whose `system_id int` had no FK at all).
+// area_members — 🛑 **FROZEN. Nothing reads it and nothing writes it.** It was area→member-device
+// membership until migration 0071 backfilled `devices.area_id` and the resolver flipped onto it;
+// these rows are the PRE-FLIP membership, kept as a record until migration 0072 drops the table.
 //
-// Membership is first-class so an Area is uniformly "a grouping of 1..N member devices" and roles can
-// DEFAULT from each member's own points (with `area_bindings` as an override) — there is no
-// single-vs-multi special-case and no stored `kind`. An area-of-one has exactly one member.
+// Querying it will answer, and will answer wrongly: a device re-homed since the flip still has its
+// old row here, and a device placed since the flip has none. `lib/areas/members.ts` is the only
+// module that should speak about membership at all.
 //
-// Two things carried over from the table this replaced:
-//   • Fully rederivable, so the `area_id` CASCADE is safe and does NOT loosen
-//     point_readings_flow_attr_1d's data-loss firewall (that table is untouched).
-//   • The migration-0014 case still holds — a member whose `systems` row was deleted keeps its
-//     membership, because `deleteDevice` ORPHANS its `devices` row rather than deleting it
-//     (`DeviceWriter.deleteDevice`, noted there as a deliberate gap). That is what makes a hard `device_id` FK
-//     satisfiable where the old int deliberately had none. If that gap is ever closed, the CASCADE
-//     here means such a member silently leaves its areas — fix the two together.
+// The one live reference left is `DeviceWriter.deleteDevice`, which clears a device's rows before
+// deleting it — the `device_id` FK is real and would otherwise raise 23503.
 export const areaMembers = pgTable(
   "area_members",
   {

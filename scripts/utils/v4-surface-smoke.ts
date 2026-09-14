@@ -54,19 +54,34 @@ import { isNull } from "drizzle-orm";
 import { createClerkClient } from "@clerk/nextjs/server";
 import { planetscaleDb } from "@/lib/db/planetscale";
 import { shareTokens } from "@/lib/db/planetscale/schema";
-import { eq, like } from "drizzle-orm";
+import { eq, inArray, like } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import {
+  areaBindings as areaBindingsTable,
   areas,
   dashboards as dashboardsTable,
+  devices as devicesTable,
   legacyHandles,
+  points as pointsTable,
 } from "@/lib/db/planetscale/schema";
 // The server's OWN binding predicate, so the fixture this script builds cannot drift from the rules
 // `replaceBindings` validates against.
+import { Device, type DeviceId } from "@/lib/ids";
+import { buildSubscriptionRegistry } from "@/lib/kv-cache-manager";
+import { getEnvironment } from "@/lib/env";
+import {
+  assertNoStaleJournal,
+  captureWorld,
+  clearJournal,
+  restoreWorld,
+  type WorldSnapshot,
+} from "@/scripts/utils/smoke-world-snapshot";
 import { bindingShapeMatches } from "@/lib/areas/slots";
 import { ROLES, type RoleId } from "@/lib/roles/registry";
 
 const BASE = process.env.V4_SMOKE_BASE ?? "http://localhost:3001";
+/** Written before the first mutation; an interrupted run leaves the wiring recoverable from here. */
+const WORLD_JOURNAL = "/tmp/liveone-v4-surface-smoke-world.json";
 
 /**
  * 🛑 DELIBERATELY GLOBAL, NOT PER-RUN — and that makes CONCURRENT RUNS UNSAFE, by design.
@@ -437,8 +452,38 @@ async function sweepScratchAreas(): Promise<number> {
     .from(areas)
     .where(like(areas.name, `${AREA_PREFIX}%`));
   for (const row of rows) {
+    // 🛑 NAME anything still living in the scratch area before deleting it, and do not try to guess
+    // where it belongs. Membership is `devices.area_id` since migration 0071, so a scratch area holds
+    // REAL devices that were taken out of their real site to be in it, and the FK is
+    // `ON DELETE SET NULL` — the delete below leaves them AMBIENT.
+    //
+    // A live run restores the exact prior area in `restoreBorrowedDevices`, from a map it captured
+    // before it moved anything. This sweep is the CRASHED-run backstop and has no such map, and
+    // `devices.primary_area_id` is NOT a substitute: it is the area-of-one each device was minted
+    // with, which for every re-homed device is a different area from the one it actually belongs to.
+    // Restoring from it would silently move Kutis out of High Street Kew and into an empty shell —
+    // a wrong answer delivered quietly, which is worse than a right question asked loudly.
+    const stranded = await db
+      .select({ name: devicesTable.name, rid: devicesTable.rid })
+      .from(devicesTable)
+      .where(eq(devicesTable.areaId, row.id));
+    if (stranded.length > 0) {
+      // 🛑 DO NOT DELETE IT. `devices.area_id` is ON DELETE SET NULL, so removing this area would
+      // turn "a real device is parked in a clearly-named scratch area" into "a real device is in no
+      // area at all" — trading a visible, reversible state for an invisible one, and destroying the
+      // only remaining record of where the device currently is. Leaving the area is the conservative
+      // half of a bad situation: the devices keep a home, the name says what happened, and an
+      // operator can move them back and re-run.
+      console.error(
+        `  ! NOT deleting scratch area ${row.id}: ${stranded.length} real device(s) are still in it ` +
+          `(${stranded.map((d) => `${d.name} (${d.rid})`).join(", ")}). A previous run died before ` +
+          `restoring them. Move each back with \`liveone device area <device> <area> --apply\`, ` +
+          `then re-run — this sweep will remove the empty area.`,
+      );
+      continue;
+    }
     await db.delete(legacyHandles).where(eq(legacyHandles.areaId, row.id));
-    await db.delete(areas).where(eq(areas.id, row.id)); // area_members/area_bindings cascade
+    await db.delete(areas).where(eq(areas.id, row.id)); // area_bindings cascade
   }
   return rows.length;
 }
@@ -461,27 +506,38 @@ interface BindingFixture {
  * Nothing is hardcoded, and nothing is cloned from an existing multi-member area — an earlier version
  * did exactly that and went un-runnable the moment the 2-hourly prod→dev sync rewrote
  * `areas.owner_user_id` to a PROD user id, dropping every multi-member area out of the test user's
- * readable set. What survives that: an area whose `members` is a single device IS that device (its
- * handle addresses the device), so the readable areas-of-one give both a `dv_` → integer-handle map and
- * a set of devices this user can definitely pull into an area of their own.
+ * readable set.
+ *
+ * 🛑 The `dv_` → integer-handle map now comes from `GET /api/v4/devices`, which states both. It used
+ * to be inferred from the readable AREAS-OF-ONE, on the reading "an area whose `members` is a single
+ * device IS that device" — and migration 0071 falsified that: a device re-homed into its site area
+ * leaves its area-of-one with ZERO members, so the map came back all but empty and this function
+ * returned null, failing the run with "fewer than 2 readable devices carry a bindable point" rather
+ * than with anything about areas. The device list was always the more direct source; it simply was
+ * not carrying the handle when this was written.
  *
  * The candidate bindings are then checked with the SERVER'S OWN predicate (`bindingShapeMatches`, which
  * `replaceBindings` validates against), so a fixture that this function returns is one the API must
  * accept — the fixture cannot drift away from the binding rules.
  */
 async function findBindingFixture(
-  areaList: any[],
+  deviceList: any[],
 ): Promise<BindingFixture | null> {
   const handleOf = new Map<string, number>();
   // EVERY helper, not merely the first: there are several on `liveone-dev`, and skipping only one of
   // them let a helper become `deviceB` — at which point the members PUT correctly refused to evict it
   // and three assertions failed on a bad fixture rather than on a real defect.
   const helpers = new Set<string>();
-  for (const a of areaList) {
-    const agg = (await call("GET", `/api/v4/areas/${a.id}`)).body;
-    const members: any[] = agg?.members ?? [];
-    for (const m of members) if (m.vendor === "helper") helpers.add(m.id);
-    if (members.length === 1) handleOf.set(members[0].id, a.legacySystemId);
+  for (const d of deviceList) {
+    if (!d.id || typeof d.legacySystemId !== "number") continue;
+    // An OWNERLESS device is ambient by construction (an OpenElectricity NEM region) and the server
+    // refuses to place one, so it cannot be a member fixture.
+    if (d.ownerUserId === null) continue;
+    if (d.vendor === "helper") {
+      helpers.add(d.id);
+      continue;
+    }
+    handleOf.set(d.id, d.legacySystemId);
   }
 
   /** The first (role, metric, point) triple on this device that `replaceBindings` would accept. */
@@ -619,6 +675,11 @@ async function main(): Promise<void> {
     }
   };
 
+  // 🛑 BEFORE the self-heal below, which DELETES things. The refusal has to come before any
+  // mutation, or a run that is about to be stopped has already swept scratch dashboards and areas —
+  // side effects on the way to declining to run. (`assertNoStaleJournal` itself only reads.)
+  assertNoStaleJournal(WORLD_JOURNAL);
+
   // Self-heal: adopt (and therefore delete) anything a previous crashed run left behind.
   const preexisting = await call("GET", "/api/v4/dashboards");
   for (const d of preexisting.body?.dashboards ?? []) {
@@ -641,6 +702,22 @@ async function main(): Promise<void> {
     console.log(
       `  (swept ${preSwept} leftover scratch area(s) from a crashed run)`,
     );
+
+  // Filled once the fixture is chosen; restored in the `finally`. Declared out here so the restore
+  // runs even if the run dies between choosing the fixture and finishing.
+  // 🛑 A whole-table snapshot, journalled to disk before anything moves. NOT a list of the devices
+  // this script names: that list was wrong twice — first it restored placements but not bindings
+  // (23 real bindings destroyed on liveone-dev, reported as a passing run), then it captured
+  // bindings for `deviceA`/`deviceB` and missed `fixture.helperDevice`, which a later assertion also
+  // moves. See `smoke-world-snapshot.ts`.
+  let world: WorldSnapshot | null = null;
+
+  // The refusal already ran, before the self-heal above. This is the CAPTURE — still ahead of the
+  // first borrow, which is what it has to be ahead of.
+  world = await captureWorld(WORLD_JOURNAL);
+  console.log(
+    `  world snapshot: ${world.placements.length} placement(s), ${world.bindings.length} binding(s) → ${WORLD_JOURNAL}`,
+  );
 
   try {
     // ---------------------------------------------------------------- 1. GET /areas
@@ -716,10 +793,25 @@ async function main(): Promise<void> {
           typeof d.vendor === "string" &&
           "vendorSiteId" in d &&
           typeof d.status === "string" &&
-          "ownerUserId" in d,
+          "ownerUserId" in d &&
+          "areaId" in d &&
+          "areaName" in d,
       ),
-      "every entry satisfies `CandidateDevice` in full (id: dv_…, legacySystemId, name, slug, vendor, vendorSiteId, status, ownerUserId)",
+      "every entry satisfies `CandidateDevice` in full (id: dv_…, legacySystemId, name, slug, vendor, vendorSiteId, status, ownerUserId, areaId, areaName)",
       deviceList[0],
+    );
+    // 🛑 `areaId` is what makes the picker honest. A device is in at most one area, so choosing one
+    // MOVES it — and a picker that cannot say where a device currently lives is offering that move
+    // with its consequence hidden. Null is a real answer (an ambient OpenElectricity region), so the
+    // assertion is on the KEY, above, and on the shape here.
+    ok(
+      deviceList.every(
+        (d: any) =>
+          (d.areaId === null || String(d.areaId).startsWith("ar_")) &&
+          (d.areaId === null) === (d.areaName === null),
+      ),
+      "areaId is an ar_ id or null, and areaName agrees with it",
+      deviceList.map((d: any) => [d.name, d.areaId, d.areaName]),
     );
     ok(
       deviceList.every(
@@ -1091,7 +1183,7 @@ async function main(): Promise<void> {
     // 🛑 Every one of these is driven by CREATING FROM SCRATCH, never by re-running against something
     // that already exists. This repo has twice shipped a write that worked on the second call and 500'd
     // on the first (an `ON CONFLICT … coalesce` path, and an FK that only breaks first creation).
-    const fixture = await findBindingFixture(list);
+    const fixture = await findBindingFixture(deviceList);
     if (!fixture)
       throw new Error(
         "fewer than 2 readable devices carry a bindable point — cannot prove the members PUT removal leg",
@@ -1111,7 +1203,20 @@ async function main(): Promise<void> {
     const noMembers = await call("POST", "/api/v4/areas", {
       body: { name: `${AREA_PREFIX} nomembers` },
     });
-    ok(noMembers.status === 422, "no members → 422", noMembers);
+    // A MISSING `members` key is a malformed body; an empty array would be a legal zero-device area.
+    ok(
+      noMembers.status === 422,
+      "a MISSING members key → 422 (an empty array is legal — a zero-device area is first-class)",
+      noMembers,
+    );
+    const emptyMembersCreate = await call("POST", "/api/v4/areas", {
+      body: { name: `${AREA_PREFIX} empty`, members: [] },
+    });
+    ok(
+      emptyMembersCreate.status === 201,
+      "members: [] CREATES — a site with no devices is legal, and is how you make one before moving devices in",
+      emptyMembersCreate,
+    );
     const badMember = await call("POST", "/api/v4/areas", {
       body: { name: `${AREA_PREFIX} badmember`, members: ["not-a-typeid"] },
     });
@@ -1175,11 +1280,16 @@ async function main(): Promise<void> {
       "slug + legacySystemId persisted as created",
       fresh.body?.area,
     );
+    // 🛑 A SET, not a sequence. The request order used to become `area_members.ordinal`; with one
+    // area per device there is no membership row to carry an ordinal, and `getAreaMemberDeviceIds`
+    // sorts (helper-last, rid). Asserting the request order here would be asserting a property the
+    // server deliberately stopped having.
     ok(
       fresh.body?.members?.length === 2 &&
-        fresh.body.members[0].id === fixture.deviceA &&
-        fresh.body.members[1].id === fixture.deviceB,
-      "members are the two requested devices, in the requested ORDER",
+        [fixture.deviceA, fixture.deviceB].every((d) =>
+          fresh.body.members.some((m: any) => m.id === d),
+        ),
+      "members are exactly the two requested devices (order is the server's, not the request's)",
       fresh.body?.members,
     );
     ok(
@@ -1277,13 +1387,20 @@ async function main(): Promise<void> {
 
     // ---------------------------------------------------------------- 5e. PUT members
     section("PUT /api/v4/areas/{id}/members — the declarative full replace");
-    const emptyMembers = await call("PUT", `/api/v4/areas/${areaId}/members`, {
-      body: { members: [] },
-    });
+    // 🛑 A MISSING `members` key is still 422; an EMPTY ARRAY is now 200. The distinction is the
+    // whole point: a zero-device area is first-class since the device→0..1-area change, but `PUT` is
+    // a full replace, so reading a malformed body as "no members" would let a client bug silently
+    // orphan every device in an area. Driven here rather than with `[]`, which would empty the
+    // fixture this section goes on to assert against.
+    const missingMembers = await call(
+      "PUT",
+      `/api/v4/areas/${areaId}/members`,
+      { body: {} },
+    );
     ok(
-      emptyMembers.status === 422,
-      "an empty membership → 422 (an area of zero members has no point set)",
-      emptyMembers,
+      missingMembers.status === 422,
+      "a MISSING members key → 422 (a malformed body must not read as 'empty this area')",
+      missingMembers,
     );
     const unreadableMember = await call(
       "PUT",
@@ -1345,13 +1462,20 @@ async function main(): Promise<void> {
         1,
       "re-adding the member does NOT resurrect its deleted binding",
     );
-    // A pure REORDER is a real edit, not a no-op: the array index is `area_members.ordinal`.
+    // 🛑 A pure REORDER is now a NO-OP, and that is the contract. The array index used to become
+    // `area_members.ordinal`; with one area per device there is no membership row to carry an
+    // ordinal, and order comes from `getAreaMemberDeviceIds`' `(helper-last, rid)` sort. So the
+    // assertion is that the returned set is unchanged — asserting the requested order would be
+    // asserting a property the server deliberately stopped having.
     const reordered = await call("PUT", `/api/v4/areas/${areaId}/members`, {
       body: { members: [fixture.deviceB, fixture.deviceA] },
     });
     ok(
-      reordered.body?.members?.[0]?.id === fixture.deviceB,
-      "a pure reorder is applied (ordinal = array index)",
+      reordered.status === 200 &&
+        [fixture.deviceA, fixture.deviceB].every((d) =>
+          reordered.body?.members?.some((m: any) => m.id === d),
+        ),
+      "a pure reorder changes nothing — order is the server's, not the request's",
       reordered.body?.members?.map((m: any) => m.id),
     );
     // 🛑 THE `AreaMember` CONTRACT, and the one v4 widening stage 13 needed. `members[]` used to carry
@@ -1380,10 +1504,15 @@ async function main(): Promise<void> {
       "a member is { id: dv_…, legacySystemId, name, vendor, status, capabilities }",
       memberShape?.[0],
     );
+    // 🛑 A SET, not a sequence — `findBindingFixture` picks A and B out of a list sorted by DISPLAY
+    // NAME, while members now come back sorted by `rid`. So "Alpha" (rid 20) before "Zulu" (rid 10)
+    // makes `[handleA, handleB]` the wrong expectation while nothing is actually wrong. What is
+    // load-bearing is that each member carries its REAL handle, not the order they arrive in.
     ok(
-      memberShape?.map((m: any) => m.legacySystemId).join(",") ===
-        [handleA, handleB].join(","),
-      "…and each `legacySystemId` is the member's real handle, in membership order",
+      [handleA, handleB].every((h) =>
+        memberShape?.some((m: any) => m.legacySystemId === h),
+      ) && memberShape?.length === 2,
+      "…and each `legacySystemId` is the member's real handle (order is the server's, by rid)",
       { got: memberShape?.map((m: any) => m.legacySystemId), handleA, handleB },
     );
 
@@ -2657,6 +2786,57 @@ async function main(): Promise<void> {
 
     // ==================================================================
   } finally {
+    // 🛑 BEFORE the area delete, and it VETOES the delete when it fails. `devices.area_id` is
+    // ON DELETE SET NULL, so deleting a scratch area that still holds a borrowed device strands it —
+    // and the journal is the only record of where it belonged.
+    let restored = true;
+    if (world) {
+      restored = await restoreWorld(world);
+      if (!restored) {
+        failures++;
+        console.error(
+          `\n  ! the world snapshot could not be fully restored. NOT deleting scratch records. ` +
+            `The journal is at ${WORLD_JOURNAL}. Nothing is replayed automatically — inspect it, then\n` +
+            `    restore it with scripts/utils/restore-smoke-journal.ts, or delete it if the world is fine.`,
+        );
+      }
+    }
+    if (!restored) {
+      console.log(
+        `\n${"=".repeat(60)}\n✗ FAIL — restore incomplete, teardown skipped`,
+      );
+      process.exit(1);
+    }
+    // Membership and bindings are rows; SERVING is a cache derived from them. The HTTP mutations
+    // above rebuilt the KV subscription registry while the borrowed devices were absent from their
+    // real areas, so putting the rows back is not enough — without this the original sites stay
+    // missing from the registry until something else rebuilds it.
+    //
+    // 🛑 GUARDED ON THE KV NAMESPACE, not on the database. There is ONE physical KV store shared by
+    // dev and prod, namespaced by `getEnvironment()` — which keys off `VERCEL_ENV`, not off the
+    // database URL. So `assertNotProd()` passing says nothing about which namespace this would
+    // write: with `VERCEL_ENV=production` in the shell, a dev-database run would rebuild the `prod:`
+    // subscriptions from dev's config and GC production's latest-value fields.
+    if (getEnvironment() === "prod") {
+      console.error(
+        `  ! NOT rebuilding the subscription registry: the KV namespace resolves to 'prod:' ` +
+          `(VERCEL_ENV=${process.env.VERCEL_ENV ?? "unset"}). Unset it and re-run.`,
+      );
+      failures++;
+    } else {
+      try {
+        await buildSubscriptionRegistry();
+      } catch (err) {
+        // 🛑 Counted as a failure, not merely logged: the rows are back but serving is not, and a
+        // PASS over the top of that is how the next person concludes the teardown is reliable.
+        console.error("  ! could not rebuild the subscription registry:", err);
+        failures++;
+      }
+    }
+    // ⚠️ KNOWN LIMITATION, stated rather than papered over: this restores the subscription EDGES,
+    // not the latest VALUES. A borrowed device's `latest:` fields were garbage-collected when it
+    // left its real area, and nothing here repopulates them — on `liveone-dev` the 2-hourly
+    // `db:rebuild-dev-kv` leg does. Until then the borrowed devices' sites read stale.
     await trash();
     // 🛑 The backstop, and it must run even when `trash()` reported success — that is the whole point.
     // A non-zero count here means the HTTP teardown believed it had deleted something it had not.
@@ -2665,6 +2845,7 @@ async function main(): Promise<void> {
     console.log(
       `\ncleaned up scratch dashboards, and hard-deleted ${swept} scratch area(s)`,
     );
+    clearJournal(WORLD_JOURNAL);
     if (leaked > 0)
       console.error(
         `  ! ${leaked} scratch dashboard(s) survived the HTTP teardown and were swept from the DB — ` +

@@ -10,6 +10,7 @@ import {
   createArea,
   refreshAreaServing,
   AreaAliasTakenError,
+  AreaConflictError,
 } from "@/lib/areas/create";
 import { Area } from "@/lib/ids";
 import { DeviceConfigRegistry } from "@/lib/registry/device-config";
@@ -19,6 +20,9 @@ import { isValidTimezone } from "@/lib/timezones";
  * config-v4 areas collection (§9.2), TypeID-native. The readable set (areas the caller owns ∪ areas
  * whose handle is a device they can see) a v4 editor lists to add an area or pick a seed source.
  *   GET  → { areas: [{ id: ar_…, displayName, legacySystemId, chartCapable }] }
+ *   GET with `x-liveone-admin` → every active area, for an admin who ASKED. Being an admin is not
+ *       acting as one: without the header this answers with the caller's own areas like anyone
+ *       else's, which is what keeps the picker from quietly becoming a fleet list.
  *   POST { name, slug?, members:[dv_…], location?, dayOffsetMin?, displayTimezone? } → 201 { id, legacySystemId }
  * Ids are `ar_` TypeIDs (areas are uuid-PK'd today — no cutover needed to speak the public id).
  *
@@ -38,6 +42,7 @@ export async function GET(request: NextRequest) {
 
   const areas = await listReadableAreas(auth.userId, {
     withChartCapability: true,
+    isAdmin: auth.actingAsAdmin,
   });
   return NextResponse.json({
     areas: areas.map((a) => ({
@@ -66,9 +71,16 @@ export async function GET(request: NextRequest) {
  * `POST /api/v4/dashboards` returns.
  *
  * The area is owner-scoped (owner forced to the caller) and always gets a SYNTHETIC handle, so it can
- * grow from one member to many without re-keying. Each member must be READABLE by the caller
- * (`resolveMemberDeviceRefs`, the §8.4 no-escalation firewall). Timezone defaults from the first member.
- *   403 unreadable/unknown member · 409 slug taken · 422 bad body.
+ * grow from one member to many without re-keying.
+ *
+ * 🛑 `members` is a RE-HOME list, not an add list. Each named device MOVES into the new area, leaving
+ * whatever area it was in, so admission is `assertDevicesRehomable` (own it, or own the area it is
+ * leaving) rather than the read check that sufficed while membership was additive — and an ownerless
+ * OpenElectricity region is refused outright (422) because it is an ambient SERVICE producer that
+ * consumers reference by id. `members: []` is legal: a zero-device area is first-class.
+ *
+ * Timezone defaults from the first member, or the platform default when there are none.
+ *   403 un-placeable member · 409 slug taken · 422 bad body / ambient device.
  */
 export async function POST(request: NextRequest) {
   const auth = await requireAuth(request);
@@ -94,8 +106,13 @@ export async function POST(request: NextRequest) {
       { status: members.status },
     );
 
-  // Day offset + display timezone default from the FIRST member device, as the legacy twin does.
-  const first = await DeviceConfigRegistry.deviceByHandle(members.systemIds[0]);
+  // Day offset + display timezone default from the FIRST member device, as the legacy twin does. An
+  // area may now be created with NO members (a zero-device area is first-class since Stage 4), in
+  // which case there is nothing to default from and the platform default stands.
+  const first =
+    members.systemIds.length > 0
+      ? await DeviceConfigRegistry.deviceByHandle(members.systemIds[0])
+      : null;
   const dayOffsetMin =
     typeof body?.dayOffsetMin === "number"
       ? body.dayOffsetMin
@@ -127,9 +144,14 @@ export async function POST(request: NextRequest) {
       displayTimezone,
       location,
       memberSystemIds: members.systemIds,
+      // 🛑 The state the firewall authorized against — the move applies only where it still holds.
+      authorized: members.authorized,
     });
-    // 🛑 Membership, KV and the point-series cache all key off this — never return before it runs.
+    // 🛑 Membership, KV and the point-series cache all key off this — never return before it runs,
+    // and refresh the areas the new members were taken OUT of too, or each goes on serving a device
+    // it no longer holds.
     await refreshAreaServing(created.id);
+    for (const other of created.vacatedAreaIds) await refreshAreaServing(other);
     return NextResponse.json(
       { id: Area.encode(created.id), legacySystemId: created.legacySystemId },
       { status: 201 },
@@ -143,6 +165,10 @@ export async function POST(request: NextRequest) {
         { error: "That shortname is already in use" },
         { status: 409 },
       );
+    // A member moved between authorization and the write. The area was NOT created — the whole
+    // transaction rolled back — so this can never answer 201 with fewer members than asked for.
+    if (err instanceof AreaConflictError)
+      return NextResponse.json({ error: err.message }, { status: 409 });
     throw err;
   }
 }

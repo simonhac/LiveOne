@@ -8,7 +8,7 @@
  * can grow from one member to many WITHOUT ever re-keying (see `lib/areas/handles.ts` and
  * docs/architecture/areas-and-dashboards.md).
  */
-import { and, asc, eq, inArray, max, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull } from "drizzle-orm";
 import { uuidv7 } from "uuidv7";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import { isUniqueViolationOn } from "@/lib/db/pg-error";
@@ -16,7 +16,6 @@ import {
   devices,
   areas,
   areaBindings,
-  areaMembers,
   points,
 } from "@/lib/db/planetscale/schema";
 import type { AreaConfig, AreaLocation } from "@/lib/areas/types";
@@ -25,7 +24,7 @@ import { ROLES, type RoleId } from "@/lib/roles/registry";
 import { allocateAreaHandle } from "@/lib/areas/handles";
 import { PointManager } from "@/lib/point/point-manager";
 import { buildSubscriptionRegistry } from "@/lib/kv-cache-manager";
-import { getAreaMemberDeviceIds } from "@/lib/areas/members";
+import { getAreaMemberDeviceIds, setDeviceArea } from "@/lib/areas/members";
 import { getLegacySystemIdForArea } from "@/lib/areas/resolve";
 import { DeviceRegistry } from "@/lib/registry";
 import { HandleAreaConflictError } from "@/lib/registry/device-registry";
@@ -47,6 +46,21 @@ export class AreaAccessError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "AreaAccessError";
+  }
+}
+
+/**
+ * Raised when the world moved under a write: a device this request authorized against is no longer
+ * where authorization saw it. → HTTP 409.
+ *
+ * 🛑 It exists so the whole write ROLLS BACK. Without it a full replace could commit its destructive
+ * half and skip its constructive one — remove X and its bindings, silently fail to move Y in because
+ * Y had gone elsewhere, and answer 200 with an empty area.
+ */
+export class AreaConflictError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "AreaConflictError";
   }
 }
 
@@ -76,32 +90,69 @@ export class AreaValidationError extends Error {
 const AREA_ALIAS_UNIQUE = "areas_owner_alias_unique";
 
 /**
- * Assert the caller may pull each `systemId` into an area they own — the no-escalation firewall. A
- * member is allowed when the caller can READ it (admin / owner / public-ownerless): you can only
- * aggregate data you can already see. (Read, not write: public grid-region devices — e.g. an
- * OpenElectricity NEM region — are legitimately added as members without owning them.)
+ * Where each device WAS when it was authorized — `devices.id` → its `area_id` at that moment.
+ *
+ * 🛑 This is not a convenience; it is the authorization CARRIED FORWARD, and every move applies only
+ * `WHERE area_id` still equals what this map recorded. Scoping a write on a SECOND, later read (the
+ * first cut of this) closes nothing: a custody claim authorized against area A, followed by the
+ * owner moving the device to B, would simply re-read B and take it from there — deciding against one
+ * state and writing to another.
+ */
+export type AuthorizedPlacements = Map<string, string | null>;
+
+/**
+ * Assert the caller may place each `systemId` in an area they own — the no-escalation firewall.
+ *
+ * 🛑 **This used to ask only "can the caller READ it", and that is no longer a sufficient question.**
+ * The old rule was sound precisely because membership was ADDITIVE: the worst a caller could do by
+ * naming your device was aggregate data they could already see, and your own area kept it too. With
+ * `devices.area_id` a device is in 0 or 1 area, so naming it here TAKES IT OUT of wherever it was —
+ * a read-shaped permission would let anyone who can see a device silently remove it from someone
+ * else's site, blanking that site's Sankey and its bindings. So there are now two legs:
+ *
+ *  1. **Ownership.** Admin, or the caller owns the device.
+ *  2. **Custody.** The device is currently in an area the CALLER owns — so it is leaving a place
+ *     they are already responsible for. This is what lets an owner re-home their own site's members
+ *     between their own areas without owning every device in them (Craig's devices in Craig Unified).
+ *
+ * And an **ownerless device is not placeable at all** → `AreaValidationError` (422, not 403: it is a
+ * statement about the device, not about the caller, and every caller gets the same answer). Ownerless
+ * means an OpenElectricity NEM region — Home Assistant's `entry_type=SERVICE`: an ambient producer
+ * that many areas consume by REFERENCE and none contains. It was admissible under the read rule, and
+ * that is exactly how OE regions ended up as members of three areas each before migration 0071 made
+ * them ambient.
  *
  * A fourth `user_systems` viewer-grant term was dropped with that table in migration 0045 (slice F).
- * This is the strict direction — a caller who could previously add a granted member now gets
- * `AreaAccessError` — which is the correct default for a firewall whose whole job is refusing
- * escalation.
  */
-export async function assertMembersReadable(
+export async function assertDevicesRehomable(
   userId: string,
   isAdmin: boolean,
   systemIds: number[],
-): Promise<void> {
+): Promise<AuthorizedPlacements> {
+  const observed: AuthorizedPlacements = new Map();
   for (const sid of systemIds) {
-    const sys = await DeviceConfigRegistry.deviceByHandle(sid);
-    if (!sys) throw new AreaValidationError(`System ${sid} not found`);
-    if (
-      isAdmin ||
-      sys.ownerClerkUserId === userId ||
-      sys.ownerClerkUserId == null
-    )
-      continue;
+    const dev = await DeviceConfigRegistry.deviceByHandle(sid);
+    if (!dev) throw new AreaValidationError(`System ${sid} not found`);
+    if (dev.ownerClerkUserId == null)
+      throw new AreaValidationError(
+        `Device ${sid} is ambient (no owner) and cannot be placed in an area — reference it by id instead`,
+      );
+    observed.set(dev.uuid, dev.areaId);
+    if (isAdmin || dev.ownerClerkUserId === userId) continue;
+    if (dev.areaId && (await areaOwner(dev.areaId)) === userId) continue;
     throw new AreaAccessError(`No access to system ${sid}`);
   }
+  return observed;
+}
+
+/** Who owns an area, for the custody leg above. Null for an unknown area. */
+async function areaOwner(areaId: string): Promise<string | null> {
+  const [row] = await requirePlanetscaleDb()
+    .select({ ownerUserId: areas.ownerUserId })
+    .from(areas)
+    .where(eq(areas.id, areaId))
+    .limit(1);
+  return row?.ownerUserId ?? null;
 }
 
 export interface CreateAreaInput {
@@ -111,8 +162,14 @@ export interface CreateAreaInput {
   timezoneOffsetMin: number;
   displayTimezone: string;
   location?: AreaLocation | null;
-  /** ≥1 member device systemIds; ordered → `area_members.ordinal`. */
+  /** Member device systemIds. Each is MOVED into the new area, leaving whatever area it was in. */
   memberSystemIds: number[];
+  /**
+   * What `assertDevicesRehomable` observed about each member — its `devices.id` → the area it was in
+   * when the caller was authorized. The move applies only where that still holds; the route supplies
+   * it, because the route is where the authorization happened.
+   */
+  authorized: AuthorizedPlacements;
 }
 
 /**
@@ -128,10 +185,13 @@ export interface CreateAreaInput {
  */
 export async function createArea(
   input: CreateAreaInput,
-): Promise<{ id: string; legacySystemId: number }> {
+): Promise<{ id: string; legacySystemId: number; vacatedAreaIds: string[] }> {
   const db = requirePlanetscaleDb();
   const id = uuidv7();
   const members = [...new Set(input.memberSystemIds)];
+  // The areas the new members LEFT — the caller refreshes serving for each, or they go on serving a
+  // device they no longer hold.
+  const vacatedAreas = new Set<string>();
 
   for (let attempt = 0; attempt < 5; attempt++) {
     const handle = await allocateAreaHandle(db);
@@ -152,8 +212,7 @@ export async function createArea(
         });
         await DeviceRegistry.ensureAreaForHandle(handle, id, tx);
         if (members.length > 0) {
-          // `area_members.device_id` is a hard FK, so each member's `devices` row must exist before its
-          // membership row. Slice 1a: this RESOLVES the uuid (`uuidForRid`) instead of ensuring the row
+          // Slice 1a: this RESOLVES the uuid (`uuidForRid`) rather than ensuring the row
           // (`ensureDeviceRow`). It is not a weakening — `devices` is the registry now, not a mirror, so a
           // member handle with no `devices` row is a genuine error and `uuidForRid` THROWS, aborting the
           // tx. Previously it would have silently minted a device from a `systems` row.
@@ -163,17 +222,24 @@ export async function createArea(
           for (const systemId of members) {
             deviceIds.push(await DeviceRegistry.uuidForRid(systemId, tx));
           }
-          await tx.insert(areaMembers).values(
-            deviceIds.map((deviceId, i) => ({
-              areaId: id,
-              deviceId,
-              ordinal: i,
-            })),
-          );
+          // 🛑 A MOVE, and it cleans up BOTH ends. Each named device leaves whatever area it was in
+          // — its eagerly-minted area-of-one, normally, but possibly a site area someone else owns,
+          // which is why the route runs `assertDevicesRehomable` before it gets here — and that
+          // area's bindings onto its points go with it. Ordinal is gone with the membership row.
+          for (const vacated of await moveDevicesInto(
+            tx,
+            id,
+            deviceIds,
+            input.authorized,
+          ))
+            vacatedAreas.add(vacated);
         }
       });
-      return { id, legacySystemId: handle };
+      return { id, legacySystemId: handle, vacatedAreaIds: [...vacatedAreas] };
     } catch (err) {
+      // A retry re-runs the whole transaction, so anything the aborted attempt recorded is not a fact
+      // about the database any more.
+      vacatedAreas.clear();
       if (err instanceof HandleAreaConflictError) continue; // lost a handle race — re-allocate
       if (isUniqueViolationOn(err, AREA_ALIAS_UNIQUE))
         throw new AreaAliasTakenError();
@@ -224,33 +290,116 @@ export async function updateAreaMeta(
 }
 
 /**
- * Add a member device (append at the next ordinal; idempotent on the PK).
+ * Move a device INTO an area. Idempotent (a device already there is left alone entirely).
  *
- * The `max(ordinal)` read and the insert share a transaction: they were two round trips before, so two
- * concurrent adds could both read the same max and collide on the ordinal. The member's uuid lookup rides
- * the same tx because `area_members.device_id` is a hard FK.
+ * Named `addMember` for its callers' sake, but it is a re-home: the device leaves whatever area it
+ * was in, and that area's bindings onto its points go with it. Returns the area it left, if any, so
+ * the caller can refresh serving at both ends.
  */
 export async function addMember(
   areaId: string,
   systemId: number,
-): Promise<void> {
-  await requirePlanetscaleDb().transaction(async (tx) => {
-    const deviceId = await DeviceRegistry.uuidForRid(systemId, tx);
-    const [{ maxOrd }] = await tx
-      .select({ maxOrd: max(areaMembers.ordinal) })
-      .from(areaMembers)
-      .where(eq(areaMembers.areaId, areaId));
-    await tx
-      .insert(areaMembers)
-      .values({ areaId, deviceId, ordinal: (maxOrd ?? -1) + 1 })
-      .onConflictDoNothing();
-  });
+  authorized: AuthorizedPlacements,
+): Promise<string[]> {
+  const db = requirePlanetscaleDb();
+  const deviceId = await DeviceRegistry.uuidForRid(systemId, db);
+  return db.transaction(async (tx) => [
+    ...(await moveDevicesInto(tx, areaId, [deviceId], authorized)),
+  ]);
 }
 
 /**
- * Remove a member device and, in the same transaction, its now-orphaned bindings (so the resolver
- * never dereferences a point on a dropped member — the `point_uid → points.id` FK guards nonexistent
- * points but not membership drift). Refuses to remove the last member.
+ * Delete every binding of `areaId` whose point lives on `deviceUuid` — "this device's bindings in
+ * this area", the one predicate every membership change needs.
+ *
+ * 🛑 It has to run on the SOURCE side of a move as well as the destination side. A device is in at
+ * most one area, so pulling it into B takes it out of A — and A's `area_bindings` rows onto its
+ * points survive that move, because nothing about them mentions membership. They are not inert: the
+ * resolver treats bindings as the OVERRIDE that SELECTS an area's points, so A would go on serving a
+ * device it no longer holds, with no error and nothing to grep for. Found in review; the first cut
+ * of this change cleaned only the departing side.
+ *
+ * Addressed through `points.device_id` since slice E PR 2a — no `devices.rid` hop.
+ */
+async function detachBindings(
+  tx: Parameters<Parameters<Db["transaction"]>[0]>[0],
+  areaId: string,
+  deviceUuid: string,
+): Promise<void> {
+  await tx
+    .delete(areaBindings)
+    .where(
+      and(
+        eq(areaBindings.areaId, areaId),
+        inArray(
+          areaBindings.pointUid,
+          tx
+            .select({ id: points.id })
+            .from(points)
+            .where(eq(points.deviceId, deviceUuid)),
+        ),
+      ),
+    );
+}
+
+/**
+ * Move `deviceUuids` into `areaId`, detaching each from the area `authorized` recorded it in —
+ * bindings and all. Returns the areas actually VACATED, so the caller can refresh serving at both
+ * ends.
+ *
+ * 🛑 **The UPDATE goes FIRST and the binding delete is conditional on it.** A move is only real if
+ * the device is still where AUTHORIZATION saw it, so the write is scoped on that — a device someone
+ * else moved in the meantime becomes a no-op rather than a theft. Deleting the bindings before
+ * knowing that would destroy a live area's wiring on behalf of a move that never happened, which is
+ * the worst failure available here: bindings are authored by hand and nothing rebuilds them.
+ */
+async function moveDevicesInto(
+  tx: Parameters<Parameters<Db["transaction"]>[0]>[0],
+  areaId: string,
+  deviceUuids: string[],
+  authorized: AuthorizedPlacements,
+): Promise<Set<string>> {
+  const vacated = new Set<string>();
+  for (const uuid of deviceUuids) {
+    const from = authorized.get(uuid) ?? null;
+    if (from === areaId) continue; // already here — no detach, no write
+    const applied = await tx
+      .update(devices)
+      .set({ areaId, updatedAt: new Date() })
+      .where(
+        and(
+          eq(devices.id, uuid),
+          from === null ? isNull(devices.areaId) : eq(devices.areaId, from),
+        ),
+      )
+      .returning({ id: devices.id });
+    // 🛑 THROW, do not skip. Skipping was how a full replace committed its destructive half: the
+    // departing members and their bindings were already gone by the time we got here, so continuing
+    // would commit an emptied area and report success. Throwing rolls the whole transaction back, and
+    // the route turns it into a 409 telling the caller to refetch.
+    if (applied.length === 0)
+      throw new AreaConflictError(
+        `device ${uuid} is no longer in the area it was authorized from — refetch and try again`,
+      );
+    if (from) {
+      await detachBindings(tx, from, uuid);
+      vacated.add(from);
+    }
+  }
+  return vacated;
+}
+
+/**
+ * Take a member device OUT of an area — it becomes ambient (`devices.area_id = NULL`), not deleted —
+ * and drop its now-orphaned bindings in the same transaction, so the resolver never dereferences a
+ * point on a departed member (the `point_uid → points.id` FK guards nonexistent points but not
+ * membership drift).
+ *
+ * The "cannot remove the last member" rule is RETIRED (plan decision 2): a zero-device area is
+ * first-class now. It had to go — it is what made the picker rule "hide areas-of-one" a render-time
+ * convention rather than the structural "hide areas with zero devices" — and it never protected
+ * anything, since an area with no devices simply resolves to no points and drops out of flow
+ * eligibility on its own.
  */
 export async function removeMember(
   areaId: string,
@@ -261,36 +410,82 @@ export async function removeMember(
   const rids = await DeviceRegistry.ridsForDevices(memberIds);
   const target = memberIds.find((id) => rids.get(id) === systemId);
   if (!target) return; // not a member — no-op
-  if (memberIds.length <= 1)
-    throw new AreaValidationError("Cannot remove the last member of an area");
   const deviceUuid = Device.toUuid(target);
   await db.transaction(async (tx) => {
-    // "Every binding whose point lives on the departing device", by uuid since slice E PR 2a.
-    // `deviceUuid` is already in hand, so this addresses `points.device_id` DIRECTLY and needs no
-    // `devices.rid` hop at all — one fewer legacy-id round trip than the predicate it replaces.
+    await detachBindings(tx, areaId, deviceUuid);
+    // 🛑 Scoped on THIS area. Membership was read before the transaction opened, so a device that has
+    // since moved elsewhere must not be orphaned by a removal aimed at the area it has already left.
     await tx
-      .delete(areaBindings)
-      .where(
-        and(
-          eq(areaBindings.areaId, areaId),
-          inArray(
-            areaBindings.pointUid,
-            tx
-              .select({ id: points.id })
-              .from(points)
-              .where(eq(points.deviceId, deviceUuid)),
-          ),
-        ),
-      );
-    await tx
-      .delete(areaMembers)
-      .where(
-        and(
-          eq(areaMembers.areaId, areaId),
-          eq(areaMembers.deviceId, deviceUuid),
-        ),
-      );
+      .update(devices)
+      .set({ areaId: null, updatedAt: new Date() })
+      .where(and(eq(devices.id, deviceUuid), eq(devices.areaId, areaId)));
   });
+}
+
+/**
+ * Move ONE device into an area, or out of every area (`toAreaId = null`) — the device-side inverse of
+ * the area-side `PUT /members`, backing `PATCH /api/v4/devices/{id} { areaId }`.
+ *
+ * Both verbs exist because both questions are natural and neither is derivable from the other in one
+ * request: "which devices are in this area" (the area builder's picker) and "which area is this
+ * device in" (the device settings dialog, and the only way to say *not assigned*). Home Assistant has
+ * the same pair, for the same reason.
+ *
+ * Returns the area the device LEFT and whether the move actually APPLIED, so the caller can refresh
+ * serving for both ends — a re-home invalidates the KV subscription registry and the point-series
+ * cache of the source area just as much as the destination's, and refreshing only the destination
+ * leaves the old area serving latest values for a device it no longer holds.
+ *
+ * `moved: false, conflicted: false` is "already there" — success. `conflicted: true` is "someone
+ * moved it between authorization and the write": nothing was written, and this function does NOT
+ * know where the device is now, so the caller must refetch rather than be told.
+ *
+ * Departing bindings go with it, by exactly the predicate `removeMember` uses. A no-op move (already
+ * there) short-circuits BEFORE the delete: re-stating a device's current area must not drop its
+ * bindings.
+ */
+export async function rehomeDevice(
+  deviceId: DeviceId,
+  toAreaId: string | null,
+  authorized: AuthorizedPlacements,
+): Promise<{ fromAreaId: string | null; moved: boolean; conflicted: boolean }> {
+  const db = requirePlanetscaleDb();
+  const deviceUuid = Device.toUuid(deviceId);
+  if (!authorized.has(deviceUuid))
+    throw new AreaValidationError(`Device ${deviceId} was not authorized`);
+  // 🛑 The area AUTHORIZATION saw, not a fresh read. Re-reading here and scoping on that would
+  // decide against one state and write to another: a custody claim authorized while the device sat
+  // in the caller's area A, followed by its owner moving it to B, would re-read B and take it.
+  const fromAreaId = authorized.get(deviceUuid) ?? null;
+  if (fromAreaId === toAreaId)
+    return { fromAreaId, moved: false, conflicted: false };
+
+  let moved = false;
+  await db.transaction(async (tx) => {
+    const applied = await tx
+      .update(devices)
+      .set({ areaId: toAreaId, updatedAt: new Date() })
+      .where(
+        and(
+          eq(devices.id, deviceUuid),
+          fromAreaId === null
+            ? isNull(devices.areaId)
+            : eq(devices.areaId, fromAreaId),
+        ),
+      )
+      .returning({ id: devices.id });
+    // 🛑 The move goes FIRST and the binding delete is conditional on it having applied. Zero rows
+    // means someone moved the device out from under us; deleting a live area's bindings on behalf of
+    // a move that did not happen is the worst outcome available, because bindings are hand-authored
+    // and nothing rebuilds them.
+    if (applied.length === 0) return;
+    moved = true;
+    if (fromAreaId) await detachBindings(tx, fromAreaId, deviceUuid);
+  });
+  // 🛑 `conflicted` is NOT the same as "already there". Both write nothing, but one is success and
+  // the other means the device is somewhere neither the caller nor this function knows — reporting
+  // `fromAreaId` as its current area would be a guess, and a wrong one.
+  return { fromAreaId, moved, conflicted: !moved };
 }
 
 /**
@@ -298,10 +493,21 @@ export async function removeMember(
  * server-side, applies transactionally, and the caller then returns the new state). Backs
  * `PUT /api/v4/areas/{id}/members`, which replaces the legacy `POST`+`DELETE /devices` pair.
  *
- * `desired` is ORDERED — the array index becomes `area_members.ordinal`, so a pure reorder is a real
- * (and applied) edit, not a no-op. Members that leave take their now-orphaned bindings with them, by
- * exactly the predicate `removeMember` uses, so the resolver never dereferences a point on a device
- * that is no longer a member.
+ * 🛑 `desired` is no longer an ORDER. The array index used to become `area_members.ordinal`, so "a
+ * pure reorder is a real edit" was part of this contract; with one area per device there is no
+ * membership row to carry an ordinal, and intra-area order is presentation — reproduced by
+ * `getAreaMemberDeviceIds`' `(helper-last, rid)` sort. Duplicates are still rejected (the wire is
+ * still a set stated as an array), and a reorder is now genuinely a no-op.
+ *
+ * 🛑 And it is a full replace in BOTH directions now: a device named here LEAVES the area it was in,
+ * which may be an area someone else owns. The route runs `assertDevicesRehomable` first — read its
+ * docstring before touching either side.
+ *
+ * Members that leave become AMBIENT (`area_id = NULL`), not deleted, and take their now-orphaned
+ * bindings with them, by exactly the predicate `removeMember` uses, so the resolver never
+ * dereferences a point on a device that is no longer a member. Members that JOIN are detached from
+ * their previous area the same way; the areas they vacated are RETURNED so the caller can refresh
+ * serving at both ends.
  *
  * 🛑 The removal leg is the half that fails SILENTLY when it is wrong, in BOTH directions: an
  * under-delete leaves a ghost member, an over-delete quietly drops bindings that should have survived,
@@ -311,8 +517,9 @@ export async function removeMember(
  * binding on EACH member, removing one: the departing member's binding must go and the survivor's must
  * remain.
  *
- * Refuses an empty membership (an area of zero members has no point set at all), matching
- * `removeMember`'s "cannot remove the last member" rule stated declaratively.
+ * An EMPTY membership is now legal (plan decision 2) — `PUT {members: []}` empties the area and
+ * leaves every former member ambient. The old refusal restated `removeMember`'s "cannot remove the
+ * last member" rule declaratively; both are retired together.
  *
  * 🛑 **HELPER members are SERVER-MANAGED and are never evicted by an omission.** An area's `helper`
  * device (`vendor='helper'`, ordinal 99 — `lib/areas/helper.ts`) is minted by the battery-provenance
@@ -327,12 +534,11 @@ export async function removeMember(
 export async function replaceMembers(
   areaId: string,
   desired: DeviceId[],
-): Promise<void> {
+  authorized: AuthorizedPlacements,
+): Promise<string[]> {
   const wanted = [...new Set(desired)];
   if (wanted.length !== desired.length)
     throw new AreaValidationError("Duplicate member in the members list");
-  if (wanted.length === 0)
-    throw new AreaValidationError("An area must have at least one member");
 
   const db = requirePlanetscaleDb();
   const current = await getAreaMemberDeviceIds(areaId);
@@ -360,49 +566,29 @@ export async function replaceMembers(
   );
   const departing = candidates.filter((id) => !serverManaged.has(id));
 
-  await db.transaction(async (tx) => {
+  return db.transaction(async (tx) => {
     for (const leaving of departing) {
       const deviceUuid = Device.toUuid(leaving);
-      // Same predicate as `removeMember`: "every binding of this area whose point lives on the
-      // departing device", addressed through `points.device_id` (no `devices.rid` hop).
+      await detachBindings(tx, areaId, deviceUuid);
+      // 🛑 Scoped on THIS area — `current` was read before the transaction opened, so a device that
+      // has since moved must not be orphaned by a removal aimed at the area it already left.
       await tx
-        .delete(areaBindings)
-        .where(
-          and(
-            eq(areaBindings.areaId, areaId),
-            inArray(
-              areaBindings.pointUid,
-              tx
-                .select({ id: points.id })
-                .from(points)
-                .where(eq(points.deviceId, deviceUuid)),
-            ),
-          ),
-        );
-      await tx
-        .delete(areaMembers)
-        .where(
-          and(
-            eq(areaMembers.areaId, areaId),
-            eq(areaMembers.deviceId, deviceUuid),
-          ),
-        );
+        .update(devices)
+        .set({ areaId: null, updatedAt: new Date() })
+        .where(and(eq(devices.id, deviceUuid), eq(devices.areaId, areaId)));
     }
-    // Upsert, not insert: a member that STAYS may still be moving to a new ordinal, and the PK
-    // (area_id, device_id) makes that a conflict rather than a second row.
-    await tx
-      .insert(areaMembers)
-      .values(
-        wanted.map((deviceId, ordinal) => ({
-          areaId,
-          deviceId: Device.toUuid(deviceId),
-          ordinal,
-        })),
-      )
-      .onConflictDoUpdate({
-        target: [areaMembers.areaId, areaMembers.deviceId],
-        set: { ordinal: sql`excluded.ordinal` },
-      });
+    // 🛑 Joining members are a MOVE, not an assignment: each leaves whatever area it was in, and that
+    // area's bindings onto its points go with it. The first cut of this wrote `area_id` and stopped,
+    // which left the source area still SELECTING the device's points through bindings nothing had
+    // removed — serving a device it no longer held, silently.
+    return [
+      ...(await moveDevicesInto(
+        tx,
+        areaId,
+        wanted.map((id) => Device.toUuid(id)),
+        authorized,
+      )),
+    ];
   });
 }
 
@@ -513,6 +699,31 @@ export async function replaceBindings(
     batteryIdx < 0 ? undefined : resolvedSystemIds[batteryIdx];
 
   await db.transaction(async (tx) => {
+    // 🛑 RE-CHECK membership inside the transaction. `members` above was read before it opened, and a
+    // concurrent re-home invalidates it: a binding PUT validates device D in area A, D's owner moves
+    // it to B — which deletes A's bindings onto D as its firewall — and this then re-inserts exactly
+    // those bindings. Both requests succeed, and A resumes serving a device it no longer holds,
+    // because binding readers join through `points` and never consult membership. Re-reading here
+    // and refusing is what makes the re-home's cleanup actually final.
+    if (resolvedUids.length > 0) {
+      const stillMembers = new Set(
+        (
+          await tx
+            .select({ id: devices.id })
+            .from(devices)
+            .where(eq(devices.areaId, areaId))
+        ).map((d) => d.id),
+      );
+      const owners = await tx
+        .select({ id: points.id, deviceId: points.deviceId })
+        .from(points)
+        .where(inArray(points.id, resolvedUids));
+      for (const point of owners)
+        if (!stillMembers.has(point.deviceId))
+          throw new AreaConflictError(
+            `a device moved out of this area while its bindings were being saved — refetch and try again`,
+          );
+    }
     await tx.delete(areaBindings).where(eq(areaBindings.areaId, areaId));
     if (bindings.length > 0) {
       await tx.insert(areaBindings).values(

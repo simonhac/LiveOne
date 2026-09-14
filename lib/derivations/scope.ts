@@ -19,7 +19,7 @@
  * 1. **Every device, not one of them.** Access is required on EVERY device in the set, for reads and
  *    for writes. One-of-N would be an escalation primitive: name one of your own points plus one of
  *    mine, and a `runs` card appears on my device — or, worse, a detector you can edit starts
- *    reading my series. `assertMembersReadable` (`lib/areas/create.ts`) makes the same choice on the
+ *    reading my series. `assertDevicesRehomable` (`lib/areas/create.ts`) makes the same choice on the
  *    members wire, for the same reason.
  * 2. **The output point's device is IN the set.** An `hws-model` WRITES onto its output point
  *    (`derivations.output_point_id`), so a caller who may edit the model may cause writes onto that

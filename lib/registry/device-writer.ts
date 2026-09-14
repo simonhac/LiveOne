@@ -1,4 +1,4 @@
-import { eq, max, sql } from "drizzle-orm";
+import { and, eq, max, ne, sql } from "drizzle-orm";
 import { isProduction } from "@/lib/env";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import { uniqueViolationDetail, violatedUniqueName } from "@/lib/db/pg-error";
@@ -56,7 +56,7 @@ type DevicePatch = {
   config?: DeviceConfig | null;
   metadata?: unknown;
   commissionedOn?: string | null;
-  /** Placement — written to the device's area-of-one, the sole home for it. */
+  /** Placement — written to the device's CURRENT area (`devices.area_id`), the home for it. */
   location?: AreaLocation | null;
   timezoneOffsetMin?: number;
   displayTimezone?: string;
@@ -147,25 +147,26 @@ async function allocateRid(exec: DeviceRegistryExec): Promise<number> {
 }
 
 /**
- * Insert a device, its area-of-one, its handle mapping and its membership edge — one transaction.
+ * Insert a device, its area-of-one and its handle mapping — one transaction.
  *
- * ⚠️⚠️ **THE FOUR-STEP ORDER BELOW IS LOAD-BEARING. Each step is required by the NEXT one's foreign
- * key, and getting it wrong has broken device creation three times.** Read this before reordering:
+ * ⚠️⚠️ **THE STEP ORDER BELOW IS LOAD-BEARING. Each step is required by the NEXT one's foreign key,
+ * and getting it wrong has broken device creation three times.** Read this before reordering:
  *
  *   1. **`areas`** — must precede `devices` because `devices.primary_area_id` is `NOT NULL` and FKs
- *      `areas(id)`. (The area no longer keys on the rid at all — migration 0052 dropped
- *      `areas.legacy_system_id` — but the rid is still allocated up front for `devices.rid` and step 3.)
+ *      `areas(id)`, and because `devices.area_id` FKs it too. (The area no longer keys on the rid at
+ *      all — migration 0052 dropped `areas.legacy_system_id` — but the rid is still allocated up
+ *      front for `devices.rid` and step 3.)
  *   2. **`devices`** — must precede `legacy_handles` because `legacy_handles.device_id` FKs `devices(id)`
  *      (migration 0036). Violating *this* edge is the 2026-07-27 prod defect: the writer opened by
  *      filling the handle row for a uuid no `devices` row carried yet, so **every first mint of a device
  *      raised 23503** and `POST /api/devices` plus both OAuth connect callbacks 500'd. Re-mints masked
  *      it, because the `ON CONFLICT` `coalesce` preserved the already-valid uuid.
  *   3. **`legacy_handles`** — both columns, device and area, now that both targets exist.
- *   4. **`area_members`** — last, because `area_members.device_id` FKs `devices(id)` AND `area_id` FKs
- *      `areas(id)`; it is the only step needing both rows present.
  *
- * Steps 2-4 are the pre-1a mirror's order, preserved exactly. Step 1 was previously a separate
- * `ensureAreaOfOne` call that read `systems` for the values it is now handed directly.
+ * 🛑 **The fourth step — the `area_members` row — is GONE (Stage 4 of the device→0..1-area change).**
+ * Membership is `devices.area_id`, written inline in step 2, so the step that needed BOTH rows present
+ * no longer exists and three steps is the whole of it. `area_members` is frozen until migration 0072
+ * drops it; writing it here would make it disagree with the column everything now reads.
  */
 async function insertDeviceToPg(
   data: CreateDeviceData,
@@ -208,6 +209,19 @@ async function insertDeviceToPg(
         model: data.model ?? null,
         serial: data.serial ?? null,
         primaryAreaId: areaId,
+        // 🛑 Membership, and it must be set HERE. Between the resolver flip and this line every
+        // newly-minted device landed AMBIENT — `area_id` NULL — because the only writer of membership
+        // was the `area_members` insert this replaces. A new device is placed in its own area-of-one,
+        // which is exactly the shape it had before the flip; Stage 5 stops minting that area at all,
+        // at which point every new device is genuinely unassigned and the UI has a bucket for it.
+        //
+        // 🛑 …EXCEPT an OWNERLESS device, which is born ambient and stays that way. An ownerless
+        // device is Home Assistant's `entry_type=SERVICE` — an OpenElectricity NEM region, consumed
+        // by every area in its state and contained by none — and `assertDevicesRehomable` refuses to
+        // place one. Minting it INSIDE an area would therefore trap it there: nothing, not even an
+        // admin, could take it out again. Found in review; `seed-devices.ts` is the caller that would
+        // have done it on the next region seeded.
+        areaId: data.ownerClerkUserId == null ? null : areaId,
         // Same value the area gets, which is what migration 0070's backfill wrote for every existing
         // device. IMMUTABLE from here: `point_readings_agg_1d` buckets on this, so re-homing a device
         // between areas must never move it. Only an explicit re-bucket op may change it.
@@ -221,12 +235,6 @@ async function insertDeviceToPg(
       // ---- 3. legacy_handles --------------------------------------------------------------------
       await DeviceRegistry.ensureDeviceForHandle(rid, tx, Device.encode(uuid));
       await DeviceRegistry.ensureAreaForHandle(rid, areaId, tx);
-
-      // ---- 4. area_members ----------------------------------------------------------------------
-      await tx
-        .insert(areaMembers)
-        .values({ areaId, deviceId: uuid, ordinal: 0 })
-        .onConflictDoNothing();
 
       return {
         id: rid, // 🛑 the INTEGER handle — see CreatedDevice's docstring
@@ -267,6 +275,11 @@ async function insertDeviceToPg(
  * device with no area is not a representable shape. That is a structural requirement,
  * not a reversal of the "areas are explicit" model, which governs whether a device gets a user-visible
  * grouping and a flow matrix.
+ *
+ * 🛑 **`primary_area_id`'s NOT NULL is the ONLY thing still forcing the mint**, and it is why "stop
+ * minting the area-of-one" could not ship with the rest of Stage 4: dropping the column is migration
+ * 0072's job (Stage 5), and until it lands an area-less device cannot be INSERTED even though it can
+ * now be represented, resolved and served.
  */
 async function createDevice(
   deviceData: CreateDeviceData,
@@ -285,7 +298,8 @@ async function createDevice(
  * the Area's owner for access control (NOT ownerless — the blend is private household-derived data).
  *
  * It nonetheless gets its own area-of-one, exactly like {@link createDevice}, for the `primary_area_id`
- * reason above. The Area membership is the SECOND edge, not a substitute for it.
+ * reason above — and is then MOVED out of it by `ensureHelperDevice`, which sets `devices.area_id` to
+ * the Area it serves. The area-of-one is left behind as an inert shell until Stage 5 stops minting it.
  */
 async function createHelperDevice(params: {
   ownerClerkUserId: string | null;
@@ -314,8 +328,8 @@ async function createHelperDevice(params: {
  * Update a device, addressed by its integer handle.
  *
  * Splits across the two tables that now hold what `systems` used to: descriptive/config columns go to
- * `devices`, placement (tz + location) to the device's area-of-one. Both in ONE transaction, so a
- * placement edit can never be half-applied. `updatedAt` is always stamped to now; a caller-supplied one
+ * `devices`, placement (tz + location) to the device's CURRENT area (`devices.area_id`). Both in ONE
+ * transaction, so a placement edit can never be half-applied. `updatedAt` is always stamped to now; a caller-supplied one
  * is ignored.
  *
  * ⚠️ `areas.name` is deliberately NOT updated when `displayName` changes. The pre-1a mirror copied
@@ -324,10 +338,78 @@ async function createHelperDevice(params: {
  * would be a NEW behaviour that silently overwrites a user-set area name — out of scope for a
  * conversion, and the kind of blanket copy-down `ensureAreaOfOne` explicitly refused.
  */
+/**
+ * May a DEVICE-addressed write change this device's area's placement? Returns a refusal reason, or
+ * null when it may.
+ *
+ * 🛑 Two conditions, and the SECOND one is the one that matters. Occupancy alone is not permission:
+ * a device can legitimately be the only ordinary device in an area somebody ELSE owns (Craig's
+ * inverter alone in a site Simon owns, alongside Simon's helper), and an Enphase reconnect handing
+ * over the vendor's address would then rewrite that owner's site location — the exact operation this
+ * guard exists to refuse. So ownership is checked too.
+ *
+ * 🛑 The area row is locked FOR UPDATE first. Without it the tenant count and the placement write
+ * are two statements with a gap: a concurrent `PUT /members` moving a second device in commits
+ * between them, and the placement lands on an area that is shared by the time it does. Locking the
+ * AREA (not the device) is what serialises against membership changes, because that is the row both
+ * sides agree on.
+ */
+async function placementRefusal(
+  tx: DeviceRegistryExec,
+  areaId: string,
+  systemId: number,
+  deviceOwnerUserId: string | null,
+): Promise<string | null> {
+  const [area] = await tx
+    .select({ ownerUserId: areas.ownerUserId })
+    .from(areas)
+    .where(eq(areas.id, areaId))
+    .limit(1)
+    .for("update");
+  if (!area) return "the site no longer exists";
+  if (area.ownerUserId !== deviceOwnerUserId)
+    return "this device's site belongs to someone else — edit the site directly";
+
+  const others = await tx
+    .select({ rid: devices.rid })
+    .from(devices)
+    .where(
+      and(
+        eq(devices.areaId, areaId),
+        ne(devices.rid, systemId),
+        ne(devices.vendor, "helper"),
+      ),
+    )
+    .limit(1);
+  return others.length > 0
+    ? "this device shares a site with others — edit the site's location/timezone instead"
+    : null;
+}
+
+/**
+ * What happened to the placement half of a patch. `applied: true` when there was nothing to place or
+ * the write landed; a `reason` when the caller asked for a placement change that could not be made.
+ */
+interface PlacementOutcome {
+  applied: boolean;
+  reason?: string;
+}
+
+/**
+ * Raised, and ROLLED BACK, when `placement: "require"` cannot be honoured. See {@link updateDevice}.
+ */
+export class PlacementRefusedError extends Error {
+  constructor(public readonly reason: string) {
+    super(`placement refused: ${reason}`);
+    this.name = "PlacementRefusedError";
+  }
+}
+
 async function updateDevice(
   systemId: number,
   patch: DevicePatch,
-): Promise<void> {
+  opts: { placement?: "require" | "best-effort" } = {},
+): Promise<PlacementOutcome> {
   const deviceSet: Partial<typeof devices.$inferInsert> = {};
   if (patch.ownerClerkUserId !== undefined)
     deviceSet.ownerUserId = patch.ownerClerkUserId;
@@ -356,20 +438,64 @@ async function updateDevice(
     areaSet.displayTimezone = patch.displayTimezone;
   if (patch.location !== undefined) areaSet.location = patch.location;
 
+  let placement: PlacementOutcome = { applied: true };
   await requirePlanetscaleDb().transaction(async (tx) => {
     await tx.update(devices).set(deviceSet).where(eq(devices.rid, systemId));
     if (Object.keys(areaSet).length > 0) {
       areaSet.updatedAt = new Date();
-      // config-v4 Phase 13 PR 5: the target area is located through `legacy_handles`, not the dropped
-      // `areas.legacy_system_id`. An UPDATE cannot join, so the handle is resolved to a uuid first —
-      // inside the SAME transaction, so it cannot race the `ensureAreaForHandle` in `ensureAreaOfOne`.
-      // A handle naming no area updates nothing, exactly as the old 0-row-match predicate did.
-      const targets = await DeviceRegistry.resolveHandle(systemId, tx);
-      if (targets?.areaId) {
-        await tx.update(areas).set(areaSet).where(eq(areas.id, targets.areaId));
+      // 🛑 The device's CURRENT area (`devices.area_id`) — the same one `DeviceConfigRegistry`
+      // resolves placement from. It used to be the handle's area (`legacy_handles`), i.e. the
+      // eagerly-minted area-of-one, and once the placement READ moved to `devices.area_id` that
+      // became a silent no-op: for any re-homed device, `PATCH /api/admin/devices/{id}/settings`
+      // would answer 200, echo the new timezone, and the next GET would return the old one.
+      const [current] = await tx
+        .select({ areaId: devices.areaId, ownerUserId: devices.ownerUserId })
+        .from(devices)
+        .where(eq(devices.rid, systemId))
+        .limit(1);
+      if (!current?.areaId) {
+        // An AMBIENT device has no place — that is what ambient means — so there is nowhere to write
+        // this. Reported rather than swallowed: the caller was told to change something and nothing
+        // changed, and a 200 over the top of that is how a user learns not to trust the form.
+        const reason = "device is not in any site";
+        if (opts.placement === "require")
+          throw new PlacementRefusedError(reason);
+        placement = { applied: false, reason };
+      } else {
+        // 🛑 Placement belongs to the SITE. Writing it from a DEVICE-addressed route would let one
+        // device's settings — or, worse, an OAuth reconnect handing over a vendor address — re-place
+        // every other device in the site, and a site the caller may not own. Refused here rather
+        // than authorized at each caller, because there are several and they do not all have a user
+        // to ask.
+        const refusal = await placementRefusal(
+          tx,
+          current.areaId,
+          systemId,
+          // The patch may be re-owning the device in this same call (the Enphase reconnect does);
+          // the owner that matters is the one it will HAVE.
+          patch.ownerClerkUserId !== undefined
+            ? patch.ownerClerkUserId
+            : current.ownerUserId,
+        );
+        if (refusal) {
+          // 🛑 `require` ABORTS THE WHOLE PATCH. The device columns were written earlier in this same
+          // transaction, so returning a refusal without throwing would commit half of what the caller
+          // asked for and then report failure: name and alias persisted, timezone silently not, and
+          // a dialog saying it failed. The one caller that genuinely wants the other half —
+          // the Enphase reconnect, whose job is the device's owner/name/status — asks for
+          // `best-effort` and is told what was skipped.
+          if (opts.placement === "require")
+            throw new PlacementRefusedError(refusal);
+          placement = { applied: false, reason: refusal };
+        } else
+          await tx
+            .update(areas)
+            .set(areaSet)
+            .where(eq(areas.id, current.areaId));
       }
     }
   });
+  return placement;
 }
 
 /**
@@ -411,6 +537,9 @@ async function deleteDevice(systemId: number): Promise<void> {
       .where(eq(devices.rid, systemId))
       .limit(1);
     if (!row) return;
+    // `area_members` is frozen, not dead: nothing WRITES it since Stage 4, but its rows still hold a
+    // hard FK onto `devices.id`, so a delete must still clear them or 23503s. Goes with the table in
+    // migration 0072. (`devices.area_id` needs no such step — it is a column on the row being deleted.)
     await tx.delete(areaMembers).where(eq(areaMembers.deviceId, row.id));
     await tx.execute(
       sql`UPDATE legacy_handles SET device_id = NULL WHERE device_id = ${row.id}::uuid`,

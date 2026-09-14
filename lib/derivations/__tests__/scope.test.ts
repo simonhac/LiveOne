@@ -102,9 +102,13 @@ function req() {
 }
 
 function asUser(userId: string, isAdmin = false) {
-  jest
-    .mocked(requireAuth)
-    .mockResolvedValue({ userId, isAdmin, isCron: false, isClaudeDev: false });
+  jest.mocked(requireAuth).mockResolvedValue({
+    userId,
+    isAdmin,
+    actingAsAdmin: isAdmin,
+    isCron: false,
+    isClaudeDev: false,
+  });
 }
 
 beforeEach(() => {

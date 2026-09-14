@@ -46,8 +46,10 @@ export async function GET(
   // (same posture as `listReadableAreas`' chartCapable enrichment), never failing the whole route.
   //
   // Membership arrives as device ids (slice H), so the `dv_` TypeIDs this route emits come straight off
-  // the membership rows — no `legacy_handles` round trip. That also retires the `device-mapping-incomplete`
-  // 503: `area_members.device_id` FKs `devices.id`, so a member without a device row is unrepresentable.
+  // the member rows — no `legacy_handles` round trip. That also retires the `device-mapping-incomplete`
+  // 503: since migration 0071 membership IS a column on the `devices` row, so a member without a
+  // device row is not merely unrepresentable — it has no place to be stated. An area with NO members
+  // is legal and yields `deviceCards: []`.
   // The rid hop remains only because `capabilitiesForDevice` is still int-keyed (Phase 13 removes it).
   const memberIds = await getAreaMemberDeviceIds(r.area.id);
   const memberRids = await DeviceRegistry.ridsForDevices(memberIds);

@@ -66,6 +66,11 @@ export async function POST(request: NextRequest) {
   let normalized: DashboardV4 | null = null;
   let seededName: string | null = null;
   if (seedArea) {
+    // 🛑 Deliberately NOT `{ isAdmin }`. This seeds a document that will be OWNED by the caller and
+    // whose refs `checkDocRefsReadable` re-validates against its owner's readable set on every later
+    // write — so seeding from an area an admin can see but does not own would mint a doc that fails
+    // its own edit check and renders empty for anyone it is shared with. Admin widens what you may
+    // ADDRESS, not what you may embed.
     const found = await findReadableArea(auth.userId, seedArea);
     if (!found.ok) {
       return NextResponse.json(

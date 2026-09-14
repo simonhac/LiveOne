@@ -18,6 +18,15 @@ import type { DeviceId } from "@/lib/ids";
  * blend points onto it) and is the one documented exception to full-replace: the route never evicts it
  * by omission. So it is shown — it really is a member, and its points are bindable — but its remove
  * button is disabled rather than being a button that silently does nothing.
+ *
+ * 🛑 **Adding is a MOVE and removing is an ORPHANING**, and the copy here has to say so, because
+ * neither is visible in this list alone. A device is in at most one area, so picking one out of the
+ * "add" list takes it out of the area it is in today — deleting that area's bindings onto its points,
+ * which can blank a card on a site the operator is not looking at. So each candidate is labelled with
+ * where it currently lives. And removing does not delete a device: it leaves it AMBIENT, in no area,
+ * which is a real state — still polled, still aggregated, just with no flow matrix. Emptying an area
+ * completely is allowed; the old "an area needs at least one device" rule is gone with the
+ * area-of-one.
  */
 export default function MembersTab({
   candidates,
@@ -36,9 +45,12 @@ export default function MembersTab({
   onRemove: (deviceId: DeviceId) => void;
 }) {
   const memberIds = new Set(members.map((m) => m.id));
-  const addable = candidates.filter((c) => c.id && !memberIds.has(c.id));
-  // "An area needs at least one device" counts only the members a client may actually remove.
-  const removable = members.filter((m) => m.vendor !== "helper").length;
+  // An OWNERLESS device is ambient by construction (an OpenElectricity NEM region — Home Assistant's
+  // `entry_type=SERVICE`). The server refuses to place one, so offering it here would produce a 422
+  // the user cannot act on; consumers reference it by id instead.
+  const addable = candidates.filter(
+    (c) => c.id && !memberIds.has(c.id) && c.ownerUserId !== null,
+  );
 
   return (
     <div className="space-y-4">
@@ -48,14 +60,14 @@ export default function MembersTab({
         </span>
         {members.length === 0 ? (
           <p className="text-sm text-gray-500">
-            No devices yet — add at least one below.
+            No devices. A site with no devices is allowed — it simply has no
+            data of its own until you add one.
           </p>
         ) : (
           <ul className="space-y-1.5">
             {members.map((m) => {
               const isHelper = m.vendor === "helper";
               const isLocked = m.id === lockedId;
-              const isLast = !isHelper && removable <= 1;
               return (
                 <li
                   key={m.id}
@@ -75,15 +87,13 @@ export default function MembersTab({
                   <button
                     type="button"
                     onClick={() => onRemove(m.id)}
-                    disabled={busy || isHelper || isLocked || isLast}
+                    disabled={busy || isHelper || isLocked}
                     title={
                       isHelper
                         ? "Derived device — managed automatically by this site"
                         : isLocked
                           ? "The device this site was created from"
-                          : isLast
-                            ? "An area needs at least one device"
-                            : "Remove device"
+                          : "Move out of this site — the device is kept, with no area"
                     }
                     className="rounded p-1 text-gray-500 transition-colors hover:bg-gray-700 hover:text-red-400 disabled:cursor-not-allowed disabled:opacity-30"
                   >
@@ -99,7 +109,7 @@ export default function MembersTab({
       <label className="block">
         <span className="mb-1 flex items-center gap-1.5 text-xs uppercase tracking-wide text-gray-500">
           <Plus className="h-3.5 w-3.5" />
-          Add a device
+          Move a device here
         </span>
         <select
           value=""
@@ -117,9 +127,15 @@ export default function MembersTab({
           {addable.map((c) => (
             <option key={c.id} value={c.id!}>
               {c.name} (ID: {c.legacySystemId})
+              {c.areaName ? ` — currently in ${c.areaName}` : " — no site"}
             </option>
           ))}
         </select>
+        <span className="mt-1 block text-xs text-gray-500">
+          A device belongs to one site. Choosing one here moves it out of the
+          site it is in now, along with that site&rsquo;s bindings onto its
+          points.
+        </span>
       </label>
     </div>
   );

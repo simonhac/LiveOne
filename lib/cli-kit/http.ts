@@ -23,6 +23,15 @@ export interface ApiInit {
   /** Sent as `If-Match: "<n>"` — the PUT's optimistic-concurrency token. */
   ifMatch?: number;
   token?: string;
+  /**
+   * Extra request headers, merged over the ones built below.
+   *
+   * The one caller is `withApiSession`, which sends `x-liveone-admin` when — and only when — the
+   * operator passed `--admin`. Request-level rather than per-route because "act as admin for this
+   * request" is a property of the request, not a selector on one resource, and every verb (GET,
+   * PATCH, PUT) has to be able to carry it without each route parsing it.
+   */
+  headers?: Record<string, string>;
   fetchImpl?: typeof fetch;
   /**
    * Per-call replacements for the default status mapping, consulted first.
@@ -74,6 +83,7 @@ export async function apiFetch<T = Record<string, unknown>>(
   if (init.body !== undefined) headers["content-type"] = "application/json";
   if (init.token) headers.authorization = `Bearer ${init.token}`;
   if (init.ifMatch !== undefined) headers["if-match"] = `"${init.ifMatch}"`;
+  Object.assign(headers, init.headers ?? {});
 
   let res: Response;
   try {

@@ -3,6 +3,7 @@ import { loadAreaForOwner, resolveMemberDeviceRefs } from "@/lib/areas/http";
 import {
   replaceMembers,
   refreshAreaServing,
+  AreaConflictError,
   AreaValidationError,
 } from "@/lib/areas/create";
 import { loadAreaMembers } from "@/lib/areas/v4-load";
@@ -16,9 +17,13 @@ import { areaMembersWire } from "@/lib/areas/v4-shapes";
  * every collection is `PUT` = full replace: the client states the membership it wants, the server
  * diffs, applies the diff in one transaction, refreshes derived state, and returns the new state.
  * That is not merely tidier than add/remove — an add and a remove issued separately have an
- * intermediate state that can violate the "at least one member" rule from either side, and a client
- * that wanted to swap the only member had no way to express it. Order is significant: the array index
- * becomes `area_members.ordinal`.
+ * intermediate state a client cannot control, and one that wanted to swap the only member had no way
+ * to express it.
+ *
+ * 🛑 Order is NOT significant. The array index used to become `area_members.ordinal`; with one area
+ * per device there is no membership row to carry one, and order comes from `getAreaMemberDeviceIds`'
+ * `(helper-last, rid)` sort. A pure reorder is a no-op. Duplicates are still rejected — the wire is
+ * a set, stated as an array.
  *
  * The response is the SAME `members` list `GET /api/v4/areas/{id}` carries, from the same loader
  * (`lib/areas/v4-load.ts`), so a write-then-render client and a read-then-render client see one shape.
@@ -61,16 +66,30 @@ export async function PUT(
       { status: members.status },
     );
 
+  let vacated: string[] = [];
   try {
-    await replaceMembers(area.id, members.deviceIds);
+    vacated = await replaceMembers(
+      area.id,
+      members.deviceIds,
+      members.authorized,
+    );
   } catch (err) {
     if (err instanceof AreaValidationError)
       return NextResponse.json({ error: err.message }, { status: 422 });
+    // 🛑 Nothing was written — the transaction rolled back, including the departures. Without this
+    // the destructive half could commit while the constructive half silently skipped.
+    if (err instanceof AreaConflictError)
+      return NextResponse.json({ error: err.message }, { status: 409 });
     throw err;
   }
   // 🛑 Membership IS the point set for a binding-less area, and the KV subscription registry is derived
   // from it — a PUT that skipped this would leave the area serving its OLD members' latest values.
+  //
+  // And it is BOTH ENDS: a joining member was taken out of some OTHER area, whose registry and
+  // point-series cache still name the device's points. Refreshing only this area leaves that one
+  // serving a device it no longer holds.
   await refreshAreaServing(area.id);
+  for (const other of vacated) await refreshAreaServing(other);
   return NextResponse.json({
     members: areaMembersWire(await loadAreaMembers(area.id)),
   });

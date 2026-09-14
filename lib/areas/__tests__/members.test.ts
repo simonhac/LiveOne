@@ -27,7 +27,7 @@ import { PgDialect, QueryBuilder } from "drizzle-orm/pg-core";
 import { Device } from "@/lib/ids";
 import {
   getAreaMemberDeviceIds,
-  ensureAreaMember,
+  setDeviceArea,
   listFlowEligibleAreaHandles,
   getAreaMemberPointsForServing,
 } from "../members";
@@ -39,6 +39,7 @@ const flat = (s: string) => s.replace(/\s+/g, " ").trim();
 
 const captured: string[] = [];
 const inserts: { table: string; values: unknown }[] = [];
+const updates: { table: string; set: Record<string, unknown> }[] = [];
 
 /**
  * A fake db that delegates every read to a REAL drizzle `QueryBuilder` (which needs no pool) and
@@ -67,22 +68,31 @@ function makeFakeDb() {
       };
       return chain;
     },
+    update: (table: any) => ({
+      set: (v: Record<string, unknown>) => ({
+        where: () => {
+          updates.push({ table: table[Symbol.for("drizzle:Name")], set: v });
+          return Promise.resolve();
+        },
+      }),
+    }),
   };
 }
 
 beforeEach(() => {
   captured.length = 0;
   inserts.length = 0;
+  updates.length = 0;
   mockDb = makeFakeDb();
 });
 
-describe("membership DAO reads `devices.area_id`, never `area_members`", () => {
+describe("membership DAO reads and writes `devices.area_id`, never `area_members`", () => {
   it("getAreaMemberDeviceIds reads the devices column and orders helper-last, then rid", async () => {
     await getAreaMemberDeviceIds("area-a");
     const [sql] = captured;
-    // 🛑 Migration 0071 moved the edge onto `devices.area_id`. `area_members` is still WRITTEN during
-    // the dual-write window, so a read that slid back to it would keep working and silently stop
-    // reflecting re-homes the moment the two diverge.
+    // 🛑 Migration 0071 moved the edge onto `devices.area_id`, and Stage 4 stopped writing
+    // `area_members` altogether. A read that slid back to the frozen table would keep working and
+    // silently answer with the pre-flip membership.
     expect(sql).toContain('from "devices"');
     expect(sql).toContain('where "devices"."area_id" = $1');
     expect(sql).not.toContain("area_members");
@@ -146,14 +156,25 @@ describe("membership DAO reads `devices.area_id`, never `area_members`", () => {
     expect(sql).toContain('"points"."rid"');
   });
 
-  it("ensureAreaMember writes area_members with the raw device uuid", async () => {
+  it("setDeviceArea UPDATES devices.area_id and inserts nothing", async () => {
     const uuid = "018f0000-0000-7000-8000-000000000001";
-    await ensureAreaMember(mockDb as never, "area-a", Device.encode(uuid), 7);
-    expect(inserts).toEqual([
-      {
-        table: "area_members",
-        values: { areaId: "area-a", deviceId: uuid, ordinal: 7 },
-      },
+    await setDeviceArea(mockDb as never, Device.encode(uuid), "area-a");
+    expect(updates).toHaveLength(1);
+    expect(updates[0].table).toBe("devices");
+    expect(updates[0].set.areaId).toBe("area-a");
+    // 🛑 The write is the whole of membership now. An `area_members` insert here would re-open the
+    // dual-write the flip closed, and the two tables would disagree on the first re-home.
+    expect(inserts).toEqual([]);
+  });
+
+  it("setDeviceArea(null) makes a device ambient rather than deleting a row", async () => {
+    const uuid = "018f0000-0000-7000-8000-000000000002";
+    await setDeviceArea(mockDb as never, Device.encode(uuid), null);
+    expect(updates).toEqual([
+      expect.objectContaining({
+        table: "devices",
+        set: expect.objectContaining({ areaId: null }),
+      }),
     ]);
   });
 

@@ -353,7 +353,7 @@ export class PointManager {
   /**
    * Resolve the viewable points for a device handle — the single "resolve viewable" path.
    *
-   * An Area is a grouping of 1..N member devices. A **real device** (an area-of-one's source, addressed
+   * An Area is a grouping of 0..N member devices. A **real device** (addressed
    * by its own `systems.id`) loads its own `point_info`. A **multi-device area** (an areas-backed handle
    * with no real `systems` row) resolves under the membership + override model: its typed `area_bindings`
    * SELECT the points (the override), and a curated multi-device area HAS bindings, so its bound child

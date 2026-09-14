@@ -325,7 +325,13 @@ function makeHttpTransport(origin: string, token: string): DashboardTransport {
     kind: "http",
     // One implementation with the api-session domains — the target line is the operator's only
     // "which server, as whom" check, and two copies is how they drift.
-    describeTarget: (mode) => printApiTarget(origin, token, mode),
+    // `void`: `printApiTarget` returns the caller's admin flag for the api-session domains, which put
+    // it on `ApiSession`. The dashboard transport has no use for it — its verbs are caller-scoped by
+    // construction (`--owner` is refused on this leg) — so it is discarded here rather than widening
+    // `describeTarget`'s contract for one consumer.
+    describeTarget: async (mode) => {
+      await printApiTarget(origin, token, mode);
+    },
     list: async (owner) => {
       if (owner !== undefined)
         throw failWith(

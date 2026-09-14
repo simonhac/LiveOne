@@ -6,11 +6,15 @@
  * a well-formed `dv_` id that names nothing and one that names a device the caller cannot see must be
  * indistinguishable (§8.4 no-escalation — otherwise this endpoint is an existence oracle over other
  * owners' devices), while a malformed id, which cannot name anything at all, is a body error.
+ *
+ * 🛑 An empty array and a MISSING/non-array `members` diverge deliberately since Stage 4: the first is
+ * "empty this area", the second is a malformed body. `PUT /members` is a full replace, so collapsing
+ * them would let a client bug silently orphan every device in an area.
  */
 import { describe, it, expect, beforeEach, jest } from "@jest/globals";
 
 let rids: Map<string, number>;
-let readableThrows: Error | null = null;
+let rehomableThrows: Error | null = null;
 
 jest.mock("@/lib/registry", () => ({
   DeviceRegistry: { ridsForDevices: jest.fn(async () => rids) },
@@ -31,8 +35,9 @@ jest.mock("@/lib/areas/create", () => {
   return {
     AreaAccessError,
     AreaValidationError,
-    assertMembersReadable: jest.fn(async () => {
-      if (readableThrows) throw readableThrows;
+    assertDevicesRehomable: jest.fn(async () => {
+      if (rehomableThrows) throw rehomableThrows;
+      return new Map();
     }),
   };
 });
@@ -53,23 +58,36 @@ beforeEach(() => {
     [A, 1],
     [B, 2],
   ]);
-  readableThrows = null;
+  rehomableThrows = null;
 });
 
 const run = (refs: unknown) => resolveMemberDeviceRefs("user_1", false, refs);
 
 describe("resolveMemberDeviceRefs", () => {
-  it("resolves an ordered list to handles, preserving ORDER (it becomes the ordinal)", async () => {
+  it("resolves the list to handles, in the order given", async () => {
+    // Order is no longer SIGNIFICANT (`area_members.ordinal` went with the membership row) but it is
+    // still preserved, so a caller reading the result back can match it up entry-for-entry.
     await expect(run([B, A])).resolves.toEqual({
       ok: true,
       deviceIds: [B, A],
       systemIds: [2, 1],
+      // 🛑 What the firewall OBSERVED while authorizing — the state the DAO scopes its writes on.
+      authorized: new Map(),
+    });
+  });
+
+  it("🛑 ACCEPTS an empty array — a zero-device area is first-class", async () => {
+    await expect(run([])).resolves.toEqual({
+      ok: true,
+      deviceIds: [],
+      systemIds: [],
+      authorized: new Map(),
     });
   });
 
   it.each([
     ["a non-array", { members: A }],
-    ["an empty array", []],
+    ["a MISSING members key", undefined],
     ["a non-string entry", [42]],
     ["a malformed TypeID", ["not-a-typeid"]],
     ["the WRONG TypeID prefix", [Area.generate()]],
@@ -85,18 +103,26 @@ describe("resolveMemberDeviceRefs", () => {
   });
 
   it("…and an unreadable one gets the SAME 403, so the two are indistinguishable", async () => {
-    readableThrows = new AreaAccessError("No access to system 2");
+    rehomableThrows = new AreaAccessError("No access to system 2");
     const r = await run([B]);
     expect(r).toMatchObject({ ok: false, status: 403 });
   });
 
   it("422s the firewall's own validation error (a handle with no device row)", async () => {
-    readableThrows = new AreaValidationError("System 2 not found");
+    rehomableThrows = new AreaValidationError("System 2 not found");
+    await expect(run([B])).resolves.toMatchObject({ ok: false, status: 422 });
+  });
+
+  it("422s an AMBIENT device, which is a fact about the device, not about the caller", async () => {
+    // An ownerless OpenElectricity region is Home Assistant's `entry_type=SERVICE`: every consumer
+    // references it by id and none contains it. 403 would be wrong — it is not an access decision,
+    // and every caller, admin included, gets the same answer.
+    rehomableThrows = new AreaValidationError("Device 2 is ambient (no owner)");
     await expect(run([B])).resolves.toMatchObject({ ok: false, status: 422 });
   });
 
   it("rethrows anything the firewall raises that is neither (a 403 must mean what it says)", async () => {
-    readableThrows = new Error("boom");
+    rehomableThrows = new Error("boom");
     await expect(run([A])).rejects.toThrow("boom");
   });
 });

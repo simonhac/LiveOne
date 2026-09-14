@@ -29,6 +29,7 @@ import {
   BASE_URL_FLAG,
   HISTORY_FLAGS,
   listDevices,
+  resolveArea,
   resolveDevice,
   runHistoryVerb,
   str,
@@ -71,8 +72,8 @@ export const deviceCommand = defineCommand({
     "Http-only: every verb calls the deployed API as you (`liveone auth login`), and prints\n" +
     "`target: <origin> as <you>` on stderr first — read it to know which environment answered.\n" +
     "Ids are per-environment.\n\n" +
-    "Every verb here READS except `recompute` and `change-offset`, which write and are dry-run by\n" +
-    "default.",
+    "Every verb here READS except `recompute`, `change-offset` and `area`, which write and are\n" +
+    "dry-run by default.",
   uses: ["api"],
   subcommands: {
     list: {
@@ -230,9 +231,10 @@ export const deviceCommand = defineCommand({
         "device ever rolled up, so the window is the whole history and is measured from the data\n" +
         "rather than typed. A partial re-bucket would split the device's days across two boundaries\n" +
         "with nothing recording where the seam is.\n\n" +
-        "🛑 Refuses when the device's area has other member devices: until the resolver flip the\n" +
-        "offset a rebuild reads is the AREA's, so this has to move the area too, and a shared area\n" +
-        "would re-bucket its other members as collateral.\n\n" +
+        "🛑 Refuses when the device's OWN area — the one minted alongside it — holds other devices,\n" +
+        "because its offset moves with the device and a shared area would re-bucket its other\n" +
+        "members as collateral. Being a member of a multi-device site is fine and expected: the\n" +
+        "site area's own offset is not touched.\n\n" +
         "The daily totals WILL change — that is the point. Run detectors are not covered; rebuild\n" +
         "those with `liveone derivation recompute`.",
       mutates: true,
@@ -248,6 +250,44 @@ export const deviceCommand = defineCommand({
       examples: [
         "liveone device change-offset 'Kinkora Fronius' --offset=600",
         "liveone device change-offset 5 --offset=600 --apply",
+      ],
+    },
+    area: {
+      name: "area",
+      summary: "Put a device in an area, or in none.",
+      when:
+        "Reach for this when you know the DEVICE and want to say where it lives. The inverse —\n" +
+        "stating an area's whole membership — is `liveone area devices`; both exist because both\n" +
+        "questions are natural and neither is a one-request rewrite of the other.",
+      description:
+        "🛑 A device is in AT MOST ONE area, so this is a MOVE. The device leaves whatever area it\n" +
+        "was in, and THAT area loses every binding whose point lives on this device — which can\n" +
+        "blank a card or a Sankey somewhere you were not looking. The dry run names both ends.\n\n" +
+        "`--none` takes the device out of every area, leaving it AMBIENT. That is a real state, not\n" +
+        "a broken one: an ambient device is still polled, still aggregated and still readable by\n" +
+        "handle — it simply has no area, so no flow matrix and no grid card. The OpenElectricity\n" +
+        "NEM regions live there permanently, and are refused by this verb for that reason.",
+      mutates: true,
+      args: [
+        DEVICE_ARG,
+        {
+          name: "area",
+          required: false,
+          help: "The destination area: ar_… id, integer handle, or display name. Omit with --none.",
+        },
+      ],
+      flags: {
+        ...BASE_URL_FLAG,
+        none: {
+          type: "boolean",
+          help: "Take the device out of every area, leaving it ambient",
+        },
+      },
+      exitCodes: { 1: "the server refused the move (the reason says why)" },
+      examples: [
+        "liveone device area 'Kutis' kew",
+        "liveone device area 'Kutis' kew --apply",
+        "liveone device area 13 --none --apply",
       ],
     },
   },
@@ -643,8 +683,111 @@ async function runChangeOffset(ctx: Ctx): Promise<number> {
   );
 }
 
+/**
+ * `device area <device> [<area>|--none]` — the device-side half of membership.
+ *
+ * 🛑 Everything this verb has to SAY is about the end the operator did not name. Membership is
+ * `devices.area_id`, so a move has two halves: the destination gains the device's points, and the
+ * source loses them along with every binding onto them. The dry run states both, because the
+ * argument list only shows one.
+ */
+async function runDeviceArea(ctx: Ctx): Promise<number> {
+  return withApiSession(
+    ctx,
+    async (s) => {
+      const device = await resolveDevice(s, ctx.args[0]);
+      const toNone = ctx.flags.none === true;
+      const areaRef = ctx.args[1];
+      if (toNone && areaRef !== undefined)
+        throw usage(
+          "both an area and --none were given",
+          "a device goes to one area or to none — they are not combinable",
+          "drop --none, or drop the area argument",
+        );
+      if (!toNone && areaRef === undefined)
+        throw usage(
+          "no destination given",
+          "this verb states where the device goes",
+          "name an area, or pass --none to leave it ambient",
+        );
+
+      const target = toNone ? null : await resolveArea(s, areaRef);
+      // A no-op is worth saying out loud rather than writing: re-stating a device's current area
+      // touches nothing server-side, and an operator who typed it meant something else.
+      const already = toNone
+        ? device.areaId === null
+        : device.areaId === target!.id;
+
+      const lines = [
+        `device: ${device.name} (${device.id})`,
+        `  from: ${device.areaName ?? "(ambient — no area)"}`,
+        `    to: ${target ? target.displayName : "(ambient — no area)"}`,
+      ];
+      if (already) lines.push("", "(already there — nothing to do)");
+      else if (device.areaId)
+        lines.push(
+          "",
+          `🛑 "${device.areaName}" loses this device's points, and every binding onto them.`,
+        );
+
+      let result: unknown = null;
+      if (!ctx.dryRun && !already)
+        result = (
+          await apiFetch<{
+            areaId: string | null;
+            previousAreaId: string | null;
+            moved: boolean;
+          }>(s.origin, `/api/v4/devices/${encodeURIComponent(device.id!)}`, {
+            method: "PATCH",
+            token: s.token,
+            body: { areaId: target ? target.id : null },
+            errors: {
+              422: {
+                exit: EXIT.FINDINGS,
+                what: "the server refused the move",
+                why: (b) => String(b.error ?? "refused"),
+                next: "nothing was changed — an ambient device (an OpenElectricity region) cannot be placed",
+              },
+              403: {
+                exit: EXIT.FINDINGS,
+                what: "not yours to move",
+                why: (b) => String(b.error ?? "forbidden"),
+                next: "you must own the device or the area it is leaving, AND own the destination",
+              },
+            },
+          })
+        ).body;
+
+      ctx.emit(
+        {
+          device: { id: device.id, name: device.name },
+          from: { id: device.areaId, name: device.areaName },
+          to: target ? { id: target.id, name: target.displayName } : null,
+          alreadyThere: already,
+          applied: !ctx.dryRun && !already,
+          result,
+        },
+        () =>
+          [
+            `${ctx.dryRun ? "would" : "WRITE"} move`,
+            ...lines,
+            "",
+            already
+              ? "nothing to do."
+              : ctx.dryRun
+                ? "Re-run with --apply to write."
+                : "written.",
+          ].join("\n"),
+      );
+      return EXIT.OK;
+    },
+    ctx.dryRun ? "dry-run" : "APPLY",
+  );
+}
+
 const HANDLERS: Record<string, (ctx: Ctx) => Promise<number>> = {
   list: runList,
+  area: runDeviceArea,
   show: runShow,
   points: runPoints,
   latest: runLatest,

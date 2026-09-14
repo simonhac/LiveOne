@@ -8,8 +8,16 @@
  *   3. with no bindings, the point set is the UNION of its members' own points;
  *   4. with bindings, the point set is exactly the BOUND points (override);
  *   5. adding a member grows the union;
- *   6. removing the last member is refused.
- * Then it hard-deletes the area (area_members + area_bindings cascade).
+ *   6. an area can be emptied of every member.
+ * Then it hard-deletes the area (area_bindings cascade).
+ *
+ * 🛑 **This run MOVES real devices, and it has to put them back.** Membership is `devices.area_id`
+ * since migration 0071: a device is in at most one area, so pulling one into the throwaway site
+ * takes it OUT of the site it actually belongs to, and step 6 then leaves it ambient. Before the
+ * device→0..1-area change this script was read-only with respect to existing membership — adding a
+ * member was purely additive, so there was nothing to restore. Now there is, so the `finally`
+ * restores every borrowed device's original `area_id` BEFORE deleting the throwaway area (the FK is
+ * `ON DELETE SET NULL`, which would otherwise silently orphan anything still pointing at it).
  *
  * Runs directly against the DB in .env.local — DEV only (the DB-env guard refuses a prod-token
  * connection). Bypasses HTTP/Clerk, so it needs no live session.
@@ -20,6 +28,12 @@
  */
 import * as dotenv from "dotenv";
 import { DeviceConfigRegistry } from "@/lib/registry/device-config";
+import {
+  assertNoStaleJournal,
+  captureWorld,
+  clearJournal,
+  restoreWorld,
+} from "@/scripts/utils/smoke-world-snapshot";
 dotenv.config({ path: ".env.local" });
 
 function getArg(name: string): string | undefined {
@@ -36,7 +50,13 @@ async function main() {
   const { planetscaleDb, requirePlanetscaleDb } = await import(
     "@/lib/db/planetscale"
   );
-  const { areas, legacyHandles } = await import("@/lib/db/planetscale/schema");
+  const {
+    areaBindings,
+    areas,
+    devices,
+    legacyHandles,
+    points: pointsTable,
+  } = await import("@/lib/db/planetscale/schema");
   const { createArea, addMember, replaceBindings, removeMember } = await import(
     "@/lib/areas/create"
   );
@@ -49,7 +69,7 @@ async function main() {
   const { bindingShapeMatches } = await import("@/lib/areas/slots");
   const { ROLES } = await import("@/lib/roles/registry");
   type RoleId = import("@/lib/roles/registry").RoleId;
-  const { eq } = await import("drizzle-orm");
+  const { eq, inArray } = await import("drizzle-orm");
 
   if (!planetscaleDb) {
     console.error(
@@ -59,6 +79,13 @@ async function main() {
   }
   const db = requirePlanetscaleDb();
   const pm = PointManager.getInstance();
+
+  // 🛑 FIRST, before a single read and before any work. A journal left by an interrupted run means
+  // the database may still be holding borrowed devices; this REFUSES rather than replaying it, and
+  // prints the deliberate restore command. Replaying a whole-config photograph automatically would
+  // revert anything that legitimately changed since — see `smoke-world-snapshot.ts`.
+  const JOURNAL = "/tmp/liveone-area-builder-smoke-world.json";
+  assertNoStaleJournal(JOURNAL);
 
   const countPoints = async (id: number) =>
     (await pm.getActivePointsForDevice(id, false, false)).length;
@@ -101,6 +128,18 @@ async function main() {
     `Members: seed=${seed.join(",")}${extra ? `  extra=${extra}` : ""}\n`,
   );
 
+  // 🛑 Journalled HERE, not at startup: everything above is validation that can exit without
+  // touching anything, and a journal left by a run that mutated nothing is pure litter — the next
+  // run would refuse on it for no reason. The next statement is the first write.
+  const world = await captureWorld(JOURNAL);
+  const uuidByRid = new Map<number, string>();
+  for (const rid of members)
+    uuidByRid.set(rid, await DeviceRegistry.uuidForRid(rid, db));
+  const placedAt = new Map(world.placements);
+  console.log(
+    `Snapshot: ${world.placements.length} placement(s), ${world.bindings.length} binding(s) → ${JOURNAL}\n`,
+  );
+
   let areaId: string | null = null;
   try {
     // 1. Create the site.
@@ -114,6 +153,14 @@ async function main() {
       displayTimezone: "Australia/Melbourne",
       location: null,
       memberSystemIds: seed,
+      // This script IS the authorization — it drives the DAO directly, below HTTP. The map states
+      // where it observed each member, which is exactly what the move is scoped on.
+      authorized: new Map(
+        seed.map((rid) => [
+          uuidByRid.get(rid)!,
+          placedAt.get(uuidByRid.get(rid)!) ?? null,
+        ]),
+      ),
     });
     areaId = created.id;
     const H = created.legacySystemId;
@@ -188,7 +235,13 @@ async function main() {
       "cleared bindings → union restored",
     );
     if (extra) {
-      await addMember(areaId, extra);
+      await addMember(
+        areaId,
+        extra,
+        new Map([
+          [uuidByRid.get(extra)!, placedAt.get(uuidByRid.get(extra)!) ?? null],
+        ]),
+      );
       const ids = await memberHandles(areaId);
       assert(ids.includes(extra), `area_members now includes ${extra}`);
       const grown = await countPoints(H);
@@ -198,20 +251,38 @@ async function main() {
       );
     }
 
-    // 6. Removing down to the last member is refused.
-    const memberIds = await memberHandles(areaId);
-    for (const m of memberIds.slice(1)) await removeMember(areaId, m);
-    let refused = false;
-    try {
-      await removeMember(areaId, (await memberHandles(areaId))[0]);
-    } catch {
-      refused = true;
-    }
-    assert(refused, "removeMember refuses the last member");
+    // 6. Removing every member is ALLOWED — a zero-device area is first-class since Stage 4 of the
+    // device→0..1-area change, which is what lets "hide areas-of-one" become the structural "hide
+    // areas with zero devices". Removal ORPHANS: the devices keep their rows, with `area_id` NULL.
+    for (const m of await memberHandles(areaId)) await removeMember(areaId, m);
+    assert(
+      (await memberHandles(areaId)).length === 0,
+      "an area can be emptied of every member",
+    );
+    assert(
+      (await countPoints(H)) === 0,
+      "an emptied area resolves to no points at all",
+    );
 
     console.log("\n✅ ALL CHECKS PASSED");
   } finally {
-    if (areaId) {
+    // Put every borrowed device back where it was, FIRST. `devices.area_id` is ON DELETE SET NULL,
+    // so deleting the throwaway area below would otherwise silently leave them ambient — and a
+    // wrapped cleanup means the operator would see the smoke run pass while dev quietly lost its
+    // membership. Wrapped so a restore failure cannot impersonate a test failure — but LOUD, and it
+    // vetoes the delete below.
+    // 🛑 Put the WORLD back before deleting anything. `devices.area_id` is ON DELETE SET NULL, so
+    // deleting the scratch area first would strand whatever is still in it — and the journal is the
+    // only record of where it belonged.
+    const restored = await restoreWorld(world);
+    if (!restored) {
+      console.error(
+        `\n❌ NOT deleting area ${areaId}: the world snapshot could not be fully restored. The ` +
+          `journal is at ${JOURNAL}. Nothing is replayed automatically — inspect it, then restore it\n` +
+          `          with scripts/utils/restore-smoke-journal.ts, or delete it if the world is fine.`,
+      );
+      process.exitCode = 1;
+    } else if (areaId) {
       // `legacy_handles.area_id` is NO ACTION, not CASCADE, so the handle row must go first — without
       // this the delete throws and, being in a `finally`, MASKS whatever the body actually failed on.
       // The cleanup is also wrapped: a cleanup failure must never impersonate a test failure.
@@ -224,12 +295,17 @@ async function main() {
       } catch (cleanupErr) {
         console.error(`\n⚠️  Cleanup of area ${areaId} FAILED:`, cleanupErr);
       }
+      // Only once the world is back AND the scratch area is gone is the journal redundant.
+      clearJournal(JOURNAL);
     }
   }
 }
 
 main()
-  .then(() => process.exit(0))
+  // 🛑 `process.exitCode`, not a hardcoded 0. The cleanup sets `exitCode = 1` when it could not put a
+  // borrowed device back, and `process.exit(0)` here OVERRODE it — so a run that left real devices
+  // displaced on a shared database reported success to the operator and to CI. Found in review.
+  .then(() => process.exit(process.exitCode ?? 0))
   .catch((e) => {
     console.error("\n❌", e);
     process.exit(1);

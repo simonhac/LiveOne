@@ -25,11 +25,13 @@ import {
  * device's days across two boundaries with nothing recording where the seam is. The span is measured
  * from the data (`agg1dSpanForPoints`).
  *
- * 🛑 **Refuses when the device's area has other members.** Until the resolver flip the offset a
- * rebuild reads is still the AREA's, so this has to move the area's `timezone_offset_min` /
- * `day_offset_min` too or the next nightly aggregate reverts it. The area named by
- * `primary_area_id` is the device's own area-of-one, so that is private — but a shared area would
- * re-bucket its other members as collateral, so the invariant is checked rather than assumed.
+ * 🛑 **Refuses when the device's area-of-one has other members.** The area it moves alongside the
+ * device is `primary_area_id`'s — the device's own — NOT the site area it belongs to. Since the
+ * bucketing flip the rebuild reads `devices.day_offset_min`, so moving the area is no longer what
+ * makes the change stick; it is what stops the area's own offset drifting from the device it was
+ * minted for. The refusal remains because a SHARED area would re-bucket its other members as
+ * collateral, and it asks `devices.area_id` — what lives there today — rather than the frozen
+ * `area_members`, which would report a re-homed device as still occupying its old shell.
  */
 
 // Delete-then-rebuild over a device's whole 1d history. 300 s is the ceiling, not the budget: a

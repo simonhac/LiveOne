@@ -34,14 +34,24 @@ async function runDevicesList(ctx: Ctx): Promise<number> {
             (isHelper(m) ? "   [server-managed]" : ""),
         ),
         "",
-        `${agg.members.length} device(s).`,
+        `${agg.members.length} device(s).` +
+          (agg.members.length === 0
+            ? "  (an area with no devices resolves to no points — that is legal, not broken)"
+            : ""),
       ].join("\n"),
     );
     return EXIT.OK;
   });
 }
 
-/** add / remove / set share one body: compute the target membership, diff it, PUT it. */
+/**
+ * add / remove / set share one body: compute the target membership, diff it, PUT it.
+ *
+ * 🛑 Since membership became `devices.area_id`, none of the three is additive any more. `add` MOVES a
+ * device here from wherever it was; `remove` makes it AMBIENT rather than deleting it; `set` does
+ * both. The diff below names each consequence explicitly, because the membership list alone shows
+ * only this area's half of a change that has two.
+ */
 function membershipWriter(
   mode: "add" | "remove" | "set",
 ): (ctx: Ctx) => Promise<number> {
@@ -62,6 +72,15 @@ function membershipWriter(
         else if (mode === "remove")
           target = current.filter((id) => !named.some((d) => d.id === id));
         else target = named.map((d) => d.id);
+
+        // 🛑 Name the AREA each joining device is taken OUT of. Membership is `devices.area_id`, so
+        // a device is in 0 or 1 area and adding it here removes it from wherever it was — possibly
+        // a live site with its own bindings and its own Sankey. An operator reading only
+        // "devices: 3 → 4  (+ Kutis)" would have no way to know they had just emptied a slot
+        // somewhere else.
+        const poaching = named.filter(
+          (d) => target.includes(d.id) && !current.includes(d.id) && d.areaId,
+        );
 
         // 🛑 Name the bindings a shrink would destroy. `replaceMembers` deletes the bindings of any
         // device that leaves, and that is the leg that fails silently in both directions — an
@@ -91,6 +110,19 @@ function membershipWriter(
           current.map(nameOf),
           target.map(nameOf),
         );
+        if (leaving.length)
+          lines.push(
+            "",
+            `${leaving.length} device(s) become AMBIENT — in no area at all, not deleted:`,
+            ...leaving.map((id) => `   ~ ${nameOf(id)}`),
+          );
+        if (poaching.length)
+          lines.push(
+            "",
+            `🛑 ${poaching.length} device(s) are being TAKEN OUT of another area:`,
+            ...poaching.map((d) => `   ← ${d.name} leaves "${d.areaName}"`),
+            "   that area loses this device's points, and any binding onto them.",
+          );
         if (doomed.length)
           lines.push(
             "",
@@ -106,6 +138,11 @@ function membershipWriter(
             area: agg.area,
             before: current,
             after: target,
+            orphaned: leaving.map(nameOf),
+            takenFrom: poaching.map((d) => ({
+              device: d.name,
+              area: d.areaName ?? null,
+            })),
             bindingsDeleted: doomed.length,
             applied: !ctx.dryRun,
             members,

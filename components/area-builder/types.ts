@@ -32,6 +32,16 @@ export interface CandidateDevice {
   vendorSiteId: string;
   status: string;
   ownerUserId: string | null;
+  /**
+   * 🛑 The area this device is in RIGHT NOW — `null` means it is in none.
+   *
+   * Not decoration: a device is in at most one area, so picking one here MOVES it out of whatever
+   * area it is in, deleting that area's bindings onto its points. A picker that offers a device
+   * without saying where it currently lives is offering an irreversible-looking edit with the
+   * consequence hidden.
+   */
+  areaId: string | null;
+  areaName: string | null;
 }
 
 export interface CandidateDevicesResponse {

@@ -49,12 +49,17 @@ describe("resolvePlacement", () => {
     }
   });
 
-  it("pins the platform default to insertDeviceToPg's historical `?? 600` / `?? Melbourne`", () => {
-    // Changing these moves the display timezone of every device onboarded through POST /api/devices
-    // and the Enphase OAuth callback, neither of which passes one. Deliberate change only.
+  it("pins the platform default to a SELF-CONSISTENT +600 — Brisbane, not Melbourne", () => {
+    // 🛑 The offset and the zone must name the same clock. Brisbane is the only Australian zone that
+    // equals +600 year-round; Melbourne observes DST, so pairing it with a fixed +600 states a
+    // contradiction for half the year. This constant is reached only by an AMBIENT device, which
+    // today means the ownerless OpenElectricity NEM regions — seeded with exactly this pair because
+    // NEM market time has no DST. It is NOT the onboarding default: `insertDeviceToPg` carries its
+    // own `?? 600` / `?? Melbourne` literals for the area it mints, and a new household connection
+    // in Victoria really is Melbourne.
     expect(PLATFORM_DEFAULT_PLACEMENT).toEqual({
       timezoneOffsetMin: 600,
-      displayTimezone: "Australia/Melbourne",
+      displayTimezone: "Australia/Brisbane",
       location: null,
     });
   });

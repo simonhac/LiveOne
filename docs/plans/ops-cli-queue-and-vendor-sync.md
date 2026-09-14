@@ -55,7 +55,7 @@ opportunity to drop the table names from the operator vocabulary:
 
 | Route | Today's noun | CLI verb | What it actually is |
 | --- | --- | --- | --- |
-| `PUT …/members` | "members" | `area devices add\|remove\|set` | which **devices** are in the area (`area_members`) |
+| `PUT …/members` | "members" | `area devices add\|remove\|set` | which **devices** are in the area (`devices.area_id`) |
 | `PUT …/bindings` | "bindings" | `area role set\|clear\|list` | which **point** fills an area's `(role, metric)` slot, at what priority |
 
 🛑 **A binding is not point metadata.** It is *area-scoped role resolution*: "in **this area**, the

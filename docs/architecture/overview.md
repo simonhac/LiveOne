@@ -112,9 +112,11 @@ adapter. Anything that used to be a composite system is now an Area with members
 - **Device** — one monitored installation from one vendor (a vendor connection). Was called a
   "system"; `systems` was dropped in config-v4, and `?systemId=N` survives only as a URL alias
   resolved through `legacy_handles`.
-- **Area** — a grouping of 1..N member devices, and the sole home for timezone, day offset and
-  location. Every device has exactly one primary area; an "area of one" is the same machinery with
-  one member. Areas are never polled and do not nest.
+- **Area** — a grouping of 0..N member devices, and the home for timezone, day offset and location.
+  A device is in **0 or 1** Area (`devices.area_id`) — Home Assistant's shape; NULL is _ambient_, a
+  real state in which the device is still polled, aggregated and addressable but has no flow matrix.
+  Areas are never polled and do not nest. (`devices.primary_area_id` still names an eagerly-minted
+  "area of one" per device, but it is vestigial — not membership — and migration 0072 drops it.)
 - **Point** — one metric stream (e.g. solar power). Identity is `points.id`, a uuid, whose wire form
   is the TypeID `pt_…`; addressed semantically by logical path (`source.solar/power`).
 - **TypeID / rid** — every config row has a uuid whose wire form is a prefixed TypeID (`dv_` device,

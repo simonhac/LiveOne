@@ -4,7 +4,10 @@ import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import { devices } from "@/lib/db/planetscale/schema";
 import { eq, and, ne } from "drizzle-orm";
 import { requireAdmin, requireDeviceAccess } from "@/lib/api-auth";
-import { DeviceWriter } from "@/lib/registry/device-writer";
+import {
+  DeviceWriter,
+  PlacementRefusedError,
+} from "@/lib/registry/device-writer";
 import { isValidTimezone } from "@/lib/timezones";
 import { DeviceConfigRegistry } from "@/lib/registry/device-config";
 
@@ -208,7 +211,14 @@ export async function PATCH(
       }
     }
 
-    await DeviceWriter.updateDevice(systemId, updates);
+    // 🛑 `require`: a placement edit that cannot be applied ROLLS THE WHOLE PATCH BACK. Placement
+    // lives on the AREA, so a device that is ambient or shares a site with others has nowhere of its
+    // own to put it — and committing the name change while silently dropping the timezone, then
+    // reporting failure, is the worst of both. 409: the request was well-formed and refused by the
+    // state of the world, not by the body.
+    await DeviceWriter.updateDevice(systemId, updates, {
+      placement: "require",
+    });
 
     // Revalidate dashboard paths to refresh server-side data
     revalidatePath("/dashboard", "layout");
@@ -226,6 +236,13 @@ export async function PATCH(
       },
     });
   } catch (error) {
+    if (error instanceof PlacementRefusedError)
+      return NextResponse.json(
+        {
+          error: `Could not change this device's location or timezone: ${error.reason}. Nothing was changed.`,
+        },
+        { status: 409 },
+      );
     console.error("Error updating system:", error);
 
     // Check for unique constraint violation on alias

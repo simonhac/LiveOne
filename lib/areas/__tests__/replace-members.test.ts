@@ -2,7 +2,7 @@
  * The membership DIFF behind `PUT /api/v4/areas/{id}/members`.
  *
  * 🛑 Why this exists rather than leaning on the live smoke run: a wrong removal set is SILENT in both
- * directions. Under-delete and a ghost member survives; over-delete and bindings that should have
+ * directions. Under-remove and a ghost member survives; over-remove and bindings that should have
  * stayed are gone — neither raises, and a status-and-payload assertion over the endpoint can pass
  * either way if the fixture happens not to distinguish them. `scripts/utils/v4-surface-smoke.ts` drives
  * the proving case for real (two members, a binding on EACH, remove one). This pins the decision itself:
@@ -10,15 +10,24 @@
  *
  * The db is a recorder, not a query engine, so these assert the operations issued — which table, which
  * device, in which order — and deliberately not the rendered SQL (the live run covers that).
+ *
+ * 🛑 Stage 4 of the device→0..1-area change rewrote what "remove" MEANS here. Membership is
+ * `devices.area_id`, so a departing member is an UPDATE to NULL — it becomes ambient, not deleted —
+ * and a member that joins is an UPDATE to this area, which takes it out of whatever area it was in.
+ * The `area_members` delete/upsert pair is gone, and with it `ordinal`: a pure reorder is now
+ * genuinely a no-op rather than "a real edit".
  */
 import { describe, it, expect, beforeEach, jest } from "@jest/globals";
 
 let currentMembers: string[] = [];
 let helperRows: { id: string }[] = [];
+/** What `assertDevicesRehomable` observed: where each device was when the caller was authorized. */
+let authorized: Map<string, string | null>;
 const ops: { op: string; table: string; values?: unknown }[] = [];
 
 jest.mock("@/lib/areas/members", () => ({
   getAreaMemberDeviceIds: jest.fn(async () => currentMembers),
+  setDeviceArea: jest.fn(),
 }));
 jest.mock("@/lib/db/planetscale", () => ({
   requirePlanetscaleDb: () => fakeDb,
@@ -27,9 +36,13 @@ jest.mock("@/lib/kv-cache-manager", () => ({
   buildSubscriptionRegistry: jest.fn(),
 }));
 
-import { areaBindings, areaMembers } from "@/lib/db/planetscale/schema";
+import { areaBindings, devices } from "@/lib/db/planetscale/schema";
 import { Device } from "@/lib/ids";
-import { replaceMembers, AreaValidationError } from "../create";
+import {
+  replaceMembers,
+  AreaConflictError,
+  AreaValidationError,
+} from "../create";
 
 /**
  * Identify the target table by IDENTITY against the imported schema objects, not by reading a name off
@@ -40,9 +53,16 @@ import { replaceMembers, AreaValidationError } from "../create";
 const nameOf = (table: unknown): string =>
   table === areaBindings
     ? "area_bindings"
-    : table === areaMembers
-      ? "area_members"
+    : table === devices
+      ? "devices"
       : "«unexpected table»";
+
+/**
+ * The moves are conditional UPDATEs now — `.returning()` decides whether the binding delete runs at
+ * all — so the recorder has to answer that, and `updateApplies` is how a test says "someone moved
+ * this device out from under us".
+ */
+let updateApplies = true;
 
 const tx = {
   select: () => ({ from: () => ({ where: () => "«subquery»" }) }),
@@ -51,12 +71,21 @@ const tx = {
       ops.push({ op: "delete", table: nameOf(table) });
     },
   }),
-  insert: (table: unknown) => ({
-    values: (values: unknown) => ({
-      onConflictDoUpdate: async () => {
-        ops.push({ op: "upsert", table: nameOf(table), values });
-      },
-    }),
+  update: (table: unknown) => ({
+    set: (values: Record<string, unknown>) => {
+      const record = () => {
+        ops.push({ op: "update", table: nameOf(table), values: values.areaId });
+      };
+      return {
+        where: () => {
+          const rows = updateApplies ? [{ id: "row" }] : [];
+          record();
+          return Object.assign(Promise.resolve(rows), {
+            returning: async () => rows,
+          });
+        },
+      };
+    },
   }),
 };
 const fakeDb = {
@@ -73,55 +102,106 @@ beforeEach(() => {
   ops.length = 0;
   currentMembers = [A, B];
   helperRows = [];
+  updateApplies = true;
+  authorized = new Map([
+    [uuid(1), "area-a"],
+    [uuid(2), "area-a"],
+  ]);
 });
 
 describe("replaceMembers — the declarative full replace", () => {
-  it("refuses an empty membership (an area of zero members has no point set)", async () => {
-    await expect(replaceMembers("area-a", [])).rejects.toBeInstanceOf(
-      AreaValidationError,
-    );
-    expect(ops).toHaveLength(0);
-  });
-
-  it("refuses a duplicate — `[a, b, a]` states two ordinals for one member", async () => {
-    await expect(replaceMembers("area-a", [A, B, A])).rejects.toBeInstanceOf(
-      AreaValidationError,
-    );
-    expect(ops).toHaveLength(0);
-  });
-
-  it("removes exactly the omitted member, bindings FIRST, then the membership row", async () => {
-    await replaceMembers("area-a", [A]);
+  it("ACCEPTS an empty membership — a zero-device area is first-class now", async () => {
+    // The old rule ("an area must have at least one member") is retired with the area-of-one: it is
+    // what made "hide areas-of-one" a render-time convention instead of the structural "hide areas
+    // with zero devices". Emptying an area orphans its members; it does not delete them.
+    await replaceMembers("area-a", [], authorized);
     expect(ops.map((o) => `${o.op} ${o.table}`)).toEqual([
       "delete area_bindings",
-      "delete area_members",
-      "upsert area_members",
+      "update devices",
+      "delete area_bindings",
+      "update devices",
+    ]);
+    // Both departures are a NULL, not a delete — the devices become ambient.
+    expect(ops.filter((o) => o.op === "update").map((o) => o.values)).toEqual([
+      null,
+      null,
     ]);
   });
 
-  it("removes NOTHING when the membership is merely reordered", async () => {
-    await replaceMembers("area-a", [B, A]);
-    expect(ops.filter((o) => o.op === "delete")).toHaveLength(0);
-    // …but the reorder is still APPLIED: the array index is the ordinal.
-    expect(ops[0].values).toEqual([
-      { areaId: "area-a", deviceId: uuid(2), ordinal: 0 },
-      { areaId: "area-a", deviceId: uuid(1), ordinal: 1 },
-    ]);
+  it("refuses a duplicate — the wire is a set, stated as an array", async () => {
+    await expect(
+      replaceMembers("area-a", [A, B, A], authorized),
+    ).rejects.toBeInstanceOf(AreaValidationError);
+    expect(ops).toHaveLength(0);
   });
 
-  it("upserts every WANTED member, not merely the new ones (a stayer may be moving ordinal)", async () => {
+  it("orphans exactly the omitted member, bindings FIRST, then the area edge", async () => {
+    const vacated = await replaceMembers("area-a", [A], authorized);
+    expect(ops.map((o) => `${o.op} ${o.table}`)).toEqual([
+      "delete area_bindings",
+      "update devices",
+    ]);
+    expect(ops[1].values).toBe(null); // B becomes AMBIENT, not deleted
+    // A is already in area-a, so it is not rewritten and nothing was vacated.
+    expect(vacated).toEqual([]);
+  });
+
+  it("a member already in this area is left completely alone", async () => {
+    const vacated = await replaceMembers("area-a", [A, B], authorized);
+    expect(ops).toEqual([]);
+    expect(vacated).toEqual([]);
+  });
+
+  it("🛑 a JOINING member is detached from the area it came FROM, bindings and all", async () => {
+    // The defect this pins, found in review: the first cut wrote `area_id` for the incoming device
+    // and stopped. `area_bindings` says nothing about membership, and the resolver treats bindings
+    // as the OVERRIDE that SELECTS an area's points — so the source area went on serving a device it
+    // no longer held, silently, with nothing to grep for.
     currentMembers = [A];
-    await replaceMembers("area-a", [A, B]);
-    expect(ops).toEqual([
-      {
-        op: "upsert",
-        table: "area_members",
-        values: [
-          { areaId: "area-a", deviceId: uuid(1), ordinal: 0 },
-          { areaId: "area-a", deviceId: uuid(2), ordinal: 1 },
-        ],
-      },
+    authorized = new Map([
+      [uuid(1), "area-a"],
+      [uuid(2), "area-elsewhere"],
     ]);
+    const vacated = await replaceMembers("area-a", [A, B], authorized);
+    // 🛑 The UPDATE comes FIRST and the delete is conditional on it — deleting a live area's
+    // bindings on behalf of a move that did not apply is the worst outcome here, because bindings
+    // are hand-authored and nothing rebuilds them.
+    expect(ops.map((o) => `${o.op} ${o.table}`)).toEqual([
+      "update devices",
+      "delete area_bindings", // …in area-elsewhere, B's former home
+    ]);
+    expect(ops[0].values).toBe("area-a");
+    // 🛑 Returned so the ROUTE can refresh serving at both ends — the source area's KV subscription
+    // registry and point-series cache still name this device's points.
+    expect(vacated).toEqual(["area-elsewhere"]);
+  });
+
+  it("🛑 THROWS when the device moved out from under us, so the whole replace rolls back", async () => {
+    // The conditional UPDATE matches zero rows because `area_id` is no longer what authorization
+    // saw. Skipping it — which the first cut did — commits the DESTRUCTIVE half of a full replace and
+    // not the constructive one: the departing members and their bindings are already gone by this
+    // point, so the caller gets 200 and an EMPTY area. Throwing rolls the transaction back and the
+    // route answers 409.
+    currentMembers = [A];
+    authorized = new Map([
+      [uuid(1), "area-a"],
+      [uuid(2), "area-elsewhere"],
+    ]);
+    updateApplies = false;
+    await expect(
+      replaceMembers("area-a", [A, B], authorized),
+    ).rejects.toBeInstanceOf(AreaConflictError);
+  });
+
+  it("moves an AMBIENT device in without trying to detach it from anywhere", async () => {
+    currentMembers = [A];
+    authorized = new Map<string, string | null>([
+      [uuid(1), "area-a"],
+      [uuid(2), null],
+    ]);
+    const vacated = await replaceMembers("area-a", [A, B], authorized);
+    expect(ops.map((o) => `${o.op} ${o.table}`)).toEqual(["update devices"]);
+    expect(vacated).toEqual([]);
   });
 
   it("🛑 never evicts a SERVER-MANAGED helper member that the caller omitted", async () => {
@@ -130,18 +210,22 @@ describe("replaceMembers — the declarative full replace", () => {
     // provenance card until the next daily recompute rebuilt them.
     currentMembers = [A, HELPER];
     helperRows = [{ id: uuid(3) }];
-    await replaceMembers("area-a", [A]);
-    expect(ops.filter((o) => o.op === "delete")).toHaveLength(0);
+    authorized = new Map([
+      [uuid(1), "area-a"],
+      [uuid(3), "area-a"],
+    ]);
+    await replaceMembers("area-a", [A], authorized);
+    expect(ops).toEqual([]);
   });
 
   it("…and the exception is narrow: a REAL member omitted alongside a helper still goes", async () => {
     currentMembers = [A, B, HELPER];
     helperRows = [{ id: uuid(3) }];
-    await replaceMembers("area-a", [A]);
+    await replaceMembers("area-a", [A], authorized);
     expect(ops.map((o) => `${o.op} ${o.table}`)).toEqual([
       "delete area_bindings",
-      "delete area_members",
-      "upsert area_members",
+      "update devices",
     ]);
+    expect(ops[1].values).toBe(null);
   });
 });

@@ -20,9 +20,10 @@ import { areas, legacyHandles } from "@/lib/db/planetscale/schema";
 import { Area, Device, type DeviceId } from "@/lib/ids";
 import { DeviceRegistry } from "@/lib/registry";
 import {
-  assertMembersReadable,
+  assertDevicesRehomable,
   AreaAccessError,
   AreaValidationError,
+  type AuthorizedPlacements,
 } from "@/lib/areas/create";
 import { listReadableAreas, type ReadableArea } from "@/lib/areas/list";
 import type { AreaLocation } from "@/lib/areas/types";
@@ -90,10 +91,20 @@ export type ReadableAreaResult =
  * authenticated) so it can back both the `/api/v4/areas/{id}` route loader and the `POST /dashboards
  * {seedArea}` branch without a second Clerk round-trip. A malformed id → 400; a well-formed id outside the
  * readable set → 403 (the §8.4 no-escalation collapse: "unknown" and "not yours" are indistinguishable).
+ *
+ * 🛑 `opts.isAdmin` means "this request ASKED to act as admin" (`AuthContext.actingAsAdmin`), not
+ * "this user is one". Being an admin and using it are different, and the default is not using it —
+ * so an admin who does not send the header sees their own areas here, exactly as anyone else does.
+ * When they do send it, this is what stops an admin being able to `PATCH /api/v4/areas/{id}` an area
+ * that `GET` on the same id refused: write access to something you cannot read.
+ *
+ * It is NOT passed by the `POST /dashboards {seedArea}` branch, which seeds a doc whose refs must be
+ * readable by the doc's OWNER — see `checkDocRefsReadable`.
  */
 export async function findReadableArea(
   userId: string,
   arId: string,
+  opts: { isAdmin?: boolean } = {},
 ): Promise<ReadableAreaResult> {
   const parsed = Area.parse(arId);
   if (!parsed.ok) {
@@ -104,7 +115,9 @@ export async function findReadableArea(
     };
   }
   const uuid = Area.toUuid(parsed.id);
-  const area = (await listReadableAreas(userId)).find((a) => a.id === uuid);
+  const area = (
+    await listReadableAreas(userId, { isAdmin: opts.isAdmin })
+  ).find((a) => a.id === uuid);
   if (!area) {
     return {
       ok: false,
@@ -125,7 +138,9 @@ export async function loadReadableArea(
 ): Promise<{ area: ReadableArea; userId: string } | { error: NextResponse }> {
   const auth = await requireAuth(request);
   if (auth instanceof NextResponse) return { error: auth };
-  const r = await findReadableArea(auth.userId, arId);
+  const r = await findReadableArea(auth.userId, arId, {
+    isAdmin: auth.actingAsAdmin,
+  });
   if (!r.ok) {
     return {
       error: NextResponse.json({ error: r.message }, { status: r.status }),
@@ -136,12 +151,22 @@ export async function loadReadableArea(
 
 /** `resolveMemberDeviceRefs` outcome — the readable member set, or a status the caller maps to a 4xx. */
 export type MemberRefsResult =
-  | { ok: true; deviceIds: DeviceId[]; systemIds: number[] }
+  | {
+      ok: true;
+      deviceIds: DeviceId[];
+      systemIds: number[];
+      /**
+       * What the firewall OBSERVED while authorizing — each device's area at that moment. The DAO
+       * scopes its writes on it, so the decision and the write are about the same state.
+       */
+      authorized: AuthorizedPlacements;
+    }
   | { ok: false; status: 403 | 422; message: string };
 
 /**
  * Decode a v4 `members: [dv_…]` list into the integer handles the area DAOs still take, refusing any
- * ref the caller cannot READ — the §8.4 no-escalation firewall on the members wire.
+ * ref the caller may not PLACE — the §8.4 no-escalation firewall on the members wire. See
+ * `assertDevicesRehomable` for why placing is a stricter question than reading.
  *
  * Two failures are deliberately COLLAPSED into one 403: a well-formed `dv_` id that names no device,
  * and one that names a device the caller cannot see. Distinguishing them would turn this endpoint into
@@ -149,22 +174,29 @@ export type MemberRefsResult =
  * (wrong prefix / bad base32) is a different thing — it cannot name anything, so it is a body error and
  * reads as 422 with the offending value echoed.
  *
- * Order is PRESERVED (it becomes `area_members.ordinal`), and duplicates are rejected rather than
- * silently deduped: on a declarative full-replace, `[a, b, a]` states two different ordinals for `a` and
- * there is no defensible way to pick one.
+ * 🛑 An EMPTY array is accepted (a zero-device area is first-class since Stage 4) but a MISSING or
+ * non-array `members` is still a 422. The distinction is load-bearing in the one direction that
+ * matters: `PUT /members` is a full replace, so reading a malformed body as "no members" would let a
+ * client bug silently empty an area and orphan every device in it.
+ *
+ * Order is no longer significant — `area_members.ordinal` is gone with the membership row — but
+ * duplicates are still rejected rather than silently deduped, because a caller that names a device
+ * twice does not have the model this endpoint implements.
  */
 export async function resolveMemberDeviceRefs(
   userId: string,
   isAdmin: boolean,
   refs: unknown,
 ): Promise<MemberRefsResult> {
-  if (!Array.isArray(refs) || refs.length === 0) {
+  if (!Array.isArray(refs)) {
     return {
       ok: false,
       status: 422,
-      message: "members must be a non-empty array of dv_ ids",
+      message: "members must be an array of dv_ ids",
     };
   }
+  if (refs.length === 0)
+    return { ok: true, deviceIds: [], systemIds: [], authorized: new Map() };
   const deviceIds: DeviceId[] = [];
   for (const ref of refs) {
     const parsed = typeof ref === "string" ? Device.parse(ref) : null;
@@ -186,7 +218,7 @@ export async function resolveMemberDeviceRefs(
   }
 
   // `ridsForDevices` answers only for devices that HAVE a row; a miss is an unknown id, which collapses
-  // into "not readable" above. The readability decision itself is `assertMembersReadable`'s — the same
+  // into "not readable" above. The admission decision itself is `assertDevicesRehomable`'s — the same
   // firewall the legacy routes call, so v4 cannot become the laxer door onto the same tables.
   const rids = await DeviceRegistry.ridsForDevices(deviceIds);
   const systemIds: number[] = [];
@@ -201,8 +233,9 @@ export async function resolveMemberDeviceRefs(
     }
     systemIds.push(rid);
   }
+  let authorized: AuthorizedPlacements;
   try {
-    await assertMembersReadable(userId, isAdmin, systemIds);
+    authorized = await assertDevicesRehomable(userId, isAdmin, systemIds);
   } catch (err) {
     if (err instanceof AreaAccessError)
       return { ok: false, status: 403, message: err.message };
@@ -210,7 +243,7 @@ export async function resolveMemberDeviceRefs(
       return { ok: false, status: 422, message: err.message };
     throw err;
   }
-  return { ok: true, deviceIds, systemIds };
+  return { ok: true, deviceIds, systemIds, authorized };
 }
 
 /**

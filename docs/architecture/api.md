@@ -91,6 +91,62 @@ Where things live, so you know which tree to look in. Within each, read the rout
 | Family                        | What it is                                                                                                                                                                               |
 | ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `/api/v4/*`                   | **Config CRUD**, TypeID-addressed: areas (+ `members`, `bindings`, `resolution`, `eligibility`, `default-group`, provenance ops), dashboards (+ `grants`, `shares`, `validate`), devices |
+
+### Admin is a privilege you invoke, not a state you are in
+
+🛑 **Being an admin and acting as one are different, and the default is not acting.** An admin
+browsing the app or running the CLI is answered exactly as any other user would be; reaching across
+owners is something you say, once, and see reported back to you. A privilege that is always on is one
+you cannot audit and cannot forget to use.
+
+The carrier is the request header **`x-liveone-admin: 1`**, surfaced as `AuthContext.actingAsAdmin`
+(`lib/api-auth.ts`). It is gated on the caller actually being an admin, so the header alone grants
+nothing — setting it is a REQUEST to use a privilege, never a claim to have one. A header rather than
+a query parameter because "act as admin for this request" is a property of the request, not a
+selector on one resource, so every verb carries it without each route parsing it.
+
+| surface | how you invoke it |
+| --- | --- |
+| operator CLI | `--admin` on any API verb. The `target:` line then reads `(AS ADMIN — fleet-wide)` instead of `(admin, not in use)`, so a fleet-wide answer is always traceable to a request for one. A non-admin passing it is refused (exit 3), never silently narrowed. |
+| web app | not yet wired — see below |
+
+What it widens today: `listReadableAreas` and `devicesVisibleByUser`, and therefore
+`GET /api/v4/areas`, `GET /api/v4/devices`, and `GET /api/v4/areas/{id}` + its sub-resources through
+`findReadableArea`. That last one is what removes a real asymmetry — `loadAreaForOwner` has always
+granted an admin WRITE on any area, so without it an admin could `PATCH` an area that `GET` on the
+same id refused: **write access to something you cannot read.**
+
+Two deliberate non-participants:
+
+- **`requireAdmin`** (the `/api/admin/*` surfaces) keeps using `isAdmin`, not `actingAsAdmin`.
+  Navigating to an admin-only route IS the explicit act; a second signal there would be ceremony.
+- **`POST /api/v4/dashboards {seedArea}`** and `checkDocRefsReadable` validate a document's refs
+  against the document's **owner**, not the caller — so seeding from an area an admin can see but does
+  not own would mint a doc that fails its own later edit check. Admin widens what you may address,
+  not what you may embed.
+
+🛑 **The rule as it stands: the ENUMERATING reads are opt-in, writes are not** — and the split is a
+staging decision, not a principle.
+
+The reads converted are the **enumerating** ones and the **area aggregate**: `listReadableAreas`,
+`devicesVisibleByUser`, and therefore `GET /api/v4/areas`, `GET /api/v4/devices`, and
+`GET /api/v4/areas/{id}` + its sub-resources through `findReadableArea`.
+
+⚠️ **Not every cross-owner read.** `requireDeviceAccess`'s `canRead` and
+`GET /api/v4/areas/by-handle/{handle}` still use plain `isAdmin`, so without the header an admin can
+be refused by `GET /api/v4/devices/{id}` and still read that device's `/config` or `/sessions`. That
+is an inconsistency, not an escalation — those privileges are pre-existing and unchanged — but it is
+real and it is why this section says "the reads converted" rather than "all reads".
+
+Every cross-owner **write** — `requireDeviceAccess`'s `canWrite`, `loadAreaForOwner`'s gate,
+`resolveMemberDeviceRefs` / `assertDevicesRehomable`, `PATCH /api/v4/devices/{id}` — still uses plain
+`isAdmin` and is unconditional, exactly as before. Uniform: no write route is the odd one out.
+
+Moving the write side onto the opt-in is the right end state and should be **one** change, because a
+half-converted write surface is worse than either end — an admin would be able to reach a route and
+then be refused halfway through it, for reasons that differ per route. The web app's "act as admin"
+toggle belongs with it: until that exists there is no way for a browser to send the header, so
+converting writes first would lock admins out of the UI.
 | `/api/data`                   | Live values for one subject (KV-backed) — the serving endpoint for card "now" values                                                                                                     |
 | `/api/history`                | All historical series, OpenNEM format, plus `?include=sankey` for the flow matrix. One endpoint for every window                                                                         |
 | `/api/device[s]/*`            | Per-device reads (points, series, run-periods) and device management (credentials, location, Tesla commands)                                                                             |

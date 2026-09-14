@@ -69,6 +69,7 @@ Data goes to stdout; all diagnostics go to stderr. Mutating commands are **dry b
       - [liveone device config clean](#liveone-device-config-clean)  _(writes)_
     - [liveone device recompute](#liveone-device-recompute)  _(writes)_
     - [liveone device change-offset](#liveone-device-change-offset)  _(writes)_
+    - [liveone device area](#liveone-device-area)  _(writes)_
   - [liveone area](#liveone-area)
     - [liveone area list](#liveone-area-list)
     - [liveone area show](#liveone-area-show)
@@ -290,6 +291,7 @@ Common options:
   --quiet                    Suppress non-essential output on stderr
   --color                    Colourise human output (default: on a terminal)
   --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
 
 Output:
   --format human   aligned text — the default at a terminal
@@ -336,6 +338,7 @@ Common options:
   --quiet                    Suppress non-essential output on stderr
   --color                    Colourise human output (default: on a terminal)
   --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
 
 Output:
   --format human   aligned text — the default at a terminal
@@ -384,6 +387,7 @@ Common options:
   --quiet                    Suppress non-essential output on stderr
   --color                    Colourise human output (default: on a terminal)
   --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
 
 Output:
   --format human   aligned text — the default at a terminal
@@ -431,6 +435,7 @@ Common options:
   --quiet                    Suppress non-essential output on stderr
   --color                    Colourise human output (default: on a terminal)
   --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
 
 Output:
   --format human   aligned text — the default at a terminal
@@ -482,6 +487,7 @@ Common options:
   --quiet                    Suppress non-essential output on stderr
   --color                    Colourise human output (default: on a terminal)
   --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
 
 Output:
   --format human   aligned text — the default at a terminal
@@ -528,6 +534,7 @@ Common options:
   --quiet                    Suppress non-essential output on stderr
   --color                    Colourise human output (default: on a terminal)
   --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
 
 Output:
   --format human   aligned text — the default at a terminal
@@ -608,6 +615,7 @@ Common options:
   --quiet                    Suppress non-essential output on stderr
   --color                    Colourise human output (default: on a terminal)
   --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
 
 Output:
   --format human   aligned text — the default at a terminal
@@ -655,6 +663,7 @@ Common options:
   --quiet                    Suppress non-essential output on stderr
   --color                    Colourise human output (default: on a terminal)
   --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
 
 Output:
   --format human   aligned text — the default at a terminal
@@ -714,6 +723,7 @@ Common options:
   --quiet                    Suppress non-essential output on stderr
   --color                    Colourise human output (default: on a terminal)
   --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
 
 Output:
   --format human   aligned text — the default at a terminal
@@ -769,6 +779,7 @@ Common options:
   --quiet                    Suppress non-essential output on stderr
   --color                    Colourise human output (default: on a terminal)
   --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
 
 Output:
   --format human   aligned text — the default at a terminal
@@ -824,6 +835,7 @@ Common options:
   --quiet                    Suppress non-essential output on stderr
   --color                    Colourise human output (default: on a terminal)
   --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
   --apply                    Actually write. Without it nothing is changed.
   --dry-run                  Report what would change and write nothing (the default)
   --yes                      Skip the confirmation prompt. Required with --apply off a terminal.
@@ -886,6 +898,7 @@ Common options:
   --quiet                    Suppress non-essential output on stderr
   --color                    Colourise human output (default: on a terminal)
   --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
   --apply                    Actually write. Without it nothing is changed.
   --dry-run                  Report what would change and write nothing (the default)
   --yes                      Skip the confirmation prompt. Required with --apply off a terminal.
@@ -954,6 +967,7 @@ Common options:
   --quiet                    Suppress non-essential output on stderr
   --color                    Colourise human output (default: on a terminal)
   --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
   --apply                    Actually write. Without it nothing is changed.
   --dry-run                  Report what would change and write nothing (the default)
   --yes                      Skip the confirmation prompt. Required with --apply off a terminal.
@@ -1022,6 +1036,7 @@ Common options:
   --quiet                    Suppress non-essential output on stderr
   --color                    Colourise human output (default: on a terminal)
   --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
   --apply                    Actually write. Without it nothing is changed.
   --dry-run                  Report what would change and write nothing (the default)
   --yes                      Skip the confirmation prompt. Required with --apply off a terminal.
@@ -1079,6 +1094,7 @@ Common options:
   --quiet                    Suppress non-essential output on stderr
   --color                    Colourise human output (default: on a terminal)
   --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
   --apply                    Actually write. Without it nothing is changed.
   --dry-run                  Report what would change and write nothing (the default)
   --yes                      Skip the confirmation prompt. Required with --apply off a terminal.
@@ -1138,6 +1154,7 @@ Common options:
   --quiet                    Suppress non-essential output on stderr
   --color                    Colourise human output (default: on a terminal)
   --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
   --apply                    Actually write. Without it nothing is changed.
   --dry-run                  Report what would change and write nothing (the default)
   --yes                      Skip the confirmation prompt. Required with --apply off a terminal.
@@ -1200,6 +1217,7 @@ Common options:
   --quiet                    Suppress non-essential output on stderr
   --color                    Colourise human output (default: on a terminal)
   --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
   --apply                    Actually write. Without it nothing is changed.
   --dry-run                  Report what would change and write nothing (the default)
   --yes                      Skip the confirmation prompt. Required with --apply off a terminal.
@@ -1270,6 +1288,7 @@ Common options:
   --quiet                    Suppress non-essential output on stderr
   --color                    Colourise human output (default: on a terminal)
   --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
   --apply                    Actually write. Without it nothing is changed.
   --dry-run                  Report what would change and write nothing (the default)
   --yes                      Skip the confirmation prompt. Required with --apply off a terminal.
@@ -1332,6 +1351,7 @@ Common options:
   --quiet                    Suppress non-essential output on stderr
   --color                    Colourise human output (default: on a terminal)
   --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
 
 Output:
   --format human   aligned text — the default at a terminal
@@ -1391,6 +1411,7 @@ Common options:
   --quiet                    Suppress non-essential output on stderr
   --color                    Colourise human output (default: on a terminal)
   --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
   --apply                    Actually write. Without it nothing is changed.
   --dry-run                  Report what would change and write nothing (the default)
   --yes                      Skip the confirmation prompt. Required with --apply off a terminal.
@@ -1449,6 +1470,7 @@ Common options:
   --quiet                    Suppress non-essential output on stderr
   --color                    Colourise human output (default: on a terminal)
   --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
   --apply                    Actually write. Without it nothing is changed.
   --dry-run                  Report what would change and write nothing (the default)
   --yes                      Skip the confirmation prompt. Required with --apply off a terminal.
@@ -1511,6 +1533,7 @@ Common options:
   --quiet                    Suppress non-essential output on stderr
   --color                    Colourise human output (default: on a terminal)
   --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
 
 Output:
   --format human   aligned text — the default at a terminal
@@ -1556,6 +1579,7 @@ Common options:
   --quiet                    Suppress non-essential output on stderr
   --color                    Colourise human output (default: on a terminal)
   --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
 
 Output:
   --format human   aligned text — the default at a terminal
@@ -1610,6 +1634,7 @@ Common options:
   --quiet                    Suppress non-essential output on stderr
   --color                    Colourise human output (default: on a terminal)
   --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
   --apply                    Actually write. Without it nothing is changed.
   --dry-run                  Report what would change and write nothing (the default)
   --yes                      Skip the confirmation prompt. Required with --apply off a terminal.
@@ -1663,6 +1688,7 @@ Common options:
   --quiet                    Suppress non-essential output on stderr
   --color                    Colourise human output (default: on a terminal)
   --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
   --apply                    Actually write. Without it nothing is changed.
   --dry-run                  Report what would change and write nothing (the default)
   --yes                      Skip the confirmation prompt. Required with --apply off a terminal.
@@ -1720,6 +1746,7 @@ Common options:
   --quiet                    Suppress non-essential output on stderr
   --color                    Colourise human output (default: on a terminal)
   --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
   --apply                    Actually write. Without it nothing is changed.
   --dry-run                  Report what would change and write nothing (the default)
   --yes                      Skip the confirmation prompt. Required with --apply off a terminal.
@@ -1779,6 +1806,7 @@ Common options:
   --quiet                    Suppress non-essential output on stderr
   --color                    Colourise human output (default: on a terminal)
   --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
 
 Output:
   --format human   aligned text — the default at a terminal
@@ -1824,6 +1852,7 @@ Common options:
   --quiet                    Suppress non-essential output on stderr
   --color                    Colourise human output (default: on a terminal)
   --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
 
 Output:
   --format human   aligned text — the default at a terminal
@@ -1874,6 +1903,7 @@ Common options:
   --quiet                    Suppress non-essential output on stderr
   --color                    Colourise human output (default: on a terminal)
   --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
   --apply                    Actually write. Without it nothing is changed.
   --dry-run                  Report what would change and write nothing (the default)
   --yes                      Skip the confirmation prompt. Required with --apply off a terminal.
@@ -1926,6 +1956,7 @@ Common options:
   --quiet                    Suppress non-essential output on stderr
   --color                    Colourise human output (default: on a terminal)
   --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
   --apply                    Actually write. Without it nothing is changed.
   --dry-run                  Report what would change and write nothing (the default)
   --yes                      Skip the confirmation prompt. Required with --apply off a terminal.
@@ -1986,6 +2017,7 @@ Common options:
   --quiet                    Suppress non-essential output on stderr
   --color                    Colourise human output (default: on a terminal)
   --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
   --apply                    Actually write. Without it nothing is changed.
   --dry-run                  Report what would change and write nothing (the default)
   --yes                      Skip the confirmation prompt. Required with --apply off a terminal.
@@ -2031,8 +2063,8 @@ Http-only: every verb calls the deployed API as you (`liveone auth login`), and 
 `target: <origin> as <you>` on stderr first — read it to know which environment answered.
 Ids are per-environment.
 
-Every verb here READS except `recompute` and `change-offset`, which write and are dry-run by
-default.
+Every verb here READS except `recompute`, `change-offset` and `area`, which write and are
+dry-run by default.
 
 Usage:
   liveone device <subcommand> [options]
@@ -2048,6 +2080,7 @@ Subcommands:
   config                 The stored DeviceConfig blob — read it, audit it for rot, normalise it.
   recompute              Rebuild the rows derived FROM a device's readings, over a window of local days.  (writes)
   change-offset          Move a device's fixed day offset, and re-bucket every daily aggregate rolled up on the old one.  (writes)
+  area                   Put a device in an area, or in none.  (writes)
 
 Run `liveone device <subcommand> --help` for a subcommand's own options.
 
@@ -2056,6 +2089,7 @@ Common options:
   --quiet                    Suppress non-essential output on stderr
   --color                    Colourise human output (default: on a terminal)
   --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
 
 Output:
   --format human   aligned text — the default at a terminal
@@ -2100,6 +2134,7 @@ Common options:
   --quiet                    Suppress non-essential output on stderr
   --color                    Colourise human output (default: on a terminal)
   --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
 
 Output:
   --format human   aligned text — the default at a terminal
@@ -2155,6 +2190,7 @@ Common options:
   --quiet                    Suppress non-essential output on stderr
   --color                    Colourise human output (default: on a terminal)
   --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
 
 Output:
   --format human   aligned text — the default at a terminal
@@ -2205,6 +2241,7 @@ Common options:
   --quiet                    Suppress non-essential output on stderr
   --color                    Colourise human output (default: on a terminal)
   --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
 
 Output:
   --format human   aligned text — the default at a terminal
@@ -2254,6 +2291,7 @@ Common options:
   --quiet                    Suppress non-essential output on stderr
   --color                    Colourise human output (default: on a terminal)
   --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
 
 Output:
   --format human   aligned text — the default at a terminal
@@ -2320,6 +2358,7 @@ Common options:
   --quiet                    Suppress non-essential output on stderr
   --color                    Colourise human output (default: on a terminal)
   --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
 
 Output:
   --format human   aligned text — the default at a terminal
@@ -2386,6 +2425,7 @@ Common options:
   --quiet                    Suppress non-essential output on stderr
   --color                    Colourise human output (default: on a terminal)
   --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
 
 Output:
   --format human   aligned text — the default at a terminal
@@ -2431,6 +2471,7 @@ Common options:
   --quiet                    Suppress non-essential output on stderr
   --color                    Colourise human output (default: on a terminal)
   --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
 
 Output:
   --format human   aligned text — the default at a terminal
@@ -2489,6 +2530,7 @@ Common options:
   --quiet                    Suppress non-essential output on stderr
   --color                    Colourise human output (default: on a terminal)
   --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
 
 Output:
   --format human   aligned text — the default at a terminal
@@ -2551,6 +2593,7 @@ Common options:
   --quiet                    Suppress non-essential output on stderr
   --color                    Colourise human output (default: on a terminal)
   --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
   --apply                    Actually write. Without it nothing is changed.
   --dry-run                  Report what would change and write nothing (the default)
   --yes                      Skip the confirmation prompt. Required with --apply off a terminal.
@@ -2624,6 +2667,7 @@ Common options:
   --quiet                    Suppress non-essential output on stderr
   --color                    Colourise human output (default: on a terminal)
   --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
   --apply                    Actually write. Without it nothing is changed.
   --dry-run                  Report what would change and write nothing (the default)
   --yes                      Skip the confirmation prompt. Required with --apply off a terminal.
@@ -2672,9 +2716,10 @@ device ever rolled up, so the window is the whole history and is measured from t
 rather than typed. A partial re-bucket would split the device's days across two boundaries
 with nothing recording where the seam is.
 
-🛑 Refuses when the device's area has other member devices: until the resolver flip the
-offset a rebuild reads is the AREA's, so this has to move the area too, and a shared area
-would re-bucket its other members as collateral.
+🛑 Refuses when the device's OWN area — the one minted alongside it — holds other devices,
+because its offset moves with the device and a shared area would re-bucket its other
+members as collateral. Being a member of a multi-device site is fine and expected: the
+site area's own offset is not touched.
 
 The daily totals WILL change — that is the point. Run detectors are not covered; rebuild
 those with `liveone derivation recompute`.
@@ -2696,6 +2741,7 @@ Common options:
   --quiet                    Suppress non-essential output on stderr
   --color                    Colourise human output (default: on a terminal)
   --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
   --apply                    Actually write. Without it nothing is changed.
   --dry-run                  Report what would change and write nothing (the default)
   --yes                      Skip the confirmation prompt. Required with --apply off a terminal.
@@ -2716,6 +2762,73 @@ Examples:
 Exit codes:
   0    success
   1    completed, with findings or no results
+  2    usage error
+  3    authentication failure
+  5    upstream failure
+  130  interrupted
+```
+
+#### liveone device area
+
+Put a device in an area, or in none.
+
+```
+Put a device in an area, or in none.
+
+When to use:
+  Reach for this when you know the DEVICE and want to say where it lives. The inverse —
+  stating an area's whole membership — is `liveone area devices`; both exist because both
+  questions are natural and neither is a one-request rewrite of the other.
+
+🛑 A device is in AT MOST ONE area, so this is a MOVE. The device leaves whatever area it
+was in, and THAT area loses every binding whose point lives on this device — which can
+blank a card or a Sankey somewhere you were not looking. The dry run names both ends.
+
+`--none` takes the device out of every area, leaving it AMBIENT. That is a real state, not
+a broken one: an ambient device is still polled, still aggregated and still readable by
+handle — it simply has no area, so no flow matrix and no grid card. The OpenElectricity
+NEM regions live there permanently, and are refused by this verb for that reason.
+
+Usage:
+  liveone device area <device> [area] [options]
+
+  This command WRITES. It is dry by default: nothing changes without --apply.
+
+Arguments:
+  <device>               A device: its dv_… id, integer handle, slug, or name
+  [area]                 The destination area: ar_… id, integer handle, or display name. Omit with --none.
+
+Options:
+  --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
+  --none                     Take the device out of every area, leaving it ambient
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
+  --apply                    Actually write. Without it nothing is changed.
+  --dry-run                  Report what would change and write nothing (the default)
+  --yes                      Skip the confirmation prompt. Required with --apply off a terminal.
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
+
+Examples:
+  liveone device area 'Kutis' kew
+  liveone device area 'Kutis' kew --apply
+  liveone device area 13 --none --apply
+
+Exit codes:
+  0    success
+  1    the server refused the move (the reason says why)
   2    usage error
   3    authentication failure
   5    upstream failure
@@ -2764,6 +2877,7 @@ Common options:
   --quiet                    Suppress non-essential output on stderr
   --color                    Colourise human output (default: on a terminal)
   --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
 
 Output:
   --format human   aligned text — the default at a terminal
@@ -2806,6 +2920,7 @@ Common options:
   --quiet                    Suppress non-essential output on stderr
   --color                    Colourise human output (default: on a terminal)
   --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
 
 Output:
   --format human   aligned text — the default at a terminal
@@ -2858,6 +2973,7 @@ Common options:
   --quiet                    Suppress non-essential output on stderr
   --color                    Colourise human output (default: on a terminal)
   --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
 
 Output:
   --format human   aligned text — the default at a terminal
@@ -2908,6 +3024,7 @@ Common options:
   --quiet                    Suppress non-essential output on stderr
   --color                    Colourise human output (default: on a terminal)
   --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
 
 Output:
   --format human   aligned text — the default at a terminal
@@ -2974,6 +3091,7 @@ Common options:
   --quiet                    Suppress non-essential output on stderr
   --color                    Colourise human output (default: on a terminal)
   --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
 
 Output:
   --format human   aligned text — the default at a terminal
@@ -3038,6 +3156,7 @@ Common options:
   --quiet                    Suppress non-essential output on stderr
   --color                    Colourise human output (default: on a terminal)
   --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
 
 Output:
   --format human   aligned text — the default at a terminal
@@ -3073,6 +3192,12 @@ When to use:
   Membership is the POOL a binding may draw from — a point can only fill a role slot if its
   device is already a member. So this comes first, and `area role` picks within it.
 
+🛑 A device is in AT MOST ONE area. Every verb here is therefore a MOVE, not an addition:
+`add` takes the device out of whatever area it was in, and `remove` leaves it AMBIENT — in
+no area at all — rather than deleting it. Both halves are named in the dry run.
+
+To move one device without stating an area's whole membership, use `liveone device area`.
+
 Usage:
   liveone area devices <subcommand> [options]
 
@@ -3080,9 +3205,9 @@ Usage:
 
 Subcommands:
   list                   The area's member devices.
-  add                    Add one or more devices to the area, keeping the rest.  (writes)
-  remove                 Remove devices from the area — and their bindings with them.  (writes)
-  set                    Declare the exact membership — anything omitted is removed.  (writes)
+  add                    Move one or more devices into the area, keeping the rest.  (writes)
+  remove                 Take devices out of the area — and their bindings with them.  (writes)
+  set                    Declare the exact membership — anything omitted becomes ambient.  (writes)
 
 Run `liveone area devices <subcommand> --help` for a subcommand's own options.
 
@@ -3091,6 +3216,7 @@ Common options:
   --quiet                    Suppress non-essential output on stderr
   --color                    Colourise human output (default: on a terminal)
   --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
 
 Output:
   --format human   aligned text — the default at a terminal
@@ -3133,6 +3259,7 @@ Common options:
   --quiet                    Suppress non-essential output on stderr
   --color                    Colourise human output (default: on a terminal)
   --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
 
 Output:
   --format human   aligned text — the default at a terminal
@@ -3157,13 +3284,15 @@ Exit codes:
 
 ##### liveone area devices add
 
-Add one or more devices to the area, keeping the rest.
+Move one or more devices into the area, keeping the rest.
 
 ```
-Add one or more devices to the area, keeping the rest.
+Move one or more devices into the area, keeping the rest.
 
 When to use:
-  Adding is the safe direction: it grows the pool and cannot orphan a binding.
+  🛑 NOT the safe direction any more. A device is in at most one area, so adding it here
+  takes it out of wherever it was — which may be a live site whose bindings onto its points
+  are deleted with it. The dry run names the area each device would leave.
 
 Usage:
   liveone area devices add <area> <device>... [options]
@@ -3182,6 +3311,7 @@ Common options:
   --quiet                    Suppress non-essential output on stderr
   --color                    Colourise human output (default: on a terminal)
   --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
   --apply                    Actually write. Without it nothing is changed.
   --dry-run                  Report what would change and write nothing (the default)
   --yes                      Skip the confirmation prompt. Required with --apply off a terminal.
@@ -3210,14 +3340,15 @@ Exit codes:
 
 ##### liveone area devices remove
 
-Remove devices from the area — and their bindings with them.
+Take devices out of the area — and their bindings with them.
 
 ```
-Remove devices from the area — and their bindings with them.
+Take devices out of the area — and their bindings with them.
 
 When to use:
   🛑 Removing a member DELETES that member's bindings. This verb names them before it does,
-  and refuses to proceed silently.
+  and refuses to proceed silently. The device itself is not deleted: it becomes AMBIENT, in
+  no area, and can be placed somewhere else. Emptying an area completely is allowed.
 
 Usage:
   liveone area devices remove <area> <device>... [options]
@@ -3236,6 +3367,7 @@ Common options:
   --quiet                    Suppress non-essential output on stderr
   --color                    Colourise human output (default: on a terminal)
   --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
   --apply                    Actually write. Without it nothing is changed.
   --dry-run                  Report what would change and write nothing (the default)
   --yes                      Skip the confirmation prompt. Required with --apply off a terminal.
@@ -3263,10 +3395,10 @@ Exit codes:
 
 ##### liveone area devices set
 
-Declare the exact membership — anything omitted is removed.
+Declare the exact membership — anything omitted becomes ambient.
 
 ```
-Declare the exact membership — anything omitted is removed.
+Declare the exact membership — anything omitted becomes ambient.
 
 When to use:
   The full-replace form, matching the route. Prefer `add`/`remove` unless you genuinely mean
@@ -3289,6 +3421,7 @@ Common options:
   --quiet                    Suppress non-essential output on stderr
   --color                    Colourise human output (default: on a terminal)
   --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
   --apply                    Actually write. Without it nothing is changed.
   --dry-run                  Report what would change and write nothing (the default)
   --yes                      Skip the confirmation prompt. Required with --apply off a terminal.
@@ -3352,6 +3485,7 @@ Common options:
   --quiet                    Suppress non-essential output on stderr
   --color                    Colourise human output (default: on a terminal)
   --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
 
 Output:
   --format human   aligned text — the default at a terminal
@@ -3395,6 +3529,7 @@ Common options:
   --quiet                    Suppress non-essential output on stderr
   --color                    Colourise human output (default: on a terminal)
   --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
 
 Output:
   --format human   aligned text — the default at a terminal
@@ -3450,6 +3585,7 @@ Common options:
   --quiet                    Suppress non-essential output on stderr
   --color                    Colourise human output (default: on a terminal)
   --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
   --apply                    Actually write. Without it nothing is changed.
   --dry-run                  Report what would change and write nothing (the default)
   --yes                      Skip the confirmation prompt. Required with --apply off a terminal.
@@ -3505,6 +3641,7 @@ Common options:
   --quiet                    Suppress non-essential output on stderr
   --color                    Colourise human output (default: on a terminal)
   --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
   --apply                    Actually write. Without it nothing is changed.
   --dry-run                  Report what would change and write nothing (the default)
   --yes                      Skip the confirmation prompt. Required with --apply off a terminal.
@@ -3565,6 +3702,7 @@ Common options:
   --quiet                    Suppress non-essential output on stderr
   --color                    Colourise human output (default: on a terminal)
   --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
 
 Output:
   --format human   aligned text — the default at a terminal
@@ -3623,6 +3761,7 @@ Common options:
   --quiet                    Suppress non-essential output on stderr
   --color                    Colourise human output (default: on a terminal)
   --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
 
 Output:
   --format human   aligned text — the default at a terminal
@@ -3684,6 +3823,7 @@ Common options:
   --quiet                    Suppress non-essential output on stderr
   --color                    Colourise human output (default: on a terminal)
   --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
   --apply                    Actually write. Without it nothing is changed.
   --dry-run                  Report what would change and write nothing (the default)
   --yes                      Skip the confirmation prompt. Required with --apply off a terminal.
@@ -3749,6 +3889,7 @@ Common options:
   --quiet                    Suppress non-essential output on stderr
   --color                    Colourise human output (default: on a terminal)
   --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
   --apply                    Actually write. Without it nothing is changed.
   --dry-run                  Report what would change and write nothing (the default)
   --yes                      Skip the confirmation prompt. Required with --apply off a terminal.
@@ -3817,6 +3958,7 @@ Common options:
   --quiet                    Suppress non-essential output on stderr
   --color                    Colourise human output (default: on a terminal)
   --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
 
 Output:
   --format human   aligned text — the default at a terminal
@@ -3874,6 +4016,7 @@ Common options:
   --quiet                    Suppress non-essential output on stderr
   --color                    Colourise human output (default: on a terminal)
   --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
 
 Output:
   --format human   aligned text — the default at a terminal
@@ -3955,6 +4098,7 @@ Common options:
   --quiet                    Suppress non-essential output on stderr
   --color                    Colourise human output (default: on a terminal)
   --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
   --apply                    Actually write. Without it nothing is changed.
   --dry-run                  Report what would change and write nothing (the default)
   --yes                      Skip the confirmation prompt. Required with --apply off a terminal.
@@ -4037,6 +4181,7 @@ Common options:
   --quiet                    Suppress non-essential output on stderr
   --color                    Colourise human output (default: on a terminal)
   --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
   --apply                    Actually write. Without it nothing is changed.
   --dry-run                  Report what would change and write nothing (the default)
   --yes                      Skip the confirmation prompt. Required with --apply off a terminal.
@@ -4093,6 +4238,7 @@ Common options:
   --quiet                    Suppress non-essential output on stderr
   --color                    Colourise human output (default: on a terminal)
   --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
   --apply                    Actually write. Without it nothing is changed.
   --dry-run                  Report what would change and write nothing (the default)
   --yes                      Skip the confirmation prompt. Required with --apply off a terminal.
@@ -4149,6 +4295,7 @@ Common options:
   --quiet                    Suppress non-essential output on stderr
   --color                    Colourise human output (default: on a terminal)
   --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
   --apply                    Actually write. Without it nothing is changed.
   --dry-run                  Report what would change and write nothing (the default)
   --yes                      Skip the confirmation prompt. Required with --apply off a terminal.
@@ -4213,6 +4360,7 @@ Common options:
   --quiet                    Suppress non-essential output on stderr
   --color                    Colourise human output (default: on a terminal)
   --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
   --apply                    Actually write. Without it nothing is changed.
   --dry-run                  Report what would change and write nothing (the default)
   --yes                      Skip the confirmation prompt. Required with --apply off a terminal.
@@ -4284,6 +4432,7 @@ Common options:
   --quiet                    Suppress non-essential output on stderr
   --color                    Colourise human output (default: on a terminal)
   --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
   --apply                    Actually write. Without it nothing is changed.
   --dry-run                  Report what would change and write nothing (the default)
   --yes                      Skip the confirmation prompt. Required with --apply off a terminal.
@@ -4351,6 +4500,7 @@ Common options:
   --quiet                    Suppress non-essential output on stderr
   --color                    Colourise human output (default: on a terminal)
   --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
 
 Output:
   --format human   aligned text — the default at a terminal
@@ -4409,6 +4559,7 @@ Common options:
   --quiet                    Suppress non-essential output on stderr
   --color                    Colourise human output (default: on a terminal)
   --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
 
 Output:
   --format human   aligned text — the default at a terminal
@@ -4455,6 +4606,7 @@ Common options:
   --quiet                    Suppress non-essential output on stderr
   --color                    Colourise human output (default: on a terminal)
   --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
 
 Output:
   --format human   aligned text — the default at a terminal
@@ -4523,6 +4675,7 @@ Common options:
   --quiet                    Suppress non-essential output on stderr
   --color                    Colourise human output (default: on a terminal)
   --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
   --apply                    Actually write. Without it nothing is changed.
   --dry-run                  Report what would change and write nothing (the default)
   --yes                      Skip the confirmation prompt. Required with --apply off a terminal.
@@ -4590,6 +4743,7 @@ Common options:
   --quiet                    Suppress non-essential output on stderr
   --color                    Colourise human output (default: on a terminal)
   --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
 
 Output:
   --format human   aligned text — the default at a terminal
@@ -4639,6 +4793,7 @@ Common options:
   --quiet                    Suppress non-essential output on stderr
   --color                    Colourise human output (default: on a terminal)
   --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
 
 Output:
   --format human   aligned text — the default at a terminal
@@ -4692,6 +4847,7 @@ Common options:
   --quiet                    Suppress non-essential output on stderr
   --color                    Colourise human output (default: on a terminal)
   --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
 
 Output:
   --format human   aligned text — the default at a terminal
@@ -4786,6 +4942,7 @@ Common options:
   --quiet                    Suppress non-essential output on stderr
   --color                    Colourise human output (default: on a terminal)
   --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
   --apply                    Actually write. Without it nothing is changed.
   --dry-run                  Report what would change and write nothing (the default)
   --yes                      Skip the confirmation prompt. Required with --apply off a terminal.
@@ -4845,6 +5002,7 @@ Common options:
   --quiet                    Suppress non-essential output on stderr
   --color                    Colourise human output (default: on a terminal)
   --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
 
 Output:
   --format human   aligned text — the default at a terminal
@@ -4904,6 +5062,7 @@ Common options:
   --quiet                    Suppress non-essential output on stderr
   --color                    Colourise human output (default: on a terminal)
   --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
   --apply                    Actually write. Without it nothing is changed.
   --dry-run                  Report what would change and write nothing (the default)
   --yes                      Skip the confirmation prompt. Required with --apply off a terminal.
@@ -4957,6 +5116,7 @@ Common options:
   --quiet                    Suppress non-essential output on stderr
   --color                    Colourise human output (default: on a terminal)
   --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
   --apply                    Actually write. Without it nothing is changed.
   --dry-run                  Report what would change and write nothing (the default)
   --yes                      Skip the confirmation prompt. Required with --apply off a terminal.
@@ -5007,6 +5167,7 @@ Common options:
   --quiet                    Suppress non-essential output on stderr
   --color                    Colourise human output (default: on a terminal)
   --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
   --apply                    Actually write. Without it nothing is changed.
   --dry-run                  Report what would change and write nothing (the default)
   --yes                      Skip the confirmation prompt. Required with --apply off a terminal.
@@ -5056,6 +5217,7 @@ Common options:
   --quiet                    Suppress non-essential output on stderr
   --color                    Colourise human output (default: on a terminal)
   --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
   --apply                    Actually write. Without it nothing is changed.
   --dry-run                  Report what would change and write nothing (the default)
   --yes                      Skip the confirmation prompt. Required with --apply off a terminal.
@@ -5111,6 +5273,7 @@ Common options:
   --quiet                    Suppress non-essential output on stderr
   --color                    Colourise human output (default: on a terminal)
   --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
 
 Output:
   --format human   aligned text — the default at a terminal
@@ -5161,6 +5324,7 @@ Common options:
   --quiet                    Suppress non-essential output on stderr
   --color                    Colourise human output (default: on a terminal)
   --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
 
 Output:
   --format human   aligned text — the default at a terminal
@@ -5222,6 +5386,7 @@ Common options:
   --quiet                    Suppress non-essential output on stderr
   --color                    Colourise human output (default: on a terminal)
   --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
   --apply                    Actually write. Without it nothing is changed.
   --dry-run                  Report what would change and write nothing (the default)
   --yes                      Skip the confirmation prompt. Required with --apply off a terminal.
@@ -5275,6 +5440,7 @@ Common options:
   --quiet                    Suppress non-essential output on stderr
   --color                    Colourise human output (default: on a terminal)
   --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
   --apply                    Actually write. Without it nothing is changed.
   --dry-run                  Report what would change and write nothing (the default)
   --yes                      Skip the confirmation prompt. Required with --apply off a terminal.
@@ -5331,6 +5497,7 @@ Common options:
   --quiet                    Suppress non-essential output on stderr
   --color                    Colourise human output (default: on a terminal)
   --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
 
 Output:
   --format human   aligned text — the default at a terminal
@@ -5373,6 +5540,7 @@ Common options:
   --quiet                    Suppress non-essential output on stderr
   --color                    Colourise human output (default: on a terminal)
   --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
 
 Output:
   --format human   aligned text — the default at a terminal
@@ -5421,6 +5589,7 @@ Common options:
   --quiet                    Suppress non-essential output on stderr
   --color                    Colourise human output (default: on a terminal)
   --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
 
 Output:
   --format human   aligned text — the default at a terminal
@@ -5475,6 +5644,7 @@ Common options:
   --quiet                    Suppress non-essential output on stderr
   --color                    Colourise human output (default: on a terminal)
   --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
 
 Output:
   --format human   aligned text — the default at a terminal
@@ -5540,6 +5710,7 @@ Common options:
   --quiet                    Suppress non-essential output on stderr
   --color                    Colourise human output (default: on a terminal)
   --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
 
 Output:
   --format human   aligned text — the default at a terminal
@@ -5584,6 +5755,7 @@ Common options:
   --quiet                    Suppress non-essential output on stderr
   --color                    Colourise human output (default: on a terminal)
   --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
 
 Output:
   --format human   aligned text — the default at a terminal
@@ -5651,6 +5823,7 @@ Common options:
   --quiet                    Suppress non-essential output on stderr
   --color                    Colourise human output (default: on a terminal)
   --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
 
 Output:
   --format human   aligned text — the default at a terminal
@@ -5711,6 +5884,7 @@ Common options:
   --quiet                    Suppress non-essential output on stderr
   --color                    Colourise human output (default: on a terminal)
   --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
 
 Output:
   --format human   aligned text — the default at a terminal
@@ -5760,6 +5934,7 @@ Common options:
   --quiet                    Suppress non-essential output on stderr
   --color                    Colourise human output (default: on a terminal)
   --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
   --apply                    Actually write. Without it nothing is changed.
   --dry-run                  Report what would change and write nothing (the default)
   --yes                      Skip the confirmation prompt. Required with --apply off a terminal.
@@ -5810,6 +5985,7 @@ Common options:
   --quiet                    Suppress non-essential output on stderr
   --color                    Colourise human output (default: on a terminal)
   --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
   --apply                    Actually write. Without it nothing is changed.
   --dry-run                  Report what would change and write nothing (the default)
   --yes                      Skip the confirmation prompt. Required with --apply off a terminal.
@@ -5872,6 +6048,7 @@ Common options:
   --quiet                    Suppress non-essential output on stderr
   --color                    Colourise human output (default: on a terminal)
   --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
   --apply                    Actually write. Without it nothing is changed.
   --dry-run                  Report what would change and write nothing (the default)
   --yes                      Skip the confirmation prompt. Required with --apply off a terminal.
@@ -5946,6 +6123,7 @@ Common options:
   --quiet                    Suppress non-essential output on stderr
   --color                    Colourise human output (default: on a terminal)
   --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
   --apply                    Actually write. Without it nothing is changed.
   --dry-run                  Report what would change and write nothing (the default)
   --yes                      Skip the confirmation prompt. Required with --apply off a terminal.
@@ -6027,6 +6205,7 @@ Common options:
   --quiet                    Suppress non-essential output on stderr
   --color                    Colourise human output (default: on a terminal)
   --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
   --apply                    Actually write. Without it nothing is changed.
   --dry-run                  Report what would change and write nothing (the default)
   --yes                      Skip the confirmation prompt. Required with --apply off a terminal.
@@ -6092,6 +6271,7 @@ Common options:
   --quiet                    Suppress non-essential output on stderr
   --color                    Colourise human output (default: on a terminal)
   --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
 
 Output:
   --format human   aligned text — the default at a terminal
@@ -6141,6 +6321,7 @@ Common options:
   --quiet                    Suppress non-essential output on stderr
   --color                    Colourise human output (default: on a terminal)
   --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
   --apply                    Actually write. Without it nothing is changed.
   --dry-run                  Report what would change and write nothing (the default)
   --yes                      Skip the confirmation prompt. Required with --apply off a terminal.
@@ -6194,6 +6375,7 @@ Common options:
   --quiet                    Suppress non-essential output on stderr
   --color                    Colourise human output (default: on a terminal)
   --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
 
 Output:
   --format human   aligned text — the default at a terminal
@@ -6245,6 +6427,7 @@ Common options:
   --quiet                    Suppress non-essential output on stderr
   --color                    Colourise human output (default: on a terminal)
   --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
 
 Output:
   --format human   aligned text — the default at a terminal
@@ -6303,6 +6486,7 @@ Common options:
   --quiet                    Suppress non-essential output on stderr
   --color                    Colourise human output (default: on a terminal)
   --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
   --apply                    Actually write. Without it nothing is changed.
   --dry-run                  Report what would change and write nothing (the default)
   --yes                      Skip the confirmation prompt. Required with --apply off a terminal.
