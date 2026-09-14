@@ -37,7 +37,7 @@ import type { GridContext } from "@/lib/grid/types";
  * and 1000003 resolves a NEM region and then answers `grid-signals: false`, so the Local Grid card
  * has never rendered on an area-addressed dashboard. Pre-existing and deliberately NOT fixed here:
  * turning it on is a visible product change and belongs with
- * `docs/plans/20260914-naming-bindings-and-area-settings.md` (Unit 2), which deletes this resolution path.
+ * `docs/plans/20260914-bindings-and-area-settings.md` (Unit 2), which deletes this resolution path.
  */
 async function devicePlaysGridRole(
   db: ReturnType<typeof requirePlanetscaleDb>,

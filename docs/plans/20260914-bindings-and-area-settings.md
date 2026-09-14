@@ -1,4 +1,4 @@
-# Naming, bindings, and area settings — one sequenced plan
+# Bindings and area settings — one sequenced plan
 
 > **Status:** active. Consolidates two 2026-09-14 handoffs — `device-naming-and-area-settings` and
 > `explicit-bindings` — into a single sequenced plan, because they collide on the same writers and
@@ -7,37 +7,51 @@
 >
 > This document is self-contained. No other plan or conversation is required.
 >
+> **Device naming is no longer part of this plan.** It was Unit 1 (Amber name generation,
+> name-at-creation, `PATCH /api/v4/devices/{dv_}` for name/slug, `liveone device rename`) and is being
+> delivered separately — removed 2026-09-14 once that work was underway elsewhere. Two things it owed
+> the rest of this plan, which must still be true when Unit 2 lands: the v4 device PATCH must accept
+> `{ name, slug }` so `DeviceSettingsDialog` can stop posting to the admin-only
+> `/api/admin/devices/{systemId}/settings`, and a device rename must never rename its area.
+>
 > It also **absorbs `finish-grid-signals-retirement.md`**, now deleted. That document's diagnosis is
-> reproduced under Unit 2 ("Grid signals — the first consumer"); its proposed `areas.config.gridSignals`
+> reproduced under Unit 1 ("Grid signals — the first consumer"); its proposed `areas.config.gridSignals`
 > jsonb pointer is replaced by a binding, which gets the same property with a real FK.
 
 ## Why these are one plan
 
-They are not independent. Stage 4 requires that *"membership/binding changes that affect materialized
+They are not independent. Unit 3 requires that *"membership/binding changes that affect materialized
 area history mark affected areas"* and that *"rehome, member replacement, onboarding, and binding
-edits cannot bypass tracking."* Stage 2 **changes what those writers mean** — it deletes the implicit
+edits cannot bypass tracking."* Unit 1 **changes what those writers mean** — it deletes the implicit
 union, adds a create-time binding command, and converts `ensureHelperBindings` from a machine
 reconciler into a command.
 
 Concretely, there is one edge that would be nasty to track correctly under today's model: whether a
 binding change alters an area's serving set **depends on whether it is the first binding**, because
-that silently narrows the area from member-union to just-that-point. Tracking built before Stage 2
+that silently narrows the area from member-union to just-that-point. Tracking built before Unit 1
 has to special-case that; tracking built after cannot encounter it.
 
-## The four units, in order
+## The three units, in order
 
 | # | Unit | Ships as | Depends on |
 | --- | --- | --- | --- |
-| 1 | **Naming** — Amber name generation, name-at-creation, device PATCH, `liveone device rename` | one PR | nothing |
-| 2 | **Explicit bindings** — retire the implicit membership union | one PR (5 stages) | nothing; must precede 4 |
-| 3 | **Area Settings** — settings ownership, standard-time derivation, route deletions | one PR | 1 (for the device PATCH the dialog calls) |
-| 4 | **Durable rebuild state and repairs** | one PR | 2 and 3 |
+| 1 | **Explicit bindings** — retire the implicit membership union | one PR (5 stages) | nothing; must precede 3 |
+| 2 | **Area Settings** — settings ownership, standard-time derivation, route deletions | one PR | the device-naming PATCH, shipping separately |
+| 3 | **Durable rebuild state and repairs** | one PR | 1 and 2 |
 
-Units 2 and 3 barely overlap and may run in parallel. Unit 3 was the second half of the original
+Units 1 and 2 barely overlap and may run in parallel. Unit 2 was the second half of the original
 "PR B"; it is split out here because a dialog refactor and a durable job system fail in completely
 different ways and should not be reviewed together.
 
-Unit 3 also **closes Stage 6 of the device→0..1-area epic** — the `areas.timezone_offset_min` vs
+⚠️ **Unit 2 has already partly landed, out of order.** PR #507 ("Move site settings to areas and
+harden area data handling") removed timezone/location editing from `DeviceSettingsDialog` and reworked
+`AreaBuilderDialog`. What remains of Unit 2 is the rest: `AreaSettingsDialog` (absent),
+`standardOffsetMin` (absent), and deleting the two legacy routes (`app/api/admin/devices/[systemId]/settings`
+and `app/api/devices/[systemId]/location`, both still present). Note the half that landed is the half
+that does **not** fix the original complaint — the dialog still saves the device name through the
+admin-only route, which is what the separate naming work unblocks.
+
+Unit 2 also **closes Stage 6 of the device→0..1-area epic** — the `areas.timezone_offset_min` vs
 `day_offset_min` duplication (~12 readers), which its "no independently editable area offset"
 decision resolves.
 
@@ -45,9 +59,8 @@ decision resolves.
 
 ## Cross-cutting decisions — do not re-litigate
 
-**Naming and settings**
+**Area settings**
 
-- Short names are unique per owner, following the database constraint, rather than globally.
 - Display timezone uses IANA local time, including daylight saving, for display and wall-clock
   scheduling.
 - The area's aggregation offset is derived from that timezone's standard time, excluding daylight
@@ -60,7 +73,7 @@ decision resolves.
 - Boundary incompatibility and incomplete rebuilding are separate concepts.
 - Available daily data remains visible with persistent warnings until repair succeeds.
 - Operators initiate resumable repairs through the CLI.
-- Unit 4 includes an authorized additive database migration for dedicated rebuild state.
+- Unit 3 includes an authorized additive database migration for dedicated rebuild state.
 - Include a dry-run/apply audit to find and mark existing mismatches. Deployment itself does not run
   that audit or repairs.
 
@@ -124,8 +137,6 @@ Measured 2026-09-14. Re-verify before acting.
   member is the *retired* `Kutis · derived` helper; dev: `Craig (legacy)`.
 - **There is no auto-binder.** Only two writers of `area_bindings`: `replaceBindings` (user-initiated)
   and `ensureHelperBindings` (battery-provenance recompute).
-- **The two Amber devices are confirmed on prod** as handle 9 `Amber Kinkora` and handle 10002
-  `Amber - CitiPower (6103034617)`. The generated convention is `Amber <network> NMI <nmi>`.
 - Empty areas are otherwise inert in both environments: zero dashboard-document references, zero
   automations, zero `users.default_area_id` pointers.
 
@@ -135,108 +146,7 @@ procedures.
 
 ---
 
-## Unit 1 — Naming
-
-### Amber name and creation
-
-Add `lib/vendors/amber/device-name.ts` with a pure
-`amberDeviceName(site: Pick<AmberSite, "network" | "nmi">): string` returning
-`Amber ${site.network} NMI ${site.nmi}`. Import it into the adapter; keep the helper separate from the
-adapter's cache and point-manager dependencies. Preserve the NMI verbatim — do not trim it or
-interpret it as a number. Continue storing it as the device serial.
-
-In `components/AddDeviceDialog.tsx`, show a Device name input after Test Connection succeeds,
-alongside model and serial. Seed it from the returned display name, reset it when the tested device
-changes, and submit the edited name in `deviceInfo.displayName`. Disable submission for invalid names
-or while a request is pending.
-
-Share name validation between creation and rename:
-
-- Require a string; store it trimmed.
-- Require 1–100 characters after trimming, using the existing JavaScript string-length convention.
-- Reject C0/C1 control characters before trimming, including trailing newlines.
-- Enforce this on the server, not just through input controls.
-- For creation, preserve the generated fallback when the request omits a name; reject an explicitly
-  supplied invalid name.
-
-The existing creation API does not enforce the claimed 100-character limit today: add that validation
-in `app/api/devices/route.ts`.
-
-Creating an owner's first device can still create an area named after the device through
-`resolveOnboardingArea`. Preserve and document that behavior. **Later device renames must not rename
-the area** — so renaming handles 9 and 10002 leaves their areas-of-one still bearing the old names.
-Those are among the 13 empty areas; archiving them (see Backlog) makes the stale names moot rather
-than something this unit must solve.
-
-### Device PATCH
-
-Extend `PATCH /api/v4/devices/{dv_}` in `app/api/v4/devices/[id]/route.ts` to accept either:
-
-```ts
-{ areaId: string | null }
-// or, with at least one supplied field:
-{ name?: string; slug?: string | null }
-```
-
-Reject non-object bodies, arrays, empty bodies, and bodies combining `areaId` with `name` or `slug`,
-with 422. Presence of `areaId`, including explicit `null`, remains the move/unassignment signal.
-Preserve the current move authorization, compare-and-set protection, refresh behavior, response shape,
-and safety comments.
-
-For naming:
-
-- Use `requireDeviceAccess(request, rid, { requireWrite: true })`; authorize device owners and admins,
-  not area custodians merely because they own the area.
-- Collapse denied access to the existing 404 `{ error: "Device not found" }` response.
-- Do not use `assertDevicesRehomable` for metadata updates. Authorized helper, ambient, disabled and
-  removed devices can be renamed.
-- Apply the shared name validation above.
-- Slugs allow letters, digits and underscores, up to 200 characters. Reject purely numeric values,
-  matching the dialog and avoiding ambiguity with integer handles. Empty/whitespace-only strings clear
-  to `null`; otherwise reject whitespace and invalid characters.
-- Enforce uniqueness within the **target device owner's** scope, including when an admin acts for that
-  owner. Preserve case-sensitive database semantics.
-- Return generic 409 conflict errors without disclosing another device's name. Catch the existing
-  `devices_owner_slug_unique` violation as well as any preflight collision, including concurrent
-  writes.
-- Ownerless devices follow the existing NULL-owner database semantics; do not create a new global
-  namespace.
-- Update name and slug together in one `DeviceWriter.updateDevice` call with no placement options. Do
-  not write an area.
-- Revalidate `/dashboard` layout and invalidate/refetch relevant UI data.
-
-Return `{ id, name, previousName, slug, previousSlug, renamed }`. `renamed` is true if either metadata
-value changed; a matching value is a successful no-op. Naming does not require CAS; membership changes
-retain their current CAS behavior.
-
-While the legacy admin settings route remains in this unit, align its name/slug validation and
-collision scope with the shared implementation. Unit 3 deletes it.
-
-### CLI
-
-Add `liveone device rename <device> <name>` in `scripts/ops/device/cli.ts` and register the handler:
-
-- Declare it mutating, with dry-run default, base URL selection, standard human/JSON output,
-  `--apply`, and the kit's noninteractive `--yes` requirement.
-- List devices once and resolve the reference against that list. Ambiguous references require an
-  opaque ID or handle.
-- Validate locally before sending any request. An unchanged name emits an already-named result without
-  writing.
-- Warn about case-insensitive display-name collisions but allow them; names are not unique keys.
-- Quote old/new names with `JSON.stringify` in dry-run output, identify the area as unchanged, and
-  explain how to apply.
-- PATCH `{ name }`; map 422 to usage and 404 to findings with an owner/admin explanation. Retain
-  standard handling for auth and upstream failures.
-- Emit `{ device, from, to, alreadyNamed, collisions, applied }`.
-- Explain that durable edits target prod: the periodic prod-to-dev configuration refresh overwrites
-  dev-only names. Do not promise an exact time until the next sync.
-
-Update API/CLI documentation, remove rename from the deferred-command list, correct the stale
-read-only device CLI comment, and regenerate committed CLI reference artifacts.
-
----
-
-## Unit 2 — Explicit bindings
+## Unit 1 — Explicit bindings
 
 ### The problem
 
@@ -270,20 +180,26 @@ KV registry is *correct* and `PointManager` is the deviation, which is the oppos
 plan started with. `_resolvePointsForHandle` is neither per-role nor union: one binding in any role
 replaces the whole set, in every role.
 
-**This must be settled before Unit 2 is built, because it changes the remedy.** Three candidate
-resolutions, and they are genuinely different products:
+✅ **SETTLED 2026-09-14: explicit-only.** Three candidates were considered:
 
 1. **Make the code match the doc** — union stays, resolution becomes per-role. Smallest conceptual
-   change; keeps an area usable with zero bindings; but keeps two concepts (visible set vs resolved
-   role) that must then be kept honest everywhere.
-2. **Make the doc match the code** — bindings are the whole set, all-or-nothing. This is what the rest
-   of this unit assumes.
-3. **Explicit-only** (this plan's current proposal) — bindings are the whole set *and* there is no
-   union to fall back to, so the "all-or-nothing" cliff disappears because there is only one mode.
+   change and it keeps an area usable with zero bindings, but it preserves two concepts (visible set
+   vs resolved role) that must then be kept honest in every reader, forever.
+2. **Make the doc match the code** — bindings are the whole set, all-or-nothing. Documents the cliff
+   rather than removing it.
+3. **Explicit-only — CHOSEN.** Bindings are the whole set *and* there is no union to fall back to, so
+   the all-or-nothing cliff disappears because there is only one mode to be on either side of.
 
-The measured fact that makes (3) cheap is unchanged: exactly one area per environment currently relies
-on the union at all. But (1) is the option that requires admitting the least, and it deserves an
-explicit rejection rather than being skipped past. **Do not start Unit 2 until this is decided.**
+Why (3) over (1): the cliff is not a bug in the union, it is the *seam between two modes*. Option 1
+keeps that seam and adds a second axis (per-role) to reason about; option 3 deletes it. It also makes
+the KV registry and the serving path agree by construction rather than by discipline, and it is what
+lets grid signals stop being a special case. The cost — an area serves nothing until bound — is
+answered by the create-time command in step 4, and is cheap in practice: exactly one area per
+environment relies on the union today.
+
+The corresponding correction has been made in
+[`../architecture/areas-and-dashboards.md`](../architecture/areas-and-dashboards.md) §3 and recorded in
+its §7, so the doc now describes today's actual behaviour and names where it is going.
 
 It also makes `replaceBindings`' unconditional `DELETE ... WHERE area_id = $1` quietly dangerous:
 machine-written rows (`ensureHelperBindings`) survive only because callers happen to echo back every
@@ -355,7 +271,7 @@ price/emissions/renewables from the device's `latest`, and the region label come
 own `vendorSiteId` payload. Only the *resolution* side still goes via location, so there is nothing
 to rewrite downstream.
 
-**What Unit 2 does about it.** An area names its grid feed by BINDING the ambient OpenElectricity
+**What Unit 1 does about it.** An area names its grid feed by BINDING the ambient OpenElectricity
 device's points (role `grid`; metrics `rate` / `intensity` / `proportion` — never `power`, where the
 real site meters live). `grid-signals` then derives from the presence of those bindings, with no
 location lookup, no region derivation and no global device search at render time.
@@ -415,7 +331,7 @@ what it actually serves before materialising it — the honest answer may be "no
 
 ---
 
-## Unit 3 — Area Settings and timezone behavior
+## Unit 2 — Area Settings and timezone behavior
 
 ### Dialogs and access
 
@@ -441,7 +357,7 @@ clients. Ensure edits refresh the table, open dialogs, membership information an
 
 In `DeviceSettingsDialog`:
 
-- Save name/slug through Unit 1's v4 API.
+- Save name/slug through the v4 device PATCH delivered by the separate naming work.
 - Remove editable timezone and location, their dirty state, and device placement locking machinery.
 - Show the area's timezone, the device's own aggregation offset, and compatibility/rebuild status. An
   unassigned device shows "No site".
@@ -500,7 +416,7 @@ preference.
 
 ---
 
-## Unit 4 — Durable health state and repairs
+## Unit 3 — Durable health state and repairs
 
 ### Storage and public health model
 
@@ -535,7 +451,7 @@ Record metadata changes and rebuild requirements in the same transaction:
 - Membership/binding changes that affect materialized area history: mark affected source/destination
   areas.
 - Wire shared writers so rehome, member replacement, onboarding and binding edits cannot bypass
-  tracking. **Unit 2 must land first** — see "Why these are one plan".
+  tracking. **Unit 1 must land first** — see "Why these are one plan".
 - Repeated unchanged requests do not advance revisions.
 - A later relevant change advances the revision; an older worker cannot clear it.
 - Returning to a compatible area may clear a never-started mismatch-only requirement, but must not
@@ -627,23 +543,9 @@ replay alongside local pending work.
 
 ## Tests and acceptance
 
-**Unit 1**
+**Unit 1** — see its Verification section. The parity harness is the acceptance gate.
 
-- Pure Amber helper: production CitiPower example, distributor containing spaces, NMI preserved
-  verbatim.
-- Creation/rename: valid trimming; empty, whitespace-only, oversized, wrong-type and control-character
-  rejection.
-- PATCH safety: non-object/array/empty bodies; explicit unassignment; placement/naming combination
-  rejection; metadata updates never call move or area writers.
-- Authorization: owner/admin success, unauthorized 404, helper/ambient/inactive naming.
-- Slugs: same-owner rejection, cross-owner reuse, admin acting for target owner, concurrent constraint
-  violation, clearing, numeric rejection, ownerless semantics.
-- CLI: required arguments, default dry-run, apply safeguards, no-op, ambiguous references, collision
-  warnings, server errors, human/JSON output.
-
-**Unit 2** — see its Verification section. The parity harness is the acceptance gate.
-
-**Units 3 and 4**
+**Units 2 and 3**
 
 - Dialog loading/saving as owner and admin, including inactive devices and lack of area-edit
   permission.
@@ -673,26 +575,17 @@ verify persisted state and representative rebuilt outputs, including an interrup
 
 ## Rollout
 
-1. Merge/deploy Unit 1 and verify its API and CLI.
-2. As admin on the production devices page, run Test Connection for handles 9 and 10002 using their
-   stored prod credentials. Read the canonical name from the returned device information; network is
-   not reliably persisted elsewhere. Do not expose credentials in logs.
-3. List Amber devices, inspect the CLI target origin, then dry-run/apply each rename. Handle 10002 is
-   expected to become `Amber CitiPower NMI 6103034617`; verify rather than assuming. Derive handle 9's
-   name from Test Connection. Include `--yes` for noninteractive applies.
-4. Confirm device names changed and area names did not. Let normal sync propagate configuration to dev.
-5. Ship Unit 2 by its stage order, gated on the parity harness and the KV registry diff.
-6. Apply Unit 4's additive rebuild-state migration through repository procedures **before** deploying
+1. Ship Unit 1 by its stage order, gated on the parity harness and the KV registry diff.
+2. Apply Unit 3's additive rebuild-state migration through repository procedures **before** deploying
    code that requires the table.
-7. Deploy Units 3 and 4; verify owner/admin settings, compatibility indicators and pending warnings.
-8. Run the boundary audit as a dry run. Review exact targets, then explicitly apply marking and run
+3. Deploy Units 2 and 3; verify owner/admin settings, compatibility indicators and pending warnings.
+4. Run the boundary audit as a dry run. Review exact targets, then explicitly apply marking and run
    scoped repairs. There is no automatic fleet repair at deploy.
-9. Verify completion from durable state and rebuilt data. Failed repairs remain visible and resumable.
+5. Verify completion from durable state and rebuilt data. Failed repairs remain visible and resumable.
 
 Update `docs/architecture/api.md`, `docs/architecture/data-model.md`, `docs/cli.md` and
-`docs/outage-catchup.md`, plus generated CLI references. Document: new naming contracts and removal of
-the legacy device settings/location routes; owner-scoped short names and private conflict messages;
-area timezone ownership, derived fixed offsets and separately stored device offsets; the retained
+`docs/outage-catchup.md`, plus generated CLI references. Document: removal of the legacy device
+settings/location routes; area timezone ownership, derived fixed offsets and separately stored device offsets; the retained
 Enphase location exception; durable health states, warnings, repair authorization, resume behavior and
 missing-history failure handling; the audit/migration rollout and environment-local sync rules; and
 that an area's point set is now exactly its bindings.
@@ -702,7 +595,7 @@ that an area's point set is now exactly its bindings.
 🛑 **This plan is disposable; the architecture doc is not.** Every unit below names what it must write
 into `docs/architecture/` **in the same PR that lands it**. A unit is not done when its code merges —
 it is done when the invariant it establishes is recorded somewhere that outlives this file. When all
-four have landed, delete this document; git is the archive.
+three have landed, delete this document; git is the archive.
 
 **The survivor is [`../architecture/areas-and-dashboards.md`](../architecture/areas-and-dashboards.md)**,
 not a new file. Its §3 "Semantic: areas, membership, bindings" already owns this territory, and a
@@ -716,10 +609,9 @@ entirely. Whichever of those is intended, the doc and the code currently disagre
 
 | Unit | Must be recorded in `areas-and-dashboards.md` when it lands |
 | --- | --- |
-| 1 Naming | Owner-scoped short names and the private-conflict rule; that device rename never renames its area; that `resolveOnboardingArea` still names the first area after the device |
-| 2 Bindings | **The core invariant: an area's serving set IS its bindings.** Placement (`devices.area_id`) vs serving (`area_bindings`) as separate concepts; the slot `(area, role, metric_type)` vs the **serving key** `{logical_path}/{metric_type}` that actually contends; that an ambient device can be BOUND but never PLACED; that grid signals are a binding, not a location walk. Add the retired member-union to §7 |
-| 3 Area Settings | Area owns timezone and location; the aggregation offset is DERIVED from standard time and is not independently editable; the device keeps its own offset; Enphase is the one remaining device→area location writer |
-| 4 Rebuild tracking | `boundaryCompatible` vs `needsRebuild` as distinct states, and that offset equality never proves a rebuild completed; that repair is operator-initiated and resumable, never automatic |
+| 1 Bindings | **The core invariant: an area's serving set IS its bindings.** Placement (`devices.area_id`) vs serving (`area_bindings`) as separate concepts; the slot `(area, role, metric_type)` vs the **serving key** `{logical_path}/{metric_type}` that actually contends; that an ambient device can be BOUND but never PLACED; that grid signals are a binding, not a location walk. Add the retired member-union to §7 |
+| 2 Area Settings | Area owns timezone and location; the aggregation offset is DERIVED from standard time and is not independently editable; the device keeps its own offset; Enphase is the one remaining device→area location writer |
+| 3 Rebuild tracking | `boundaryCompatible` vs `needsRebuild` as distinct states, and that offset equality never proves a rebuild completed; that repair is operator-initiated and resumable, never automatic |
 
 Also owed on landing, per the Rollout section: `api.md` (route contracts and the deleted legacy
 routes), `data-model.md` (the offset columns and the rebuild-state table), `cli.md` and the generated
@@ -746,8 +638,8 @@ flagged above, which describes today and can be fixed whenever.
 
 - No production rename, schema migration, audit apply or rebuild is performed merely by adding this
   document.
-- **Any schema change needs explicit approval first.** Only Unit 4 requires one.
+- **Any schema change needs explicit approval first.** Only Unit 3 requires one.
 - **Do not purge anything on prod** — measured at zero; the orphans visible on dev are mirror
   artifacts, not defects.
 - The retired `finish-grid-signals-retirement.md` proposed an `areas.config.gridSignals` jsonb
-  pointer. Unit 2 uses a binding instead; do not reintroduce the pointer.
+  pointer. Unit 1 uses a binding instead; do not reintroduce the pointer.
