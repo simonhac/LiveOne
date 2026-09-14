@@ -19,6 +19,12 @@ export const DEVICES_SPEC = {
   when:
     "Membership is the POOL a binding may draw from — a point can only fill a role slot if its\n" +
     "device is already a member. So this comes first, and `area role` picks within it.",
+  description:
+    "🛑 A device is in AT MOST ONE area. Every verb here is therefore a MOVE, not an addition:\n" +
+    "`add` takes the device out of whatever area it was in, and `remove` leaves it AMBIENT — in\n" +
+    "no area at all — rather than deleting it. Both halves are named in the dry run.\n" +
+    "\n" +
+    "To move one device without stating an area's whole membership, use `liveone device area`.",
   subcommands: {
     list: {
       name: "list",
@@ -29,8 +35,11 @@ export const DEVICES_SPEC = {
     },
     add: {
       name: "add",
-      summary: "Add one or more devices to the area, keeping the rest.",
-      when: "Adding is the safe direction: it grows the pool and cannot orphan a binding.",
+      summary: "Move one or more devices into the area, keeping the rest.",
+      when:
+        "🛑 NOT the safe direction any more. A device is in at most one area, so adding it here\n" +
+        "takes it out of wherever it was — which may be a live site whose bindings onto its points\n" +
+        "are deleted with it. The dry run names the area each device would leave.",
       mutates: true,
       args: [
         AREA_ARG,
@@ -52,10 +61,11 @@ export const DEVICES_SPEC = {
     },
     remove: {
       name: "remove",
-      summary: "Remove devices from the area — and their bindings with them.",
+      summary: "Take devices out of the area — and their bindings with them.",
       when:
         "🛑 Removing a member DELETES that member's bindings. This verb names them before it does,\n" +
-        "and refuses to proceed silently.",
+        "and refuses to proceed silently. The device itself is not deleted: it becomes AMBIENT, in\n" +
+        "no area, and can be placed somewhere else. Emptying an area completely is allowed.",
       mutates: true,
       args: [
         AREA_ARG,
@@ -74,7 +84,8 @@ export const DEVICES_SPEC = {
     },
     set: {
       name: "set",
-      summary: "Declare the exact membership — anything omitted is removed.",
+      summary:
+        "Declare the exact membership — anything omitted becomes ambient.",
       when:
         "The full-replace form, matching the route. Prefer `add`/`remove` unless you genuinely mean\n" +
         "'these and only these'.",

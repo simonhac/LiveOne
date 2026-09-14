@@ -191,7 +191,9 @@ export default function AreaBuilderDialog({
     if (!displayName) return setError("Give the site a name");
     if (!aliasValid)
       return setError("Shortname: lowercase letters, numbers, hyphens");
-    if (members.length === 0) return setError("Add at least one device");
+    // No "at least one device" gate: a site with no devices is first-class since the
+    // device→0..1-area change, and creating one THEN moving devices in (here, or from a device's own
+    // settings) is the natural order when the devices are currently somewhere else.
     setBusy(true);
     setError(null);
     try {
@@ -593,9 +595,7 @@ export default function AreaBuilderDialog({
               </button>
               <button
                 onClick={create}
-                disabled={
-                  busy || !name.trim() || !aliasValid || members.length === 0
-                }
+                disabled={busy || !name.trim() || !aliasValid}
                 className="min-w-[100px] rounded-md bg-blue-600 px-6 py-2 text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {busy ? "Creating…" : "Create site"}

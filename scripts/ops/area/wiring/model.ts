@@ -16,6 +16,13 @@ export interface WireMember {
   vendor: string;
   status: string;
   capabilities?: string[];
+  /**
+   * The area this device is CURRENTLY in, as `GET /api/v4/devices` reports it. Present on a
+   * candidate from that list, absent on a member read out of the area aggregate (which already knows
+   * the answer). `null` means ambient.
+   */
+  areaId?: string | null;
+  areaName?: string | null;
 }
 
 export interface WireBinding {

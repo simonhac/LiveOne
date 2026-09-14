@@ -141,6 +141,9 @@ export interface WireDevice {
   vendorSiteId: string | null;
   status: string;
   ownerUserId: string | null;
+  /** The area the device is IN. `null` means ambient — in no area, HA's unassigned bucket. */
+  areaId: string | null;
+  areaName: string | null;
 }
 
 export async function listDevices(s: ApiSession): Promise<WireDevice[]> {

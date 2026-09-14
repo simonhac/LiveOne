@@ -1,10 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
-import { inArray } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import { requireAuth } from "@/lib/api-auth";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
-import { devices as devicesTable } from "@/lib/db/planetscale/schema";
+import {
+  areas as areasTable,
+  devices as devicesTable,
+} from "@/lib/db/planetscale/schema";
 import { DeviceConfigRegistry } from "@/lib/registry/device-config";
-import { Device } from "@/lib/ids";
+import { Area, Device } from "@/lib/ids";
 
 /**
  * `GET /api/v4/devices` (clean-sheet §9.2) — the readable device set: exactly the devices visible to
@@ -33,6 +36,11 @@ import { Device } from "@/lib/ids";
  * same key) as `GET /api/v4/areas`. It is what today's member picker round-trips into
  * `memberSystemIds`, so carrying it makes re-pointing the client a URL change.
  *
+ * `areaId` / `areaName` are NEW here, and they are not decoration: membership is `devices.area_id`
+ * and naming a device in an area MOVES it, so every picker and every CLI diff that offers a device
+ * has to be able to say what it would be taken out of. Null means ambient — HA's unassigned bucket,
+ * which is where the OpenElectricity NEM regions permanently live.
+ *
  * ⚠️ **`capabilities` (§9.2's fifth field) is deliberately NOT here.** It is absent from the legacy
  * twin, so omitting it narrows nothing; and each entry would cost a full `capabilitiesForDevice` walk
  * (a PointManager point scan + a member walk + a grid-context resolve) on a request the member picker
@@ -51,19 +59,27 @@ export async function GET(request: NextRequest) {
   const rids = visible.map((d) => d.id);
   const rows = rids.length
     ? await requirePlanetscaleDb()
-        .select({ rid: devicesTable.rid, id: devicesTable.id })
+        .select({
+          rid: devicesTable.rid,
+          id: devicesTable.id,
+          areaId: devicesTable.areaId,
+          areaName: areasTable.name,
+        })
         .from(devicesTable)
+        // LEFT: an ambient device (`area_id` NULL) must still appear in the picker — it is the one
+        // an operator most needs to see, and an INNER join would silently drop it.
+        .leftJoin(areasTable, eq(areasTable.id, devicesTable.areaId))
         .where(inArray(devicesTable.rid, rids))
     : [];
-  const uuidByRid = new Map(rows.map((r) => [r.rid, r.id]));
+  const rowByRid = new Map(rows.map((r) => [r.rid, r]));
 
   return NextResponse.json({
     devices: visible.map((d) => {
-      const uuid = uuidByRid.get(d.id);
+      const row = rowByRid.get(d.id);
       return {
         // Every visible device came out of `devices`, so the uuid is always there; the fallback only
         // exists so a mapping hole degrades to a 200 with a null id instead of a 500.
-        id: uuid ? Device.encode(uuid) : null,
+        id: row ? Device.encode(row.id) : null,
         legacySystemId: d.id,
         name: d.displayName,
         slug: d.alias,
@@ -71,6 +87,8 @@ export async function GET(request: NextRequest) {
         vendorSiteId: d.vendorSiteId,
         status: d.status,
         ownerUserId: d.ownerClerkUserId,
+        areaId: row?.areaId ? Area.encode(row.areaId) : null,
+        areaName: row?.areaName ?? null,
       };
     }),
   });

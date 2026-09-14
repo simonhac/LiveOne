@@ -123,7 +123,11 @@ describe("GET /api/v4/devices — the candidate-devices twin", () => {
 
   it("maps EVERY legacy key across — nothing dropped, id becomes a dv_ TypeID", async () => {
     mockVisible.mockResolvedValue([legacyRow] as any);
-    mockDb.mockReturnValue(selectChain([{ rid: 7, id: DEVICE_UUID }]) as any);
+    mockDb.mockReturnValue(
+      selectChain([
+        { rid: 7, id: DEVICE_UUID, areaId: AREA_UUID, areaName: "Kinkora" },
+      ]) as any,
+    );
     const res = await devicesGET(
       new NextRequest("http://localhost/api/v4/devices"),
     );
@@ -142,8 +146,30 @@ describe("GET /api/v4/devices — the candidate-devices twin", () => {
         vendorSiteId: "site-99",
         status: "active",
         ownerUserId: "user_1",
+        // 🛑 Membership is `devices.area_id`, so naming a device in an area MOVES it. Every picker
+        // and every CLI diff that offers a device has to be able to say what it would be taken out
+        // of; this is where that fact comes from.
+        areaId: AREA,
+        areaName: "Kinkora",
       },
     ]);
+  });
+
+  it("reports an AMBIENT device as areaId null rather than dropping it", async () => {
+    // The LEFT join is the load-bearing half: an OpenElectricity NEM region is permanently in no
+    // area, and an INNER join would silently remove it from every picker with no error anywhere.
+    mockVisible.mockResolvedValue([legacyRow] as any);
+    mockDb.mockReturnValue(
+      selectChain([
+        { rid: 7, id: DEVICE_UUID, areaId: null, areaName: null },
+      ]) as any,
+    );
+    const res = await devicesGET(
+      new NextRequest("http://localhost/api/v4/devices"),
+    );
+    const { devices } = await res.json();
+    expect(devices).toHaveLength(1);
+    expect(devices[0]).toMatchObject({ areaId: null, areaName: null });
   });
 
   it("asks only for ACTIVE devices — the same visible set the legacy twin picks from", async () => {

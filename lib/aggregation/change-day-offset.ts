@@ -59,12 +59,16 @@ export interface ChangeDayOffsetPlan {
   /**
    * The area whose stored offset this will move with the device, and why it is safe to.
    *
-   * Pre-resolver-flip the bucketing offset a rebuild reads is still the AREA's
-   * (`DeviceConfigRegistry` projects `areas.timezone_offset_min` onto the device), so moving the
-   * device without moving its area would be reverted by the next nightly aggregate. The area named
-   * by `devices.primary_area_id` is the device's own area-of-one, so moving it is private to this
-   * device — but that is an invariant worth CHECKING rather than assuming, because a shared area
-   * would silently re-bucket its other members too.
+   * This is the device's own AREA-OF-ONE (`devices.primary_area_id`), not the site area it is a
+   * member of (`devices.area_id`). The two diverged at migration 0071 and the distinction is now
+   * load-bearing: since the bucketing flip a rebuild reads `devices.day_offset_min`, so moving the
+   * area is no longer what makes the change stick — it is what keeps `areas.timezone_offset_min`
+   * from drifting away from the device it was minted for. Naming the SITE area here instead would
+   * refuse every device that is in one, which is every device this verb exists for.
+   *
+   * `otherMembers` is still checked rather than assumed, and it reads `devices.area_id` — "what
+   * actually lives in this area today", which for a re-homed device's area-of-one is nothing at
+   * all. The stale `area_members` row would have answered "this device", and refused.
    */
   readonly area: {
     id: string;
