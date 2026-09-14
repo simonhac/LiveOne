@@ -37,7 +37,7 @@ truth for every column; these are roles, not schemas.
 | Table               | One-liner                                                                                                                                           |
 | ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `areas`             | A site/grouping. Owns display timezone, location, and the day offset for the AREA-keyed derived tables. Every device has exactly one.               |
-| `area_members`      | An area's 1..N member devices, `(area_id, device_id, ordinal)`.                                                                                     |
+| `area_members`      | 🛑 **FROZEN.** The pre-0071 many-to-many membership. Nothing reads or writes it; membership is `devices.area_id`. Dropped by migration 0072.         |
 | `area_bindings`     | Typed role→point **overrides**; absent means the area defaults to the union of its members' points.                                                 |
 | `derivations`       | Persisted derived series (run tracking, HWS model), generalizing the former per-feature tracker tables.                                             |
 | `derived_intervals` | Materialized run/interval records produced by a derivation, with per-interval signal statistics. Its four provenance columns are LEGACY and filled only when a single area can price the run — see below.            |
@@ -119,7 +119,7 @@ These are load-bearing; don't violate them without updating
    `session_id → sessions(id)` (safe because the session row is co-enqueued ahead of its
    readings), and the aggregate tables carry none. The config layer is the opposite: config-v4
    replaced the old FK-less integer joins with hard references (`points.device_id`,
-   `devices.primary_area_id`, `area_members.device_id`), which is what makes an orphaned row a
+   `devices.primary_area_id`, `devices.area_id`), which is what makes an orphaned row a
    loud failure rather than a silent empty result.
    ⚠️ **Removing an FK turns any join onto the replacement key into a silent filter.** Prefer a
    replacement join that is itself FK-backed and NOT NULL.
@@ -231,23 +231,53 @@ which is what gates settled-vs-estimated presentation. Readings can carry `value
 
 ### Areas
 
-An **Area** is a grouping of 1..N member devices. There is no `kind` column and no single-vs-multi
-special case: an "area of one" is the same machinery with one member and no bindings. An Area is never
+An **Area** is a grouping of 0..N member devices, and a device is in **0 or 1** Area — Home
+Assistant's shape. There is no `kind` column and no single-vs-multi special case. An Area is never
 polled, has no credentials and does not nest.
 
-- **`area_members`** — the Area's member devices, `(area_id, device_id → devices.id, ordinal)`.
+- **`devices.area_id`** (nullable, `ON DELETE SET NULL`) — membership. One column on the device, so
+  "which Area is this device in" is a property of the row rather than a join, and the answer is
+  single-valued by construction. **NULL means AMBIENT**: the device is in no Area. That is a real,
+  first-class state — an ambient device is still polled, still aggregated and still addressable by
+  handle; it simply has no flow matrix and no grid card. The OpenElectricity NEM regions live there
+  permanently, which is Home Assistant's `entry_type=SERVICE`: an ambient producer many consumers
+  reference by id and none contains.
 - **`area_bindings`** — typed role→point **overrides**; when present they _select_ the Area's points,
   otherwise the Area defaults to the **union** of its members' own points.
+
+🛑 **`area_members` is frozen, not current.** It was the many-to-many membership table until
+migration 0071 backfilled `devices.area_id` and the resolver flipped onto it. Nothing reads or writes
+it now; its rows are the pre-flip membership, kept as a record until migration 0072 drops it. Reading
+it will answer, and will answer wrongly.
+
+🛑 **Membership is a MOVE, not an addition**, and the authorization follows from that. While a device
+could be in many Areas, "the caller can READ this device" was a sufficient admission rule: naming
+your device in my Area let me aggregate data I could already see, and your Area kept it. It is not
+sufficient now, because naming a device takes it OUT of wherever it was, deleting that Area's
+bindings onto its points. `assertDevicesRehomable` (`lib/areas/create.ts`) therefore asks ownership
+**or custody** (the device is in an Area the caller owns), and refuses an ownerless device outright.
 
 An Area is served **area-natively** as its own row (`ServingSubject`, `lib/dashboard/subject.ts`). Before
 config-v4 Phase 13, a multi-device Area was _synthesized_ on demand into a device-shaped object with a
 runtime `vendor_type = 'area'`; that synthesis is deleted.
 
-🛑 **Eager areas — every device has exactly one `primary_area_id` (NOT NULL), and areas-of-one are kept
-forever.** Deleting them was the tidier model and was **rejected**: `point_readings_flow_attr_1d` and
-`battery_provenance_daily` are keyed by area uuid, so deleting an area-of-one destroys history. They are
-filtered out of the picker at render time instead. The area — not the device — is the sole home for
-display timezone and location.
+🛑 **The area-of-one is now VESTIGIAL, and this paragraph used to say the opposite.** Every device
+still has a `primary_area_id` (NOT NULL) naming an Area minted alongside it, and those Areas are still
+kept forever — `point_readings_flow_attr_1d` and `battery_provenance_daily` are keyed by area uuid, so
+deleting one destroys history, and that decision stands. What changed is that it is no longer the
+device's *membership*: `devices.area_id` is, and for most devices the two now name different Areas.
+The column survives only because it is `NOT NULL`, which is the single thing still forcing a new
+device to mint an Area at all; migration 0072 drops it, and only then can a device be created
+unassigned.
+
+Two consequences worth stating, because both invert older rules:
+
+- **A zero-device Area is legal.** "An Area must have at least one member" is retired. It is what
+  made "hide areas-of-one" a render-time convention rather than the structural "hide Areas with no
+  devices".
+- **The Area is still the home for display timezone and location**, but which Area answers for a
+  device is now a question with two candidates, and `lib/areas/placement.ts` owns the resolution
+  chain (`area → owner → platform default`) so an ambient device still has both.
 
 🛑 **`devices.day_offset_min` is IMMUTABLE except through one verb.** It is the boundary
 `point_readings_agg_1d` rolls up on, so writing it without rebuilding leaves every daily total the

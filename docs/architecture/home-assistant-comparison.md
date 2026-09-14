@@ -66,7 +66,7 @@ aggregates fast to many tenants_, and _partition access for real_.
 | Frontend          | TypeScript / **Lit** (web components) — Lovelace                                                                                                                                          | TypeScript / **Next.js** (React)                                                                                                                          |
 | Runtime shape     | Long-lived **process you host** — can hold authoritative state in RAM                                                                                                                     | **Stateless serverless** (Vercel, `syd1`) — no in-RAM authoritative state, so state lives in KV + Postgres                                                |
 | Time-series store | SQLite (default) / MariaDB / PostgreSQL via the _recorder_, with default purge                                                                                                            | PostgreSQL (PlanetScale) as the sole datastore, retained at every tier; Vercel KV as a derived latest-value cache                                         |
-| Config store      | **JSON documents under `.storage/`** (entity / device / area / floor / label / category registries, Lovelace docs, energy prefs), loaded into memory at boot                              | **SQL tables in the same Postgres** (`devices`, `points`, `areas`, `area_members`, `area_bindings`, `derivations`, `dashboards`) with real FKs and CHECKs |
+| Config store      | **JSON documents under `.storage/`** (entity / device / area / floor / label / category registries, Lovelace docs, energy prefs), loaded into memory at boot                              | **SQL tables in the same Postgres** (`devices`, `points`, `areas`, `area_bindings`, `derivations`, `dashboards`) with real FKs and CHECKs |
 | Release cadence   | Monthly (`2026.7` at time of writing), with published deprecation runways                                                                                                                 | Continuous deploy from `main`                                                                                                                             |
 | Distribution      | Core / Supervisor / OS / Container + add-ons                                                                                                                                              | Single Vercel deployment                                                                                                                                  |
 
@@ -91,7 +91,7 @@ rows that can't dangle — which buys us enforcement and costs us HA's zero-migr
 | `points.active`                                                                        | `available` + `entity_category` (config / diagnostic)                                                        | **Ours is a single on/off** — HA separates "can't read it right now" from "this is a secondary/diagnostic signal"                                 |
 | `lib/roles/registry.ts` (6 roles, carries `device_class`/`state_class`/`unit`)         | _(no native table)_ — Energy-dashboard role slots                                                            | **Explicitly HA-aware** — our export bridge in waiting. v4 deletes its SQL projection (`roles`); `area_bindings_role_check` holds the vocabulary. |
 | `areas` (uuid `ar_…`; owns `day_offset_min`, `display_timezone`, `location`, `config`) | **Area** registry (+ configured primary temperature/humidity sensors)                                        | Close — and converging: HA areas have started acquiring per-role sensor slots of their own                                                        |
-| `area_members` (area ↔ device, many-to-many)                                          | device's single `area_id`                                                                                    | **Ours is more general** — a device can belong to several areas; HA allows exactly one                                                            |
+| `devices.area_id` (nullable — a device is in 0 or 1 area)                               | device's single `area_id` (also nullable)                                                                    | **Identical, since 2026-09-14.** We were many-to-many (`area_members`) and called it "more general"; it inverted — see below                      |
 | `area_bindings` (role→point, `priority`, shape-validated, FK + CHECK)                  | Energy "preferences" — `energy_sources[]` with `flow_from`/`flow_to`, `stat_cost`, `device_consumption[]`    | Same job. Ours is enforced SQL with deterministic per-slot resolution; theirs is a JSON doc with per-source cost/price fields we lack             |
 | `derivations` / `derived_intervals` (+ per-run cost / emissions / renewable)           | Helper integrations (Threshold, Integration, Derivative, Utility Meter, Template, Group)                     | Same intent — **one mechanism now**, but our kinds are code-typed where HA's are user-composable                                                  |
 | `dashboards.doc` (recursive node tree) + `dashboard_revisions`                         | **Lovelace** storage-mode dashboard, **or a generated _strategy_**                                           | Close in shape; ours adds revisions + `If-Match`. HA additionally generates dashboards from the registries at render time (strategies)            |
@@ -127,8 +127,8 @@ Real design advantages. The first two are new to this revision and are the sharp
    independently-addressable devices"_ (§4.1). That reasoning still holds for today's adapters — but
    HA has since built exactly the mechanism for exactly that case, so the decision should be re-read
    as _deferred_, not settled. The first multi-site vendor connection we onboard is the trigger.
-   (Where we _are_ more general: `area_members` is many-to-many, so one site can span devices and one
-   device can appear in several areas; HA pins a device to exactly one area.)
+   (We used to claim a compensating generality here — `area_members` was many-to-many, so a device
+   could appear in several areas. **That claim is withdrawn**; see the §"more general" note below.)
 2. **Two hierarchies we don't have at all.** `via_device` gives HA a **device tree** (hub → child
    device, power strip → outlet), and since **2025.4** the energy dashboard has an explicit
    **upstream device** relation for sub-metering: mark a breaker as upstream of the devices on its
@@ -209,6 +209,19 @@ Real design advantages. The first two are new to this revision and are the sharp
 - **The document is one JSONB blob** (§12.2). Deliberate — nothing queries cards in SQL, and
   normalization would create two sources of truth — but it does mean no SQL query can answer "which
   dashboards show this point" without walking documents.
+- **A device is in 0 or 1 area** — matching HA exactly, after this doc spent two revisions claiming
+  the opposite was an advantage. `area_members` was many-to-many and was described as "more general
+  than HA". The generality was never used for anything a human authored: it existed so a device could
+  sit in both its eagerly-minted area-of-one AND its real site. What it cost was concrete. Something
+  had to GUESS which of a device's areas priced its runs — `ORDER BY ordinal, areas.id LIMIT 1` — and
+  every Kutis EV charge read $0.00 for two months because the guess went to the area that bound no
+  meter. The flow-eligibility guard exists only to stop a child area claiming its parent's Sankey.
+  Both are consequences of a generality nothing asked for, and HA's constraint is the fix.
+
+  What we DO still have that HA does not, on this axis: a device can be **shared by reference**
+  without being contained. An OpenElectricity NEM region is area-less and consumed by every area in
+  its state — which is precisely HA's own answer (`entry_type=SERVICE`, plus `areas.temperature_entity_id`
+  pointing OUT at a sensor), arrived at from the same pressure.
 
 ## Where ours may be superior
 
@@ -355,6 +368,11 @@ Remaining borrowings worth considering, in rough order of value-per-risk:
 
 ## Revision history
 
+- **2026-09-14** — the `area_members` row **inverted**. A device is now in 0 or 1 area
+  (`devices.area_id`), exactly HA's shape; the "ours is more general" claim is withdrawn in both
+  places it appeared, with the two defects that generality cost recorded beside it. Added the
+  `entry_type=SERVICE` ↔ ownerless-OpenElectricity mapping: an ambient producer consumed by reference
+  rather than contained, which is how both systems answer the shared-device question.
 - **2026-07-28 (second pass)** — deeper HA verification against the developer docs, and LiveOne
   restated as finished config-v4 rather than a migration in progress. Material corrections: HA config
   **subentries** (containment went deeper, not away); `via_device` + the **2025.4 energy device

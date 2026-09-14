@@ -6,6 +6,20 @@
 > `dashboards.descriptor` dropped by migration `0054`); none of its v3 machinery is carried forward.
 > What survives is one unfinished half of a retirement it proposed — and the observation that config-v4
 > made that half **cheaper**, not harder.
+>
+> 🛑 **BLOCKED as written, 2026-09-14.** The mechanism this plan rests on — "make the OpenElectricity
+> region device an ordinary member of the area" — is no longer representable. A device is in **0 or 1**
+> area (`devices.area_id`, migration 0071), and an ownerless OE region is deliberately AMBIENT: it is
+> consumed by every area in its NEM state, so it cannot be contained by one of them.
+> `assertDevicesRehomable` refuses to place it, and `area_members` is frozen.
+>
+> The DIAGNOSIS is untouched and still correct: grid-signals is the one capability decided by where an
+> area *is* rather than what it *contains*, and `lib/grid/context.ts` should go. What needs rewriting
+> is the remedy. Home Assistant faced exactly this and answered with a pointer ON THE AREA rather than
+> a membership — `areas.temperature_entity_id` / `humidity_entity_id` name a sensor the area does not
+> contain. The analogous shape here is an explicit `areas.grid_signals_device_id` (or a slot in
+> `areas.config`), which keeps the headline property this plan is built on — **the absence of the
+> reference IS the off-grid rule** — while removing the location derivation. Re-draft before starting.
 
 ## Why
 
@@ -68,6 +82,10 @@ right shape, so there is nothing to rewrite downstream.
 
 Make the OpenElectricity region device an ordinary **member of the area**, and let the capability
 fall out of membership.
+
+🛑 Superseded by the status note above — a device is in 0 or 1 area, so an ambient OE region cannot
+be a member of the areas that consume it. Kept verbatim because the reasoning below about what the
+membership BUYS carries over unchanged to an explicit area→device reference.
 
 Concretely: seed an `area_members` row binding the area to the public OE region device that serves
 its NEM region. `grid-signals` then derives the same way every other capability does — from the
