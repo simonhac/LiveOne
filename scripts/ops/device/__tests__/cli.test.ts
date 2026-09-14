@@ -352,3 +352,57 @@ describe("merging a re-bucket's passes", () => {
     );
   });
 });
+
+/**
+ * `--include-inactive`, and the `--status` bug it exists to close.
+ *
+ * 🛑 `device list --status=archived` returned ZERO, always, while its own help advertised
+ * `archived` and `disabled` as valid values: the filter runs client-side over whatever the server
+ * returned, and the server returns only `active` unless asked otherwise. So two of the three
+ * documented values could only ever answer "nothing". Found by running it on prod after archiving
+ * three devices and getting an empty list back.
+ *
+ * The flag is named `includeInactive`, NOT `includeArchived` like the areas twin, because
+ * `devices.status` is `active | disabled | archived` — a flag called `include-archived` that also
+ * returned `disabled` devices would be wrong in the widening direction.
+ */
+describe("device --include-inactive", () => {
+  it("is offered on the read verbs that address a device by ref", () => {
+    for (const verb of ["list", "show"] as const) {
+      const spec = deviceCommand.subcommands?.[verb];
+      expect(Object.keys(spec?.flags ?? {})).toContain("includeInactive");
+    }
+  });
+
+  it("parses as a boolean, defaulting to off", () => {
+    expect(success(["show", "4"]).flags.includeInactive).toBe(false);
+    expect(
+      success(["show", "4", "--include-inactive"]).flags.includeInactive,
+    ).toBe(true);
+  });
+
+  /**
+   * 🛑 The name is load-bearing. If someone "harmonises" it to `--include-archived` to match the
+   * area verbs, it starts describing a set it does not return.
+   */
+  it("is NOT called --include-archived — devices have three statuses, areas have two", () => {
+    expect(failure(["show", "4", "--include-archived"])).toMatch(
+      /include-archived/,
+    );
+  });
+
+  it("--status still advertises the values it can now actually return", () => {
+    const help = String(
+      (
+        deviceCommand.subcommands?.list?.flags as Record<
+          string,
+          { help: string }
+        >
+      )?.status?.help ?? "",
+    );
+    expect(help).toContain("archived");
+    expect(help).not.toContain("removed");
+    // and it says it widens, so the coupling is discoverable from --help alone
+    expect(help).toMatch(/include-inactive/);
+  });
+});

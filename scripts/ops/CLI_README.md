@@ -2286,7 +2286,8 @@ Usage:
 Options:
   --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
   --vendor <vendor>          Only this vendor's devices
-  --status <status>          Only devices with this status (active, disabled, archived)
+  --status <status>          Only devices with this status (active, disabled, archived) — implies --include-inactive
+  --include-inactive         Also consider disabled and archived devices (only active ones are listed by default)
 
 Common options:
   --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
@@ -2343,6 +2344,7 @@ Arguments:
 
 Options:
   --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
+  --include-inactive         Also consider disabled and archived devices (only active ones are listed by default)
 
 Common options:
   --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
@@ -2363,6 +2365,7 @@ External access:
 Examples:
   liveone device show daylesford
   liveone device show dv_01kybrhzkmfyxvz63d15rscj19
+  liveone device show 4 --include-inactive
 
 Exit codes:
   0    success
@@ -5693,6 +5696,7 @@ Arguments:
 
 Options:
   --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
+  --include-archived         Also consider archived areas (they are hidden from every listing by default)
 
 Common options:
   --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
@@ -5753,6 +5757,7 @@ Arguments:
 
 Options:
   --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
+  --include-archived         Also consider archived areas (they are hidden from every listing by default)
   --label <simon's phone>    Who or what this URL is for — required, so it can be revoked knowingly  (required)
   --expires-days <90>        Stop working after this many days (default: never)
 
@@ -5809,6 +5814,7 @@ Arguments:
 
 Options:
   --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
+  --include-archived         Also consider archived areas (they are hidden from every listing by default)
 
 Common options:
   --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)

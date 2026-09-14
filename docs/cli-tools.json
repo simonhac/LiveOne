@@ -1923,6 +1923,10 @@
             "type": "string",
             "description": "Target origin (default: your stored default, else https://www.liveone.energy) (origin)"
           },
+          "include-archived": {
+            "type": "boolean",
+            "description": "Also consider archived areas (they are hidden from every listing by default)"
+          },
           "format": {
             "type": "string",
             "enum": [
@@ -1936,7 +1940,7 @@
           "area"
         ]
       },
-      "signature": "liveone calendar list <area> { --base-url?: string }",
+      "signature": "liveone calendar list <area> { --base-url?: string; --include-archived?: boolean }",
       "invocation": "npm run liveone -- calendar list",
       "file": "scripts/ops/liveone.ts",
       "writes": false,
@@ -1966,6 +1970,10 @@
           "base-url": {
             "type": "string",
             "description": "Target origin (default: your stored default, else https://www.liveone.energy) (origin)"
+          },
+          "include-archived": {
+            "type": "boolean",
+            "description": "Also consider archived areas (they are hidden from every listing by default)"
           },
           "label": {
             "type": "string",
@@ -1997,7 +2005,7 @@
           "label"
         ]
       },
-      "signature": "liveone calendar mint <area> { --base-url?: string; --label: string; --expires-days?: number }",
+      "signature": "liveone calendar mint <area> { --base-url?: string; --include-archived?: boolean; --label: string; --expires-days?: number }",
       "invocation": "npm run liveone -- calendar mint",
       "file": "scripts/ops/liveone.ts",
       "writes": true,
@@ -2032,6 +2040,10 @@
             "type": "string",
             "description": "Target origin (default: your stored default, else https://www.liveone.energy) (origin)"
           },
+          "include-archived": {
+            "type": "boolean",
+            "description": "Also consider archived areas (they are hidden from every listing by default)"
+          },
           "format": {
             "type": "string",
             "enum": [
@@ -2054,7 +2066,7 @@
           "token"
         ]
       },
-      "signature": "liveone calendar revoke <area> <token> { --base-url?: string }",
+      "signature": "liveone calendar revoke <area> <token> { --base-url?: string; --include-archived?: boolean }",
       "invocation": "npm run liveone -- calendar revoke",
       "file": "scripts/ops/liveone.ts",
       "writes": true,
@@ -4589,7 +4601,11 @@
           },
           "status": {
             "type": "string",
-            "description": "Only devices with this status (active, disabled, archived) (status)"
+            "description": "Only devices with this status (active, disabled, archived) — implies --include-inactive (status)"
+          },
+          "include-inactive": {
+            "type": "boolean",
+            "description": "Also consider disabled and archived devices (only active ones are listed by default)"
           },
           "format": {
             "type": "string",
@@ -4601,7 +4617,7 @@
           }
         }
       },
-      "signature": "liveone device list { --base-url?: string; --vendor?: string; --status?: string }",
+      "signature": "liveone device list { --base-url?: string; --vendor?: string; --status?: string; --include-inactive?: boolean }",
       "invocation": "npm run liveone -- device list",
       "file": "scripts/ops/liveone.ts",
       "writes": false,
@@ -4785,7 +4801,7 @@
       "when": "Use this to see everything the platform knows about one device — its vendor identity,\nconfig overrides, derived capabilities and point inventory.",
       "parentWhen": "Reach for this for the PHYSICAL/vendor layer: what a device IS and what it reports. For the\nsemantic grouping (areas, bindings, flows) use `area`; for what a dashboard shows use\n`dashboard`.",
       "details": "The aggregate is an OBJECT, so the human rendering is the pretty-printed JSON — a table\nwould only hide its shape. `points` renders the point inventory alone, as a table.\n`capabilities` are DERIVED (a point scan + compound predicates), and `area show` remains\nthe authoritative place to read them in context — its members carry the same list.",
-      "description": "npm run liveone -- device show — A device's full aggregate: metadata, config, adapter state, capabilities, points.\n\nUse this to see everything the platform knows about one device — its vendor identity,\nconfig overrides, derived capabilities and point inventory.\n\nAbout `device` generally: Reach for this for the PHYSICAL/vendor layer: what a device IS and what it reports. For the\nsemantic grouping (areas, bindings, flows) use `area`; for what a dashboard shows use\n`dashboard`.\n\nThe aggregate is an OBJECT, so the human rendering is the pretty-printed JSON — a table\nwould only hide its shape. `points` renders the point inventory alone, as a table.\n`capabilities` are DERIVED (a point scan + compound predicates), and `area show` remains\nthe authoritative place to read them in context — its members carry the same list.\n\nRead-only. This command changes nothing.\n\nCalls the deployed LiveOne API as the signed-in user. A missing, expired or revoked CLI token is exit 3.\n\nExit codes: 0, 1, 2, 3, 5, 130.\n\nExamples:\n  liveone device show daylesford\n  liveone device show dv_01kybrhzkmfyxvz63d15rscj19",
+      "description": "npm run liveone -- device show — A device's full aggregate: metadata, config, adapter state, capabilities, points.\n\nUse this to see everything the platform knows about one device — its vendor identity,\nconfig overrides, derived capabilities and point inventory.\n\nAbout `device` generally: Reach for this for the PHYSICAL/vendor layer: what a device IS and what it reports. For the\nsemantic grouping (areas, bindings, flows) use `area`; for what a dashboard shows use\n`dashboard`.\n\nThe aggregate is an OBJECT, so the human rendering is the pretty-printed JSON — a table\nwould only hide its shape. `points` renders the point inventory alone, as a table.\n`capabilities` are DERIVED (a point scan + compound predicates), and `area show` remains\nthe authoritative place to read them in context — its members carry the same list.\n\nRead-only. This command changes nothing.\n\nCalls the deployed LiveOne API as the signed-in user. A missing, expired or revoked CLI token is exit 3.\n\nExit codes: 0, 1, 2, 3, 5, 130.\n\nExamples:\n  liveone device show daylesford\n  liveone device show dv_01kybrhzkmfyxvz63d15rscj19\n  liveone device show 4 --include-inactive",
       "input_schema": {
         "type": "object",
         "properties": {
@@ -4796,6 +4812,10 @@
           "base-url": {
             "type": "string",
             "description": "Target origin (default: your stored default, else https://www.liveone.energy) (origin)"
+          },
+          "include-inactive": {
+            "type": "boolean",
+            "description": "Also consider disabled and archived devices (only active ones are listed by default)"
           },
           "format": {
             "type": "string",
@@ -4810,7 +4830,7 @@
           "device"
         ]
       },
-      "signature": "liveone device show <device> { --base-url?: string }",
+      "signature": "liveone device show <device> { --base-url?: string; --include-inactive?: boolean }",
       "invocation": "npm run liveone -- device show",
       "file": "scripts/ops/liveone.ts",
       "writes": false,

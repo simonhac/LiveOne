@@ -8,7 +8,7 @@
 import { EXIT, num, str, type Ctx } from "@/lib/cli/cli";
 import { withApiSession, type ApiSession } from "@/lib/cli-kit/api-session";
 import { apiFetch } from "@/lib/cli-kit/http";
-import { resolveArea, usage, type WireArea } from "../shared";
+import { bool, resolveArea, usage, type WireArea } from "../shared";
 
 /** A token as the API serves it, with both URL forms already assembled server-side. */
 interface WireCalendarToken {
@@ -49,7 +49,14 @@ function state(t: WireCalendarToken, nowMs: number): string {
 
 async function runList(ctx: Ctx): Promise<number> {
   return withApiSession(ctx, async (s) => {
-    const area = await resolveArea(s, ctx.args[0]);
+    const area = await resolveArea(s, ctx.args[0], {
+      // 🛑 An archived area's feed tokens must stay REACHABLE, and `revoke` is why. Revoking is the
+      // prerequisite for `area delete` (a live token is a dependent it refuses on), and archiving
+      // is the prerequisite for the delete too — so without this the two interlocks deadlock: the
+      // moment you archive an area you can no longer revoke the token that stops you deleting it.
+      // Found by hitting exactly that on prod, one step short of deleting the last shell area.
+      includeArchived: bool(ctx, "includeArchived") === true,
+    });
     const tokens = await listTokens(s, area);
     const nowMs = Date.now();
 
@@ -75,7 +82,14 @@ async function runMint(ctx: Ctx): Promise<number> {
     async (s) => {
       const label = str(ctx, "label")!;
       const expiresDays = num(ctx, "expiresDays");
-      const area = await resolveArea(s, ctx.args[0]);
+      const area = await resolveArea(s, ctx.args[0], {
+        // 🛑 An archived area's feed tokens must stay REACHABLE, and `revoke` is why. Revoking is the
+        // prerequisite for `area delete` (a live token is a dependent it refuses on), and archiving
+        // is the prerequisite for the delete too — so without this the two interlocks deadlock: the
+        // moment you archive an area you can no longer revoke the token that stops you deleting it.
+        // Found by hitting exactly that on prod, one step short of deleting the last shell area.
+        includeArchived: bool(ctx, "includeArchived") === true,
+      });
 
       let minted: WireCalendarToken | undefined;
       if (!ctx.dryRun) {
@@ -128,7 +142,14 @@ async function runRevoke(ctx: Ctx): Promise<number> {
   return withApiSession(
     ctx,
     async (s) => {
-      const area = await resolveArea(s, ctx.args[0]);
+      const area = await resolveArea(s, ctx.args[0], {
+        // 🛑 An archived area's feed tokens must stay REACHABLE, and `revoke` is why. Revoking is the
+        // prerequisite for `area delete` (a live token is a dependent it refuses on), and archiving
+        // is the prerequisite for the delete too — so without this the two interlocks deadlock: the
+        // moment you archive an area you can no longer revoke the token that stops you deleting it.
+        // Found by hitting exactly that on prod, one step short of deleting the last shell area.
+        includeArchived: bool(ctx, "includeArchived") === true,
+      });
       const ref = ctx.args[1];
       const tokens = await listTokens(s, area);
 
