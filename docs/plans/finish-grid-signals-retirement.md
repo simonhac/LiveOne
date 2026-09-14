@@ -43,10 +43,12 @@ card type in its place — listed among the tile views at `:31`, registered as a
 same batch (`grid` → `house-to-grid`) shipped too: `house-to-grid` is at `card-types.ts:27`.
 
 **Not done — the resolution half.** [`lib/grid/context.ts`](../../lib/grid/context.ts) still exists,
-and was actively maintained rather than deleted: `:57-59` carries a config-v4 Phase 13 PR 5 comment
-explaining that the area is now located via `legacy_handles` rather than the dropped
-`areas.legacy_system_id`, implemented as the inner join at `:60-65`. `resolveGridContextForDevice`
-(`:45`) still does the full location walk — area location (`:68`) → `nemRegionForLocation` (`:71`) →
+and has been actively maintained rather than deleted — twice. Config-v4 Phase 13 PR 5 re-pointed the
+area lookup at `legacy_handles` when `areas.legacy_system_id` was dropped; the device→0..1-area
+change re-pointed it again (2026-09-14) at `devices.area_id`, because stopping the area-of-one mint
+left a newly onboarded device with no handle→area leg at all and a re-homed one resolving its
+shell's location instead of its site's. `resolveGridContextForDevice` still does the full location
+walk — area location (`:68`) → `nemRegionForLocation` (`:71`) →
 a grid-role point check (`:77`) → a lookup of the public OpenElectricity device serving that region
 (`:81-90`). Its own comment at `:48-50` records that this "runs inline on the dashboard server
 render" and must therefore swallow every DB fault, "never 500 the whole dashboard". Its result type
