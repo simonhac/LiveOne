@@ -296,6 +296,13 @@ async function insertDeviceToPg(
  * and served but not INSERTED — and it produced 14 of prod's 17 areas as one-device shells. What is
  * left is the same outcome for a household connecting their first inverter, arrived at as a
  * decision rather than a constraint, and skipped entirely for everyone it was wrong for.
+ *
+ * ⚠️ **The placement and the insert are two transactions, not one**, because creating an area is
+ * itself a transaction with a handle-race retry. So a failed device insert can leave an empty area
+ * behind. That is no worse than what it replaces — the old writer stranded an area on every failed
+ * attempt too, and `deleteDevice`'s rollback has never removed one — and it is now self-limiting:
+ * the area it left is recorded as the owner's default, so the retry lands IN it rather than making
+ * another. A zero-device area is first-class.
  */
 async function createDevice(
   deviceData: CreateDeviceData,
