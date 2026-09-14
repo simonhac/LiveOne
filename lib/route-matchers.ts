@@ -147,6 +147,9 @@ export function hasFeedToken(request: Request): boolean {
 // 404 before the handler runs, so a credential the handler understands never gets the chance to be
 // understood. This is the same reason `/api/cron` and `/api/gush` are listed elsewhere.
 const cliTokenRoutes = [
+  // Metadata-only inventory; requireAuth in-handler, own scope unless actingAsAdmin.
+  // Sharing returns recipients/counts only, never bearer tokens. No mutation methods.
+  "/api/v4/tree",
   // Enrollment and assignment management still requireAdmin in both helpers.
   "/api/admin/collectors",
   "/api/admin/pollers",

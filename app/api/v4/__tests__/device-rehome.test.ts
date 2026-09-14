@@ -25,6 +25,10 @@ const DEVICE = Device.generate();
 const DEVICE_UUID = Device.toUuid(DEVICE);
 
 jest.mock("@/lib/api-auth", () => ({ requireAuth: jest.fn() }));
+jest.mock("next/cache", () => ({ revalidatePath: jest.fn() }));
+jest.mock("@/lib/registry/device-writer", () => ({
+  DeviceWriter: { updateDevice: jest.fn() },
+}));
 jest.mock("@/lib/db/planetscale", () => ({ requirePlanetscaleDb: jest.fn() }));
 jest.mock("@/lib/registry/device-config", () => ({
   DeviceConfigRegistry: { devicesVisibleByUser: jest.fn() },
@@ -67,6 +71,7 @@ import {
   AreaValidationError,
 } from "@/lib/areas/create";
 import { PATCH } from "../devices/[id]/route";
+import { DeviceWriter } from "@/lib/registry/device-writer";
 
 const mockAuth = jest.mocked(requireAuth);
 const mockDb = jest.mocked(requirePlanetscaleDb);
@@ -119,6 +124,62 @@ beforeEach(() => {
 });
 
 describe("PATCH /api/v4/devices/{id}", () => {
+  it.each([false, true])(
+    "renames for an owner/admin without moving or changing area settings (admin=%s)",
+    async (isAdmin) => {
+      mockAuth.mockResolvedValue({
+        userId: isAdmin ? "admin" : "user_1",
+        isAdmin,
+      } as any);
+      mockDb.mockReturnValue(
+        selectChain([{ rid: 7, name: "Old", ownerUserId: "user_1" }]) as any,
+      );
+      const res = await call({ name: " Amber CitiPower NMI 0123456789 " });
+      expect(res.status).toBe(200);
+      expect(await res.json()).toMatchObject({
+        name: "Amber CitiPower NMI 0123456789",
+        previousName: "Old",
+        renamed: true,
+      });
+      expect(DeviceWriter.updateDevice).toHaveBeenCalledWith(7, {
+        displayName: "Amber CitiPower NMI 0123456789",
+      });
+      expect(mockRehome).not.toHaveBeenCalled();
+      expect(mockRefresh).not.toHaveBeenCalled();
+    },
+  );
+
+  it("does not give an area owner permission to rename someone else's device", async () => {
+    mockDb.mockReturnValue(
+      selectChain([{ rid: 7, name: "Old", ownerUserId: "other" }]) as any,
+    );
+    expect((await call({ name: "New" })).status).toBe(404);
+    expect(DeviceWriter.updateDevice).not.toHaveBeenCalled();
+    expect(mockRehomable).not.toHaveBeenCalled();
+  });
+
+  it.each([null, 42, "", "   ", "a".repeat(101)])(
+    "refuses invalid name %p",
+    async (name) => {
+      expect((await call({ name })).status).toBe(422);
+      expect(DeviceWriter.updateDevice).not.toHaveBeenCalled();
+    },
+  );
+
+  it("rejects a combined rename and move without either write", async () => {
+    expect((await call({ name: "New", areaId: AREA })).status).toBe(422);
+    expect(DeviceWriter.updateDevice).not.toHaveBeenCalled();
+    expect(mockRehome).not.toHaveBeenCalled();
+  });
+
+  it("reports an unchanged name without writing", async () => {
+    mockDb.mockReturnValue(
+      selectChain([{ rid: 7, name: "Same", ownerUserId: "user_1" }]) as any,
+    );
+    const res = await call({ name: "Same" });
+    expect((await res.json()).renamed).toBe(false);
+    expect(DeviceWriter.updateDevice).not.toHaveBeenCalled();
+  });
   it("moves the device and refreshes serving at BOTH ends", async () => {
     const fromUuid = Area.toUuid(OTHER_AREA);
     mockRehome.mockResolvedValue({

@@ -72,10 +72,39 @@ export const deviceCommand = defineCommand({
     "Http-only: every verb calls the deployed API as you (`liveone auth login`), and prints\n" +
     "`target: <origin> as <you>` on stderr first — read it to know which environment answered.\n" +
     "Ids are per-environment.\n\n" +
-    "Every verb here READS except `recompute`, `change-offset` and `area`, which write and are\n" +
+    "Every verb here READS except `rename`, `recompute`, `change-offset` and `area`, which write and are\n" +
     "dry-run by default.",
   uses: ["api"],
   subcommands: {
+    rename: {
+      name: "rename",
+      summary:
+        "Change a device's display name; preserve its area, wiring and history.",
+      mutates: true,
+      args: [
+        DEVICE_ARG,
+        {
+          name: "name",
+          required: true,
+          help: "The new display name (1–100 characters)",
+        },
+      ],
+      flags: { ...BASE_URL_FLAG },
+      examples: [
+        "liveone device rename 10002 'Amber CitiPower NMI 6103034617'",
+        "liveone device rename 10002 'Amber CitiPower NMI 6103034617' --apply",
+      ],
+    },
+    "vendor-identity": {
+      name: "vendor-identity",
+      summary:
+        "Verify an Amber device's distributor and NMI at its stored vendor site.",
+      description:
+        "Owner/admin only. Reads Amber site metadata through the server; credentials stay server-side. Returns a suggested device name without saving it.",
+      args: [DEVICE_ARG],
+      flags: { ...BASE_URL_FLAG },
+      examples: ["liveone device vendor-identity 9"],
+    },
     list: {
       name: "list",
       summary:
@@ -823,6 +852,8 @@ async function runDeviceArea(ctx: Ctx): Promise<number> {
 }
 
 const HANDLERS: Record<string, (ctx: Ctx) => Promise<number>> = {
+  rename: runRename,
+  "vendor-identity": runVendorIdentity,
   list: runList,
   area: runDeviceArea,
   show: runShow,
@@ -832,6 +863,65 @@ const HANDLERS: Record<string, (ctx: Ctx) => Promise<number>> = {
   recompute: runRecompute,
   "change-offset": runChangeOffset,
 };
+
+async function runVendorIdentity(ctx: Ctx): Promise<number> {
+  return withApiSession(ctx, async (s) => {
+    const device = await resolveDevice(s, ctx.args[0]);
+    const identity = await s.get(
+      `/api/v4/devices/${encodeURIComponent(device.id!)}/vendor-identity`,
+    );
+    ctx.emit(identity, () => JSON.stringify(identity, null, 2));
+    return EXIT.OK;
+  });
+}
+
+async function runRename(ctx: Ctx): Promise<number> {
+  const rawName = ctx.args[1];
+  if (!rawName.trim() || rawName.length > 100)
+    throw usage(
+      "invalid device name",
+      "names must contain 1–100 characters",
+      "pass a nonempty name of at most 100 characters",
+    );
+  const name = rawName.trim();
+  return withApiSession(
+    ctx,
+    async (s) => {
+      const device = await resolveDevice(s, ctx.args[0]);
+      const path = `/api/v4/devices/${encodeURIComponent(device.id!)}`;
+      let result: unknown = null;
+      if (!ctx.dryRun) {
+        result = (
+          await apiFetch(s.origin, path, {
+            method: "PATCH",
+            token: s.token,
+            body: { name },
+          })
+        ).body;
+        const saved = await s.get<{ name: string }>(path);
+        if (saved.name !== name)
+          throw usage(
+            "name verification failed",
+            "the device did not read back with the requested name",
+            "run device show to inspect the current value before retrying",
+          );
+      }
+      ctx.emit(
+        {
+          id: device.id,
+          previousName: device.name,
+          name,
+          applied: !ctx.dryRun,
+          result,
+        },
+        () =>
+          `${ctx.dryRun ? "would rename" : "renamed and verified"} ${device.id}:\n  from: ${device.name}\n    to: ${name}${ctx.dryRun ? "\nRe-run with --apply to write." : ""}`,
+      );
+      return EXIT.OK;
+    },
+    ctx.dryRun ? "dry-run" : "APPLY",
+  );
+}
 
 /**
  * Run whichever `device` verb was selected.

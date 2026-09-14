@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
+import { revalidatePath } from "next/cache";
+import { DeviceWriter } from "@/lib/registry/device-writer";
 import { asc, eq } from "drizzle-orm";
 import { requireAuth } from "@/lib/api-auth";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
@@ -129,7 +131,9 @@ export async function GET(
 }
 
 /**
- * `PATCH /api/v4/devices/{id}` — put this device in an area, or in none: `{ areaId: "ar_…" | null }`.
+ * `PATCH /api/v4/devices/{id}` — rename with `{ name }`, or move with `{ areaId }`.
+ * Naming requires device ownership or admin; area custody alone cannot rename a device.
+ * Names and moves cannot be combined, avoiding partial writes with different authorization rules.
  *
  * The device-side inverse of `PUT /api/v4/areas/{id}/members`, and the ONLY way to say *not
  * assigned*. Both verbs exist because both questions are natural: the area builder asks "which
@@ -173,10 +177,48 @@ export async function PATCH(
 
   const body = (await request.json().catch(() => null)) as {
     areaId?: unknown;
+    name?: unknown;
   } | null;
+  if (body && typeof body === "object" && "name" in body) {
+    if (Object.keys(body).some((key) => key !== "name"))
+      return NextResponse.json(
+        {
+          error: "Send name alone; do not combine a rename with other changes",
+        },
+        { status: 422 },
+      );
+    if (
+      typeof body.name !== "string" ||
+      !body.name.trim() ||
+      body.name.length > 100
+    )
+      return NextResponse.json(
+        { error: "name must be a nonempty string of at most 100 characters" },
+        { status: 422 },
+      );
+    const [device] = await requirePlanetscaleDb()
+      .select({
+        rid: devicesTable.rid,
+        name: devicesTable.name,
+        ownerUserId: devicesTable.ownerUserId,
+      })
+      .from(devicesTable)
+      .where(eq(devicesTable.id, uuid))
+      .limit(1);
+    if (!device || !(auth.isAdmin || device.ownerUserId === auth.userId))
+      return NextResponse.json({ error: "Device not found" }, { status: 404 });
+    const name = body.name.trim();
+    const renamed = name !== device.name;
+    if (renamed) {
+      await DeviceWriter.updateDevice(device.rid, { displayName: name });
+      revalidatePath("/dashboard", "layout");
+      revalidatePath("/device", "layout");
+    }
+    return NextResponse.json({ id, name, previousName: device.name, renamed });
+  }
   // `areaId` must be PRESENT — `{}` is not "unassign". Absent-means-null is exactly the shape that
-  // lets a client bug orphan a device silently, and this route has no other field to patch.
-  if (!body || !("areaId" in body))
+  // lets a client bug orphan a device silently.
+  if (!body || typeof body !== "object" || !("areaId" in body))
     return NextResponse.json(
       { error: "body must be { areaId: ar_… | null }" },
       { status: 422 },
