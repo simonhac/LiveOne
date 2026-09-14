@@ -1,0 +1,56 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`tree renderer shows the requested detail with cross-device references, history and sharing 1`] = `
+"LiveOne (fleet; 2026-09-14T00:00:00.000Z)
+├── Craig — craig@example.com
+│   ├── Area: Old site (ar_empty) [archived] [no devices in scope]
+│   │   ├── Bindings: 0
+│   │   └── Provenance
+│   │       ├── Battery history: 0 day(s)
+│   │       └── Flow attribution: 0 day(s)
+│   └── Owned device #2: EV → High Street [area owner: simon@example.com]
+├── Simon — simon@example.com
+│   ├── Area: High Street (ar_home)
+│   │   ├── Shared via dashboard Home: craig@example.com (viewer), 1 active share link(s)
+│   │   ├── Calendar sharing: 1 active feed link(s) [schedule only]
+│   │   ├── Device #1: Battery inverter [sigenergy]
+│   │   │   ├── Shared via dashboard Home: craig@example.com (viewer), 1 active share link(s)
+│   │   │   ├── History
+│   │   │   │   ├── Daily aggregates: 720 point-day rows, 2026-05-17 → 2026-09-13
+│   │   │   │   └── Last successful collection: 2026-09-14T00:00:00.000Z
+│   │   │   ├── Points: 1 (0 inactive, 0 controls)
+│   │   │   │   └── battery/power [power; W] (pt_power) [sensor]
+│   │   │   └── Derivation: Charging sessions (dx_charge; run-detector/ev) [disabled]
+│   │   │       ├── boundary → EV / charge/stop
+│   │   │       ├── signal → Battery inverter / battery/power
+│   │   │       └── History: 42 interval(s), latest 2026-09-13T10:00:00.000Z
+│   │   │           └── Interval provenance via High Street: 40 record(s)
+│   │   ├── Device #2: EV [tesla] [removed] [owner: craig@example.com]
+│   │   │   ├── History
+│   │   │   │   ├── Daily aggregates: none
+│   │   │   │   └── Last successful collection: none recorded
+│   │   │   ├── Points: 1 (1 inactive, 1 controls)
+│   │   │   │   └── charge/stop [state] (pt_stop) [inactive] [control]
+│   │   │   └── Derivation reference → Charging sessions (dx_charge) [disabled]
+│   │   ├── Automation: Stop charging (au_stop; standing) [enabled]
+│   │   │   ├── Trigger: charge-session → dx_charge
+│   │   │   ├── Action: turn_off → pt_stop
+│   │   │   └── Last triggered: 2026-09-13T11:00:00.000Z
+│   │   ├── Bindings: 1
+│   │   │   └── battery/power → Battery inverter / battery/power [priority 0] (bn_one)
+│   │   └── Provenance
+│   │       ├── Battery history: 120 day(s), latest 2026-09-13
+│   │       └── Flow attribution: 119 day(s), latest 2026-09-13
+│   └── Dashboard: Home (db_home)
+│       ├── Shared via dashboard Home: craig@example.com (viewer), 1 active share link(s)
+│       └── Area reference → High Street
+└── No owner / public
+    └── Unassigned devices
+        └── Device #3: Grid Victoria [openelectricity]
+            ├── History
+            │   ├── Daily aggregates: none
+            │   └── Last successful collection: none recorded
+            └── Points: 0 (0 inactive, 0 controls)
+
+2 users; 2 areas; 3 devices; 1 derivations; 1 automations."
+`;

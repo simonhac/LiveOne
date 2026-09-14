@@ -39,6 +39,7 @@ Data goes to stdout; all diagnostics go to stderr. Mutating commands are **dry b
 ## `scripts/ops`
 
 - [liveone](../scripts/ops/CLI_README.md#liveone) — The LiveOne operator CLI.
+  - [liveone tree](../scripts/ops/CLI_README.md#liveone-tree) — Users → areas → devices, with derivations, automations and provenance.
   - [liveone find](../scripts/ops/CLI_README.md#liveone-find) — Find the command for a job, in plain English.
   - [liveone auth](../scripts/ops/CLI_README.md#liveone-auth) — Sign the CLI in as you, and manage its tokens.
     - [liveone auth login](../scripts/ops/CLI_README.md#liveone-auth-login) — Sign in via the browser and store a token for one origin.

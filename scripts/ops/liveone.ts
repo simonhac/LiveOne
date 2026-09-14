@@ -35,6 +35,7 @@ import { queueCommand, runQueue } from "./queue/cli";
 import { syncCommand, runSync } from "./sync/cli";
 import { importCommand, runImport } from "./import/cli";
 import { sessionCommand, runSession } from "./session/cli";
+import { treeCommand, runTree } from "./tree";
 
 export const cmd = defineCommand({
   name: "liveone",
@@ -47,6 +48,7 @@ export const cmd = defineCommand({
     "Connection and credentials are per-domain; each domain's --help states what it reaches and\n" +
     "what a failure means. Mutating commands change nothing without --apply.",
   subcommands: {
+    tree: treeCommand,
     // A root-level VERB beside the domain groups: "which command does X" is a question about the
     // whole tool, not about one domain.
     find: findCommand,
@@ -79,6 +81,7 @@ export const cmd = defineCommand({
  * itself, so adding one is a line here plus a module, with no dispatch logic to keep in step.
  */
 const DOMAINS: Record<string, (ctx: Ctx) => Promise<number>> = {
+  tree: runTree,
   find: runFind,
   auth: runAuth,
   dashboard: runDashboard,

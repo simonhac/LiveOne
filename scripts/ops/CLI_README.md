@@ -25,6 +25,7 @@ Data goes to stdout; all diagnostics go to stderr. Mutating commands are **dry b
 ## Contents
 
 - [liveone](#liveone)
+  - [liveone tree](#liveone-tree)
   - [liveone find](#liveone-find)
   - [liveone auth](#liveone-auth)
     - [liveone auth login](#liveone-auth-login)
@@ -161,6 +162,7 @@ Usage:
   Read-only. This command changes nothing.
 
 Subcommands:
+  tree                   Users → areas → devices, with derivations, automations and provenance.
   find                   Find the command for a job, in plain English.
   auth                   Sign the CLI in as you, and manage its tokens.
   dashboard              Inspect and edit stored dashboard documents (`dashboards.doc`, the v4 node tree).
@@ -197,6 +199,57 @@ Exit codes:
   0    success
   1    completed, with findings or no results
   2    usage error
+  130  interrupted
+```
+
+### liveone tree
+
+Users → areas → devices, with derivations, automations and provenance.
+
+```
+Users → areas → devices, with derivations, automations and provenance.
+
+Read-only. Defaults to your owned inventory, including every status and empty areas. Use --admin for the fleet and ownerless objects. Points and bindings are summarized; helper outputs are expanded. --sharing annotates effective dashboard access and active calendar links, never token values. Historical readings, sessions and commands are not individual tree nodes.
+
+Usage:
+  liveone tree [options]
+
+  Read-only. This command changes nothing.
+
+Options:
+  --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
+  --sharing                  Annotate dashboard recipients, effective shared objects and active share/calendar links
+  --points                   Expand every device's sensor/control points
+  --bindings                 Expand area role-to-point bindings
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
+
+Examples:
+  liveone tree
+  liveone tree --admin --sharing
+  liveone tree --admin --sharing --points --bindings --format=human
+  liveone tree --admin --format=json
+
+Exit codes:
+  0    success
+  1    completed, with findings or no results
+  2    usage error
+  3    authentication failure
+  5    upstream failure
   130  interrupted
 ```
 

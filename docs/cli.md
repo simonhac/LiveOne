@@ -159,3 +159,36 @@ onboarding now suggests `Amber <distributor> NMI <nmi>`.
   currently takes `area show` + N × `device show`).
 - **`auth list --verify`** — ping whoami per stored origin, so a server-side-revoked token
   surfaces before it surprises a command.
+
+## Inventory tree
+
+`liveone tree` shows the signed-in user's owned areas, devices and dashboards, including inactive
+objects and empty areas. `--admin` opts into the whole fleet, including ownerless/public devices
+and users without objects. Device placement comes from `devices.area_id`; cross-owner placements
+are labeled, and a derivation spanning devices appears once with references from its other devices.
+
+```sh
+npm run liveone -- tree --admin --sharing --points --bindings --format=human
+npm run liveone -- tree --admin --sharing --format=json
+```
+
+The default tree includes all derivations and automations, sensor/control point counts, helper
+output points, binding counts, battery/flow provenance day counts, device daily-aggregate history
+ranges and last successful collection, derivation interval history and area attribution, and each
+automation's trigger/action and last-triggered time. `--points` expands all sensor/control points;
+`--bindings` expands each role-to-point binding. JSON always includes this point/binding detail.
+History is summarized: raw readings, sessions, commands, forecasts and dashboard revisions are not
+individual tree nodes. Collection infrastructure (collectors and managed pollers) is also outside
+this ownership tree.
+
+`--sharing` annotates recipients and roles plus **active** dashboard-link and calendar-link counts.
+Device exposure follows the existing dashboard authorization resolver, not an inference from area
+membership. Calendar links expose schedules only. Neither share tokens nor credentials are returned
+by the inventory API. Own-scope sharing covers owned dashboards/calendars; use `--admin` for a
+fleet-wide audit. Other owners' objects referenced by an owned object remain references rather than
+being silently expanded into that owner's private inventory.
+
+The command requires the versioned, authenticated `GET /api/v4/tree` endpoint; it fails if the
+server does not confirm the requested scope or sharing mode. It never falls back to direct SQL or
+a partial list from older endpoints. The inventory is a read across several stores, not a single
+transactional snapshot.

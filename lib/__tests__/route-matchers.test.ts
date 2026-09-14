@@ -5,6 +5,7 @@ import {
   hasAccessToken,
   isCalendarFeedRoute,
   hasFeedToken,
+  isCliTokenRoute,
 } from "../route-matchers";
 
 // createRouteMatcher's predicate reads the request URL; provide both `url` (used
@@ -14,6 +15,15 @@ const req = (path: string, method = "GET") => {
   const url = `https://liveone.vercel.app${path}`;
   return { url, nextUrl: new URL(url), method } as any;
 };
+
+describe("tree inventory edge scope", () => {
+  it("admits the CLI but neither public access nor dashboard share tokens", () => {
+    expect(isCliTokenRoute(req("/api/v4/tree"))).toBe(true);
+    expect(isCliTokenRoute(req("/api/v4/tree/other"))).toBe(false);
+    expect(isPublicRoute(req("/api/v4/tree"))).toBe(false);
+    expect(isShareableRoute(req("/api/v4/tree"))).toBe(false);
+  });
+});
 
 describe("isPublicRoute — middleware allow-list", () => {
   // Self-authenticating / no-auth inbound + auth pages: must bypass Clerk.

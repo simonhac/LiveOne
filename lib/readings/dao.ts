@@ -1672,6 +1672,19 @@ async function agg1dSpanForPoints(
   return { startDay: r.startDay, endDay: r.endDay, rows: r.rows };
 }
 
+/** Inventory history summary through the UUID seam; counts only daily aggregates, never raw rows. */
+async function agg1dSpanForDevice(deviceId: DeviceId) {
+  const db = requirePlanetscaleDb();
+  const rows = await db
+    .select({ rid: points.rid })
+    .from(points)
+    .where(eq(points.deviceId, Device.toUuid(deviceId)));
+  return agg1dSpanForPoints(
+    rows.map((p) => p.rid),
+    db,
+  );
+}
+
 /**
  * The `agg_5m` instant span a point set occupies. Returns `null` when the points have no 5m rows.
  *
@@ -2221,6 +2234,7 @@ export const ReadingsDao = {
   delete1dRange,
   delete1dForPointsInRange,
   agg1dSpanForPoints,
+  agg1dSpanForDevice,
   agg5mSpanMsForPoints,
   readAdminPivot,
   hasReadingsForDevice,
