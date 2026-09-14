@@ -168,3 +168,87 @@ describe("area_bindings writers populate point_uid", () => {
     }
   });
 });
+
+/**
+ * The AMBIENT carve-out on `replaceBindings`' membership check.
+ *
+ * Membership is the firewall for an OWNED device: binding a point you can merely read would publish
+ * someone else's readings into an area you control. For an OWNERLESS device it is not a firewall at
+ * all, it is an unsatisfiable condition — `assertDevicesRehomable` refuses to place an ownerless
+ * device in ANY area (422, admins included), so it can never become a member, and a binding is the
+ * only way an area can name it. That is what the OpenElectricity NEM regions are: public, ambient,
+ * consumed by every area in their state and contained by none.
+ *
+ * Pinned in BOTH directions, because the value of the exception is entirely in how narrow it is.
+ */
+describe("replaceBindings: ambient (ownerless) points may be bound without membership", () => {
+  const AMBIENT_UID = "018f0000-0000-7000-8000-0000000000bb";
+
+  it("ACCEPTS an ownerless point whose device is not a member", async () => {
+    // systemId 77 is NOT in the mocked member set (9), and ownerUserId is null → ambient.
+    mockDb = makeFakeDb([
+      {
+        systemId: 77,
+        pointUid: AMBIENT_UID,
+        logicalPathStem: "grid.price",
+        metricType: "rate",
+        ownerUserId: null,
+      },
+    ]);
+
+    await replaceBindings("area-a", [
+      { role: "grid", metricType: "rate", pointId: Point.encode(AMBIENT_UID) },
+    ]);
+
+    const bindingInsert = inserts.find((i) => i.table === "area_bindings");
+    expect(bindingInsert).toBeDefined();
+    expect(bindingInsert!.values[0]).toMatchObject({ pointUid: AMBIENT_UID });
+  });
+
+  it("still REFUSES a non-member point that has an owner — the firewall is untouched", async () => {
+    mockDb = makeFakeDb([
+      {
+        systemId: 77,
+        pointUid: AMBIENT_UID,
+        logicalPathStem: "bidi.grid",
+        metricType: "power",
+        ownerUserId: "user_someone_else",
+      },
+    ]);
+
+    await expect(
+      replaceBindings("area-a", [
+        {
+          role: "grid",
+          metricType: "power",
+          pointId: Point.encode(AMBIENT_UID),
+        },
+      ]),
+    ).rejects.toThrow(/not a member of this area/);
+    expect(inserts.find((i) => i.table === "area_bindings")).toBeUndefined();
+  });
+
+  it("FAILS CLOSED when the projection omits ownerUserId", async () => {
+    // Not a hypothetical contract: the carve-out reads a column this query must select. If a
+    // refactor drops it, `undefined` must refuse rather than read as ambient — otherwise the
+    // membership firewall silently stops applying to EVERY point, owned ones included.
+    mockDb = makeFakeDb([
+      {
+        systemId: 77,
+        pointUid: AMBIENT_UID,
+        logicalPathStem: "grid.price",
+        metricType: "rate",
+      },
+    ]);
+
+    await expect(
+      replaceBindings("area-a", [
+        {
+          role: "grid",
+          metricType: "rate",
+          pointId: Point.encode(AMBIENT_UID),
+        },
+      ]),
+    ).rejects.toThrow(/not a member of this area/);
+  });
+});
