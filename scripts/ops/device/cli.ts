@@ -27,7 +27,9 @@ import { withApiSession, type ApiSession } from "@/lib/cli-kit/api-session";
 import { apiFetch } from "@/lib/cli-kit/http";
 import {
   BASE_URL_FLAG,
+  bool,
   HISTORY_FLAGS,
+  INCLUDE_INACTIVE_FLAG,
   listDevices,
   resolveArea,
   resolveDevice,
@@ -120,8 +122,9 @@ export const deviceCommand = defineCommand({
         status: {
           type: "string",
           placeholder: "status",
-          help: "Only devices with this status (active, disabled, archived)",
+          help: "Only devices with this status (active, disabled, archived) — implies --include-inactive",
         },
+        ...INCLUDE_INACTIVE_FLAG,
       },
       examples: ["liveone device list", "liveone device list --vendor=amber"],
     },
@@ -138,10 +141,11 @@ export const deviceCommand = defineCommand({
         "`capabilities` are DERIVED (a point scan + compound predicates), and `area show` remains\n" +
         "the authoritative place to read them in context — its members carry the same list.",
       args: [DEVICE_ARG],
-      flags: { ...BASE_URL_FLAG },
+      flags: { ...BASE_URL_FLAG, ...INCLUDE_INACTIVE_FLAG },
       examples: [
         "liveone device show daylesford",
         "liveone device show dv_01kybrhzkmfyxvz63d15rscj19",
+        "liveone device show 4 --include-inactive",
       ],
     },
     points: {
@@ -330,7 +334,18 @@ async function runList(ctx: Ctx): Promise<number> {
   return withApiSession(ctx, async (s) => {
     const vendor = str(ctx, "vendor");
     const status = str(ctx, "status");
-    const devices = (await listDevices(s)).filter(
+    // 🛑 `--status` IMPLIES the widening. The filter is applied client-side over whatever the server
+    // returned, and the server returns only `active` by default — so `--status=archived` matched an
+    // active-only list and returned zero, every time, while the flag's own help advertised
+    // `archived` and `disabled` as valid values. It was a filter that could only ever answer
+    // "nothing" for two of the three values it documented.
+    const devices = (
+      await listDevices(s, {
+        includeInactive:
+          bool(ctx, "includeInactive") === true ||
+          (status !== undefined && status !== "active"),
+      })
+    ).filter(
       (d) =>
         (vendor === undefined || d.vendor === vendor) &&
         (status === undefined || d.status === status),
@@ -351,11 +366,17 @@ async function runList(ctx: Ctx): Promise<number> {
   });
 }
 
+/** The read verbs' shared opt-in to non-active devices. */
+const inactiveOpts = (ctx: Ctx) => ({
+  includeInactive: bool(ctx, "includeInactive") === true,
+});
+
 async function fetchAggregate(
   s: ApiSession,
   ref: string,
+  opts: { includeInactive?: boolean } = {},
 ): Promise<Record<string, unknown> & { points?: WirePoint[] }> {
-  const device = await resolveDevice(s, ref);
+  const device = await resolveDevice(s, ref, opts);
   return s.get(
     `/api/v4/devices/${encodeURIComponent(device.id!)}?include=points,capabilities`,
   );
@@ -363,7 +384,7 @@ async function fetchAggregate(
 
 async function runShow(ctx: Ctx): Promise<number> {
   return withApiSession(ctx, async (s) => {
-    const body = await fetchAggregate(s, ctx.args[0]);
+    const body = await fetchAggregate(s, ctx.args[0], inactiveOpts(ctx));
     // Object-heavy payload: the pretty JSON IS the human rendering (a table would hide the shape).
     ctx.emit(body, () => JSON.stringify(body, null, 2));
     return EXIT.OK;
