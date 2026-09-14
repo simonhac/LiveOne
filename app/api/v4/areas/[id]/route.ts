@@ -8,7 +8,10 @@ import {
   loadReadableArea,
   locationPatchFromBody,
 } from "@/lib/areas/http";
-import { mergeAreaLocation } from "@/lib/areas/location";
+import {
+  mergeAreaLocation,
+  areaLocationPatchError,
+} from "@/lib/areas/location";
 import {
   updateAreaMeta,
   refreshAreaServing,
@@ -208,6 +211,8 @@ export async function PATCH(
     archiving = body.status === "archived" && area.status !== "archived";
   }
   if (body.location !== undefined) {
+    const error = areaLocationPatchError(body.location, area.location);
+    if (error) return NextResponse.json({ error }, { status: 422 });
     patch.location = mergeAreaLocation(
       area.location,
       locationPatchFromBody(body.location),

@@ -1,6 +1,6 @@
 "use client";
 
-import { MapPin, Pencil, Plus } from "lucide-react";
+import { MapPin, Settings, Plus } from "lucide-react";
 import type {
   AdminAreaData,
   AreaSourceDevice,
@@ -177,11 +177,11 @@ export function AreaTable({
                     <td className="px-2 md:px-6 py-4 align-top text-right">
                       <button
                         onClick={() => onEdit(area.id)}
-                        title="Edit area"
+                        title="Area settings"
                         className="inline-flex items-center gap-1 rounded-md border border-gray-600 px-2 py-1 text-xs text-gray-300 transition-colors hover:text-white hover:border-gray-500"
                       >
-                        <Pencil className="w-3 h-3" />
-                        Edit
+                        <Settings className="w-3 h-3" />
+                        Settings
                       </button>
                     </td>
                   </tr>

@@ -294,6 +294,14 @@ describe("PATCH /api/v4/areas/{id}", () => {
     ["slug", { slug: 7 }],
     ["dayOffsetMin", { dayOffsetMin: "600" }],
     ["displayTimezone", { displayTimezone: "" }],
+    ["unknown timezone", { displayTimezone: "Australia/Melbournee" }],
+    ["location shape", { location: "VIC" }],
+    ["location null", { location: null }],
+    ["location array", { location: [] }],
+    ["state", { location: { state: "Victoria" } }],
+    ["postcode", { location: { postcode: "123" } }],
+    ["postcode type", { location: { postcode: 3000 } }],
+    ["latitude", { location: { lat: 91 } }],
     ["status", { status: "deleted" }],
   ])("422s an invalid %s", async (_label, body) => {
     const res = await areaPATCH(req(body), params);
@@ -323,6 +331,46 @@ describe("PATCH /api/v4/areas/{id}", () => {
       }),
     });
     expect(mockRefresh).toHaveBeenCalledWith(AREA_UUID);
+  });
+
+  it("changes display timezone without requesting a day-offset change", async () => {
+    const res = await areaPATCH(
+      req({ displayTimezone: "Australia/Adelaide" }),
+      params,
+    );
+    expect(res.status).toBe(200);
+    expect(mockUpdateMeta).toHaveBeenCalledWith(AREA_UUID, {
+      displayTimezone: "Australia/Adelaide",
+    });
+    expect(mockRefresh).toHaveBeenCalledWith(AREA_UUID);
+  });
+
+  it("clears location fields while preserving coordinates", async () => {
+    // The auth fixture is independent of the aggregate echoed after the write.
+    mockLoadOwner.mockResolvedValueOnce({
+      userId: "owner",
+      isAdmin: false,
+      area: {
+        id: AREA_UUID,
+        legacySystemId: 42,
+        status: "active",
+        location: {
+          country: "AU",
+          state: "VIC",
+          postcode: "3000",
+          lat: -37,
+          lng: 145,
+        },
+      },
+    } as any);
+    const res = await areaPATCH(
+      req({ location: { state: "", postcode: null } }),
+      params,
+    );
+    expect(res.status).toBe(200);
+    expect(mockUpdateMeta).toHaveBeenCalledWith(AREA_UUID, {
+      location: { country: "AU", lat: -37, lng: 145 },
+    });
   });
 
   it("409s an alias collision", async () => {

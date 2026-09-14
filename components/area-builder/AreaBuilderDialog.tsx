@@ -7,14 +7,17 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Layers, MapPin, Trash2, X } from "lucide-react";
 import { useModalContext } from "@/contexts/ModalContext";
-import { fetchJson } from "@/lib/queries";
+import { fetchJson, invalidateDevice } from "@/lib/queries";
 import { normalizeAlias, isValidAlias } from "@/lib/dashboard/alias";
 import {
   nemRegionForLocation,
   nemRegionShortLabel,
 } from "@/lib/vendors/openelectricity/region";
+import { areaLocationPatchError } from "@/lib/areas/location";
+import { TIMEZONE_GROUPS, isValidTimezone } from "@/lib/timezones";
 import MembersTab from "./MembersTab";
 import BindingsTab from "./BindingsTab";
+import { areaDetailKey, cacheSavedAreaDetail } from "./cache";
 import type {
   AreaEditPayload,
   CandidateDevice,
@@ -62,6 +65,7 @@ export default function AreaBuilderDialog({
   areaId = null,
   initialMemberSystemId,
   onSaved,
+  actingAsAdmin = false,
 }: {
   isOpen: boolean;
   onClose: () => void;
@@ -71,6 +75,8 @@ export default function AreaBuilderDialog({
   initialMemberSystemId?: number;
   /** Called after any mutation so the caller can refresh server-rendered lists (router.refresh). */
   onSaved?: () => void;
+  /** Explicit admin read scope, supplied only by the admin areas page. */
+  actingAsAdmin?: boolean;
 }) {
   const queryClient = useQueryClient();
   const { registerModal, unregisterModal } = useModalContext();
@@ -87,6 +93,7 @@ export default function AreaBuilderDialog({
   // Edit-mode tab + form state (seeded from the detail query).
   const [tab, setTab] = useState<EditTab>("general");
   const [editName, setEditName] = useState("");
+  const [editTimezone, setEditTimezone] = useState("");
   const [editAlias, setEditAlias] = useState("");
   const [locState, setLocState] = useState("");
   const [locPostcode, setLocPostcode] = useState("");
@@ -113,28 +120,43 @@ export default function AreaBuilderDialog({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, areaId, initialMemberSystemId]);
 
+  const read = async <T,>(url: string): Promise<T> => {
+    if (!actingAsAdmin) return fetchJson<T>(url);
+    const res = await fetch(url, { headers: { "x-liveone-admin": "true" } });
+    const body = await res.json();
+    if (!res.ok) throw new Error(body.error ?? "Could not load area settings");
+    return body as T;
+  };
+
   const { data: candidatesResp } = useQuery({
-    queryKey: ["area-builder", "candidates"],
+    queryKey: ["area-builder", "candidates", actingAsAdmin],
     enabled: isOpen,
-    queryFn: () => fetchJson<CandidateDevicesResponse>("/api/v4/devices"),
+    queryFn: () => read<CandidateDevicesResponse>("/api/v4/devices"),
   });
   const candidates: CandidateDevice[] = candidatesResp?.devices ?? [];
 
   // ONE fetch for the whole aggregate — meta + members + bindings (§9.2). There is no v4 `bindings` GET.
-  const { data: detail, refetch: refetchDetail } = useQuery({
-    queryKey: ["area-builder", "detail", activeAreaId],
+  const {
+    data: detail,
+    refetch: refetchDetail,
+    isPending: detailPending,
+    error: detailError,
+  } = useQuery({
+    queryKey: areaDetailKey(activeAreaId, actingAsAdmin),
     enabled: isOpen && isEdit,
-    queryFn: () => fetchJson<AreaEditPayload>(`/api/v4/areas/${activeAreaId}`),
+    refetchOnWindowFocus: false,
+    queryFn: () => read<AreaEditPayload>(`/api/v4/areas/${activeAreaId}`),
   });
 
   // Seed the edit-form fields whenever the detail loads/changes.
   useEffect(() => {
-    if (!detail) return;
+    if (!isOpen || !detail) return;
+    setEditTimezone(detail.area.displayTimezone);
     setEditName(detail.area.name);
     setEditAlias(detail.area.slug ?? "");
     setLocState(detail.area.location?.state ?? "");
     setLocPostcode(detail.area.location?.postcode ?? "");
-  }, [detail]);
+  }, [detail, isOpen]);
 
   // The seed device arrives as an integer handle; the write surface takes `dv_`. Resolve it once the
   // candidate list is in, and lock it as member #1.
@@ -168,19 +190,37 @@ export default function AreaBuilderDialog({
   const afterMutation = () => {
     onSaved?.();
     queryClient.invalidateQueries({ queryKey: ["areas", "readable"] });
+    if (detail) {
+      const ids = [
+        detail.area.id,
+        detail.area.legacySystemId,
+        ...detail.members.flatMap((m) => [m.id, m.legacySystemId]),
+      ];
+      for (const id of ids)
+        if (id != null) void invalidateDevice(queryClient, id);
+      queryClient.invalidateQueries({
+        queryKey: ["automations", detail.area.id],
+      });
+    }
   };
 
   const aliasValid = isValidAlias(alias.trim());
   const editAliasValid = isValidAlias(editAlias.trim());
 
+  const locationError = areaLocationPatchError(
+    { state: locState, postcode: locPostcode },
+    detail?.area.location ?? null,
+  );
+  const isAustralian = (detail?.area.location?.country ?? "AU") === "AU";
+
   const region = useMemo(
     () =>
       nemRegionForLocation({
-        country: "AU",
+        country: detail?.area.location?.country ?? "AU",
         state: locState || undefined,
         postcode: locPostcode || undefined,
       }),
-    [locState, locPostcode],
+    [locState, locPostcode, detail?.area.location?.country],
   );
 
   if (!isOpen || typeof document === "undefined") return null;
@@ -242,9 +282,16 @@ export default function AreaBuilderDialog({
         setError(body?.error ?? "Could not save");
         return;
       }
+      await cacheSavedAreaDetail(
+        queryClient,
+        activeAreaId,
+        actingAsAdmin,
+        body as AreaEditPayload,
+      );
       toast.success(successMsg);
       afterMutation();
-      await refetchDetail();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not save");
     } finally {
       setBusy(false);
     }
@@ -328,17 +375,28 @@ export default function AreaBuilderDialog({
     <>
       <div
         className="fixed inset-0 z-[10000] bg-black/50 backdrop-blur-sm"
-        onClick={onClose}
+        onClick={() => {
+          if (!busy) onClose();
+        }}
       />
       <div className="pointer-events-none fixed inset-0 z-[10001] flex items-center justify-center px-4">
-        <div className="pointer-events-auto flex max-h-[85vh] w-full max-w-[520px] flex-col rounded-lg border border-gray-700 bg-gray-800 shadow-xl">
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label={isEdit ? "Area settings" : "New site"}
+          className="pointer-events-auto flex max-h-[85vh] w-full max-w-[520px] flex-col rounded-lg border border-gray-700 bg-gray-800 shadow-xl"
+        >
           <div className="flex items-center justify-between border-b border-gray-700 px-6 py-4">
             <h2 className="flex items-center gap-2 text-lg font-semibold text-white">
               <Layers className="h-5 w-5 text-purple-400" />
-              {isEdit ? "Edit site" : "New site"}
+              {isEdit ? "Area settings" : "New site"}
             </h2>
             <button
-              onClick={onClose}
+              aria-label="Close area settings"
+              disabled={busy}
+              onClick={() => {
+                if (!busy) onClose();
+              }}
               className="rounded p-1 transition-colors hover:bg-gray-700"
             >
               <X className="h-5 w-5 text-gray-400" />
@@ -346,14 +404,14 @@ export default function AreaBuilderDialog({
           </div>
 
           {isEdit && (
-            <div className="flex gap-1 border-b border-gray-700 px-4 pt-2">
+            <div className="flex shrink-0 gap-1 overflow-x-auto border-b border-gray-700 px-4 pt-2">
               {(
                 ["general", "location", "members", "bindings"] as EditTab[]
               ).map((t) => (
                 <button
                   key={t}
                   onClick={() => setTab(t)}
-                  className={`rounded-t px-3 py-2 text-sm capitalize transition-colors ${
+                  className={`shrink-0 rounded-t px-3 py-2 text-sm capitalize transition-colors ${
                     tab === t
                       ? "bg-gray-900 text-white"
                       : "text-gray-400 hover:text-gray-200"
@@ -365,231 +423,300 @@ export default function AreaBuilderDialog({
             </div>
           )}
 
-          <div className="flex-1 space-y-4 overflow-auto px-6 py-4">
-            {/* CREATE MODE */}
-            {!isEdit && (
-              <>
-                <label className="block">
-                  <span className="mb-1 block text-xs uppercase tracking-wide text-gray-500">
-                    Name
-                  </span>
-                  <input
-                    autoFocus
-                    value={name}
-                    onChange={(e) => setName(e.target.value)}
-                    placeholder="e.g. Home & Farm"
-                    className={inputCls}
-                  />
-                </label>
-                <label className="block">
-                  <span className="mb-1 block text-xs uppercase tracking-wide text-gray-500">
-                    Shortname (optional)
-                  </span>
-                  <input
-                    value={alias}
-                    onChange={(e) => setAlias(e.target.value)}
-                    onBlur={() => setAlias(normalizeAlias(alias))}
-                    placeholder="e.g. home-farm"
-                    className={inputCls}
-                  />
-                  {!aliasValid && (
-                    <span className="mt-1 block text-xs text-amber-400">
-                      Lowercase letters, numbers and hyphens only
-                    </span>
-                  )}
-                </label>
-                <MembersTab
-                  candidates={candidates}
-                  members={createChips}
-                  lockedId={lockedDeviceId}
-                  onAdd={(id) => setMembers((m) => [...new Set([...m, id])])}
-                  onRemove={(id) =>
-                    setMembers((m) => m.filter((x) => x !== id))
-                  }
-                />
-              </>
+          <div className="flex-1 overflow-auto px-6 py-4">
+            {isEdit && detailPending && (
+              <p role="status">Loading area settings…</p>
             )}
-
-            {/* EDIT: GENERAL */}
-            {isEdit && tab === "general" && (
-              <>
-                <label className="block">
-                  <span className="mb-1 block text-xs uppercase tracking-wide text-gray-500">
-                    Name
-                  </span>
-                  <input
-                    value={editName}
-                    onChange={(e) => setEditName(e.target.value)}
-                    className={inputCls}
-                  />
-                </label>
-                <label className="block">
-                  <span className="mb-1 block text-xs uppercase tracking-wide text-gray-500">
-                    Shortname
-                  </span>
-                  <input
-                    value={editAlias}
-                    onChange={(e) => setEditAlias(e.target.value)}
-                    onBlur={() => setEditAlias(normalizeAlias(editAlias))}
-                    className={inputCls}
-                  />
-                </label>
-                <div className="flex items-center justify-between border-t border-gray-700 pt-3">
-                  {confirmDelete ? (
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm text-gray-300">
-                        Archive this site?
-                      </span>
-                      <button
-                        onClick={() => del(blockedBy != null)}
-                        disabled={busy}
-                        className="rounded-md bg-red-600 px-3 py-1.5 text-sm text-white hover:bg-red-700 disabled:opacity-50"
-                      >
-                        {blockedBy ? "Archive anyway" : "Archive"}
-                      </button>
-                      <button
-                        onClick={() => {
-                          setConfirmDelete(false);
-                          // Clear the escalation too, or a later archive of a DIFFERENT site would
-                          // open already showing "Archive anyway" and force on the first click.
-                          setBlockedBy(null);
-                          setError(null);
-                        }}
-                        className="text-sm text-gray-400 hover:text-white"
-                      >
-                        Cancel
-                      </button>
-                    </div>
-                  ) : (
-                    <button
-                      onClick={() => setConfirmDelete(true)}
-                      className="flex items-center gap-1.5 text-sm text-red-400 hover:text-red-300"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                      Archive site
-                    </button>
-                  )}
-                  <button
-                    onClick={() =>
-                      patchArea(
-                        {
-                          name: editName.trim(),
-                          slug: normalizeAlias(editAlias) || null,
-                        },
-                        "Saved",
-                      )
-                    }
-                    disabled={busy || !editName.trim() || !editAliasValid}
-                    className="rounded-md bg-blue-600 px-5 py-2 text-sm text-white hover:bg-blue-700 disabled:opacity-50"
-                  >
-                    Save
-                  </button>
-                </div>
-              </>
-            )}
-
-            {/* EDIT: LOCATION */}
-            {isEdit && tab === "location" && (
-              <>
-                <p className="text-xs text-gray-500">
-                  A site&apos;s location derives its NEM grid region (for the
-                  Local Grid card).
-                </p>
-                <label className="block">
-                  <span className="mb-1 block text-xs uppercase tracking-wide text-gray-500">
-                    State / territory
-                  </span>
-                  <select
-                    value={locState}
-                    onChange={(e) => setLocState(e.target.value)}
-                    className={inputCls}
-                  >
-                    <option value="">—</option>
-                    {AU_STATES.map((s) => (
-                      <option key={s} value={s}>
-                        {s}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label className="block">
-                  <span className="mb-1 block text-xs uppercase tracking-wide text-gray-500">
-                    Postcode (optional)
-                  </span>
-                  <input
-                    value={locPostcode}
-                    onChange={(e) => setLocPostcode(e.target.value)}
-                    placeholder="e.g. 3460"
-                    className={inputCls}
-                  />
-                </label>
-                <div className="flex items-center gap-1.5 text-xs text-gray-400">
-                  <MapPin className="h-3.5 w-3.5" />
-                  {region
-                    ? `NEM region: ${nemRegionShortLabel(region)}`
-                    : "Off-NEM / no region derived"}
-                </div>
-                <div className="flex justify-end border-t border-gray-700 pt-3">
-                  <button
-                    onClick={() =>
-                      patchArea(
-                        {
-                          location: {
-                            country: "AU",
-                            state: locState || "",
-                            postcode: locPostcode.trim() || "",
-                          },
-                        },
-                        "Saved location",
-                      )
-                    }
-                    disabled={busy}
-                    className="rounded-md bg-blue-600 px-5 py-2 text-sm text-white hover:bg-blue-700 disabled:opacity-50"
-                  >
-                    Save location
-                  </button>
-                </div>
-              </>
-            )}
-
-            {/* EDIT: MEMBERS */}
-            {isEdit && tab === "members" && detail && (
-              <MembersTab
-                candidates={candidates}
-                members={detail.members}
-                busy={busy}
-                onAdd={(id) => replaceMembers([...currentMemberIds(), id])}
-                onRemove={(id) =>
-                  replaceMembers(currentMemberIds().filter((x) => x !== id))
-                }
-              />
-            )}
-
-            {/* EDIT: BINDINGS */}
-            {isEdit && tab === "bindings" && detail && (
-              <BindingsTab
-                areaId={detail.area.id}
-                members={detail.members}
-                initialBindings={detail.bindings}
-                onSaved={() => {
-                  afterMutation();
-                  refetchDetail();
-                }}
-              />
-            )}
-
-            {error && (
-              <p className="whitespace-pre-line text-sm text-red-400">
-                {error}
+            {isEdit && detailError && (
+              <p role="alert" className="text-sm text-red-400">
+                {detailError.message}
               </p>
             )}
+            <fieldset
+              disabled={busy || (isEdit && (detailPending || !!detailError))}
+              className="space-y-4 disabled:opacity-60"
+            >
+              {/* CREATE MODE */}
+              {!isEdit && (
+                <>
+                  <label className="block">
+                    <span className="mb-1 block text-xs uppercase tracking-wide text-gray-500">
+                      Name
+                    </span>
+                    <input
+                      autoFocus
+                      value={name}
+                      onChange={(e) => setName(e.target.value)}
+                      placeholder="e.g. Home & Farm"
+                      className={inputCls}
+                    />
+                  </label>
+                  <label className="block">
+                    <span className="mb-1 block text-xs uppercase tracking-wide text-gray-500">
+                      Shortname (optional)
+                    </span>
+                    <input
+                      value={alias}
+                      onChange={(e) => setAlias(e.target.value)}
+                      onBlur={() => setAlias(normalizeAlias(alias))}
+                      placeholder="e.g. home-farm"
+                      className={inputCls}
+                    />
+                    {!aliasValid && (
+                      <span className="mt-1 block text-xs text-amber-400">
+                        Lowercase letters, numbers and hyphens only
+                      </span>
+                    )}
+                  </label>
+                  <MembersTab
+                    candidates={candidates}
+                    members={createChips}
+                    lockedId={lockedDeviceId}
+                    onAdd={(id) => setMembers((m) => [...new Set([...m, id])])}
+                    onRemove={(id) =>
+                      setMembers((m) => m.filter((x) => x !== id))
+                    }
+                  />
+                </>
+              )}
+
+              {/* EDIT: GENERAL */}
+              {isEdit && tab === "general" && (
+                <>
+                  <label className="block">
+                    <span className="mb-1 block text-xs uppercase tracking-wide text-gray-500">
+                      Name
+                    </span>
+                    <input
+                      value={editName}
+                      onChange={(e) => setEditName(e.target.value)}
+                      className={inputCls}
+                    />
+                  </label>
+                  <label className="block">
+                    <span className="mb-1 block text-xs uppercase tracking-wide text-gray-500">
+                      Shortname
+                    </span>
+                    <input
+                      value={editAlias}
+                      onChange={(e) => setEditAlias(e.target.value)}
+                      onBlur={() => setEditAlias(normalizeAlias(editAlias))}
+                      className={inputCls}
+                    />
+                  </label>
+                  <label className="block">
+                    <span className="mb-1 block text-xs uppercase tracking-wide text-gray-500">
+                      Display timezone
+                    </span>
+                    <select
+                      value={editTimezone}
+                      onChange={(e) => setEditTimezone(e.target.value)}
+                      className={inputCls}
+                    >
+                      {!TIMEZONE_GROUPS.some((g) =>
+                        g.timezones.some((tz) => tz.value === editTimezone),
+                      ) && (
+                        <option value={editTimezone}>
+                          {editTimezone || "Select a timezone…"}
+                        </option>
+                      )}
+                      {TIMEZONE_GROUPS.map((group) => (
+                        <optgroup key={group.region} label={group.region}>
+                          {group.timezones.map((tz) => (
+                            <option key={tz.value} value={tz.value}>
+                              {tz.label}
+                            </option>
+                          ))}
+                        </optgroup>
+                      ))}
+                    </select>
+                    <span className="mt-2 block text-xs text-gray-400">
+                      Used for displayed times and local-time schedules in this
+                      area.
+                    </span>
+                  </label>
+                  <div className="flex items-center justify-between border-t border-gray-700 pt-3">
+                    {confirmDelete ? (
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm text-gray-300">
+                          Archive this site?
+                        </span>
+                        <button
+                          onClick={() => del(blockedBy != null)}
+                          disabled={busy}
+                          className="rounded-md bg-red-600 px-3 py-1.5 text-sm text-white hover:bg-red-700 disabled:opacity-50"
+                        >
+                          {blockedBy ? "Archive anyway" : "Archive"}
+                        </button>
+                        <button
+                          onClick={() => {
+                            setConfirmDelete(false);
+                            // Clear the escalation too, or a later archive of a DIFFERENT site would
+                            // open already showing "Archive anyway" and force on the first click.
+                            setBlockedBy(null);
+                            setError(null);
+                          }}
+                          className="text-sm text-gray-400 hover:text-white"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        onClick={() => setConfirmDelete(true)}
+                        className="flex items-center gap-1.5 text-sm text-red-400 hover:text-red-300"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                        Archive site
+                      </button>
+                    )}
+                    <button
+                      onClick={() =>
+                        patchArea(
+                          {
+                            name: editName.trim(),
+                            slug: normalizeAlias(editAlias) || null,
+                            displayTimezone: editTimezone,
+                          },
+                          "Saved",
+                        )
+                      }
+                      disabled={
+                        busy ||
+                        !editName.trim() ||
+                        !editAliasValid ||
+                        !isValidTimezone(editTimezone)
+                      }
+                      className="rounded-md bg-blue-600 px-5 py-2 text-sm text-white hover:bg-blue-700 disabled:opacity-50"
+                    >
+                      Save
+                    </button>
+                  </div>
+                </>
+              )}
+
+              {/* EDIT: LOCATION */}
+              {isEdit && tab === "location" && (
+                <>
+                  <p className="text-xs text-gray-500">
+                    A site&apos;s location derives its NEM grid region (for the
+                    Local Grid card).
+                  </p>
+                  <label className="block">
+                    <span className="mb-1 block text-xs uppercase tracking-wide text-gray-500">
+                      State / territory
+                    </span>
+                    {!isAustralian ? (
+                      <input
+                        value={locState}
+                        onChange={(e) => setLocState(e.target.value)}
+                        className={inputCls}
+                      />
+                    ) : (
+                      <select
+                        value={locState}
+                        onChange={(e) => setLocState(e.target.value)}
+                        className={inputCls}
+                      >
+                        <option value="">—</option>
+                        {AU_STATES.map((s) => (
+                          <option key={s} value={s}>
+                            {s}
+                          </option>
+                        ))}
+                      </select>
+                    )}
+                  </label>
+                  <label className="block">
+                    <span className="mb-1 block text-xs uppercase tracking-wide text-gray-500">
+                      Postcode (optional)
+                    </span>
+                    <input
+                      inputMode={isAustralian ? "numeric" : "text"}
+                      maxLength={isAustralian ? 4 : undefined}
+                      value={locPostcode}
+                      onChange={(e) => setLocPostcode(e.target.value)}
+                      placeholder="e.g. 3460"
+                      className={inputCls}
+                    />
+                  </label>
+                  <div className="flex items-center gap-1.5 text-xs text-gray-400">
+                    <MapPin className="h-3.5 w-3.5" />
+                    {region
+                      ? `NEM region: ${nemRegionShortLabel(region)}`
+                      : "Off-NEM / no region derived"}
+                  </div>
+                  {locationError && (
+                    <p role="alert" className="text-sm text-red-400">
+                      {locationError}
+                    </p>
+                  )}
+                  <div className="flex justify-end border-t border-gray-700 pt-3">
+                    <button
+                      onClick={() =>
+                        patchArea(
+                          {
+                            location: {
+                              state: locState || "",
+                              postcode: locPostcode.trim() || "",
+                            },
+                          },
+                          "Saved location",
+                        )
+                      }
+                      disabled={busy || !!locationError}
+                      className="rounded-md bg-blue-600 px-5 py-2 text-sm text-white hover:bg-blue-700 disabled:opacity-50"
+                    >
+                      Save location
+                    </button>
+                  </div>
+                </>
+              )}
+
+              {/* EDIT: MEMBERS */}
+              {isEdit && tab === "members" && detail && (
+                <MembersTab
+                  candidates={candidates}
+                  members={detail.members}
+                  busy={busy}
+                  onAdd={(id) => replaceMembers([...currentMemberIds(), id])}
+                  onRemove={(id) =>
+                    replaceMembers(currentMemberIds().filter((x) => x !== id))
+                  }
+                />
+              )}
+
+              {/* EDIT: BINDINGS */}
+              {isEdit && tab === "bindings" && detail && (
+                <BindingsTab
+                  areaId={detail.area.id}
+                  members={detail.members}
+                  initialBindings={detail.bindings}
+                  onSaved={() => {
+                    afterMutation();
+                    refetchDetail();
+                  }}
+                />
+              )}
+
+              {error && (
+                <p
+                  role="alert"
+                  className="whitespace-pre-line text-sm text-red-400"
+                >
+                  {error}
+                </p>
+              )}
+            </fieldset>
           </div>
 
           {/* CREATE footer */}
           {!isEdit && (
             <div className="flex justify-end gap-3 border-t border-gray-700 px-6 py-4">
               <button
-                onClick={onClose}
+                onClick={() => {
+                  if (!busy) onClose();
+                }}
                 disabled={busy}
                 className="rounded-md border border-gray-600 px-4 py-2 text-gray-300 hover:text-white disabled:opacity-50"
               >
@@ -607,10 +734,12 @@ export default function AreaBuilderDialog({
           {isEdit && (
             <div className="flex justify-end border-t border-gray-700 px-6 py-3">
               <button
-                onClick={onClose}
+                onClick={() => {
+                  if (!busy) onClose();
+                }}
                 className="rounded-md border border-gray-600 px-4 py-2 text-sm text-gray-300 hover:text-white"
               >
-                Done
+                Close
               </button>
             </div>
           )}

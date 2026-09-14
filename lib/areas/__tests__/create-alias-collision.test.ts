@@ -19,6 +19,7 @@ import { describe, it, expect, beforeEach, jest } from "@jest/globals";
 /** What the fake `areas` INSERT should throw, if anything. Consumed one attempt at a time. */
 let insertFailures: unknown[] = [];
 let txAttempts = 0;
+let updatedColumns: Record<string, unknown> = {};
 
 jest.mock("@/lib/db/planetscale", () => ({
   requirePlanetscaleDb() {
@@ -53,7 +54,8 @@ jest.mock("@/lib/db/planetscale", () => ({
  */
 function updateChain() {
   const chain = {
-    set() {
+    set(values: Record<string, unknown>) {
+      updatedColumns = values;
       return chain;
     },
     async where() {
@@ -197,5 +199,21 @@ describe("updateAreaMeta — alias collision", () => {
         alias: "p14-pgerr-alias",
       }),
     ).rejects.not.toBeInstanceOf(AreaAliasTakenError);
+  });
+});
+
+describe("updateAreaMeta — display timezone", () => {
+  it("writes timezone without changing either fixed aggregation offset", async () => {
+    insertFailures = [];
+    updatedColumns = {};
+    await updateAreaMeta("019f0000-0000-7000-8000-00000000a001", {
+      displayTimezone: "Australia/Adelaide",
+    });
+    expect(updatedColumns).toEqual({
+      displayTimezone: "Australia/Adelaide",
+      updatedAt: expect.any(Date),
+    });
+    expect(updatedColumns).not.toHaveProperty("dayOffsetMin");
+    expect(updatedColumns).not.toHaveProperty("timezoneOffsetMin");
   });
 });
