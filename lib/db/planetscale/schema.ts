@@ -1312,15 +1312,16 @@ export const devices = pgTable(
     slug: text("slug"), // ← systems.alias
     model: text("model"),
     serial: text("serial"),
-    // Eager area: tz/location resolve HERE, not on the device. ⚠️ config-v4 CUTOVER SHAPE — NOT NULL
-    // (registry-sync mints the area-of-one; the mint mirror ensureDeviceRow supplies it on every insert).
+    // The eagerly-minted area-of-one each device was born with. ⚠️ **VESTIGIAL, and on its way out.**
     //
-    // 🛑 SUPERSEDED by `areaId` below (migration 0070). Both columns are live during the expand/contract
-    // window: this one is still the join target and still NOT NULL, `area_id` is nullable and
-    // unbackfilled until 0071. Migration 0072 drops this column. Do not add new readers.
-    primaryAreaId: uuid("primary_area_id")
-      .notNull()
-      .references(() => areas.id),
+    // 🛑 SUPERSEDED by `areaId` below (migration 0070). Its `NOT NULL` was dropped by migration 0072,
+    // which is the whole point of that migration: while it stood, an area-less device could be
+    // represented, resolved and served but NOT INSERTED, so `insertDeviceToPg` had to keep minting a
+    // shell area for every new device. Migration 0073 drops the column outright.
+    //
+    // Nothing reads it. Do not add a reader — `areaId` is the area a device is IN, and the two have
+    // answered differently for every re-homed device since 0071.
+    primaryAreaId: uuid("primary_area_id").references(() => areas.id),
     // The device's area, Home-Assistant shaped: 0 or 1, nullable, and the SOLE edge once 0072 lands
     // (`area_members` goes with it). NULL is a first-class state — HA's "not assigned to an area"
     // bucket — and is what an ownerless ambient producer (the OpenElectricity NEM regions, HA's

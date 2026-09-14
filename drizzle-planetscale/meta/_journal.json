@@ -505,6 +505,13 @@
       "when": 1789339234809,
       "tag": "0071_backfill_devices_area_id",
       "breakpoints": true
+    },
+    {
+      "idx": 72,
+      "version": "7",
+      "when": 1789355946953,
+      "tag": "0072_primary_area_id_nullable",
+      "breakpoints": true
     }
   ]
 }
