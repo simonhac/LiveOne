@@ -49,12 +49,18 @@ import {
 } from "@/lib/registry/device-config";
 
 /**
- * The member devices behind a handle: an area's `area_members`, or the handle's own device.
+ * The member devices behind a handle: an area's members, or the handle's own device.
  *
  * The uuid is the PRIMITIVE since 0063 — the run-detector lookup joins `derivation_sources.device_id`
  * — and the `rid` rides along because `point_info` and the KV keyspace are still int-addressed.
  * {@link memberSystemIds} is the thin int-only wrapper the rest of the callers still use. The `!` is
- * safe by the `area_members.device_id` FK — see `DeviceRegistry.ridsForDevices`.
+ * safe by `devices.rid`'s NOT NULL — see `DeviceRegistry.ridsForDevices`.
+ *
+ * 🛑 The empty-membership fall-through is now the NORMAL path for a device handle, not an edge case.
+ * A device handle names both the device and its area-of-one, and since migration 0071 that area holds
+ * ZERO devices (the device's `area_id` points at the site area it actually belongs to). So `area` is
+ * found, its member list is empty, and the answer is the handle's own device — which is exactly
+ * right, and is why the length check has to be there rather than an `if (area) return members`.
  */
 export async function memberDevices(
   handle: number,
