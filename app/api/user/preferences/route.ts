@@ -5,7 +5,9 @@ import {
   setDefaultDashboardById,
   clearDefaultDashboard,
   setDefaultArea,
+  checkDefaultArea,
   checkDefaultDashboard,
+  writeBothDefaults,
 } from "@/lib/user-preferences";
 import { makeTimer, serverTimingHeaders } from "@/lib/server-timing";
 
@@ -86,18 +88,32 @@ export async function PATCH(request: NextRequest) {
         { status: 400 },
       );
 
-    // Resolve-and-authorize the dashboard BEFORE writing the area, so its 404/403 cannot arrive
-    // after a committed area change. `setDefaultDashboardById` re-resolves it a moment later; that
-    // duplicate read is the price of not splitting a writer in two for a combination no caller
-    // currently sends.
-    if (typeof defaultDashboardId === "string") {
-      const check = await checkDefaultDashboard(userId, defaultDashboardId);
-      if (!check.success) {
-        const status = check.error === "not_found" ? 404 : 403;
+    // 🛑 A COMBINED patch is validated and then written as ONE statement. Validating first and
+    // writing twice is not enough and was the first cut of this: `setDefaultDashboardById`
+    // re-resolves the dashboard, so another request deleting it between the preflight and the
+    // write still answered 404 with the AREA already committed. One UPDATE, one outcome.
+    if (defaultAreaId !== undefined && defaultDashboardId !== undefined) {
+      const area = await checkDefaultArea(userId, defaultAreaId);
+      if (!area.success) {
+        const status = area.error === "not_found" ? 404 : 400;
         const error =
-          check.error === "not_found" ? "Dashboard not found" : check.error;
+          area.error === "not_found" ? "Area not found" : area.error;
         return NextResponse.json({ error }, { status });
       }
+      if (typeof defaultDashboardId === "string") {
+        const dash = await checkDefaultDashboard(userId, defaultDashboardId);
+        if (!dash.success) {
+          const status = dash.error === "not_found" ? 404 : 403;
+          const error =
+            dash.error === "not_found" ? "Dashboard not found" : dash.error;
+          return NextResponse.json({ error }, { status });
+        }
+      }
+      await writeBothDefaults(userId, area.uuid, defaultDashboardId);
+      return NextResponse.json({
+        success: true,
+        message: "Preferences updated",
+      });
     }
 
     if (defaultAreaId !== undefined) {

@@ -36,7 +36,7 @@
  * its state and contained by none — and `assertDevicesRehomable` refuses to place one, so minting an
  * area for it would trap it somewhere nothing could free it from.
  */
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, isNull, notExists, sql } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import { areas, users } from "@/lib/db/planetscale/schema";
 import type { AreaLocation } from "@/lib/areas/types";
@@ -132,10 +132,14 @@ async function fillBlankLocation(
   await requirePlanetscaleDb()
     .update(areas)
     .set({ location, updatedAt: new Date() })
-    // Every clause of the read is RE-STATED as a predicate, not merely checked by the caller. Two
-    // concurrent connects both reading "blank" must not have the second overwrite the first — and
-    // the owner is re-stated because the area could have been transferred between the read and this
-    // write, at which point writing a location into it would be editing somebody else's site.
+    // The clauses that MATTER are re-stated as predicates rather than merely checked by the caller.
+    // Two concurrent connects both reading "blank" must not have the second overwrite the first,
+    // and the owner is re-stated because the area could have been transferred between the read and
+    // this write — writing a location into it would then be editing somebody else's site.
+    //
+    // `status` is deliberately NOT re-stated: filling in a blank location on an area archived a
+    // moment ago is harmless (nothing reads an archived area's location) and refusing would cost a
+    // real write to avoid a no-op.
     .where(
       and(
         eq(areas.id, areaId),
@@ -149,12 +153,15 @@ async function fillBlankLocation(
  * Record `areaId` as this owner's default, creating the `users` row if they have none.
  *
  * `onConflictDoUpdate` rather than insert-then-update: a `users` row is created lazily (see
- * `lib/user-preferences.ts`), so a user can onboard a device before they have one, and two concurrent
- * connects must not race each other into a 23505.
+ * `lib/user-preferences.ts`), so a user can onboard a device before they have one, and two
+ * concurrent connects must not race each other into a 23505.
  *
- * Unconditional because the CALLER has already established that there is nothing to protect: this
- * runs only when the owner has no usable default AND no other active area. A user who has
- * deliberately chosen a default has a usable one, and never reaches here.
+ * 🛑 The `setWhere` is a compare-and-swap on BOTH halves of what was observed — the id, and the
+ * fact that it was UNUSABLE — because comparing the id alone is not enough. Interleaving: the
+ * default names archived area A, onboarding reads "A, unusable" and starts creating B, the user
+ * restores A and deliberately re-selects it, and a bare `default_area_id = A` then succeeds and
+ * silently replaces their choice with B. Re-stating "…and A is still not an active area this user
+ * owns" makes the restore win, which is the right answer: they acted later and on purpose.
  */
 async function recordDefaultArea(
   ownerClerkUserId: string,
@@ -182,7 +189,21 @@ async function recordDefaultArea(
       setWhere:
         replacing === null
           ? isNull(users.defaultAreaId)
-          : eq(users.defaultAreaId, replacing),
+          : and(
+              eq(users.defaultAreaId, replacing),
+              notExists(
+                requirePlanetscaleDb()
+                  .select({ one: sql`1` })
+                  .from(areas)
+                  .where(
+                    and(
+                      eq(areas.id, replacing),
+                      eq(areas.ownerUserId, ownerClerkUserId),
+                      eq(areas.status, "active"),
+                    ),
+                  ),
+              ),
+            ),
     })
     // 🛑 REPORTED, not assumed. Two racing first connections both decide to record; only one write
     // lands, and both claiming `recordedAsDefault: true` made `createDevice` log two different

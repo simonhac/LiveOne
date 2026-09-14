@@ -138,6 +138,62 @@ export async function setDefaultDashboardById(
 }
 
 /**
+ * Set BOTH defaults in one statement.
+ *
+ * 🛑 Exists so a combined `PATCH /api/user/preferences` cannot half-apply. Two sequential writers
+ * could not deliver that however carefully the route validated first: the dashboard is re-resolved
+ * inside `setDefaultDashboardById`, so another request deleting it between the preflight and the
+ * write still produced a 404 with the AREA already committed. One UPDATE, one outcome.
+ *
+ * Both values must already be validated — this writes what it is given.
+ */
+export async function writeBothDefaults(
+  clerkUserId: string,
+  areaUuid: string | null,
+  dashboardId: string | null,
+): Promise<void> {
+  await getOrCreateUserPreferences(clerkUserId);
+  await requirePlanetscaleDb()
+    .update(pgUsers)
+    .set({
+      defaultAreaId: areaUuid,
+      defaultDashboardId: dashboardId
+        ? Dashboard.toUuidOrNull(dashboardId)
+        : null,
+      updatedAt: new Date(),
+    })
+    .where(eq(pgUsers.clerkUserId, clerkUserId));
+}
+
+/**
+ * Validate an `ar_` ref as a default-area target: owned by this user and active. Returns the raw
+ * uuid to write, or a refusal. Split from the writer so a combined PATCH can check every field
+ * before writing any.
+ */
+export async function checkDefaultArea(
+  clerkUserId: string,
+  areaId: string | null,
+): Promise<
+  { success: true; uuid: string | null } | { success: false; error: string }
+> {
+  if (areaId === null) return { success: true, uuid: null };
+  const uuid = Area.toUuidOrNull(areaId);
+  if (!uuid) return { success: false, error: "not_found" };
+  const [area] = await requirePlanetscaleDb()
+    .select({ owner: pgAreas.ownerUserId, status: pgAreas.status })
+    .from(pgAreas)
+    .where(eq(pgAreas.id, uuid))
+    .limit(1);
+  // Unknown and not-yours collapse into one answer, as everywhere else: a well-formed `ar_` string
+  // is not permission to learn whether it names anything.
+  if (!area || area.owner !== clerkUserId)
+    return { success: false, error: "not_found" };
+  if (area.status !== "active")
+    return { success: false, error: "That area is not active" };
+  return { success: true, uuid };
+}
+
+/**
  * Set (or clear, with `null`) the area a newly onboarded device of this user's is placed in.
  *
  * Owner-only, and re-checked here rather than trusted from the wire: the area is where the next
@@ -150,25 +206,11 @@ export async function setDefaultArea(
   areaId: string | null,
 ): Promise<{ success: boolean; error?: string }> {
   await getOrCreateUserPreferences(clerkUserId);
-  let uuid: string | null = null;
-  if (areaId !== null) {
-    uuid = Area.toUuidOrNull(areaId);
-    if (!uuid) return { success: false, error: "not_found" };
-    const [area] = await requirePlanetscaleDb()
-      .select({ owner: pgAreas.ownerUserId, status: pgAreas.status })
-      .from(pgAreas)
-      .where(eq(pgAreas.id, uuid))
-      .limit(1);
-    // Unknown and not-yours collapse into one answer, as everywhere else: a well-formed `ar_`
-    // string is not permission to learn whether it names anything.
-    if (!area || area.owner !== clerkUserId)
-      return { success: false, error: "not_found" };
-    if (area.status !== "active")
-      return { success: false, error: "That area is not active" };
-  }
+  const check = await checkDefaultArea(clerkUserId, areaId);
+  if (!check.success) return check;
   await requirePlanetscaleDb()
     .update(pgUsers)
-    .set({ defaultAreaId: uuid, updatedAt: new Date() })
+    .set({ defaultAreaId: check.uuid, updatedAt: new Date() })
     .where(eq(pgUsers.clerkUserId, clerkUserId));
   return { success: true };
 }

@@ -61,6 +61,17 @@ second time to resolve `gridDeviceSystemId`, which becomes the `ctx.gridDevice` 
 ([`lib/capabilities/strategy.ts:45`](../../lib/capabilities/strategy.ts)) to emit the card
 (`:126-127`: `tiles.push(card("oe-grid", { device: ctx.gridDevice }))`).
 
+**🛑 And the AREA half of it has never worked — measured, not inferred.** `devicePlaysGridRole`
+([`lib/grid/context.ts`](../../lib/grid/context.ts)) joins `points → devices` on `devices.rid`, so a
+handle with no `devices` row matches nothing. Every area handle therefore resolves its location and
+its NEM region correctly and then fails the grid-role check. On `liveone-dev`, 2026-09-14, handles
+7 (Craig Unified), 8 (Kinkora Unified), 1000001 (Kuti House), 1000002 (Daylesford) and 1000003
+(High Street Kew) all answer `grid-signals: false` — the Local Grid card has only ever rendered on a
+DEVICE-addressed dashboard. That is a second, independent reason to delete this path rather than
+repair it: the repair is "check the area's bindings", which is a product change (a card appears on
+five dashboards that do not have one today) dressed as a bug fix, and this plan replaces the whole
+resolution anyway.
+
 **And it is the one deliberate exception to the capability model.** The registry says so at
 [`lib/capabilities/registry.ts:26-27`](../../lib/capabilities/registry.ts): compound capabilities are
 "a predicate over area config + external rows … (area location + a grid point + NEM region + a seeded
