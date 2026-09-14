@@ -133,8 +133,12 @@ async function main() {
 
   // Real device records, not a three-column projection: `intervalFor` reads `adapter_state` (via
   // `metadata`) for the per-device overrides, so a device shorn of it reports the class default.
-  // `activeDevices()` is already ORDER BY rid, and its inner join on `primary_area_id` (NOT NULL)
-  // cannot drop a row.
+  // `activeDevices()` is already ORDER BY rid, and its join onto `areas` cannot drop a row because
+  // it is a LEFT JOIN (`device-config.ts`'s `baseSelect`). That matters since the device→0..1-area
+  // change: an AREA-LESS device is a supported, first-class state and must still be polled. While
+  // the join was INNER on a NOT NULL `primary_area_id` the guarantee was structural; it is now a
+  // property of the query, and flipping it back would silently drop every area-less device from
+  // this report AND from the poll-all cron, with no error anywhere.
   const active = await DeviceConfigRegistry.activeDevices();
   const devices =
     args.deviceRid === undefined

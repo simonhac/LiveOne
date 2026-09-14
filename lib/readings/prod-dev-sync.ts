@@ -69,9 +69,15 @@ type FkChild = {
    * rather than emitted (a 42703) or missing (a silent gap).
    *
    * Exists for exactly one thing: a column that is being dropped by a migration which, by
-   * expand/contract, lands AFTER the code that stops using it. `devices.primary_area_id` is such a
-   * column — it still has its NO ACTION FK during the deploy window, so the realignment needs the
-   * repoint; once 0074 applies it is gone and the same manifest must not name it.
+   * expand/contract, lands AFTER the code that stops using it. Migrations here are applied BY HAND
+   * and never at deploy, so that window is structural, not incidental — it recurs every time a
+   * repointed column is retired.
+   *
+   * 🛑 NO ENTRY USES THIS TODAY, and that is the expected resting state. Its one user was
+   * `devices.primary_area_id`: it kept its NO ACTION FK through the deploy window, so the
+   * realignment still needed the repoint, and migration 0074 then dropped the column and this flag
+   * dropped the leg — no follow-up PR. The flag is kept for the next such drop; see the filter in
+   * `syncTable` for the mechanism and `prod-dev-sync.test.ts` for its coverage.
    *
    * 🛑 Opt-IN, deliberately. A blanket "skip anything the catalog does not have" was the first cut
    * and it turns a TYPO into a silent missing leg — misspell `area_id` and the realignment stops
@@ -306,19 +312,16 @@ const FULL: FullTable[] = [
       // outright, so there is no longer an `area_id` for a realigning area to strand. The
       // protection it stood for moved to `derivation_sources.point_id`'s FK ("you cannot delete a
       // point a live derivation reads").
-      // 🛑 TWO ENTRIES, not one with two columns: an entry's `cols` are a single (possibly
-      // composite) foreign key, zipped against the parent PK. `["area_id", "primary_area_id"]`
-      // would emit `primary_area_id = b.new_undefined`.
+      // 🛑 ONE ENTRY PER FOREIGN KEY, never one entry with two columns: an entry's `cols` are a
+      // single (possibly composite) foreign key, zipped positionally against the parent PK. While
+      // `primary_area_id` still existed this list held two entries, and collapsing them into
+      // `["area_id", "primary_area_id"]` emitted `primary_area_id = b.new_undefined` — valid SQL,
+      // wrong SQL, invisible to tsc. Pinned by a test; the zip is asserted at runtime too.
       //
-      // The second is the DEPLOY-WINDOW leg — see the catalog filter in `syncTable`. Between this
-      // code deploying and migration 0074 applying, `primary_area_id` is still present WITH its
-      // NO ACTION FK, so a drifted area a dev device still points at cannot be deleted and every
-      // sync run in that window would abort on 23503. The filter drops this entry the moment 0074
-      // lands, which is what makes it safe to leave here rather than needing a third PR.
-      repoint: [
-        { table: "devices", cols: ["area_id"] },
-        { table: "devices", cols: ["primary_area_id"], transitional: true },
-      ],
+      // That second entry was the DEPLOY-WINDOW leg, carried `transitional: true`, and retired
+      // itself against the live catalog when migration 0074 dropped the column (2026-09-14) — the
+      // mechanism is still there in `syncTable` for the next such drop, with no current user.
+      repoint: [{ table: "devices", cols: ["area_id"] }],
       // Nullable columns behind areas_owner_alias_unique. Cleared on the drifted dev row so prod's row
       // can be inserted alongside it, which the repoint UPDATE needs as its FK target. The drifted row
       // is deleted moments later, in the same transaction.
@@ -952,14 +955,16 @@ export async function syncTable(
       // 🛑 FILTERED AGAINST THE LIVE CATALOG, so the manifest can name a column that exists only
       // on one side of a pending migration.
       //
-      // This closes the deploy window that expand/contract creates. `devices.primary_area_id` is
-      // listed below alongside `area_id` because between this code deploying and migration 0074
-      // being applied the column is still there WITH its NO ACTION FK — so a drifted area that a
-      // dev device still points at cannot be deleted, and every sync run in that window would abort
-      // on 23503. That window is hours, but the sync runs every two hours and the last time it
-      // aborted it froze liveone-dev for three days. After 0074 the column is gone from
-      // `colsByTable` and the entry silently drops out, which is also what makes it safe to leave
-      // here rather than needing a third PR to remove it.
+      // This closes the deploy window that expand/contract creates. Migrations here are applied BY
+      // HAND, always after the code that stops reading the column, so a `transitional` entry lets
+      // ONE manifest serve both sides of a pending DROP: emitted while the column is still in
+      // `colsByTable`, silently dropped once it is not — no follow-up PR either way.
+      //
+      // The worked example, and so far the only one: `devices.primary_area_id` kept its NO ACTION
+      // FK through its window, so a drifted area that a dev device still pointed at could not be
+      // deleted and every sync run would abort on 23503. That window is hours, but the sync runs
+      // every two hours and the last time it aborted it froze liveone-dev for three days.
+      // Migration 0074 dropped the column on 2026-09-14 and the entry retired itself here.
       const repoint = (idDrift.repoint ?? []).filter((c) => {
         // The zip below is positional against the parent PK, so a length mismatch is a manifest
         // bug that would otherwise emit `b.new_undefined` into production SQL. Asserted, not

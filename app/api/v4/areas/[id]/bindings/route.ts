@@ -23,8 +23,9 @@ import { Point } from "@/lib/ids";
  * identity comes back, so a client can address one without positional arithmetic. The response is the
  * same `bindings` list `GET /api/v4/areas/{id}` carries, from the same loader.
  *
- * Server-side invariants (`replaceBindings`, unchanged): the role must be known, each point's owning
- * device must be a CURRENT MEMBER of the area, the point's metric must match the slot, and no
+ * Server-side invariants (`replaceBindings`): the role must be known, each point's owning device must
+ * be a CURRENT MEMBER of the area — or AMBIENT (ownerless, and so public and unplaceable; see the
+ * carve-out in `replaceBindings`) — the point's metric must match the slot, and no
  * (role, metricType, pointId) or (role, metricType, priority) may repeat. The owning device is read from
  * `points ⋈ devices` and never from the wire, so a caller cannot claim a point belongs to a device it
  * does not.

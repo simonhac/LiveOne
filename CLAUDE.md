@@ -32,6 +32,32 @@ To check TypeScript compilation:
 - **API Documentation**: See `docs/architecture/api.md` for conventions and external contracts (there is deliberately no route inventory — `find app/api -name route.ts` is ground truth)
 - **Database**: PostgreSQL on PlanetScale (the sole datastore) — prod = `sydney` branch (`aws-ap-southeast-2`), dev = shared PlanetScale dev branch
 - **Deployment**: Vercel (automatic from main branch; region `syd1`)
+- **What this repo does NOT own**: `docs/infra-ownership.md` — read it before touching uptime checks or env sync
+
+### 🛑 The app's uptime checks are code in the `infra` repo, not clicks
+
+LiveOne's BetterStack **checks, heartbeats and log plumbing** are declared as OpenTofu in the sibling
+`simonhac/infra` repo (`iac/project_liveone.tf`) — a boring IaC repo, nothing to read there for app
+work. It is checked out in its own workspace alongside this one; ask for the path rather than
+assuming one. **Don't create or edit one by hand**, neither in the BetterStack dashboard nor with a `curl`.
+The reasons are mechanical, not procedural: BetterStack applies `ssl_expiration`/`domain_expiration`
+per-**DOMAIN**, so a hand-made check on `liveone.energy` with default expiry settings silently
+rewrites those settings on every other check for the domain; a recreated heartbeat mints a new ping
+URL, silently orphaning the Vercel env var or Fly secret holding the old one (the collector keeps
+running, the heartbeat just never hears from it again); and anything created outside the state file
+is invisible to the next plan. Also configured there: env-value sync — the Vercel and Fly env stores
+are sync *targets*, not sources.
+
+Owned **here**, so don't go looking in `infra` for them: the app and its schema, `vercel.json` and
+the crons, migrations (manual — `npm run pg-migrate`), `liveone-flyhub` (`packages/usher`, deployed
+by hand from this repo), this repo's GitHub Actions, and the health endpoints themselves.
+⚠️ Those endpoints are a **contract**: one check matches a keyword in the **body** of `/api/health`
+and others assert exact status codes, so changing a JSON key or a status code can leave a check
+permanently passing with **no test here failing**. Flag it in the PR.
+
+`infra`'s `scripts/tofu.sh` fetches credentials at invocation, so even a plan is not
+credential-free — get explicit consent before running it. Full boundary map:
+`docs/infra-ownership.md`.
 
 ### Environment Variables
 

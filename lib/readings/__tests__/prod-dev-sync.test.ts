@@ -465,14 +465,12 @@ describe("prod→dev readings transfer", () => {
     expect(table).toMatchObject({
       mode: "full",
       idDrift: {
-        // Two ENTRIES, not one entry with two columns — an entry is one foreign key, zipped
-        // against the parent PK. `primary_area_id` is the deploy-window leg: still present (with
-        // its NO ACTION FK) between this code deploying and migration 0074 applying, and filtered
-        // out against the live catalog once the column is gone. See the SQL assertions below.
-        repoint: [
-          { table: "devices", cols: ["area_id"] },
-          { table: "devices", cols: ["primary_area_id"], transitional: true },
-        ],
+        // ONE ENTRY PER FOREIGN KEY — an entry is one FK, zipped against the parent PK, never one
+        // entry with two columns. This list held a second, `transitional` entry for
+        // `primary_area_id` (the deploy-window leg) until migration 0074 dropped the column on
+        // 2026-09-14 and the catalog filter retired it. `toMatchObject` compares arrays by length,
+        // so re-adding a leg without updating this line is loud.
+        repoint: [{ table: "devices", cols: ["area_id"] }],
         // config-v4 Phase 13 PR 6: `legacy_system_id` is GONE from here — migration 0052 dropped the
         // column, and `neutralize` becomes a literal `UPDATE areas SET <col> = NULL` at runtime.
         neutralize: ["slug"],
@@ -583,22 +581,37 @@ describe("prod→dev readings transfer", () => {
   });
 
   // 🛑 The repoint list is filtered against the LIVE CATALOG, and that is what lets one manifest
-  // serve both sides of a pending DROP. Between this code deploying and migration 0074 applying,
-  // `devices.primary_area_id` still exists with a NO ACTION FK, so a drifted area a dev device
-  // points at cannot be deleted and the whole sync run aborts on 23503 — which is exactly how
-  // liveone-dev froze for three days in July. After 0074 the column is gone and the leg must
-  // vanish, or every run is a 42703 instead. Neither state is reachable from the manifest alone.
+  // serve both sides of a pending DROP — the expand/contract window that this project's MANUAL
+  // migrations open by construction, every time a repointed column is retired.
+  //
+  // The manifest no longer carries a `transitional` entry: its one user, `devices.primary_area_id`,
+  // retired itself when migration 0074 dropped the column on 2026-09-14. So the entry below is
+  // SYNTHETIC, reproducing that exact shape — because the mechanism outlives its first user and an
+  // untested mechanism is a broken one the next time somebody reaches for it. The two failure modes
+  // it stands between: with the column still present (NO ACTION FK) a missing leg means a drifted
+  // area a dev device points at cannot be deleted and the whole run aborts on 23503 — which is how
+  // liveone-dev froze for three days in July; with the column gone, an emitted leg is a 42703 on
+  // every run instead. Neither state is reachable from the manifest alone.
   it("emits a repoint leg only for columns the target database actually has", async () => {
-    const table = prodDevSyncManifest().find(
-      (entry) => entry.name === "areas",
-    )!;
+    const areas = prodDevSyncManifest().find((e) => e.name === "areas")!;
     const AREA_COLS = ["id", "owner_user_id", "name", "slug"];
+    // The surviving `area_id` leg verbatim, plus a second leg standing in for a column mid-drop.
+    const dropping = {
+      ...areas,
+      idDrift: {
+        ...(areas as { idDrift: Record<string, unknown> }).idDrift,
+        repoint: [
+          { table: "devices", cols: ["area_id"] },
+          { table: "devices", cols: ["primary_area_id"], transitional: true },
+        ],
+      },
+    } as typeof areas;
 
     const during = copyClients();
     await syncTable(
       during.prod,
       during.dev,
-      table,
+      dropping,
       new Map([
         ["areas", AREA_COLS],
         ["devices", ["id", "rid", "area_id", "primary_area_id"]],
@@ -613,10 +626,10 @@ describe("prod→dev readings transfer", () => {
     await syncTable(
       after.prod,
       after.dev,
-      table,
+      dropping,
       new Map([
         ["areas", AREA_COLS],
-        ["devices", ["id", "rid", "area_id"]], // 0074 applied
+        ["devices", ["id", "rid", "area_id"]], // the DROP has landed
       ]),
       new Map([["areas", ["id"]]]),
     );
@@ -629,6 +642,26 @@ describe("prod→dev readings transfer", () => {
     expect(droppedSql).toContain(
       "UPDATE public.devices x SET area_id = b.new_id FROM _drift b WHERE x.area_id = b.id;",
     );
+
+    // And the REAL manifest, against the REAL post-0074 catalog, emits exactly the one surviving
+    // leg — i.e. the synthetic entry above is the only place `primary_area_id` still appears.
+    const live = copyClients();
+    await syncTable(
+      live.prod,
+      live.dev,
+      areas,
+      new Map([
+        ["areas", AREA_COLS],
+        ["devices", ["id", "rid", "area_id"]],
+      ]),
+      new Map([["areas", ["id"]]]),
+    );
+    const liveSql = live.devSql.at(-1)!;
+    expect(liveSql).toContain(
+      "UPDATE public.devices x SET area_id = b.new_id FROM _drift b WHERE x.area_id = b.id;",
+    );
+    expect(liveSql).not.toContain("primary_area_id");
+    expect(liveSql).not.toContain("new_undefined");
   });
 
   // 🛑 Absence is OPT-IN. A blanket "skip whatever the catalog lacks" turns a manifest typo into a

@@ -450,14 +450,36 @@ async function fetchSiteData(
 }
 
 /**
- * Convert units to kW or kWh (units are always proper SI format: W, Wh, kW, kWh)
+ * Convert units to kW or kWh (units are always proper SI format: W, Wh, kW, kWh).
+ *
+ * 🛑 FAILS CLOSED on an unrecognised or missing unit — an unidentified quantity is returned
+ * unscaled, never scaled on a guess. This used to read `convertUnits(dataSeries.units || "W")`,
+ * i.e. a series that arrived without a unit was ASSUMED to be watts and silently divided by 1000.
+ * That default cannot be right: the one thing you know about a value whose unit you could not read
+ * is that you do not know what it measures.
+ *
+ * It is also now the same rule as the fleet's other converter, `convertToKw` in
+ * `lib/charts/lines-data.ts`, which already failed closed. The two disagreeing about the SAME
+ * missing-unit case — one scaling by 1000, one not — is the hazard, not either default alone.
+ *
+ * In practice no series reaches here unitless: `units` is sourced from the point itself
+ * (`lib/history/build-series.ts` and `lib/history/list-series.ts` both set it from
+ * `series.point.metricUnit`, which is `points.unit`). So this changes no live behaviour; it removes
+ * the trap rather than fixing a firing bug.
+ *
+ * ⚠️ This is a hardcoded W→kW special case, not a unit MODEL: it carries units, it does not
+ * reconcile them. Two sources of one quantity in different native units (the NEM spot price is
+ * `$/MWh` from OpenElectricity and `cents_kWh` from Amber) are each labelled correctly and are
+ * still not comparable. That is `docs/plans/ha-parity-and-leapfrog.md` #6 (unit classes + display
+ * precision, conversion in ONE place at the serving edge), and it is the blocker on chaining those
+ * two into one ranked slot.
  */
-function convertUnits(units: string): number {
-  // Units are always proper SI format from metricUnit field
-  if (units === "W" || units === "Wh") {
+export function convertUnits(units: string): number {
+  const u = units?.toLowerCase() ?? "";
+  if (u === "w" || u === "wh") {
     return 1000; // Convert W→kW or Wh→kWh
   }
-  // Already in kW/kWh or other units (%, text, etc.)
+  // Already in kW/kWh, a non-power unit (%, text, …), or UNKNOWN — all pass through unscaled.
   return 1;
 }
 
@@ -469,7 +491,8 @@ function extractSeriesData(
   selectedIndices: number[],
   config: any,
 ): (number | null)[] {
-  const conversionFactor = convertUnits(dataSeries.units || "W");
+  // No `|| "W"`: see convertUnits. An absent unit means "unknown", which must not become "watts".
+  const conversionFactor = convertUnits(dataSeries.units);
 
   let seriesValues = selectedIndices.map((i: number) => {
     const val = dataSeries.history.data[i];

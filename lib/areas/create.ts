@@ -635,10 +635,17 @@ export interface BindingInput {
 
 /**
  * Replace ALL of an area's bindings with the given ordered list (ordinal = array index), in one
- * transaction. Validates each role is known, each point's owning device is a current member, and there
- * are no duplicate (role, metricType, pointId) tuples — the same triple `area_bindings_unique` enforces
- * since migration 0047. `metricType` comes from the chosen point's `point_info.metric_type` (the caller
+ * transaction. Validates each role is known, each point's owning device is a current member OR
+ * ambient (ownerless — see the carve-out at the check), and there are no duplicate
+ * (role, metricType, pointId) tuples — the same triple `area_bindings_unique` enforces since
+ * migration 0047. `metricType` comes from the chosen point's `point_info.metric_type` (the caller
  * sources it from `/api/device/[id]/points`).
+ *
+ * 🛑 This is a REPLACE, and bindings are an OVERRIDE, not an addition: once an area holds any
+ * binding, `PointManager._resolvePointsForHandle` serves the bound points ALONE and stops unioning
+ * its member devices' own points. So adding a first binding to a binding-less area does not widen
+ * it, it narrows it to that one point. Callers seeding a single binding must check which mode the
+ * area is in.
  */
 export async function replaceBindings(
   areaId: string,
@@ -662,6 +669,9 @@ export async function replaceBindings(
             pointUid: points.id,
             logicalPathStem: points.logicalPath,
             metricType: points.metricType,
+            // For the AMBIENT carve-out below. Read from `points ⋈ devices` like `systemId`, never
+            // from the wire.
+            ownerUserId: devices.ownerUserId,
           })
           .from(points)
           .innerJoin(devices, eq(devices.id, points.deviceId))
@@ -683,7 +693,25 @@ export async function replaceBindings(
       throw new AreaValidationError("Each binding needs a metricType");
     const point = pointByUid.get(wantedUids[bi]);
     if (!point) throw new AreaValidationError(`Point ${b.pointId} not found`);
-    if (!members.has(point.systemId))
+    // Member, OR ambient. 🛑 The carve-out is `owner_user_id IS NULL` and nothing else.
+    //
+    // An ownerless device is PUBLIC by construction — the OpenElectricity NEM regions, Home
+    // Assistant's `entry_type=SERVICE`: an ambient producer consumed by every area in its state and
+    // contained by none. `assertDevicesRehomable` refuses to place one in ANY area (422, admins
+    // included), so it can never BECOME a member and a binding is the only way an area can name it.
+    // Requiring membership here is therefore not a security rule for these rows, it is an
+    // unsatisfiable one.
+    //
+    // It escalates nothing, and that is the whole test this exception has to pass: an ownerless
+    // device's points are already readable by everyone (`lib/derivations/scope.ts` — "readable by
+    // everyone, configurable by nobody but an admin"), so binding one exposes no data the caller
+    // could not already read. Contrast an OWNED device, where membership IS the firewall: binding
+    // someone else's point would publish their readings into an area they do not control. That
+    // check is untouched.
+    // `!== null`, not `!= null`: drizzle yields null for a NULL column, so the two agree on real
+    // data — but if this projection ever stops selecting `ownerUserId`, `undefined` must REFUSE
+    // (fail closed) rather than read as ambient and wave every non-member point through.
+    if (!members.has(point.systemId) && point.ownerUserId !== null)
       throw new AreaValidationError(
         `Point ${b.pointId} belongs to system ${point.systemId}, which is not a member of this area`,
       );
