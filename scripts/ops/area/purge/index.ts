@@ -28,7 +28,14 @@
 import { EXIT, type CommandSpec, type Ctx } from "@/lib/cli/cli";
 import { withApiSession, type ApiSession } from "@/lib/cli-kit/api-session";
 import { apiFetch } from "@/lib/cli-kit/http";
-import { BASE_URL_FLAG, resolveArea, str, usage } from "../../shared";
+import {
+  BASE_URL_FLAG,
+  bool,
+  INCLUDE_ARCHIVED_FLAG,
+  resolveArea,
+  str,
+  usage,
+} from "../../shared";
 
 const AREA_ARG = {
   name: "area",
@@ -66,7 +73,7 @@ export const PROVENANCE_SPEC = {
     "\n" +
     "Read-only. This is the evidence a `purge` dry run is based on.",
   args: [AREA_ARG],
-  flags: { ...BASE_URL_FLAG, ...WINDOW_FLAGS },
+  flags: { ...BASE_URL_FLAG, ...WINDOW_FLAGS, ...INCLUDE_ARCHIVED_FLAG },
   examples: [
     "liveone area provenance kutis",
     "liveone area provenance 13 --start=2026-07-06 --end=2026-09-12",
@@ -111,7 +118,7 @@ export const PURGE_SPEC = {
         "the one you get by typing less will eventually be typed less.",
       mutates: true,
       args: [AREA_ARG],
-      flags: { ...BASE_URL_FLAG, ...WINDOW_FLAGS },
+      flags: { ...BASE_URL_FLAG, ...WINDOW_FLAGS, ...INCLUDE_ARCHIVED_FLAG },
       exitCodes: { 1: "there was nothing in that window to delete" },
       examples: [
         "liveone area purge flows 13 --start=2026-07-06 --end=2026-09-12",
@@ -139,7 +146,7 @@ export const PURGE_SPEC = {
         "the same `pt_` ids.",
       mutates: true,
       args: [AREA_ARG],
-      flags: { ...BASE_URL_FLAG },
+      flags: { ...BASE_URL_FLAG, ...INCLUDE_ARCHIVED_FLAG },
       exitCodes: { 1: "the area had no battery provenance to delete" },
       examples: [
         "liveone area purge provenance 13",
@@ -205,7 +212,9 @@ function renderProvenance(p: ProvenanceReport): string[] {
 
 async function runProvenanceRead(ctx: Ctx): Promise<number> {
   return withApiSession(ctx, async (s) => {
-    const area = await resolveArea(s, ctx.args[0]);
+    const area = await resolveArea(s, ctx.args[0], {
+      includeArchived: bool(ctx, "includeArchived") === true,
+    });
     const start = str(ctx, "start");
     const end = str(ctx, "end");
 
@@ -243,7 +252,9 @@ async function runPurgeFlows(ctx: Ctx): Promise<number> {
   return withApiSession(
     ctx,
     async (s) => {
-      const area = await resolveArea(s, ctx.args[0]);
+      const area = await resolveArea(s, ctx.args[0], {
+        includeArchived: bool(ctx, "includeArchived") === true,
+      });
       const window = requireWindow(ctx);
       const at = `/api/v4/areas/${area.id}/flows?start=${window.start}&end=${window.end}`;
 
@@ -296,7 +307,9 @@ async function runPurgeProvenance(ctx: Ctx): Promise<number> {
   return withApiSession(
     ctx,
     async (s) => {
-      const area = await resolveArea(s, ctx.args[0]);
+      const area = await resolveArea(s, ctx.args[0], {
+        includeArchived: bool(ctx, "includeArchived") === true,
+      });
       const at = `/api/v4/areas/${area.id}/provenance`;
 
       const found = await s.get<ProvenanceReport & { ok: boolean }>(at);

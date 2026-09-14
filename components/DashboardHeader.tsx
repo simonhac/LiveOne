@@ -62,7 +62,7 @@ export interface DashboardHeaderProps {
   deviceInfo?: DeviceInfo | null;
   vendorType?: string;
   supportsPolling?: boolean;
-  deviceStatus?: "active" | "disabled" | "removed";
+  deviceStatus?: "active" | "disabled" | "archived";
 
   // User and access
   isAdmin: boolean;
@@ -392,8 +392,8 @@ export default function DashboardHeader({
                 Admin
               </Link>
             )}
-            {/* Settings dropdown - Only show for admin or non-removed devices */}
-            {(isAdmin || deviceStatus !== "removed") && (
+            {/* Settings dropdown - Only show for admin or non-archived devices */}
+            {(isAdmin || deviceStatus !== "archived") && (
               <div className="relative" ref={settingsDropdownRef}>
                 <button
                   onClick={() => setShowSettingsDropdown(!showSettingsDropdown)}

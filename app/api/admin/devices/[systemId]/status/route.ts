@@ -21,10 +21,10 @@ export async function PATCH(
     const { status } = body;
 
     // Validate status
-    if (!status || !["active", "disabled", "removed"].includes(status)) {
+    if (!status || !["active", "disabled", "archived"].includes(status)) {
       return NextResponse.json(
         {
-          error: "Invalid status. Must be one of: active, disabled, removed",
+          error: "Invalid status. Must be one of: active, disabled, archived",
         },
         { status: 400 },
       );
@@ -38,7 +38,7 @@ export async function PATCH(
 
     await DeviceWriter.updateDevice(systemId, { status });
 
-    // Defaults are dashboard-based now (default_dashboard_id, ON DELETE SET NULL); a removed device
+    // Defaults are dashboard-based now (default_dashboard_id, ON DELETE SET NULL); an archived device
     // leaves its dashboards intact, so there is no per-device default to clear here.
     console.log(
       `System ${systemId} status changed to ${status} by admin ${authResult.userId}`,

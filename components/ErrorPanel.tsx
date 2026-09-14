@@ -5,7 +5,7 @@ import { AlertTriangle } from "lucide-react";
  * The app's "this couldn't be loaded" notice: amber, inline, and always saying WHAT is missing
  * rather than shimmering forever or collapsing to nothing.
  *
- * One component so the vocabulary stays one vocabulary — an unresolvable area, a removed device and
+ * One component so the vocabulary stays one vocabulary — an unresolvable area, an archived device and
  * a render-time crash should all read as the same kind of event, because to the person looking at
  * them they are. Deliberately not a full-page treatment: it is sized by its container, so it works
  * both as a card-sized notice inside a dashboard section and as the body of the root error boundary.

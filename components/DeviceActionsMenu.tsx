@@ -17,12 +17,12 @@ import {
 interface DeviceActionsMenuProps {
   systemId: number;
   deviceName: string;
-  status: "active" | "disabled" | "removed";
+  status: "active" | "disabled" | "archived";
   vendorType?: string;
   supportsPolling?: boolean;
   onTest: () => void;
   onPollNow?: (dryRun?: boolean) => void;
-  onStatusChange: (status: "active" | "disabled" | "removed") => void;
+  onStatusChange: (status: "active" | "disabled" | "archived") => void;
   onPollingStats?: () => void;
   onSettings?: () => void;
   onViewData?: () => void;
@@ -265,13 +265,15 @@ export default function DeviceActionsMenu({
                 Disable
               </button>
             )}
-            {status !== "removed" && (
+            {status !== "archived" && (
               <button
-                onClick={() => handleMenuClick(() => onStatusChange("removed"))}
+                onClick={() =>
+                  handleMenuClick(() => onStatusChange("archived"))
+                }
                 className="w-full text-left px-4 py-2 text-sm text-gray-300 hover:bg-gray-700 hover:text-white flex items-center gap-2"
               >
                 <Trash2 className="w-4 h-4" />
-                Mark Removed
+                Mark Archived
               </button>
             )}
             {onSettings && (

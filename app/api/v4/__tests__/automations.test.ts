@@ -63,6 +63,7 @@ jest.mock("@/lib/automations/store", () => ({
   create: jest.fn(),
   patch: jest.fn(),
   remove: jest.fn(),
+  moveToArea: jest.fn(),
   derivationBelongsToArea: jest.fn(),
 }));
 
@@ -77,6 +78,7 @@ import { loadDerivation } from "@/lib/derivations/scope";
 import type { AutomationRow } from "@/lib/db/planetscale/schema";
 import { GET, POST } from "../automations/route";
 import { DELETE, PATCH } from "../automations/[id]/route";
+import { POST as MOVE } from "../automations/[id]/move/route";
 
 const mockAuth = jest.mocked(requireAuth);
 const mockDeviceAccess = jest.mocked(requireDeviceAccess);
@@ -193,6 +195,15 @@ function patch(body: unknown, id: string = AU) {
   return PATCH(
     new NextRequest("http://localhost/api/v4/automations/x", {
       method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+    { params: Promise.resolve({ id }) },
+  );
+}
+function move(body: unknown, id: string = AU, qs = "") {
+  return MOVE(
+    new NextRequest(`http://localhost/api/v4/automations/x/move${qs}`, {
+      method: "POST",
       body: JSON.stringify(body),
     }),
     { params: Promise.resolve({ id }) },
@@ -602,6 +613,191 @@ describe("POST /api/v4/automations", () => {
       requireOwner: true,
     });
     expect(mockDeviceAccess).toHaveBeenCalledWith(expect.anything(), 10);
+  });
+});
+
+/**
+ * `POST /api/v4/automations/{id}/move`.
+ *
+ * The verb exists because PATCH refuses `areaId` and the suggested alternative — delete and
+ * recreate — silently costs the calendar UID and the consumed-slot record. So the assertions that
+ * matter are: PATCH's refusal is UNCHANGED, both ends are authorized, and the references are
+ * re-checked against the DESTINATION.
+ */
+describe("POST /api/v4/automations/{id}/move", () => {
+  const OTHER = Area.encode(OTHER_AREA_UUID);
+
+  beforeEach(() => {
+    // Destination resolves and is owned, by default.
+    mockAreaOwner.mockResolvedValue({
+      userId: "user_1",
+      isAdmin: false,
+      area: {
+        id: OTHER_AREA_UUID,
+        ownerClerkUserId: "user_1",
+        displayTimezone: TZ,
+      },
+    } as never);
+    jest.mocked(store.moveToArea).mockResolvedValue({
+      ...row(),
+      areaId: OTHER_AREA_UUID,
+    } as never);
+  });
+
+  it("400s a malformed automation id", async () => {
+    expect((await move({ areaId: OTHER }, "au_nonsense")).status).toBe(400);
+  });
+
+  it("404s an unknown automation", async () => {
+    mockStore.getById.mockResolvedValue(null);
+    expect((await move({ areaId: OTHER })).status).toBe(404);
+  });
+
+  it.each([[{}], [{ areaId: null }], [{ areaId: 7 }], [null]])(
+    "422s a body without a string areaId (%p)",
+    async (body) => {
+      expect((await move(body)).status).toBe(422);
+      expect(store.moveToArea).not.toHaveBeenCalled();
+    },
+  );
+
+  it("422s a malformed area id", async () => {
+    expect((await move({ areaId: "ar_nonsense" })).status).toBe(422);
+    expect(store.moveToArea).not.toHaveBeenCalled();
+  });
+
+  it("moves, and returns the updated row", async () => {
+    const res = await move({ areaId: OTHER });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.moved).toBe(true);
+    // 🛑 The RESPONSE must be the moved row, not the stale one the loader read.
+    expect(body.automation.areaId).toBe(OTHER);
+    expect(body.automation.id).toBe(AU); // the uuid IS the calendar UID — it must not change
+    // 🛑 CAS on the observed revision. Without it a concurrent PATCH can swap the trigger between
+    // the destination check and this write, filing a rule nobody validated into the destination.
+    expect(store.moveToArea).toHaveBeenCalledWith(
+      AU_UUID,
+      OTHER_AREA_UUID,
+      row().revision,
+    );
+  });
+
+  /**
+   * 🛑 The dry run must run the REAL checks. A preview that prints "would move" and is then refused
+   * by apply is worse than no preview — it trains people to skip it.
+   */
+  it("?dryRun=true runs every check and writes nothing", async () => {
+    const res = await move({ areaId: OTHER }, AU, "?dryRun=true");
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.wouldMove).toBe(true);
+    expect(body.moved).toBe(false);
+    expect(store.moveToArea).not.toHaveBeenCalled();
+  });
+
+  it("?dryRun=true still refuses a destination that cannot hold the rule", async () => {
+    mockStore.getById.mockResolvedValue(
+      row({
+        trigger: {
+          kind: "exercise",
+          source: { kind: "derivation", derivationId: DX_UUID },
+          schedule: {
+            start: "2026-09-17T09:00",
+            rrule: "FREQ=WEEKLY;BYDAY=TH",
+          },
+          unless: { loadPointId: LOAD_PT_UUID },
+        },
+        action: {
+          kind: "point-action",
+          pointId: ACT_PT_UUID,
+          action: "set_value",
+          value: 30,
+        },
+      } as never),
+    );
+    mockStore.derivationBelongsToArea.mockResolvedValue(false);
+    const res = await move({ areaId: OTHER }, AU, "?dryRun=true");
+    expect(res.status).toBe(422);
+    expect(store.moveToArea).not.toHaveBeenCalled();
+  });
+
+  it("409s a stale revision rather than 404ing or 500ing", async () => {
+    jest.mocked(store.moveToArea).mockResolvedValue(null as never);
+    const res = await move({ areaId: OTHER });
+    expect(res.status).toBe(409);
+    expect((await res.json()).detail.code).toBe("stale-revision");
+  });
+
+  /**
+   * 🛑 The destination must not be an existence oracle. `loadAreaForOwner` distinguishes 404 from
+   * 403; the device move collapses both, because otherwise an authenticated caller can enumerate
+   * candidate `ar_` ids and learn which name a real area from the status code alone.
+   */
+  it("collapses a destination 404 into 403, like the device move", async () => {
+    mockAreaOwner.mockResolvedValue({
+      error: NextResponse.json({ error: "no such area" }, { status: 404 }),
+    } as never);
+    const res = await move({ areaId: OTHER });
+    expect(res.status).toBe(403);
+    expect(store.moveToArea).not.toHaveBeenCalled();
+  });
+
+  /**
+   * A retried script must not fail on the move it already made. Answered as success with
+   * `moved: false` rather than refused — a verb that errors on its own idempotent re-run is one
+   * people learn to ignore the errors of.
+   */
+  it("is a no-op, not an error, when it is already there", async () => {
+    const res = await move({ areaId: Area.encode(AREA_UUID) });
+    expect(res.status).toBe(200);
+    expect((await res.json()).moved).toBe(false);
+    expect(store.moveToArea).not.toHaveBeenCalled();
+  });
+
+  it("🛑 propagates the DESTINATION's refusal — owning the rule is not permission to place it", async () => {
+    mockAreaOwner.mockResolvedValue({
+      error: NextResponse.json({ error: "not yours" }, { status: 403 }),
+    } as never);
+    expect((await move({ areaId: OTHER })).status).toBe(403);
+    expect(store.moveToArea).not.toHaveBeenCalled();
+  });
+
+  /**
+   * 🛑 The check a move exists to re-run. `derivationBelongsToArea` asks whether the trigger's
+   * derivation is owned by a device in the area — the one predicate whose answer changes precisely
+   * when the area does, and which no other edit to the rule can invalidate.
+   */
+  it("re-checks the references against the DESTINATION, not the source", async () => {
+    // A DERIVATION-sourced trigger, because that is the only shape whose validity depends on the
+    // area at all — the default fixture's charge-session names a point and would move anywhere.
+    mockStore.getById.mockResolvedValue(
+      row({
+        trigger: {
+          kind: "exercise",
+          source: { kind: "derivation", derivationId: DX_UUID },
+          schedule: {
+            start: "2026-09-17T09:00",
+            rrule: "FREQ=WEEKLY;BYDAY=TH",
+          },
+          unless: { loadPointId: LOAD_PT_UUID },
+        },
+        action: {
+          kind: "point-action",
+          pointId: ACT_PT_UUID,
+          action: "set_value",
+          value: 30,
+        },
+      } as never),
+    );
+    mockStore.derivationBelongsToArea.mockResolvedValue(false);
+    const res = await move({ areaId: OTHER });
+    expect(res.status).toBe(422);
+    expect(store.moveToArea).not.toHaveBeenCalled();
+    expect(mockStore.derivationBelongsToArea).toHaveBeenCalledWith(
+      expect.anything(),
+      OTHER_AREA_UUID,
+    );
   });
 });
 

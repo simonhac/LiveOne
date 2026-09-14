@@ -35,7 +35,7 @@ export interface DeviceData {
   };
   location?: any;
   metadata?: any;
-  status: "active" | "disabled" | "removed";
+  status: "active" | "disabled" | "archived";
   timezoneOffsetMin: number;
   deviceInfo?: {
     model?: string | null;
@@ -292,7 +292,7 @@ export async function getAdminDevicesData(
       },
       location: device.location,
       metadata: device.metadata,
-      status: device.status as "active" | "disabled" | "removed",
+      status: device.status as "active" | "disabled" | "archived",
       timezoneOffsetMin: device.timezoneOffsetMin,
       deviceInfo: {
         model: device.model,

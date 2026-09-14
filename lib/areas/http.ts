@@ -104,7 +104,7 @@ export type ReadableAreaResult =
 export async function findReadableArea(
   userId: string,
   arId: string,
-  opts: { isAdmin?: boolean } = {},
+  opts: { isAdmin?: boolean; includeArchived?: boolean } = {},
 ): Promise<ReadableAreaResult> {
   const parsed = Area.parse(arId);
   if (!parsed.ok) {
@@ -116,7 +116,10 @@ export async function findReadableArea(
   }
   const uuid = Area.toUuid(parsed.id);
   const area = (
-    await listReadableAreas(userId, { isAdmin: opts.isAdmin })
+    await listReadableAreas(userId, {
+      isAdmin: opts.isAdmin,
+      includeArchived: opts.includeArchived,
+    })
   ).find((a) => a.id === uuid);
   if (!area) {
     return {
@@ -135,11 +138,13 @@ export async function findReadableArea(
 export async function loadReadableArea(
   request: NextRequest,
   arId: string,
+  opts: { includeArchived?: boolean } = {},
 ): Promise<{ area: ReadableArea; userId: string } | { error: NextResponse }> {
   const auth = await requireAuth(request);
   if (auth instanceof NextResponse) return { error: auth };
   const r = await findReadableArea(auth.userId, arId, {
     isAdmin: auth.actingAsAdmin,
+    includeArchived: opts.includeArchived,
   });
   if (!r.ok) {
     return {

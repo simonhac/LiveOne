@@ -30,10 +30,10 @@ export async function POST(request: NextRequest) {
     const userDisplay = await getUserDisplay(userId);
     console.log("ENPHASE: User disconnecting Enphase:", userDisplay);
 
-    // Note: We don't clear tokens anymore - devices are just marked as removed
-    // and credentials are ignored for removed devices
+    // Note: We don't clear tokens anymore - devices are just marked as archived
+    // and credentials are ignored for archived devices
 
-    // The read is the config registry (`devices`); each Enphase device is then marked removed through
+    // The read is the config registry (`devices`); each Enphase device is then marked archived through
     // the `systems` writer, keyed by handle.
 
     const ownedDevices = await DeviceConfigRegistry.devicesByOwner(userId);
@@ -44,7 +44,7 @@ export async function POST(request: NextRequest) {
     for (const s of enphaseDevices) {
       await DeviceWriter.updateDevice(s.id, {
         ownerClerkUserId: null,
-        status: "removed",
+        status: "archived",
       });
     }
 

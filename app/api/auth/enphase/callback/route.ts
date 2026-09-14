@@ -189,7 +189,7 @@ export async function GET(request: NextRequest) {
       }
       console.log("ENPHASE: Tokens stored for new system");
     } else {
-      // Update existing device (reactivate if it was removed)
+      // Update existing device (reactivate if it was archived)
       console.log("ENPHASE: Updating existing system");
 
       // 🛑 The placement half may be REFUSED, and a reconnect must not fail on that. Placement lives
@@ -210,7 +210,7 @@ export async function GET(request: NextRequest) {
           // `region.ts` infers from `state`/`postcode` and tolerates a missing country.
           location: (enphaseDevice.address ||
             existingDevice.location) as AreaLocation | null,
-          status: "active", // Reactivate the device if it was removed
+          status: "active", // Reactivate the device if it was archived
         },
         // 🛑 best-effort, NOT require: a reconnect must not fail because the site's placement is not
         // this device's to set. The owner/name/status half is what the reconnect is for.

@@ -351,3 +351,51 @@ describe("resolveAutomation", () => {
       "automation list ar_x",
     ));
 });
+
+/**
+ * `automation move` — the verb that fills the asymmetry with devices, which have had a move since
+ * `PATCH /api/v4/devices/{id} { areaId }`.
+ *
+ * The properties worth pinning at parse level are the ones a handler cannot rescue: that the
+ * destination is not optional-with-a-default (there is no sensible default area to move to), and
+ * that the verb is dry by default like every other writer in the domain.
+ */
+describe("automation move", () => {
+  it("is dry by default and offers --apply", () => {
+    const args = ["move", "daylesford", "au_1", "--to=other"];
+    expect(success(args).dryRun).toBe(true);
+    expect(success([...args, "--apply"]).dryRun).toBe(false);
+  });
+
+  it("--apply off a terminal refuses without --yes", () => {
+    const r = parse(
+      automationCommand,
+      ["move", "daylesford", "au_1", "--to=other", "--apply"],
+      { stdoutIsTTY: false, stdinIsTTY: false },
+      ["liveone"],
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it("takes the source area and automation positionally — there is no GET-by-id", () => {
+    expect(success(["move", "daylesford", "au_1", "--to=other"]).args).toEqual([
+      "daylesford",
+      "au_1",
+    ]);
+  });
+
+  it("carries the destination on --to", () => {
+    expect(success(["move", "a", "au_1", "--to=kinkora"]).flags.to).toBe(
+      "kinkora",
+    );
+  });
+
+  /**
+   * The handler refuses a missing `--to` rather than the parser, because a string flag with no
+   * default parses fine as absent. Pinned so that giving it a default — any default — has to be a
+   * deliberate, failing change: a move whose destination defaults is a move to somewhere nobody named.
+   */
+  it("parses without --to, leaving the refusal to the handler", () => {
+    expect(success(["move", "a", "au_1"]).flags.to).toBeUndefined();
+  });
+});

@@ -137,8 +137,8 @@ export default async function DevicePage({ params }: PageProps) {
 
   const deviceExists = !!device;
 
-  // Block access to removed devices (even for admins)
-  if (device && device.status === "removed") {
+  // Block access to archived devices (even for admins)
+  if (device && device.status === "archived") {
     redirect("/dashboard");
   }
 

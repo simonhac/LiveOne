@@ -55,6 +55,21 @@ export const BASE_URL_FLAG = {
   },
 } as const satisfies Record<string, FlagSpec>;
 
+/**
+ * Reach an area that has been archived.
+ *
+ * OFF by default on every verb, because an archived area is one somebody deliberately retired and a
+ * listing that silently includes it teaches you to stop reading the list. On, it is the only way to
+ * address one at all — refs resolve against `/api/v4/areas`, so an omitted row is unaddressable even
+ * by its literal `ar_…` id.
+ */
+export const INCLUDE_ARCHIVED_FLAG = {
+  includeArchived: {
+    type: "boolean",
+    help: "Also consider archived areas (they are hidden from every listing by default)",
+  },
+} as const satisfies Record<string, FlagSpec>;
+
 // ---------------------------------------------------------------------------
 // Ref resolution
 // ---------------------------------------------------------------------------
@@ -178,6 +193,8 @@ export interface WireArea {
   id: string | null;
   displayName: string;
   legacySystemId: number | null;
+  /** `'active'` or `'archived'`. Always served; only ever `'archived'` if the caller asked. */
+  status?: string;
 }
 
 /**
@@ -188,8 +205,18 @@ export interface WireArea {
 export async function resolveArea(
   s: ApiSession,
   ref: string,
+  opts: { includeArchived?: boolean } = {},
 ): Promise<WireArea> {
-  const { areas } = await s.get<{ areas: WireArea[] }>("/api/v4/areas");
+  // 🛑 An area ref is resolved against a LIST, not sent to the server, so whatever this list omits
+  // is unaddressable — passing the literal `ar_…` id does not get you past it. That is why
+  // `includeArchived` has to reach this function and not merely the routes: before it did, archiving
+  // an area hid it from `show`, `provenance` and `purge` as well as from the pickers, which made
+  // archive a one-way door into a state nothing could inspect or clean up.
+  const { areas } = await s.get<{ areas: WireArea[] }>(
+    opts.includeArchived
+      ? "/api/v4/areas?includeArchived=true"
+      : "/api/v4/areas",
+  );
   return resolveRef(
     areas.map((a) => ({ ...a, name: a.displayName })),
     ref,

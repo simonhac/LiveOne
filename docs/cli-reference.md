@@ -106,6 +106,8 @@ Data goes to stdout; all diagnostics go to stderr. Mutating commands are **dry b
     - [liveone area purge](../scripts/ops/CLI_README.md#liveone-area-purge) — Delete an area's derived rows — the flow matrix, or the battery fold.
       - [liveone area purge flows](../scripts/ops/CLI_README.md#liveone-area-purge-flows) — Delete the area's flow/Sankey matrix over a window of local days.  _(writes)_
       - [liveone area purge provenance](../scripts/ops/CLI_README.md#liveone-area-purge-provenance) — Delete the area's battery provenance: the fold, its blend series and their bindings.  _(writes)_
+    - [liveone area archive](../scripts/ops/CLI_README.md#liveone-area-archive) — Retire an area: keep every row, stop serving it.  _(writes)_
+    - [liveone area delete](../scripts/ops/CLI_README.md#liveone-area-delete) — Destroy an archived area's row. Irreversible, and refuses rather than forces.  _(writes)_
   - [liveone derivation](../scripts/ops/CLI_README.md#liveone-derivation) — Derived signals — run detectors and the HWS model: list, create, enable, recompute, delete.
     - [liveone derivation list](../scripts/ops/CLI_README.md#liveone-derivation-list) — The derivations you can read: id, kind, role, enabled, devices, sources.
     - [liveone derivation create](../scripts/ops/CLI_README.md#liveone-derivation-create) — Add a derivation to a device.  _(writes)_
@@ -125,6 +127,7 @@ Data goes to stdout; all diagnostics go to stderr. Mutating commands are **dry b
     - [liveone automation upcoming](../scripts/ops/CLI_README.md#liveone-automation-upcoming) — Every scheduled occurrence on an area, dated, for the next N days.
     - [liveone automation skip](../scripts/ops/CLI_README.md#liveone-automation-skip) — Skip one occurrence of a repeating rule, leaving the rule itself alone.  _(writes)_
     - [liveone automation enable](../scripts/ops/CLI_README.md#liveone-automation-enable) — Re-enable a disabled automation.  _(writes)_
+    - [liveone automation move](../scripts/ops/CLI_README.md#liveone-automation-move) — Re-home an automation onto another area.  _(writes)_
     - [liveone automation disable](../scripts/ops/CLI_README.md#liveone-automation-disable) — Stop an automation being evaluated, without deleting it.  _(writes)_
     - [liveone automation delete](../scripts/ops/CLI_README.md#liveone-automation-delete) — Delete an automation.  _(writes)_
   - [liveone calendar](../scripts/ops/CLI_README.md#liveone-calendar) — Subscribe a calendar app to an area's scheduled automations.

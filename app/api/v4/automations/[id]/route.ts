@@ -1,11 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { refuseIfReliedUpon } from "@/lib/integrity/http";
-import { requireAuth } from "@/lib/api-auth";
-import { loadAreaForAuth, type AreaAuthRow } from "@/lib/areas/http";
-import { Automation } from "@/lib/ids";
 import type {
   AutomationMode,
-  AutomationRow,
   AutomationTrigger,
 } from "@/lib/db/planetscale/schema";
 import * as store from "@/lib/automations/store";
@@ -16,6 +12,13 @@ import {
 } from "@/lib/automations/wire";
 import { checkReferences } from "@/lib/automations/references";
 import { refuseOnceExercise } from "@/lib/automations/types";
+// Shared with `./move/route.ts` — a Next.js route file cannot be imported from another route,
+// so the loader these two have in common lives in lib.
+import {
+  loadOwnedAutomation,
+  notFound,
+  unprocessable,
+} from "@/lib/automations/http";
 
 /**
  * One charge-limit automation.
@@ -37,44 +40,6 @@ import { refuseOnceExercise } from "@/lib/automations/types";
  */
 
 const MODES: AutomationMode[] = ["once", "standing"];
-
-function unprocessable(error: string): NextResponse {
-  return NextResponse.json({ error }, { status: 422 });
-}
-
-function notFound(): NextResponse {
-  return NextResponse.json({ error: "Automation not found" }, { status: 404 });
-}
-
-/** Authenticate + resolve + authorize. Returns the row, or the response to send. */
-async function loadOwnedAutomation(
-  request: NextRequest,
-  id: string,
-): Promise<
-  { row: AutomationRow; area: AreaAuthRow } | { error: NextResponse }
-> {
-  const auth = await requireAuth(request);
-  if (auth instanceof NextResponse) return { error: auth };
-
-  const uuid = Automation.toUuidOrNull(id);
-  if (!uuid)
-    return {
-      error: NextResponse.json(
-        { error: `Invalid automation id: ${id}` },
-        { status: 400 },
-      ),
-    };
-
-  const row = await store.getById(uuid);
-  if (!row) return { error: notFound() };
-
-  const area = await loadAreaForAuth(row.areaId);
-  // Same owner-or-admin predicate `loadAreaForOwner` applies — but collapsed to 404 (see header).
-  if (!area || !(auth.isAdmin || area.ownerClerkUserId === auth.userId))
-    return { error: notFound() };
-
-  return { row, area };
-}
 
 export async function PATCH(
   request: NextRequest,

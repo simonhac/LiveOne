@@ -120,7 +120,7 @@ export const deviceCommand = defineCommand({
         status: {
           type: "string",
           placeholder: "status",
-          help: "Only devices with this status (active, disabled, removed)",
+          help: "Only devices with this status (active, disabled, archived)",
         },
       },
       examples: ["liveone device list", "liveone device list --vendor=amber"],

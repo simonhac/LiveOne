@@ -55,7 +55,7 @@ export function fixture(): TreeInventory {
         handle: 2,
         name: "EV",
         vendor: "tesla",
-        status: "removed",
+        status: "archived",
         ownerId: "craig",
         areaId: "ar_home",
         history: { daily: null, lastSuccess: null },

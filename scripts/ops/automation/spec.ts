@@ -2,7 +2,7 @@
  * The `automation` command tree — declaration only, no I/O.
  */
 import { type CommandSpec } from "@/lib/cli/cli";
-import { BASE_URL_FLAG } from "../shared";
+import { BASE_URL_FLAG, INCLUDE_ARCHIVED_FLAG } from "../shared";
 import { AREA_ARG, AUTOMATION_ARG } from "./model";
 
 const TARGET_ARGS = [AREA_ARG, AUTOMATION_ARG];
@@ -229,6 +229,43 @@ export const AUTOMATION_SUBCOMMANDS = {
     flags: { ...BASE_URL_FLAG },
   },
 
+  move: {
+    name: "move",
+    summary: "Re-home an automation onto another area.",
+    when:
+      "Use this when a rule sits on the wrong area — typically a legacy area-of-one shell whose\n" +
+      "device has since moved to a real site. It is also the prerequisite for `area delete`, which\n" +
+      "refuses while an area still owns automations.",
+    description:
+      "An IN-PLACE move, not delete + recreate, and the difference matters twice:\n" +
+      "  • the automation's id is its calendar UID, so subscribers keep the same events rather than\n" +
+      "    seeing them all vanish and reappear;\n" +
+      "  • the record of which schedule slot has already been consumed survives, so a slot that has\n" +
+      "    already run cannot arm again.\n" +
+      "\n" +
+      "The destination must own the trigger's derivation — i.e. the derivation's owner device must\n" +
+      "be a member of it — or the server refuses. Moving does NOT change when an exercise fires:\n" +
+      "the schedule resolves through the derivation's owner device's area, not this one.",
+    mutates: true,
+    args: TARGET_ARGS,
+    flags: {
+      ...BASE_URL_FLAG,
+      ...INCLUDE_ARCHIVED_FLAG,
+      to: {
+        type: "string",
+        placeholder: "area",
+        help: "Destination area: its ar_… id, integer handle, or display name",
+      },
+    },
+    exitCodes: {
+      1: "the server refused (the reason names why it does not belong there)",
+    },
+    examples: [
+      "liveone automation move daylesford-selectronic au_6ws9rd8vwk98nsc4bytnjd02zt --to=daylesford",
+      "liveone automation move daylesford-selectronic au_6ws9rd8vwk98nsc4bytnjd02zt --to=daylesford --apply",
+      "liveone automation move old-shell au_… --to=daylesford --include-archived --apply",
+    ],
+  },
   disable: {
     name: "disable",
     summary: "Stop an automation being evaluated, without deleting it.",

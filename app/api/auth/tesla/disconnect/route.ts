@@ -30,7 +30,7 @@ export async function POST(request: NextRequest) {
     const userDisplay = await getUserDisplay(userId);
     console.log("TESLA: User disconnecting Tesla:", userDisplay);
 
-    // The read is the config registry (`devices`); each Tesla device is then marked removed through
+    // The read is the config registry (`devices`); each Tesla device is then marked archived through
     // the `systems` writer, keyed by handle.
 
     const ownedDevices = await DeviceConfigRegistry.devicesByOwner(userId);
@@ -39,7 +39,7 @@ export async function POST(request: NextRequest) {
     for (const s of teslaDevices) {
       await DeviceWriter.updateDevice(s.id, {
         ownerClerkUserId: null,
-        status: "removed",
+        status: "archived",
       });
     }
 

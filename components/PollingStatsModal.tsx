@@ -28,7 +28,7 @@ interface PollingStatsModalProps {
   systemId: number | null;
   deviceName: string;
   vendorType: string;
-  status: "active" | "disabled" | "removed" | null;
+  status: "active" | "disabled" | "archived" | null;
   stats: PollingStats;
 }
 
@@ -96,7 +96,7 @@ export default function PollingStatsModal({
                     ? "text-green-400"
                     : status === "disabled"
                       ? "text-orange-400"
-                      : status === "removed"
+                      : status === "archived"
                         ? "text-red-400"
                         : "text-gray-400"
                 }`}

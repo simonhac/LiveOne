@@ -27,6 +27,7 @@ import {
   bool,
   HISTORY_FLAGS,
   HISTORY_400,
+  INCLUDE_ARCHIVED_FLAG,
   resolveRef,
   runHistoryVerb,
   str,
@@ -36,6 +37,7 @@ import {
 } from "../shared";
 import { DEVICES_SPEC, ROLE_SPEC, WIRING_HANDLERS } from "./wiring";
 import { PROVENANCE_SPEC, PURGE_SPEC, PURGE_HANDLERS } from "./purge";
+import { ARCHIVE_SPEC, DELETE_SPEC, RETIRE_HANDLERS } from "./retire";
 
 const AREA_ARG = {
   name: "area",
@@ -48,15 +50,35 @@ interface WireArea {
   displayName: string;
   legacySystemId: number | null;
   chartCapable: boolean;
+  status?: string;
 }
 
-/** List + resolve, shared by every verb that takes `<area>`. */
-async function resolveArea(s: ApiSession, ref: string): Promise<WireArea> {
-  const { areas } = await s.get<{ areas: WireArea[] }>("/api/v4/areas");
+/**
+ * List + resolve, shared by every verb that takes `<area>`.
+ *
+ * 🛑 A ref is matched against the LIST, never sent to the server, so anything the list omits is
+ * unaddressable — including by its literal `ar_…` id. That is why `includeArchived` belongs here and
+ * not only on the routes.
+ */
+async function resolveArea(
+  s: ApiSession,
+  ref: string,
+  opts: { includeArchived?: boolean } = {},
+): Promise<WireArea> {
+  const { areas } = await s.get<{ areas: WireArea[] }>(
+    opts.includeArchived
+      ? "/api/v4/areas?includeArchived=true"
+      : "/api/v4/areas",
+  );
   return resolveRef(
     areas.map((a) => ({ ...a, name: a.displayName })),
     ref,
-    { noun: "area", listCmd: "liveone area list" },
+    {
+      noun: "area",
+      listCmd: opts.includeArchived
+        ? "liveone area list --include-archived"
+        : "liveone area list",
+    },
   );
 }
 
@@ -78,15 +100,24 @@ export const areaCommand = defineCommand({
     "\n" +
     "The reads (list, show, latest, history, flows) change nothing. The two WIRING sub-domains do:\n" +
     "`devices` sets which devices an area is made of, and `role` sets which point fills each\n" +
-    "(role, metric) slot. Both are dry-run by default and state their change as a diff.",
+    "(role, metric) slot. Both are dry-run by default and state their change as a diff.\n" +
+    "\n" +
+    "Retiring an area is TWO verbs, and they are not synonyms: `archive` stops it being served and\n" +
+    "keeps every row (reversible, `--undo`); `delete` destroys the row, refuses unless the area is\n" +
+    "already archived, and has no --force. An archived area is hidden from every listing — pass\n" +
+    "--include-archived to address one at all.",
   uses: ["api"],
   subcommands: {
     list: {
       name: "list",
       summary: "List the areas you can read: id, handle, name.",
       when: "Start here when you do not yet know an area's id.",
-      flags: { ...BASE_URL_FLAG },
-      examples: ["liveone area list", "liveone area list --format json"],
+      flags: { ...BASE_URL_FLAG, ...INCLUDE_ARCHIVED_FLAG },
+      examples: [
+        "liveone area list",
+        "liveone area list --include-archived",
+        "liveone area list --format json",
+      ],
     },
     show: {
       name: "show",
@@ -97,10 +128,11 @@ export const areaCommand = defineCommand({
         "The aggregate is an OBJECT, so the human rendering is the pretty-printed JSON — a table\n" +
         "would only hide its shape.",
       args: [AREA_ARG],
-      flags: { ...BASE_URL_FLAG },
+      flags: { ...BASE_URL_FLAG, ...INCLUDE_ARCHIVED_FLAG },
       examples: [
         "liveone area show daylesford",
         "liveone area show ar_01kx8km3a3fh5v2csryvhskzep",
+        "liveone area show kuti-house --include-archived",
       ],
     },
     latest: {
@@ -198,6 +230,8 @@ export const areaCommand = defineCommand({
     role: ROLE_SPEC,
     provenance: PROVENANCE_SPEC,
     purge: PURGE_SPEC,
+    archive: ARCHIVE_SPEC,
+    delete: DELETE_SPEC,
   },
 } satisfies CommandSpec);
 
@@ -207,12 +241,18 @@ export const areaCommand = defineCommand({
 
 async function runList(ctx: Ctx): Promise<number> {
   return withApiSession(ctx, async (s) => {
-    const { areas } = await s.get<{ areas: WireArea[] }>("/api/v4/areas");
-    ctx.emit({ count: areas.length, areas }, () =>
+    const includeArchived = bool(ctx, "includeArchived") === true;
+    const { areas } = await s.get<{ areas: WireArea[] }>(
+      includeArchived ? "/api/v4/areas?includeArchived=true" : "/api/v4/areas",
+    );
+    ctx.emit({ count: areas.length, includeArchived, areas }, () =>
       [
         ...areas.map(
           (a) =>
-            `${a.id ?? "(no id)"}  handle=${String(a.legacySystemId ?? "-").padEnd(8)} ${a.displayName}`,
+            `${a.id ?? "(no id)"}  handle=${String(a.legacySystemId ?? "-").padEnd(8)} ${a.displayName}` +
+            // Tagged from the DATA, not from the flag, so a row that should not be in this list is
+            // visible rather than camouflaged by the request that happened to fetch it.
+            (a.status && a.status !== "active" ? ` [${a.status}]` : ""),
         ),
         "",
         `${areas.length} area(s).`,
@@ -224,9 +264,14 @@ async function runList(ctx: Ctx): Promise<number> {
 
 async function runShow(ctx: Ctx): Promise<number> {
   return withApiSession(ctx, async (s) => {
-    const area = await resolveArea(s, ctx.args[0]);
+    const includeArchived = bool(ctx, "includeArchived") === true;
+    const area = await resolveArea(s, ctx.args[0], { includeArchived });
+    // 🛑 The flag has to reach BOTH legs. `resolveArea` matches the ref against the list; the GET
+    // below re-resolves the id through `loadReadableArea`, which filters independently — so passing
+    // it to only one of them finds the area and then 403s on it.
     const body = await s.get<Record<string, unknown>>(
-      `/api/v4/areas/${encodeURIComponent(area.id!)}`,
+      `/api/v4/areas/${encodeURIComponent(area.id!)}` +
+        (includeArchived ? "?includeArchived=true" : ""),
     );
     // Object-heavy payload: the pretty JSON IS the human rendering (a table would hide the shape).
     ctx.emit(body, () => JSON.stringify(body, null, 2));
@@ -448,7 +493,11 @@ export async function runArea(ctx: Ctx): Promise<number> {
   // verb and printed a Sankey instead of deleting one — the failure mode this dispatcher's own comment
   // warns about, arriving from the other direction.
   const key = path.join(".");
-  const handler = WIRING_HANDLERS[key] ?? PURGE_HANDLERS[key] ?? HANDLERS[key];
+  const handler =
+    WIRING_HANDLERS[key] ??
+    PURGE_HANDLERS[key] ??
+    RETIRE_HANDLERS[key] ??
+    HANDLERS[key];
   if (!handler)
     throw usage(
       `unknown area command "${path.join(" ")}"`,

@@ -25,7 +25,7 @@ exports[`tree renderer shows the requested detail with cross-device references, 
 │   │   │       ├── signal → Battery inverter / battery/power
 │   │   │       └── History: 42 interval(s), latest 2026-09-13T10:00:00.000Z
 │   │   │           └── Interval provenance via High Street: 40 record(s)
-│   │   ├── Device #2: EV [tesla] [removed] [owner: craig@example.com]
+│   │   ├── Device #2: EV [tesla] [archived] [owner: craig@example.com]
 │   │   │   ├── History
 │   │   │   │   ├── Daily aggregates: none
 │   │   │   │   └── Last successful collection: none recorded

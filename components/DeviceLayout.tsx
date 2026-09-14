@@ -180,7 +180,7 @@ export default function DeviceLayout({
           deviceInfo={deviceInfo ?? null}
           vendorType={device.vendorType}
           supportsPolling={supportsPolling ?? device.supportsPolling ?? false}
-          deviceStatus={device.status as "active" | "disabled" | "removed"}
+          deviceStatus={device.status as "active" | "disabled" | "archived"}
           isAdmin={isAdmin}
           userId={userId}
           availableDevices={availableDevices}

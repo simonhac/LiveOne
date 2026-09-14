@@ -167,13 +167,13 @@ export async function GET(request: NextRequest) {
       }
       console.log("TESLA: Tokens stored for new system");
     } else {
-      // Update existing device (reactivate if it was removed)
+      // Update existing device (reactivate if it was archived)
       console.log("TESLA: Updating existing system");
 
       await DeviceWriter.updateDevice(existingDevice.id, {
         ownerClerkUserId: userId,
         displayName: teslaVehicle.display_name || existingDevice.displayName,
-        status: "active", // Reactivate the device if it was removed
+        status: "active", // Reactivate the device if it was archived
       });
 
       // Store tokens with the existing device ID

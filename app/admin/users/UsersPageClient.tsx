@@ -20,7 +20,7 @@ interface DeviceAccess {
   systemId: number;
   systemNumber: string;
   displayName: string;
-  status?: "active" | "disabled" | "removed";
+  status?: "active" | "disabled" | "archived";
 }
 
 interface UserData {
@@ -191,18 +191,18 @@ export default function UsersPageClient() {
                     <td className="px-2 md:px-6 py-4 align-top">
                       <div className="space-y-1">
                         {user.devices.length > 0 ? (
-                          // Sort systems: non-removed first, then removed
+                          // Sort systems: non-archived first, then archived
                           user.devices
                             .sort((a, b) => {
-                              // Sort by status first (non-removed before removed)
+                              // Sort by status first (non-archived before archived)
                               if (
-                                a.status === "removed" &&
-                                b.status !== "removed"
+                                a.status === "archived" &&
+                                b.status !== "archived"
                               )
                                 return 1;
                               if (
-                                a.status !== "removed" &&
-                                b.status === "removed"
+                                a.status !== "archived" &&
+                                b.status === "archived"
                               )
                                 return -1;
                               // Then sort by name
@@ -216,7 +216,7 @@ export default function UsersPageClient() {
                                 <Link
                                   href={`/device/${device.systemId}`}
                                   className={`text-sm transition-colors whitespace-nowrap ${
-                                    device.status === "removed"
+                                    device.status === "archived"
                                       ? "text-gray-500 line-through italic hover:text-gray-400"
                                       : "text-gray-300 hover:text-blue-400"
                                   }`}
@@ -226,7 +226,7 @@ export default function UsersPageClient() {
                                 <div className="relative group">
                                   <Crown
                                     className={`w-3 h-3 cursor-help ${
-                                      device.status === "removed"
+                                      device.status === "archived"
                                         ? "text-purple-700"
                                         : "text-purple-400"
                                     }`}
