@@ -1,7 +1,11 @@
 /**
- * Reads and writes over the `area_members` membership table — an Area is an explicit grouping of 1..N
- * member devices, and Phase C's resolver consumes that membership to default each member's own points
- * (with `area_bindings` as an override), so there is no single-vs-multi special-case.
+ * Reads and writes over AREA MEMBERSHIP — which, since migration 0071, is the single nullable column
+ * `devices.area_id`: an Area holds 0..N devices and a device is in 0 or 1 Area (Home Assistant's
+ * shape). Phase C's resolver consumes that membership to default each member's own points (with
+ * `area_bindings` as an override), so there is no single-vs-multi special-case.
+ *
+ * 🛑 `area_members` is no longer read OR written by this module. The table survives only until
+ * migration 0072 drops it, holding the pre-flip membership as a frozen record.
  *
  * Config-v4 Phase 12 slice H moved this off `area_devices` (`(area_id, system_id int)`, no FK) onto
  * `area_members` (`(area_id, device_id uuid)` → `devices.id`). Membership is now stated in device uuids:
@@ -17,7 +21,6 @@
 import { and, asc, eq, isNotNull, sql } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import {
-  areaMembers,
   areas,
   devices,
   legacyHandles,
@@ -26,12 +29,15 @@ import {
 import { Device, type DeviceId } from "@/lib/ids";
 
 type Db = ReturnType<typeof requirePlanetscaleDb>;
+type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
+/** A db handle OR an open transaction — a re-home usually rides the transaction that invalidates its bindings. */
+type Exec = Db | Tx;
 
 /**
  * The member device ids of an Area, ordered helper-last then by `devices.rid`. Empty if none.
  *
- * 🛑 READS `devices.area_id` (migration 0071), not `area_members`. `area_members` is still WRITTEN —
- * the dual-write window — so reverting this function is the whole of reverting the resolver flip.
+ * 🛑 READS `devices.area_id` (migration 0071), not `area_members`, which as of Stage 4 nothing writes
+ * either. The table holds the pre-flip membership as a frozen record until migration 0072 drops it.
  *
  * The ordering reproduces the old `(area_members.ordinal, devices.rid)` exactly, and that was checked
  * rather than assumed: every helper carried `ordinal = 99` so that it sorted last, and no other
@@ -54,21 +60,30 @@ export async function getAreaMemberDeviceIds(
 }
 
 /**
- * Add a device as an Area member. Idempotent (PK conflict -> no-op).
+ * Place a device in an Area, or take it out of every Area (`areaId = null`).
  *
- * The caller must have ensured the `devices` row exists — `area_members.device_id` is a hard FK, unlike
- * the old `area_devices.system_id`. `ensureDeviceRow` (lib/registry/v4-mirror.ts) is what guarantees it.
+ * 🛑 **This is a MOVE, not an add.** A device has 0 or 1 area (Home Assistant's shape), so putting it
+ * in yours takes it out of whoever else's it was in — there is no state in which it is in both. That
+ * is the whole reason `assertDevicesRehomable` (lib/areas/create.ts) exists: while membership was
+ * additive, "the caller can READ it" was a sufficient firewall, because the worst a caller could do
+ * was aggregate data they could already see. It is not sufficient for a verb that removes.
+ *
+ * Idempotent by construction — it is an UPDATE of one column, so re-running it writes the same value.
+ * `ordinal` is gone with the `area_members` row: with one area per device, intra-area order is
+ * presentation, and it is reproduced by `getAreaMemberDeviceIds`' `(helper-last, rid)` sort.
+ *
+ * Takes the `db`/`tx` handle explicitly because every caller has one: a re-home usually rides the
+ * same transaction as the binding deletes it invalidates.
  */
-export async function ensureAreaMember(
-  db: Db,
-  areaId: string,
+export async function setDeviceArea(
+  db: Exec,
   deviceId: DeviceId,
-  ordinal = 0,
+  areaId: string | null,
 ): Promise<void> {
   await db
-    .insert(areaMembers)
-    .values({ areaId, deviceId: Device.toUuid(deviceId), ordinal })
-    .onConflictDoNothing();
+    .update(devices)
+    .set({ areaId, updatedAt: new Date() })
+    .where(eq(devices.id, Device.toUuid(deviceId)));
 }
 
 /**

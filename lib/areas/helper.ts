@@ -3,15 +3,16 @@
  * in an Area and own the Area's COMPUTED points (the battery-provenance blend is the first tenant). A
  * helper is a MEMBER of exactly one Area; it is owned by the Area's owner (private household-derived data,
  * NOT ownerless).
+ *
+ * "Exactly one Area" is structural since migration 0071 — `devices.area_id`, one nullable column —
+ * rather than a convention over `area_members` rows. That is what makes the dedupe below reliable.
  */
 import { and, asc, eq } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
-import { areaMembers, areas, devices } from "@/lib/db/planetscale/schema";
+import { areas, devices } from "@/lib/db/planetscale/schema";
 import { DeviceWriter } from "@/lib/registry/device-writer";
 import { helperSiteId } from "./helper-site-id";
-import { ensureAreaMember } from "./members";
-
-const HELPER_MEMBER_ORDINAL = 99; // sorts after the real member devices
+import { setDeviceArea } from "./members";
 
 /**
  * Ensure the Area's helper device exists and is a member, returning its integer handle (`devices.rid`).
@@ -64,7 +65,15 @@ export async function ensureHelperDevice(areaId: string): Promise<number> {
   // re-derive it via `ensureDeviceRow(helper.id)` to "re-assert the row in case the mirror hiccupped" — a
   // hedge that only meant something while the row was a COPY of a `systems` row written by someone else.
   // There is no second writer to lose a race with now, so the extra round trip goes with it.
+  //
+  // 🛑 This MOVES the helper out of the area-of-one its create just minted and into the Area it
+  // serves — and it is the write the dedupe above reads. Between the resolver flip (which pointed the
+  // dedupe at `devices.area_id`) and this line, the two disagreed: the dedupe asked a column no writer
+  // set, so it missed every time and this function minted a FRESH helper on every call. That is the
+  // duplicate-helper bug (two `Craig Unified · derived` on dev) in its unbounded form — nothing caps
+  // it — and it is now structurally impossible, because membership IS a column on the row being
+  // deduped.
   const helperDeviceId = helper.deviceId;
-  await ensureAreaMember(db, areaId, helperDeviceId, HELPER_MEMBER_ORDINAL);
+  await setDeviceArea(db, helperDeviceId, areaId);
   return helper.id;
 }

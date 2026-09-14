@@ -13,26 +13,34 @@
  * not catch it: it compiles and fails at runtime. That is the same failure shape as the 2026-07-27
  * create-path FK defect, which is why this is pinned at runtime and not just in a docstring.
  *
- * ## 2. The four-step insert order
+ * ## 2. The three-step insert order
  *
- * `areas` → `devices` → `legacy_handles` → `area_members`, each required by the NEXT one's foreign key.
- * The fake exec below ENFORCES those FKs, which is what makes this a real test rather than a
- * transcription of the implementation: run it against the pre-fix ordering (handle mapping first) and it
- * fails with 23503, exactly as `POST /api/devices` and both connect callbacks did on production.
+ * `areas` → `devices` → `legacy_handles`, each required by the NEXT one's foreign key. The fake exec
+ * below ENFORCES those FKs, which is what makes this a real test rather than a transcription of the
+ * implementation: run it against the pre-fix ordering (handle mapping first) and it fails with 23503,
+ * exactly as `POST /api/devices` and both connect callbacks did on production.
+ *
+ * The fourth step — the `area_members` row — went with Stage 4 of the device→0..1-area change.
+ *
+ * ## 3. A new device is PLACED in the area it mints
+ *
+ * `devices.area_id` is membership now, and it is written inline with the device row. Between the
+ * resolver flip and Stage 4 nothing wrote it here, so every newly-minted device landed AMBIENT: it
+ * resolved into no area, and `ensureHelperDevice` — which dedupes on that column — missed every time
+ * and minted an unbounded run of helpers. Pinned below, because nothing else would have raised.
  */
 import { describe, expect, it, jest, beforeEach } from "@jest/globals";
-import { areaMembers, areas, devices } from "@/lib/db/planetscale/schema";
+import { areas, devices } from "@/lib/db/planetscale/schema";
 import { Device, type DeviceId } from "@/lib/ids";
 
 const ops: string[] = [];
 const store = {
   areas: new Set<string>(),
-  devices: new Map<string, number>(), // uuid -> rid
+  devices: new Map<string, { rid: number; areaId: string | null }>(),
   handles: new Map<
     number,
     { deviceId: string | null; areaId: string | null }
   >(),
-  members: [] as { areaId: string; deviceId: string }[],
 };
 
 function fkViolation(constraint: string): Error {
@@ -56,13 +64,7 @@ const exec = {
     values: (v: Record<string, unknown>) => {
       // Table IDENTITY, not a name string: drizzle's internal shape is not part of its public API.
       const name =
-        table === areas
-          ? "areas"
-          : table === devices
-            ? "devices"
-            : table === areaMembers
-              ? "area_members"
-              : "?";
+        table === areas ? "areas" : table === devices ? "devices" : "?";
       const run = async () => {
         if (name === "areas") {
           ops.push("areas");
@@ -71,16 +73,14 @@ const exec = {
           ops.push("devices");
           if (!store.areas.has(v.primaryAreaId as string))
             throw fkViolation("devices_primary_area_id_areas_id_fk");
-          store.devices.set(v.id as string, v.rid as number);
-        } else if (name === "area_members") {
-          ops.push("area_members");
-          if (!store.devices.has(v.deviceId as string))
-            throw fkViolation("area_members_device_id_devices_id_fk");
-          if (!store.areas.has(v.areaId as string))
-            throw fkViolation("area_members_area_id_areas_id_fk");
-          store.members.push({
-            areaId: v.areaId as string,
-            deviceId: v.deviceId as string,
+          // `devices.area_id` FKs `areas(id)` too (migration 0070), so the membership write is
+          // subject to the SAME ordering constraint as `primary_area_id` — which is why folding
+          // membership into this row did not cost the step it replaced.
+          if (v.areaId != null && !store.areas.has(v.areaId as string))
+            throw fkViolation("devices_area_id_areas_id_fk");
+          store.devices.set(v.id as string, {
+            rid: v.rid as number,
+            areaId: (v.areaId as string | null) ?? null,
           });
         }
       };
@@ -141,7 +141,6 @@ beforeEach(() => {
   store.areas.clear();
   store.devices.clear();
   store.handles.clear();
-  store.members.length = 0;
 });
 
 const CREATE = {
@@ -165,7 +164,7 @@ describe("DeviceWriter.createSystem — the returned handle", () => {
       /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
     );
     expect(created.id).not.toBe(created.deviceUuid as unknown);
-    expect(store.devices.get(created.deviceUuid)).toBe(created.id);
+    expect(store.devices.get(created.deviceUuid)?.rid).toBe(created.id);
   });
 
   it("files the device under the rid it returns", async () => {
@@ -174,24 +173,27 @@ describe("DeviceWriter.createSystem — the returned handle", () => {
   });
 });
 
-describe("DeviceWriter.createSystem — the four-step insert order", () => {
-  it("writes areas → devices → legacy_handles → area_members", async () => {
+describe("DeviceWriter.createSystem — the three-step insert order", () => {
+  it("writes areas → devices → legacy_handles, and no membership row", async () => {
     await DeviceWriter.createDevice(CREATE);
     expect(ops).toEqual([
       "areas",
       "devices",
       "legacy_handles.device_id",
       "legacy_handles.area_id",
-      "area_members",
     ]);
+    // 🛑 `area_members` is frozen. A write here would make it disagree with `devices.area_id` — the
+    // column every reader moved to — on the very first re-home.
+    expect(ops).not.toContain("area_members");
   });
 
-  it("mints the area-of-one and joins the device to it", async () => {
+  it("🛑 mints the area-of-one and PLACES the device in it", async () => {
     const created = await DeviceWriter.createDevice(CREATE);
     expect(store.areas.has(created.areaId)).toBe(true);
-    expect(store.members).toEqual([
-      { areaId: created.areaId, deviceId: created.deviceUuid },
-    ]);
+    // The regression this pins: with `area_id` left NULL the insert still succeeds, the device still
+    // polls, and nothing raises — it is simply in no area, and the helper dedupe that reads this
+    // column mints a fresh helper on every call for ever.
+    expect(store.devices.get(created.deviceUuid)?.areaId).toBe(created.areaId);
   });
 });
 

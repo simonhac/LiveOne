@@ -147,25 +147,26 @@ async function allocateRid(exec: DeviceRegistryExec): Promise<number> {
 }
 
 /**
- * Insert a device, its area-of-one, its handle mapping and its membership edge — one transaction.
+ * Insert a device, its area-of-one and its handle mapping — one transaction.
  *
- * ⚠️⚠️ **THE FOUR-STEP ORDER BELOW IS LOAD-BEARING. Each step is required by the NEXT one's foreign
- * key, and getting it wrong has broken device creation three times.** Read this before reordering:
+ * ⚠️⚠️ **THE STEP ORDER BELOW IS LOAD-BEARING. Each step is required by the NEXT one's foreign key,
+ * and getting it wrong has broken device creation three times.** Read this before reordering:
  *
  *   1. **`areas`** — must precede `devices` because `devices.primary_area_id` is `NOT NULL` and FKs
- *      `areas(id)`. (The area no longer keys on the rid at all — migration 0052 dropped
- *      `areas.legacy_system_id` — but the rid is still allocated up front for `devices.rid` and step 3.)
+ *      `areas(id)`, and because `devices.area_id` FKs it too. (The area no longer keys on the rid at
+ *      all — migration 0052 dropped `areas.legacy_system_id` — but the rid is still allocated up
+ *      front for `devices.rid` and step 3.)
  *   2. **`devices`** — must precede `legacy_handles` because `legacy_handles.device_id` FKs `devices(id)`
  *      (migration 0036). Violating *this* edge is the 2026-07-27 prod defect: the writer opened by
  *      filling the handle row for a uuid no `devices` row carried yet, so **every first mint of a device
  *      raised 23503** and `POST /api/devices` plus both OAuth connect callbacks 500'd. Re-mints masked
  *      it, because the `ON CONFLICT` `coalesce` preserved the already-valid uuid.
  *   3. **`legacy_handles`** — both columns, device and area, now that both targets exist.
- *   4. **`area_members`** — last, because `area_members.device_id` FKs `devices(id)` AND `area_id` FKs
- *      `areas(id)`; it is the only step needing both rows present.
  *
- * Steps 2-4 are the pre-1a mirror's order, preserved exactly. Step 1 was previously a separate
- * `ensureAreaOfOne` call that read `systems` for the values it is now handed directly.
+ * 🛑 **The fourth step — the `area_members` row — is GONE (Stage 4 of the device→0..1-area change).**
+ * Membership is `devices.area_id`, written inline in step 2, so the step that needed BOTH rows present
+ * no longer exists and three steps is the whole of it. `area_members` is frozen until migration 0072
+ * drops it; writing it here would make it disagree with the column everything now reads.
  */
 async function insertDeviceToPg(
   data: CreateDeviceData,
@@ -208,6 +209,12 @@ async function insertDeviceToPg(
         model: data.model ?? null,
         serial: data.serial ?? null,
         primaryAreaId: areaId,
+        // 🛑 Membership, and it must be set HERE. Between the resolver flip and this line every
+        // newly-minted device landed AMBIENT — `area_id` NULL — because the only writer of membership
+        // was the `area_members` insert this replaces. A new device is placed in its own area-of-one,
+        // which is exactly the shape it had before the flip; Stage 5 stops minting that area at all,
+        // at which point a new device is genuinely unassigned and the UI has a bucket for it.
+        areaId,
         // Same value the area gets, which is what migration 0070's backfill wrote for every existing
         // device. IMMUTABLE from here: `point_readings_agg_1d` buckets on this, so re-homing a device
         // between areas must never move it. Only an explicit re-bucket op may change it.
@@ -221,12 +228,6 @@ async function insertDeviceToPg(
       // ---- 3. legacy_handles --------------------------------------------------------------------
       await DeviceRegistry.ensureDeviceForHandle(rid, tx, Device.encode(uuid));
       await DeviceRegistry.ensureAreaForHandle(rid, areaId, tx);
-
-      // ---- 4. area_members ----------------------------------------------------------------------
-      await tx
-        .insert(areaMembers)
-        .values({ areaId, deviceId: uuid, ordinal: 0 })
-        .onConflictDoNothing();
 
       return {
         id: rid, // 🛑 the INTEGER handle — see CreatedDevice's docstring
@@ -267,6 +268,11 @@ async function insertDeviceToPg(
  * device with no area is not a representable shape. That is a structural requirement,
  * not a reversal of the "areas are explicit" model, which governs whether a device gets a user-visible
  * grouping and a flow matrix.
+ *
+ * 🛑 **`primary_area_id`'s NOT NULL is the ONLY thing still forcing the mint**, and it is why "stop
+ * minting the area-of-one" could not ship with the rest of Stage 4: dropping the column is migration
+ * 0072's job (Stage 5), and until it lands an area-less device cannot be INSERTED even though it can
+ * now be represented, resolved and served.
  */
 async function createDevice(
   deviceData: CreateDeviceData,
@@ -285,7 +291,8 @@ async function createDevice(
  * the Area's owner for access control (NOT ownerless — the blend is private household-derived data).
  *
  * It nonetheless gets its own area-of-one, exactly like {@link createDevice}, for the `primary_area_id`
- * reason above. The Area membership is the SECOND edge, not a substitute for it.
+ * reason above — and is then MOVED out of it by `ensureHelperDevice`, which sets `devices.area_id` to
+ * the Area it serves. The area-of-one is left behind as an inert shell until Stage 5 stops minting it.
  */
 async function createHelperDevice(params: {
   ownerClerkUserId: string | null;
@@ -411,6 +418,9 @@ async function deleteDevice(systemId: number): Promise<void> {
       .where(eq(devices.rid, systemId))
       .limit(1);
     if (!row) return;
+    // `area_members` is frozen, not dead: nothing WRITES it since Stage 4, but its rows still hold a
+    // hard FK onto `devices.id`, so a delete must still clear them or 23503s. Goes with the table in
+    // migration 0072. (`devices.area_id` needs no such step — it is a column on the row being deleted.)
     await tx.delete(areaMembers).where(eq(areaMembers.deviceId, row.id));
     await tx.execute(
       sql`UPDATE legacy_handles SET device_id = NULL WHERE device_id = ${row.id}::uuid`,
