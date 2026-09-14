@@ -19,6 +19,57 @@ export interface AreaLocationPatch {
   lng?: number | null;
 }
 
+/** Validate an HTTP location patch before coercion can silently discard invalid fields. */
+export function areaLocationPatchError(
+  body: unknown,
+  existing: AreaLocation | null,
+): string | null {
+  if (!body || typeof body !== "object" || Array.isArray(body))
+    return "location must be an object";
+  const patch = body as Record<string, unknown>;
+  for (const key of ["country", "state", "postcode"] as const) {
+    const value = patch[key];
+    if (value !== undefined && value !== null && typeof value !== "string")
+      return `location.${key} must be a string or null`;
+  }
+  for (const [key, limit] of [
+    ["lat", 90],
+    ["lng", 180],
+  ] as const) {
+    const value = patch[key];
+    if (
+      value !== undefined &&
+      value !== null &&
+      (typeof value !== "number" ||
+        !Number.isFinite(value) ||
+        Math.abs(value) > limit)
+    )
+      return `location.${key} must be between -${limit} and ${limit}, or null`;
+  }
+  const country =
+    patch.country === undefined
+      ? (existing?.country ?? "AU")
+      : typeof patch.country === "string"
+        ? patch.country.trim().toUpperCase() || "AU"
+        : "AU";
+  if (!/^[A-Z]{2}$/.test(country))
+    return "location.country must be a two-letter country code";
+  if (country === "AU") {
+    const state =
+      typeof patch.state === "string" ? patch.state.trim().toUpperCase() : "";
+    if (
+      state &&
+      !["NSW", "ACT", "VIC", "QLD", "SA", "TAS", "WA", "NT"].includes(state)
+    )
+      return "location.state must be an Australian state or territory code";
+    const postcode =
+      typeof patch.postcode === "string" ? patch.postcode.trim() : "";
+    if (postcode && !/^\d{4}$/.test(postcode))
+      return "location.postcode must contain four digits";
+  }
+  return null;
+}
+
 export function mergeAreaLocation(
   existing: AreaLocation | null | undefined,
   patch: AreaLocationPatch,

@@ -5,41 +5,15 @@ import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { fetchJson } from "@/lib/queries";
-import { X, Shield, Loader2, MapPin, Layers } from "lucide-react";
+import { X, Shield, Loader2, Layers } from "lucide-react";
 import { useModalContext } from "@/contexts/ModalContext";
 import PointsTab from "./PointsTab";
 import TeslaConfigTab from "./TeslaConfigTab";
 import DeviceConfigTab from "./DeviceConfigTab";
 import AdminTab from "./AdminTab";
 import AreaBuilderDialog from "@/components/area-builder/AreaBuilderDialog";
-import { TIMEZONE_GROUPS } from "@/lib/timezones";
-import {
-  nemRegionForLocation,
-  nemRegionShortLabel,
-} from "@/lib/vendors/openelectricity/region";
-
-/** What `GET /api/admin/devices/{id}/settings` says about where this device's placement lives. */
-interface SitePlacement {
-  areaId: string | null;
-  areaName: string | null;
-  editable: boolean;
-  reason: string | null;
-}
-
 /** `+600` / `-330`, the way the CLI prints an offset. */
 const signedOffset = (m: number) => `${m >= 0 ? "+" : ""}${m}m`;
-
-// State/territory codes. WA/NT are valid locations but off the NEM (the preview says so).
-const AU_STATES = [
-  "NSW",
-  "ACT",
-  "VIC",
-  "QLD",
-  "SA",
-  "TAS",
-  "WA",
-  "NT",
-] as const;
 
 interface DeviceSettingsDialogProps {
   isOpen: boolean;
@@ -68,37 +42,21 @@ export default function DeviceSettingsDialog({
   const queryClient = useQueryClient();
   const [displayName, setDisplayName] = useState("");
   const [alias, setAlias] = useState("");
-  const [displayTimezone, setDisplayTimezone] = useState("");
   const [editedDisplayName, setEditedDisplayName] = useState("");
   const [editedAlias, setEditedAlias] = useState("");
-  const [editedTimezone, setEditedTimezone] = useState("");
   const [isDisplayNameDirty, setIsDisplayNameDirty] = useState(false);
   const [isAliasDirty, setIsAliasDirty] = useState(false);
-  const [isTimezoneDirty, setIsTimezoneDirty] = useState(false);
   const [isTeslaDirty, setIsTeslaDirty] = useState(false);
   const [isConfigDirty, setIsConfigDirty] = useState(false);
   const [isAdminDirty, setIsAdminDirty] = useState(false);
   const [aliasError, setAliasError] = useState<string | null>(null);
-  // Location (folded in from the former AreaLocationDialog) — sets the site's NEM region for the
-  // Local Grid card. country is fixed to AU (the NEM is Australia-only).
-  const [locationState, setLocationState] = useState("");
-  const [locationPostcode, setLocationPostcode] = useState("");
-  const [origLocationState, setOrigLocationState] = useState("");
-  const [origLocationPostcode, setOrigLocationPostcode] = useState("");
-  const [isLocationDirty, setIsLocationDirty] = useState(false);
-  // 🛑 The device/site split, reported by the server. Timezone and location live on the SITE
-  // (`areas.display_timezone` / `areas.location`), so this device-addressed dialog may only edit
-  // them when this device is the site's sole ordinary tenant AND owns it — otherwise a save here
-  // would re-place every other device in the site, possibly someone else's. `editable: false` is
-  // the same predicate the writer enforces, so the fields are disabled rather than 409'd on save.
-  const [placement, setPlacement] = useState<SitePlacement | null>(null);
   // The DEVICE's own day bucket. Shown, never edited here: `point_readings_agg_1d` rolls up on it,
   // so changing it without rebuilding leaves every daily total the device ever produced describing
   // a window its own `day` key no longer matches. `liveone device change-offset` does both.
   const [dayOffsetMin, setDayOffsetMin] = useState<number | null>(null);
   const [showAreaBuilder, setShowAreaBuilder] = useState(false);
   const [activeTab, setActiveTab] = useState<
-    "general" | "points" | "tesla" | "config" | "admin" | "location"
+    "general" | "points" | "tesla" | "config" | "admin"
   >("general");
   const teslaSaveRef = useRef<(() => Promise<any>) | null>(null);
   const configSaveRef = useRef<(() => Promise<any>) | null>(null);
@@ -133,10 +91,8 @@ export default function DeviceSettingsDialog({
         settings?: {
           displayName?: string | null;
           alias?: string | null;
-          displayTimezone?: string | null;
-          /** The DEVICE's own fixed day bucket. Read-only here — see `SitePlacement`. */
+          /** The device's own fixed day bucket, shown read-only. */
           dayOffsetMin?: number | null;
-          placement?: SitePlacement | null;
         };
       }>(`/api/admin/devices/${systemId}/settings`);
 
@@ -158,67 +114,28 @@ export default function DeviceSettingsDialog({
       const {
         displayName: fetchedName,
         alias: fetchedAlias,
-        displayTimezone: fetchedTimezone,
         dayOffsetMin: fetchedDayOffset,
-        placement: fetchedPlacement,
       } = data.settings;
 
       setDayOffsetMin(fetchedDayOffset ?? null);
-      setPlacement(fetchedPlacement ?? null);
 
       // Store original values
       setDisplayName(fetchedName || "");
       setAlias(fetchedAlias || "");
-      setDisplayTimezone(fetchedTimezone || "");
 
       // Initialize edited values
       setEditedDisplayName(fetchedName || "");
       setEditedAlias(fetchedAlias || "");
-      setEditedTimezone(fetchedTimezone || "");
 
       // Reset dirty flags
       setIsDisplayNameDirty(false);
       setIsAliasDirty(false);
-      setIsTimezoneDirty(false);
       setIsTeslaDirty(false);
       setIsConfigDirty(false);
       setIsAdminDirty(false);
       setAliasError(null);
     }
   }, [settingsData]);
-
-  // Fetch the site's location when the dialog opens (separate from the admin settings query).
-  const { data: locationData } = useQuery({
-    queryKey: ["system", systemId, "location"],
-    queryFn: () =>
-      fetchJson<{
-        location?: { state?: string | null; postcode?: string | null };
-      }>(`/api/devices/${systemId}/location`),
-    enabled: isOpen && !!systemId,
-  });
-
-  useEffect(() => {
-    if (!locationData) return;
-    const st = locationData.location?.state ?? "";
-    const pc = locationData.location?.postcode ?? "";
-    setLocationState(st);
-    setLocationPostcode(pc);
-    setOrigLocationState(st);
-    setOrigLocationPostcode(pc);
-    setIsLocationDirty(false);
-  }, [locationData]);
-
-  // 🛑 Only false once the settings query has ANSWERED. While `placement` is null the fields are
-  // locked, not open: defaulting to editable would let the user type into a field the server is
-  // about to refuse, and the whole point of this flag is that they never see that 409.
-  const placementLocked = !placement?.editable;
-
-  // Live region preview from the current form — same derivation the server uses.
-  const locationRegion = nemRegionForLocation({
-    country: "AU",
-    state: locationState || undefined,
-    postcode: locationPostcode || undefined,
-  });
 
   const validateAlias = (value: string): string | null => {
     if (!value) return null; // Empty is valid (optional field)
@@ -242,37 +159,27 @@ export default function DeviceSettingsDialog({
     setAliasError(validateAlias(value));
   };
 
-  const handleTimezoneChange = (value: string) => {
-    setEditedTimezone(value);
-    setIsTimezoneDirty(value !== displayTimezone);
-  };
-
   const hasChanges =
     isDisplayNameDirty ||
     isAliasDirty ||
-    isTimezoneDirty ||
     isTeslaDirty ||
     isConfigDirty ||
-    isAdminDirty ||
-    isLocationDirty;
-  const hasGeneralChanges =
-    isDisplayNameDirty || isAliasDirty || isTimezoneDirty;
+    isAdminDirty;
+  const hasGeneralChanges = isDisplayNameDirty || isAliasDirty;
 
   const saveMutation = useMutation({
     mutationFn: async () => {
       const startedAt = performance.now();
 
-      // Save regular settings (displayName, alias, displayTimezone)
-      if (isDisplayNameDirty || isAliasDirty || isTimezoneDirty) {
+      // Save regular settings (displayName, alias)
+      if (isDisplayNameDirty || isAliasDirty) {
         const settings: {
           displayName?: string;
           alias?: string | null;
-          displayTimezone?: string | null;
         } = {};
 
         if (isDisplayNameDirty) settings.displayName = editedDisplayName;
         if (isAliasDirty) settings.alias = editedAlias || null;
-        if (isTimezoneDirty) settings.displayTimezone = editedTimezone || null;
 
         console.log("Settings to save:", settings);
 
@@ -361,25 +268,6 @@ export default function DeviceSettingsDialog({
         }
       }
 
-      // Save the site's location (state + optional postcode → NEM region for the Local Grid card).
-      // "" clears the field (see mergeAreaLocation). country is AU for the NEM.
-      if (isLocationDirty) {
-        const response = await fetch(`/api/devices/${systemId}/location`, {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            country: "AU",
-            state: locationState || "",
-            postcode: locationPostcode.trim() || "",
-          }),
-        });
-
-        if (!response.ok) {
-          const data = await response.json();
-          throw new Error(data.error || "Failed to update location");
-        }
-      }
-
       // Prepare updates to pass to dashboard (before resetting dirty flags)
       const updates: { displayName?: string; alias?: string | null } = {};
       if (isDisplayNameDirty) updates.displayName = editedDisplayName;
@@ -399,20 +287,13 @@ export default function DeviceSettingsDialog({
       // Reset dirty flags
       setIsDisplayNameDirty(false);
       setIsAliasDirty(false);
-      setIsTimezoneDirty(false);
       setIsTeslaDirty(false);
       setIsConfigDirty(false);
       setIsAdminDirty(false);
-      setIsLocationDirty(false);
-      setOrigLocationState(locationState);
-      setOrigLocationPostcode(locationPostcode);
 
       // Refresh this dialog's settings query so a reopen shows the saved values
       queryClient.invalidateQueries({
         queryKey: ["system", systemId, "settings"],
-      });
-      queryClient.invalidateQueries({
-        queryKey: ["system", systemId, "location"],
       });
       // Config edits change capability eligibility + stale/sizing — refresh the config query and the
       // device's live dashboard data so open cards re-derive.
@@ -450,23 +331,11 @@ export default function DeviceSettingsDialog({
   const handleCancel = useCallback(() => {
     setEditedDisplayName(displayName);
     setEditedAlias(alias);
-    setEditedTimezone(displayTimezone);
     setIsDisplayNameDirty(false);
     setIsAliasDirty(false);
-    setIsTimezoneDirty(false);
-    setLocationState(origLocationState);
-    setLocationPostcode(origLocationPostcode);
-    setIsLocationDirty(false);
     setAliasError(null);
     onClose();
-  }, [
-    displayName,
-    alias,
-    displayTimezone,
-    origLocationState,
-    origLocationPostcode,
-    onClose,
-  ]);
+  }, [displayName, alias, onClose]);
 
   // Prevent body scroll when modal is open
   useEffect(() => {
@@ -539,19 +408,6 @@ export default function DeviceSettingsDialog({
               >
                 General
                 {hasGeneralChanges && (
-                  <span className="ml-2 inline-block w-2 h-2 bg-red-500 rounded-full"></span>
-                )}
-              </button>
-              <button
-                onClick={() => setActiveTab("location")}
-                className={`px-4 py-3 text-sm font-medium transition-colors border-b-2 ${
-                  activeTab === "location"
-                    ? "text-white border-blue-500 bg-gray-700/50"
-                    : "text-gray-400 border-transparent hover:text-gray-300 hover:border-gray-600"
-                }`}
-              >
-                Location
-                {isLocationDirty && (
                   <span className="ml-2 inline-block w-2 h-2 bg-red-500 rounded-full"></span>
                 )}
               </button>
@@ -695,133 +551,6 @@ export default function DeviceSettingsDialog({
                       </p>
                     </div>
                   )}
-
-                  {/* Display Timezone — the SITE's, not the device's. */}
-                  <div className="mt-4">
-                    <label className="block text-sm font-medium text-gray-300 mb-2">
-                      Display Timezone
-                      {placement?.areaName && (
-                        <span className="ml-2 font-normal text-gray-500">
-                          — {placement.areaName}
-                        </span>
-                      )}
-                    </label>
-                    <p className="text-xs text-gray-400 mb-2">
-                      Timezone used for all date/time displayed to users. It
-                      belongs to the SITE, so it is shared by every device in
-                      it.
-                    </p>
-                    <select
-                      value={editedTimezone || ""}
-                      onChange={(e) => handleTimezoneChange(e.target.value)}
-                      className="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded-md text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:opacity-50 disabled:cursor-not-allowed"
-                      disabled={isSaving || placementLocked}
-                    >
-                      {!editedTimezone && (
-                        <option value="">Select a timezone...</option>
-                      )}
-                      {TIMEZONE_GROUPS.map((group) => (
-                        <optgroup key={group.region} label={group.region}>
-                          {group.timezones.map((tz) => (
-                            <option key={tz.value} value={tz.value}>
-                              {tz.label}
-                            </option>
-                          ))}
-                        </optgroup>
-                      ))}
-                    </select>
-                    {placementLocked && (
-                      <p className="text-xs text-amber-400/80 mt-1">
-                        Read-only here — {placement?.reason}.
-                      </p>
-                    )}
-                  </div>
-                </div>
-
-                {/* Location Tab Content */}
-                <div className={activeTab === "location" ? "" : "hidden"}>
-                  <p className="text-sm text-gray-400 mb-4">
-                    Your site&apos;s state sets the National Electricity Market
-                    (NEM) region used by the Local Grid card (price, emissions,
-                    renewables).
-                  </p>
-                  {/* Same rule as the timezone above: location is the SITE's. */}
-                  {placementLocked && (
-                    <p className="text-sm text-amber-400/80 mb-4">
-                      Read-only here — {placement?.reason}.
-                    </p>
-                  )}
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-300 mb-2">
-                      State / territory
-                    </label>
-                    <select
-                      value={locationState}
-                      onChange={(e) => {
-                        setLocationState(e.target.value);
-                        setIsLocationDirty(
-                          e.target.value !== origLocationState ||
-                            locationPostcode !== origLocationPostcode,
-                        );
-                      }}
-                      disabled={isSaving || placementLocked}
-                      className="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded-md text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      <option value="">Not set</option>
-                      {AU_STATES.map((s) => (
-                        <option key={s} value={s}>
-                          {s}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div className="mt-4">
-                    <label className="block text-sm font-medium text-gray-300 mb-2">
-                      Postcode (optional)
-                    </label>
-                    <p className="text-xs text-gray-400 mb-2">
-                      Used only if no state is set.
-                    </p>
-                    <input
-                      type="text"
-                      inputMode="numeric"
-                      value={locationPostcode}
-                      maxLength={4}
-                      onChange={(e) => {
-                        const pc = e.target.value.replace(/[^\d]/g, "");
-                        setLocationPostcode(pc);
-                        setIsLocationDirty(
-                          locationState !== origLocationState ||
-                            pc !== origLocationPostcode,
-                        );
-                      }}
-                      placeholder="e.g. 3000"
-                      disabled={isSaving || placementLocked}
-                      className="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded-md text-gray-100 placeholder:text-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:opacity-50 disabled:cursor-not-allowed"
-                    />
-                  </div>
-
-                  {/* Live region preview */}
-                  <div className="mt-4 rounded-lg bg-gray-900/70 px-4 py-3 ring-1 ring-gray-700/80">
-                    <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-gray-500">
-                      <MapPin className="w-3.5 h-3.5" />
-                      Grid region
-                    </div>
-                    <p className="mt-0.5 text-sm">
-                      {locationRegion ? (
-                        <span className="font-semibold text-blue-300">
-                          {nemRegionShortLabel(locationRegion)} (
-                          {locationRegion})
-                        </span>
-                      ) : (
-                        <span className="text-gray-400">
-                          Not on the NEM — no grid card
-                        </span>
-                      )}
-                    </p>
-                  </div>
 
                   {/* Create a site (multi-device Area) seeded from this device */}
                   <div className="mt-4 border-t border-gray-700 pt-4">

@@ -37,9 +37,10 @@ export default function OwnerAreasClient({
           </Link>
           <h1 className="mt-3 text-2xl font-semibold">My sites</h1>
           <p className="mt-1 text-sm text-gray-400">
-            Sites you own — group devices, set a location, and manage role→point
-            bindings. To show a site on a dashboard, open that dashboard and use
-            its <span className="text-gray-200">Add area</span> button.
+            Sites you own — group devices, set a location and timezone, and
+            manage role→point bindings. To show a site on a dashboard, open that
+            dashboard and use its{" "}
+            <span className="text-gray-200">Add area</span> button.
           </p>
         </div>
         <AreaTable

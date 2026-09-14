@@ -31,6 +31,7 @@ export default function AdminAreasClient({
         />
       </div>
       <AreaBuilderDialog
+        actingAsAdmin
         isOpen={dialogAreaId !== undefined}
         areaId={dialogAreaId ?? null}
         onClose={() => setDialogAreaId(undefined)}
