@@ -325,15 +325,15 @@ export const FIXTURE_LATEST: LatestPointValues = {
   "load.hws/power": pt("load.hws/power", 3600, "W", "HWS"),
   "bidi.grid.import/rate": pt("bidi.grid.import/rate", 0.31, "$/kWh", "Import"),
   "ev.battery/soc": pt("ev.battery/soc", 64, "%", "EV SoC"),
-  "grid.price/rate": pt("grid.price/rate", 92.5, "$/MWh", "Spot"),
-  "grid.emissionsIntensity/intensity": pt(
-    "grid.emissionsIntensity/intensity",
+  "bidi.grid.spot/rate": pt("bidi.grid.spot/rate", 92.5, "$/MWh", "Spot"),
+  "bidi.grid.emissionsIntensity/intensity": pt(
+    "bidi.grid.emissionsIntensity/intensity",
     0.55,
     "tCO2e/MWh",
     "Intensity",
   ),
-  "grid.renewables/proportion": pt(
-    "grid.renewables/proportion",
+  "bidi.grid.renewables/proportion": pt(
+    "bidi.grid.renewables/proportion",
     41.2,
     "%",
     "Renewables",

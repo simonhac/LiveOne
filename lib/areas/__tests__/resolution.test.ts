@@ -143,8 +143,8 @@ describe("deterministic area information resolution", () => {
   });
 
   it("does not hide automatic ambiguity behind a config fallback", () => {
-    const a = candidate(1, "grid.emissionsIntensity", "intensity");
-    const b = candidate(2, "grid.emissionsIntensity", "intensity");
+    const a = candidate(1, "bidi.grid.emissionsIntensity", "intensity");
+    const b = candidate(2, "bidi.grid.emissionsIntensity", "intensity");
     expect(
       slot([a, b], [], "grid/emissions-intensity", {
         batteryProvenance: {
@@ -201,10 +201,24 @@ describe("binding shape validation", () => {
     ).toBe(true);
     expect(
       bindingShapeMatches("grid", "intensity", {
-        logicalPathStem: "grid.emissionsIntensity",
+        logicalPathStem: "bidi.grid.emissionsIntensity",
         metricType: "intensity",
       }),
     ).toBe(true);
+  });
+
+  // 🛑 Pins the DELETED carve-out. `bindingShapeMatches` used to return true for any `grid.*` stem
+  // on role `grid`, which made the megawatt `grid.demand` bindable into `grid`/`power` — the same
+  // serving key the site's own watt meters use. The three market signals were renamed into
+  // `bidi.grid.*` (where they match by the ordinary anchor rule) and demand was deliberately left
+  // behind, so admitting it again is now a decision someone has to write down.
+  it("no longer admits a bare `grid.*` stem to role grid — the carve-out is gone", () => {
+    expect(
+      bindingShapeMatches("grid", "power", {
+        logicalPathStem: "grid.demand",
+        metricType: "power",
+      }),
+    ).toBe(false);
   });
 
   it("rejects a wrong role or declared metric", () => {

@@ -136,7 +136,29 @@ decision resolves.
   `ar_`/`dx_`/`au_` in different tables and a polymorphic sink loses the FK `area_bindings.point_uid`
   has today.
 
-### ✅ APPROVED (2026-09-14) — the OpenElectricity path rename — Unit 1, stage 1.1
+### ✅ CODE LANDED (2026-09-14) — the OpenElectricity path rename — Unit 1, stage 1.1
+
+> **Status: code done, DATA NOT APPLIED.** The rename is in
+> `lib/vendors/openelectricity/point-metadata.ts` (`OE_STEMS`), the `slots.ts` carve-out is deleted,
+> and `lib/grid/latest.ts`, `lib/battery-provenance/load.ts`, the slot catalogue, the test fixtures
+> and the docs move with it. The six `points.logical_path` rows are **not** renamed yet —
+> `scripts/utils/rename-oe-grid-stems.ts` is the data half (dry-run by default, `--revert` is an
+> exact inverse), and it must be applied to **prod**: `points` is a `mode: "full"` leg of the 2-hourly
+> prod→dev sync, so a dev-only apply is overwritten within the hour.
+>
+> 🛑 **Sequence: deploy the code, then apply the data, then rebuild KV — close together, and not
+> across 00:05 local.** The two halves are independent (`ensurePointInfo` short-circuits on an
+> existing point, and `mintPoint`'s `ON CONFLICT` SET clause omits `logical_path`), so neither heals
+> nor reverts the other; in the window between them the Local Grid card's price/emissions/renewables
+> read a key nothing publishes and go blank, and the fold loses its emissions and renewables legs.
+> Both are recoverable — the card on the KV rebuild, the fold by `liveone device recompute` — but a
+> window that spans the daily aggregation is a day of provenance to rebuild rather than a blank card
+> for five minutes.
+>
+> No history moves: `points.id` is a uuidv5 over `(vendor, vendorSiteId, physicalPathTail)` and
+> readings key on `point_rid`, so neither identity depends on the logical path.
+
+### The original decision
 
 `ROLES.grid.stem` is `"bidi.grid"` and `stemMatchesRole` matches the anchor or a dotted descendant, so
 `grid.*` points are bindable **only** via a carve-out at `lib/areas/slots.ts:215`
@@ -401,7 +423,7 @@ own controller rather than an inverter's view of it.
 
 | # | Stage | Ship | Revert |
 | --- | --- | --- | --- |
-| 1.1 | OE path rename — 6 `points.logical_path` rows; `point-metadata.ts`; `lib/grid/latest.ts`; delete the `slots.ts:215` carve-out; KV rebuild | data + code | rename back + rebuild |
+| 1.1 | ✅ code / ⏳ data — OE path rename: `point-metadata.ts` (`OE_STEMS`), `lib/grid/latest.ts`, `lib/battery-provenance/load.ts`, the two `slots.ts` `exact()` stems, the `slots.ts` carve-out DELETED; then 6 `points.logical_path` rows on **prod** via `scripts/utils/rename-oe-grid-stems.ts --apply`; KV rebuild | code, then data | `--revert --apply` + rebuild |
 | 1.2 | Kinkora SoC decision (one row), then retire the chain and enforce one-per-serving-key in `replaceBindings` | code + 1 row | revert |
 | 1.3 | Backfill the union-mode area's bindings (prod `Kutis`; dev `Craig (legacy)`) | data | delete the rows |
 | 1.4 | Loom-aware create-time binding command | code | revert |
@@ -416,8 +438,15 @@ own controller rather than an inverter's view of it.
 - KV subscription-registry diff, pre/post — strict subset, every removed entry accounted for, and
   after 1.2 **no `#rank` field anywhere** in it.
 - After 1.2, re-run the chain census (serving keys with >1 wire per area) — must return zero rows.
-- After 1.1, `grep -rn "grid\.\(price\|renewables\|emissionsIntensity\)"` must find only
-  `grid.demand`'s siblings gone and the carve-out deleted.
+- After 1.1: `grep -rnE '(^|[^.])grid\.(price|renewables|emissionsIntensity)'` over tracked files
+  returns nothing outside `docs/incidents/` and the Amber vendor key names (Amber's own `grid.*`
+  strings are its VENDOR keys, not logical paths, and do not move); `grid.demand` is untouched; and
+  `bindingShapeMatches("grid", "power", { logicalPathStem: "grid.demand" })` is false — pinned by a
+  test, because that is the carve-out's deletion and not merely a rename.
+- After 1.1's DATA leg, re-run `rename-oe-grid-stems.ts` with no flags: it must report 8 OE points,
+  6 already renamed and `0 row(s)` to change. Then confirm the Local Grid card still shows price,
+  emissions and renewables, and that a battery-provenance recompute for the day still produces
+  emissions and renewable legs (the two readers keyed on the old paths).
 - Re-run `scripts/area-builder-smoke.ts` and `scripts/utils/v4-surface-smoke.ts`.
 
 ---

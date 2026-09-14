@@ -6,17 +6,22 @@
  * No bespoke endpoint: this is a pure selector over that payload.
  *
  * The four OE grid-signal logical-path keys (logicalPathStem + "/" + metricType):
- *   - grid.price/rate                   ($/MWh)
- *   - grid.emissionsIntensity/intensity (tCO2e/MWh)
- *   - grid.renewables/proportion        (%)
- *   - grid.demand/power                 (MW)
+ *   - bidi.grid.spot/rate                    ($/MWh)
+ *   - bidi.grid.emissionsIntensity/intensity (tCO2e/MWh)
+ *   - bidi.grid.renewables/proportion        (%)
+ *   - grid.demand/power                      (MW)
  * Display-unit conversion happens in the card.
+ *
+ * ⚠️ The first three are the SAME serving keys Amber publishes (`bidi.grid.spot/rate`,
+ * `bidi.grid.renewables/proportion`) — deliberately, so a wire can carry either source into the same
+ * port. They do not collide here because this selector reads one device's `latest` map at a time,
+ * and that device is the public OpenElectricity region device.
  */
 
 const GRID_LATEST_PATHS = {
-  price: "grid.price/rate",
-  emissionsIntensity: "grid.emissionsIntensity/intensity",
-  renewables: "grid.renewables/proportion",
+  price: "bidi.grid.spot/rate",
+  emissionsIntensity: "bidi.grid.emissionsIntensity/intensity",
+  renewables: "bidi.grid.renewables/proportion",
   demand: "grid.demand/power",
 } as const;
 

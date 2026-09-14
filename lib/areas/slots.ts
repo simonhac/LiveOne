@@ -165,7 +165,7 @@ export const RESOLUTION_SLOTS: readonly ResolutionSlotDef[] = [
     slot: "grid/emissions-intensity",
     role: "grid",
     metricType: "emissions-intensity",
-    matches: exact("grid.emissionsIntensity", "intensity"),
+    matches: exact("bidi.grid.emissionsIntensity", "intensity"),
     config: {
       key: "batteryProvenance.generatorSource.emissionsIntensity",
       available: (config) =>
@@ -178,9 +178,7 @@ export const RESOLUTION_SLOTS: readonly ResolutionSlotDef[] = [
     slot: "grid/renewable-fraction",
     role: "grid",
     metricType: "renewable-fraction",
-    matches: (point) =>
-      exact("grid.renewables", "proportion")(point) ||
-      exact("bidi.grid.renewables", "proportion")(point),
+    matches: exact("bidi.grid.renewables", "proportion"),
     config: {
       key: "batteryProvenance.generatorSource.renewableFraction",
       available: (config) =>
@@ -210,8 +208,12 @@ export function bindingShapeMatches(
   if (point.logicalPathStem == null || point.metricType !== rawMetricType)
     return false;
 
-  // Regional market points are area-level grid producers but intentionally use the `grid.*`
-  // namespace rather than a physical device's `bidi.grid.*` namespace.
-  if (role === "grid" && point.logicalPathStem.startsWith("grid.")) return true;
+  // 🛑 No carve-out. There used to be one here for the OpenElectricity regional market points,
+  // which sat on a `grid.*` stem that `stemMatchesRole` (anchor `bidi.grid`) could never match.
+  // They were renamed into `bidi.grid.*` instead — `bidi.grid` is the grid-CONNECTION namespace,
+  // which Amber already uses for exactly these signals — so they now match by the ordinary rule and
+  // the exception is gone. `grid.demand` (MW) was deliberately left behind, and is therefore no
+  // longer bindable to role `grid` without a new decision. See
+  // lib/vendors/openelectricity/point-metadata.ts.
   return stemMatchesRole(point.logicalPathStem, role);
 }

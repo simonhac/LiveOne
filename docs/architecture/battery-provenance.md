@@ -29,10 +29,10 @@ user can ask, for any load and any period:
 Three metrics are attached to every energy flow:
 
 - **Emissions intensity** — grams of CO₂ per kWh. Source: OpenElectricity
-  `grid.emissionsIntensity/intensity` (tCO₂e/MWh ≡ gCO₂/kWh) on the household's NEM-region system,
+  `bidi.grid.emissionsIntensity/intensity` (tCO₂e/MWh ≡ gCO₂/kWh) on the household's NEM-region system,
   5-minute resolution.
 - **Renewable proportion** — what fraction of the energy was renewable (%). Source: OpenElectricity
-  `grid.renewables/proportion`, same region system, 5-minute.
+  `bidi.grid.renewables/proportion`, same region system, 5-minute.
 - **Cost / price** — cents per kWh. Source: Amber `bidi.grid.import/rate` on the household's own
   system, 30-minute step.
 

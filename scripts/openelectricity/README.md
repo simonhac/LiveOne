@@ -39,7 +39,7 @@ batches `INSERT … ON CONFLICT` into `point_readings_agg_5m` (the same SQL the 
 uses), and **bypasses QStash** entirely.
 
 It writes **data only** — never schema. The region's system + its four points
-(`grid.price`, `grid.emissionsIntensity`, `grid.renewables`, `grid.demand`) must already
+(`bidi.grid.spot`, `bidi.grid.emissionsIntensity`, `bidi.grid.renewables`, `grid.demand`) must already
 exist: seed the system, then run one live poll / online backfill so `ensurePointInfo`
 creates the points.
 
