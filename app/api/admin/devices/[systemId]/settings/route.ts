@@ -26,12 +26,21 @@ export async function GET(
     const authResult = await requireDeviceAccess(request, systemId);
     if (authResult instanceof NextResponse) return authResult;
 
+    // The device/site split, so the dialog can render it rather than discovering it on save.
+    // `dayOffsetMin` is the DEVICE's own bucket and is read-only here — the only sanctioned writer
+    // is `POST /api/v4/devices/{id}/change-offset`, which deletes and rebuilds every daily
+    // aggregate that was rolled up on the old boundary. `displayTimezone` and `location` belong to
+    // the SITE, and `placement.editable` says whether this device-addressed route may write them.
+    const placement = await DeviceWriter.describeDevicePlacement(systemId);
+
     return NextResponse.json({
       success: true,
       settings: {
         displayName: authResult.device.displayName,
         alias: authResult.device.alias,
         displayTimezone: authResult.device.displayTimezone,
+        dayOffsetMin: authResult.device.dayOffsetMin,
+        placement,
       },
     });
   } catch (error) {

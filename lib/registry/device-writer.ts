@@ -373,6 +373,23 @@ async function createHelperDevice(params: {
  * conversion, and the kind of blanket copy-down `ensureAreaOfOne` explicitly refused.
  */
 /**
+ * Why a DEVICE-addressed write may not change the site's placement.
+ *
+ * Shared, rather than inlined at each site, because the UI has to state the SAME rule the writer
+ * enforces: `DeviceSettingsDialog` disables the timezone and location fields and prints the reason,
+ * and a dialog that disagreed with the server would either refuse an edit that would have worked or
+ * offer one that 409s on save.
+ */
+const PLACEMENT_REFUSAL = {
+  noArea: "device is not in any site",
+  gone: "the site no longer exists",
+  otherOwner:
+    "this device's site belongs to someone else — edit the site directly",
+  shared:
+    "this device shares a site with others — edit the site's location/timezone instead",
+} as const;
+
+/**
  * May a DEVICE-addressed write change this device's area's placement? Returns a refusal reason, or
  * null when it may.
  *
@@ -400,9 +417,9 @@ async function placementRefusal(
     .where(eq(areas.id, areaId))
     .limit(1)
     .for("update");
-  if (!area) return "the site no longer exists";
+  if (!area) return PLACEMENT_REFUSAL.gone;
   if (area.ownerUserId !== deviceOwnerUserId)
-    return "this device's site belongs to someone else — edit the site directly";
+    return PLACEMENT_REFUSAL.otherOwner;
 
   const others = await tx
     .select({ rid: devices.rid })
@@ -415,9 +432,65 @@ async function placementRefusal(
       ),
     )
     .limit(1);
+  return others.length > 0 ? PLACEMENT_REFUSAL.shared : null;
+}
+
+/**
+ * The same question as {@link placementRefusal}, asked WITHOUT a transaction and without writing:
+ * which site does this device's timezone and location live on, and may this caller edit them here?
+ *
+ * For `GET /api/admin/devices/{id}/settings`, so the dialog can render the split the model now has
+ * — day offset is the DEVICE's, timezone and location are the SITE's — instead of offering a field
+ * that will 409 on save. It duplicates the predicate rather than calling the writer's version
+ * because that one takes `FOR UPDATE`, which is right for a write and wrong for a page load; the
+ * reason STRINGS are shared so the two cannot drift apart in what they say.
+ *
+ * ⚠️ Advisory only. It is a read outside any lock, so a site can gain a tenant between this answer
+ * and the save — at which point the save refuses, which is the correct end state. Never treat this
+ * as the authorization.
+ */
+async function describeDevicePlacement(systemId: number): Promise<{
+  areaId: string | null;
+  areaName: string | null;
+  editable: boolean;
+  reason: string | null;
+}> {
+  const db = requirePlanetscaleDb();
+  const [row] = await db
+    .select({
+      areaId: devices.areaId,
+      deviceOwner: devices.ownerUserId,
+      areaName: areas.name,
+      areaOwner: areas.ownerUserId,
+    })
+    .from(devices)
+    .leftJoin(areas, eq(areas.id, devices.areaId))
+    .where(eq(devices.rid, systemId))
+    .limit(1);
+  if (!row || !row.areaId)
+    return {
+      areaId: null,
+      areaName: null,
+      editable: false,
+      reason: PLACEMENT_REFUSAL.noArea,
+    };
+  const base = { areaId: row.areaId, areaName: row.areaName };
+  if (row.areaOwner !== row.deviceOwner)
+    return { ...base, editable: false, reason: PLACEMENT_REFUSAL.otherOwner };
+  const others = await db
+    .select({ rid: devices.rid })
+    .from(devices)
+    .where(
+      and(
+        eq(devices.areaId, row.areaId),
+        ne(devices.rid, systemId),
+        ne(devices.vendor, "helper"),
+      ),
+    )
+    .limit(1);
   return others.length > 0
-    ? "this device shares a site with others — edit the site's location/timezone instead"
-    : null;
+    ? { ...base, editable: false, reason: PLACEMENT_REFUSAL.shared }
+    : { ...base, editable: true, reason: null };
 }
 
 /**
@@ -491,7 +564,7 @@ async function updateDevice(
         // An AMBIENT device has no place — that is what ambient means — so there is nowhere to write
         // this. Reported rather than swallowed: the caller was told to change something and nothing
         // changed, and a 200 over the top of that is how a user learns not to trust the form.
-        const reason = "device is not in any site";
+        const reason = PLACEMENT_REFUSAL.noArea;
         if (opts.placement === "require")
           throw new PlacementRefusedError(reason);
         placement = { applied: false, reason };
@@ -583,15 +656,21 @@ async function deleteDevice(systemId: number): Promise<void> {
 }
 
 /**
- * The four device writers. A plain object, like `DeviceRegistry` / `DeviceConfigRegistry`.
+ * The four device writers, plus the one READ that belongs beside them. A plain object, like
+ * `DeviceRegistry` / `DeviceConfigRegistry`.
  *
  * The names keep their original spelling (`createDevice`, `updateDevice`, `deleteDevice`) for the
  * same reason {@link DevicePatch} keeps its field names: renaming them is churn across ten call
  * sites that says nothing about storage.
+ *
+ * `describeDevicePlacement` is here rather than in a registry because it answers a question only
+ * the writer defines — whether THIS write would be refused — and the value of co-locating it is
+ * that the refusal strings have one home.
  */
 export const DeviceWriter = {
   createDevice,
   createHelperDevice,
   updateDevice,
   deleteDevice,
+  describeDevicePlacement,
 };

@@ -18,6 +18,17 @@ import {
   nemRegionShortLabel,
 } from "@/lib/vendors/openelectricity/region";
 
+/** What `GET /api/admin/devices/{id}/settings` says about where this device's placement lives. */
+interface SitePlacement {
+  areaId: string | null;
+  areaName: string | null;
+  editable: boolean;
+  reason: string | null;
+}
+
+/** `+600` / `-330`, the way the CLI prints an offset. */
+const signedOffset = (m: number) => `${m >= 0 ? "+" : ""}${m}m`;
+
 // State/territory codes. WA/NT are valid locations but off the NEM (the preview says so).
 const AU_STATES = [
   "NSW",
@@ -75,6 +86,16 @@ export default function DeviceSettingsDialog({
   const [origLocationState, setOrigLocationState] = useState("");
   const [origLocationPostcode, setOrigLocationPostcode] = useState("");
   const [isLocationDirty, setIsLocationDirty] = useState(false);
+  // 🛑 The device/site split, reported by the server. Timezone and location live on the SITE
+  // (`areas.display_timezone` / `areas.location`), so this device-addressed dialog may only edit
+  // them when this device is the site's sole ordinary tenant AND owns it — otherwise a save here
+  // would re-place every other device in the site, possibly someone else's. `editable: false` is
+  // the same predicate the writer enforces, so the fields are disabled rather than 409'd on save.
+  const [placement, setPlacement] = useState<SitePlacement | null>(null);
+  // The DEVICE's own day bucket. Shown, never edited here: `point_readings_agg_1d` rolls up on it,
+  // so changing it without rebuilding leaves every daily total the device ever produced describing
+  // a window its own `day` key no longer matches. `liveone device change-offset` does both.
+  const [dayOffsetMin, setDayOffsetMin] = useState<number | null>(null);
   const [showAreaBuilder, setShowAreaBuilder] = useState(false);
   const [activeTab, setActiveTab] = useState<
     "general" | "points" | "tesla" | "config" | "admin" | "location"
@@ -113,6 +134,9 @@ export default function DeviceSettingsDialog({
           displayName?: string | null;
           alias?: string | null;
           displayTimezone?: string | null;
+          /** The DEVICE's own fixed day bucket. Read-only here — see `SitePlacement`. */
+          dayOffsetMin?: number | null;
+          placement?: SitePlacement | null;
         };
       }>(`/api/admin/devices/${systemId}/settings`);
 
@@ -135,7 +159,12 @@ export default function DeviceSettingsDialog({
         displayName: fetchedName,
         alias: fetchedAlias,
         displayTimezone: fetchedTimezone,
+        dayOffsetMin: fetchedDayOffset,
+        placement: fetchedPlacement,
       } = data.settings;
+
+      setDayOffsetMin(fetchedDayOffset ?? null);
+      setPlacement(fetchedPlacement ?? null);
 
       // Store original values
       setDisplayName(fetchedName || "");
@@ -178,6 +207,11 @@ export default function DeviceSettingsDialog({
     setOrigLocationPostcode(pc);
     setIsLocationDirty(false);
   }, [locationData]);
+
+  // 🛑 Only false once the settings query has ANSWERED. While `placement` is null the fields are
+  // locked, not open: defaulting to editable would let the user type into a field the server is
+  // about to refuse, and the whole point of this flag is that they never see that 409.
+  const placementLocked = !placement?.editable;
 
   // Live region preview from the current form — same derivation the server uses.
   const locationRegion = nemRegionForLocation({
@@ -637,19 +671,51 @@ export default function DeviceSettingsDialog({
                     )}
                   </div>
 
-                  {/* Display Timezone field */}
+                  {/* The device's own day bucket — read-only. See `dayOffsetMin`'s comment. */}
+                  {dayOffsetMin !== null && (
+                    <div className="mt-4">
+                      <label className="block text-sm font-medium text-gray-300 mb-2">
+                        Day boundary
+                      </label>
+                      <p className="text-xs text-gray-400 mb-2">
+                        This device&apos;s own fixed offset — the boundary its
+                        daily totals roll up on. It does not change when the
+                        device moves between sites.
+                      </p>
+                      <div className="w-full px-3 py-2 bg-gray-900 border border-gray-800 rounded-md text-gray-400 font-mono text-sm">
+                        {signedOffset(dayOffsetMin)}
+                      </div>
+                      <p className="text-xs text-gray-500 mt-1">
+                        Changing it re-buckets every daily total the device has
+                        ever produced, so it is a deliberate operation:{" "}
+                        <code className="text-gray-400">
+                          liveone device change-offset {systemId} --apply
+                        </code>
+                        .
+                      </p>
+                    </div>
+                  )}
+
+                  {/* Display Timezone — the SITE's, not the device's. */}
                   <div className="mt-4">
                     <label className="block text-sm font-medium text-gray-300 mb-2">
                       Display Timezone
+                      {placement?.areaName && (
+                        <span className="ml-2 font-normal text-gray-500">
+                          — {placement.areaName}
+                        </span>
+                      )}
                     </label>
                     <p className="text-xs text-gray-400 mb-2">
-                      Timezone used for all date/time displayed to users.
+                      Timezone used for all date/time displayed to users. It
+                      belongs to the SITE, so it is shared by every device in
+                      it.
                     </p>
                     <select
                       value={editedTimezone || ""}
                       onChange={(e) => handleTimezoneChange(e.target.value)}
-                      className="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded-md text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                      disabled={isSaving}
+                      className="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded-md text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:opacity-50 disabled:cursor-not-allowed"
+                      disabled={isSaving || placementLocked}
                     >
                       {!editedTimezone && (
                         <option value="">Select a timezone...</option>
@@ -664,6 +730,11 @@ export default function DeviceSettingsDialog({
                         </optgroup>
                       ))}
                     </select>
+                    {placementLocked && (
+                      <p className="text-xs text-amber-400/80 mt-1">
+                        Read-only here — {placement?.reason}.
+                      </p>
+                    )}
                   </div>
                 </div>
 
@@ -674,6 +745,12 @@ export default function DeviceSettingsDialog({
                     (NEM) region used by the Local Grid card (price, emissions,
                     renewables).
                   </p>
+                  {/* Same rule as the timezone above: location is the SITE's. */}
+                  {placementLocked && (
+                    <p className="text-sm text-amber-400/80 mb-4">
+                      Read-only here — {placement?.reason}.
+                    </p>
+                  )}
 
                   <div>
                     <label className="block text-sm font-medium text-gray-300 mb-2">
@@ -688,8 +765,8 @@ export default function DeviceSettingsDialog({
                             locationPostcode !== origLocationPostcode,
                         );
                       }}
-                      disabled={isSaving}
-                      className="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded-md text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      disabled={isSaving || placementLocked}
+                      className="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded-md text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       <option value="">Not set</option>
                       {AU_STATES.map((s) => (
@@ -721,8 +798,8 @@ export default function DeviceSettingsDialog({
                         );
                       }}
                       placeholder="e.g. 3000"
-                      disabled={isSaving}
-                      className="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded-md text-gray-100 placeholder:text-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      disabled={isSaving || placementLocked}
+                      className="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded-md text-gray-100 placeholder:text-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:opacity-50 disabled:cursor-not-allowed"
                     />
                   </div>
 
