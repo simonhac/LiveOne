@@ -18,6 +18,7 @@ import type { LatestReadingData } from "@/lib/types/readings";
 import type { ZonedDateTime } from "@internationalized/date";
 import { getNextMinuteBoundary } from "@/lib/date-utils";
 import { evaluateSlot } from "./schedule";
+import type { MaintenanceWindow } from "./maintenance-window";
 import { PointManager, type SessionInfo } from "@/lib/point/point-manager";
 import { sessionManager } from "@/lib/session-manager";
 import {
@@ -98,6 +99,17 @@ export abstract class BaseVendorAdapter implements VendorAdapter {
    * cannot express — otherwise raise `MONITOR_DEVICE_STALE_SLOTS`, or fix the vendor.
    */
   readonly staleBudgetMinutes: number | undefined = undefined;
+
+  /**
+   * A vendor's SCHEDULED, MEASURED window of unavailability. Inside it, a device that would be
+   * stale or failing is reported as `device_in_maintenance` rather than alerting — so the health
+   * monitor stops paging for a vendor behaving exactly as advertised, WITHOUT the vendor having to
+   * buy that quiet with a slack staleness budget it then carries all day.
+   *
+   * It does NOT gate polling; see `lib/vendors/maintenance-window.ts`. Declare only what you have
+   * measured, and record the measurement where you declare it.
+   */
+  readonly maintenanceWindow: MaintenanceWindow | undefined = undefined;
 
   /** Slot width for one device. Override when the cadence depends on device state (see Tesla). */
   protected intervalFor(_device: DeviceConfigView): number {

@@ -74,9 +74,20 @@ that runs **every 15 minutes** (`vercel.json`, `*/15 * * * *`; `maxDuration = 30
   check holds each active polled device to its OWN declared slot (hourly Enphase and
   minutely Selectronic are not judged alike). A vendor may declare
   `staleBudgetMinutes` on its adapter where a multiple of its slot can't express its
-  reality — Amber does (45 min), because it takes a scheduled 00:05–00:30 AEST
-  maintenance window every night; when it does, the alert text says "its declared N
-  min staleness budget" instead of "3× its slot". Push vendors are exempt.
+  reality; when it does, the alert text says "its declared N min staleness budget"
+  instead of "3× its slot". Push vendors are exempt.
+- **A SCHEDULED vendor outage is a different problem, and gets a different lever.**
+  Amber is dark 00:05–00:30 every night by design. Widening its staleness budget to
+  cover that (which is what we did until 2026-09-15, at 45 min) buys quiet at midnight
+  with a 45-minute blind spot at 3 pm — and stopped working anyway when the
+  `device_failing` check landed, because that one doesn't read the budget. A vendor
+  with a measured window now declares `maintenanceWindow` instead: inside it, a stale
+  or failing device is reported as `device_in_maintenance` and does not page; outside
+  it, the vendor keeps the tight generic cliff. The window *closing* re-arms the
+  alarm, so one that has moved or run long is loud rather than silent.
+- **`unhealthy` in the `/api/health/devices` body is wider than what 503s.**
+  `device_in_maintenance` and `device_never_polled` are reported with their numbers
+  and do not fail the check — `alertable()` is the set that does. Read the `code`.
 - **It detects; it does not heal.** Recovery is QStash retries plus the minutely
   `relay-outbox` cron (`vercel.json`, `* * * * *`) draining the durable outbox once
   the receiver is healthy again. The monitor is the smoke alarm; the relay is what
