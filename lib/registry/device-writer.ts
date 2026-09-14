@@ -338,13 +338,39 @@ async function createHelperDevice(params: {
  * would be a NEW behaviour that silently overwrites a user-set area name — out of scope for a
  * conversion, and the kind of blanket copy-down `ensureAreaOfOne` explicitly refused.
  */
-/** Does this area hold a device other than `systemId` that is not its own derived helper? */
-async function areaHasOtherTenants(
+/**
+ * May a DEVICE-addressed write change this device's area's placement? Returns a refusal reason, or
+ * null when it may.
+ *
+ * 🛑 Two conditions, and the SECOND one is the one that matters. Occupancy alone is not permission:
+ * a device can legitimately be the only ordinary device in an area somebody ELSE owns (Craig's
+ * inverter alone in a site Simon owns, alongside Simon's helper), and an Enphase reconnect handing
+ * over the vendor's address would then rewrite that owner's site location — the exact operation this
+ * guard exists to refuse. So ownership is checked too.
+ *
+ * 🛑 The area row is locked FOR UPDATE first. Without it the tenant count and the placement write
+ * are two statements with a gap: a concurrent `PUT /members` moving a second device in commits
+ * between them, and the placement lands on an area that is shared by the time it does. Locking the
+ * AREA (not the device) is what serialises against membership changes, because that is the row both
+ * sides agree on.
+ */
+async function placementRefusal(
   tx: DeviceRegistryExec,
   areaId: string,
   systemId: number,
-): Promise<boolean> {
-  const rows = await tx
+  deviceOwnerUserId: string | null,
+): Promise<string | null> {
+  const [area] = await tx
+    .select({ ownerUserId: areas.ownerUserId })
+    .from(areas)
+    .where(eq(areas.id, areaId))
+    .limit(1)
+    .for("update");
+  if (!area) return "the site no longer exists";
+  if (area.ownerUserId !== deviceOwnerUserId)
+    return "this device's site belongs to someone else — edit the site directly";
+
+  const others = await tx
     .select({ rid: devices.rid })
     .from(devices)
     .where(
@@ -355,7 +381,9 @@ async function areaHasOtherTenants(
       ),
     )
     .limit(1);
-  return rows.length > 0;
+  return others.length > 0
+    ? "this device shares a site with others — edit the site's location/timezone instead"
+    : null;
 }
 
 /**
@@ -367,9 +395,20 @@ interface PlacementOutcome {
   reason?: string;
 }
 
+/**
+ * Raised, and ROLLED BACK, when `placement: "require"` cannot be honoured. See {@link updateDevice}.
+ */
+export class PlacementRefusedError extends Error {
+  constructor(public readonly reason: string) {
+    super(`placement refused: ${reason}`);
+    this.name = "PlacementRefusedError";
+  }
+}
+
 async function updateDevice(
   systemId: number,
   patch: DevicePatch,
+  opts: { placement?: "require" | "best-effort" } = {},
 ): Promise<PlacementOutcome> {
   const deviceSet: Partial<typeof devices.$inferInsert> = {};
   if (patch.ownerClerkUserId !== undefined)
@@ -410,7 +449,7 @@ async function updateDevice(
       // became a silent no-op: for any re-homed device, `PATCH /api/admin/devices/{id}/settings`
       // would answer 200, echo the new timezone, and the next GET would return the old one.
       const [current] = await tx
-        .select({ areaId: devices.areaId })
+        .select({ areaId: devices.areaId, ownerUserId: devices.ownerUserId })
         .from(devices)
         .where(eq(devices.rid, systemId))
         .limit(1);
@@ -418,20 +457,41 @@ async function updateDevice(
         // An AMBIENT device has no place — that is what ambient means — so there is nowhere to write
         // this. Reported rather than swallowed: the caller was told to change something and nothing
         // changed, and a 200 over the top of that is how a user learns not to trust the form.
-        placement = { applied: false, reason: "device is not in any site" };
-      } else if (await areaHasOtherTenants(tx, current.areaId, systemId)) {
-        // 🛑 A SHARED area. Placement belongs to the site, so writing it from a DEVICE-addressed
-        // route would let one device's settings — or, worse, an OAuth reconnect handing over a vendor
-        // address — silently re-place every other device in the site, and a site the caller may not
-        // even own. Refused here rather than authorized at each caller, because there are several and
-        // they do not all have a user to ask. Edit the AREA to move a shared site.
-        placement = {
-          applied: false,
-          reason:
-            "this device shares a site with others — edit the site's location/timezone instead",
-        };
+        const reason = "device is not in any site";
+        if (opts.placement === "require")
+          throw new PlacementRefusedError(reason);
+        placement = { applied: false, reason };
       } else {
-        await tx.update(areas).set(areaSet).where(eq(areas.id, current.areaId));
+        // 🛑 Placement belongs to the SITE. Writing it from a DEVICE-addressed route would let one
+        // device's settings — or, worse, an OAuth reconnect handing over a vendor address — re-place
+        // every other device in the site, and a site the caller may not own. Refused here rather
+        // than authorized at each caller, because there are several and they do not all have a user
+        // to ask.
+        const refusal = await placementRefusal(
+          tx,
+          current.areaId,
+          systemId,
+          // The patch may be re-owning the device in this same call (the Enphase reconnect does);
+          // the owner that matters is the one it will HAVE.
+          patch.ownerClerkUserId !== undefined
+            ? patch.ownerClerkUserId
+            : current.ownerUserId,
+        );
+        if (refusal) {
+          // 🛑 `require` ABORTS THE WHOLE PATCH. The device columns were written earlier in this same
+          // transaction, so returning a refusal without throwing would commit half of what the caller
+          // asked for and then report failure: name and alias persisted, timezone silently not, and
+          // a dialog saying it failed. The one caller that genuinely wants the other half —
+          // the Enphase reconnect, whose job is the device's owner/name/status — asks for
+          // `best-effort` and is told what was skipped.
+          if (opts.placement === "require")
+            throw new PlacementRefusedError(refusal);
+          placement = { applied: false, reason: refusal };
+        } else
+          await tx
+            .update(areas)
+            .set(areaSet)
+            .where(eq(areas.id, current.areaId));
       }
     }
   });

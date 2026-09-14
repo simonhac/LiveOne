@@ -67,10 +67,20 @@ import {
 // The server's OWN binding predicate, so the fixture this script builds cannot drift from the rules
 // `replaceBindings` validates against.
 import { Device, type DeviceId } from "@/lib/ids";
+import { buildSubscriptionRegistry } from "@/lib/kv-cache-manager";
+import {
+  captureWorld,
+  clearJournal,
+  readJournal,
+  restoreWorld,
+  type WorldSnapshot,
+} from "@/scripts/utils/smoke-world-snapshot";
 import { bindingShapeMatches } from "@/lib/areas/slots";
 import { ROLES, type RoleId } from "@/lib/roles/registry";
 
 const BASE = process.env.V4_SMOKE_BASE ?? "http://localhost:3001";
+/** Written before the first mutation; an interrupted run leaves the wiring recoverable from here. */
+const WORLD_JOURNAL = "/tmp/liveone-v4-surface-smoke-world.json";
 
 /**
  * 🛑 DELIBERATELY GLOBAL, NOT PER-RUN — and that makes CONCURRENT RUNS UNSAFE, by design.
@@ -477,105 +487,6 @@ async function sweepScratchAreas(): Promise<number> {
   return rows.length;
 }
 
-/**
- * Where each of this run's fixture devices lived BEFORE it was borrowed, and the restore that puts
- * them back.
- *
- * 🛑 This exists because the members PUT stopped being additive. Before migration 0071 pulling a
- * device into a scratch area left its real membership untouched, so there was nothing to restore and
- * this script was read-only with respect to `liveone-dev`'s wiring. It is not any more: a device is
- * in at most one area, so every fixture device is taken OUT of its real site for the duration of the
- * run, and `devices.area_id` is `ON DELETE SET NULL`, so the teardown would otherwise leave them
- * ambient on a SHARED database.
- */
-async function captureDeviceAreas(
-  deviceUuids: string[],
-): Promise<Map<string, string | null>> {
-  if (deviceUuids.length === 0) return new Map();
-  const db = requirePlanetscaleDb();
-  const rows = await db
-    .select({ id: devicesTable.id, areaId: devicesTable.areaId })
-    .from(devicesTable)
-    .where(inArray(devicesTable.id, deviceUuids));
-  return new Map(rows.map((r) => [r.id, r.areaId]));
-}
-
-/**
- * The BINDINGS a borrow will destroy, and the restore that puts them back.
- *
- * 🛑 Restoring `devices.area_id` is not enough. Moving a device into the scratch area detaches it
- * from its real one *bindings and all*, and `area_bindings` rows are hand-authored — nothing rebuilds
- * them. Without this the membership table comes back byte-identical while the original site's wiring
- * is silently gone. That is not hypothetical: it destroyed 23 real bindings on `liveone-dev`.
- */
-async function captureDeviceBindings(
-  deviceUuids: string[],
-): Promise<(typeof areaBindingsTable.$inferSelect)[]> {
-  if (deviceUuids.length === 0) return [];
-  const db = requirePlanetscaleDb();
-  return db
-    .select()
-    .from(areaBindingsTable)
-    .where(
-      inArray(
-        areaBindingsTable.pointUid,
-        db
-          .select({ id: pointsTable.id })
-          .from(pointsTable)
-          .where(inArray(pointsTable.deviceId, deviceUuids)),
-      ),
-    );
-}
-
-async function restoreDeviceBindings(
-  rows: (typeof areaBindingsTable.$inferSelect)[],
-): Promise<boolean> {
-  const db = requirePlanetscaleDb();
-  let ok = true;
-  for (const b of rows) {
-    try {
-      await db
-        .insert(areaBindingsTable)
-        .values(b)
-        .onConflictDoNothing({
-          target: [
-            areaBindingsTable.areaId,
-            areaBindingsTable.role,
-            areaBindingsTable.metricType,
-            areaBindingsTable.pointUid,
-          ],
-        });
-    } catch (err) {
-      console.error(`  ! could not restore binding ${b.id}:`, err);
-      ok = false;
-    }
-  }
-  return ok;
-}
-
-async function restoreBorrowedDevices(
-  original: Map<string, string | null>,
-): Promise<boolean> {
-  const db = requirePlanetscaleDb();
-  let allOk = true;
-  for (const [uuid, areaId] of original) {
-    try {
-      await db
-        .update(devicesTable)
-        .set({ areaId })
-        .where(eq(devicesTable.id, uuid));
-    } catch (err) {
-      // 🛑 Loud, and it FAILS THE RUN. A restore that silently gave up would leave a real device out
-      // of its real site on a shared database while the script printed PASS over the top of it —
-      // and the teardown below would then delete the scratch area, turning a recoverable state into
-      // an unrecoverable one.
-      console.error(`  ! could not restore device ${uuid} to ${areaId}:`, err);
-      allOk = false;
-    }
-  }
-  return allOk;
-}
-
 interface BindingFixture {
   /** `dv_` → integer handle, learned from the areas-of-one (an area of one member IS that device). */
   handleOf: Map<string, number>;
@@ -788,8 +699,32 @@ async function main(): Promise<void> {
 
   // Filled once the fixture is chosen; restored in the `finally`. Declared out here so the restore
   // runs even if the run dies between choosing the fixture and finishing.
-  const borrowedAreas = new Map<string, string | null>();
-  let borrowedBindings: (typeof areaBindingsTable.$inferSelect)[] = [];
+  // 🛑 A whole-table snapshot, journalled to disk before anything moves. NOT a list of the devices
+  // this script names: that list was wrong twice — first it restored placements but not bindings
+  // (23 real bindings destroyed on liveone-dev, reported as a passing run), then it captured
+  // bindings for `deviceA`/`deviceB` and missed `fixture.helperDevice`, which a later assertion also
+  // moves. See `smoke-world-snapshot.ts`.
+  let world: WorldSnapshot | null = null;
+
+  // 🛑 FIRST, before a single read — recovery rewrites membership and bindings, and anything already
+  // read describes the damaged world. See `area-builder-smoke.ts` for the run this cost.
+  const staleWorld = readJournal(WORLD_JOURNAL);
+  if (staleWorld) {
+    console.log(
+      `⚠️  a previous run was interrupted (${staleWorld.capturedAt}) — restoring from its journal first`,
+    );
+    if (!(await restoreWorld(staleWorld))) {
+      console.error(
+        "✗ could not restore the previous run's snapshot; aborting",
+      );
+      process.exit(1);
+    }
+    clearJournal(WORLD_JOURNAL);
+  }
+  world = await captureWorld(WORLD_JOURNAL);
+  console.log(
+    `  world snapshot: ${world.placements.length} placement(s), ${world.bindings.length} binding(s) → ${WORLD_JOURNAL}`,
+  );
 
   try {
     // ---------------------------------------------------------------- 1. GET /areas
@@ -1265,16 +1200,6 @@ async function main(): Promise<void> {
     );
     const handleA = fixture.handleOf.get(fixture.deviceA)!;
     const handleB = fixture.handleOf.get(fixture.deviceB)!;
-    // 🛑 Record where the fixture devices live BEFORE anything moves them. See `captureDeviceAreas`.
-    const borrowedUuids = [fixture.deviceA, fixture.deviceB].map((d) =>
-      Device.toUuid(d as DeviceId),
-    );
-    for (const [uuid, was] of await captureDeviceAreas(borrowedUuids))
-      borrowedAreas.set(uuid, was);
-    borrowedBindings = await captureDeviceBindings(borrowedUuids);
-    console.log(
-      `  captured ${borrowedBindings.length} binding(s) on the borrowed devices, to restore at teardown`,
-    );
 
     // ---------------------------------------------------------------- 5b. POST /areas
     section("POST /api/v4/areas");
@@ -2836,11 +2761,35 @@ async function main(): Promise<void> {
 
     // ==================================================================
   } finally {
-    // 🛑 BEFORE the area delete. `devices.area_id` is ON DELETE SET NULL, so deleting the scratch
-    // area after this would leave every borrowed device ambient — see `captureDeviceAreas`. If it
-    // fails, the sweep below refuses to delete the area that still holds them, and the run fails.
-    if (!(await restoreBorrowedDevices(borrowedAreas))) failures++;
-    if (!(await restoreDeviceBindings(borrowedBindings))) failures++;
+    // 🛑 BEFORE the area delete, and it VETOES the delete when it fails. `devices.area_id` is
+    // ON DELETE SET NULL, so deleting a scratch area that still holds a borrowed device strands it —
+    // and the journal is the only record of where it belonged.
+    let restored = true;
+    if (world) {
+      restored = await restoreWorld(world);
+      if (!restored) {
+        failures++;
+        console.error(
+          `\n  ! the world snapshot could not be fully restored. NOT deleting scratch records. ` +
+            `The journal is at ${WORLD_JOURNAL} — fix the cause and re-run, which restores from it.`,
+        );
+      }
+    }
+    if (!restored) {
+      console.log(
+        `\n${"=".repeat(60)}\n✗ FAIL — restore incomplete, teardown skipped`,
+      );
+      process.exit(1);
+    }
+    // Membership and bindings are rows; SERVING is a cache derived from them. The HTTP mutations
+    // above rebuilt the KV subscription registry while the borrowed devices were absent from their
+    // real areas, so putting the rows back is not enough — without this the original sites stay
+    // missing from the registry until something else rebuilds it.
+    try {
+      await buildSubscriptionRegistry();
+    } catch (err) {
+      console.error("  ! could not rebuild the subscription registry:", err);
+    }
     await trash();
     // 🛑 The backstop, and it must run even when `trash()` reported success — that is the whole point.
     // A non-zero count here means the HTTP teardown believed it had deleted something it had not.
@@ -2849,6 +2798,7 @@ async function main(): Promise<void> {
     console.log(
       `\ncleaned up scratch dashboards, and hard-deleted ${swept} scratch area(s)`,
     );
+    clearJournal(WORLD_JOURNAL);
     if (leaked > 0)
       console.error(
         `  ! ${leaked} scratch dashboard(s) survived the HTTP teardown and were swept from the DB — ` +

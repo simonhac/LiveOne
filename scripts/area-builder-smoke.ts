@@ -28,6 +28,12 @@
  */
 import * as dotenv from "dotenv";
 import { DeviceConfigRegistry } from "@/lib/registry/device-config";
+import {
+  captureWorld,
+  clearJournal,
+  readJournal,
+  restoreWorld,
+} from "@/scripts/utils/smoke-world-snapshot";
 dotenv.config({ path: ".env.local" });
 
 function getArg(name: string): string | undefined {
@@ -74,6 +80,31 @@ async function main() {
   const db = requirePlanetscaleDb();
   const pm = PointManager.getInstance();
 
+  // 🛑 FIRST, before a single read. Recovery rewrites `devices.area_id` and `area_bindings`, and
+  // `PointManager` memoizes a handle's resolved point set — so recovering AFTER the member selection
+  // below left every cached set describing the damaged world, and the union assertions failed against
+  // a database that was by then correct. Nothing may be read until the world is the world.
+  //
+  // Snapshot BOTH tables before anything moves, journalled to disk. See
+  // `smoke-world-snapshot.ts` for why this is a whole-table copy rather than a list of the devices
+  // this script names — that list was wrong twice, and the second time a "successful" run still
+  // deleted a helper's blend bindings.
+  const JOURNAL = "/tmp/liveone-area-builder-smoke-world.json";
+  const stale = readJournal(JOURNAL);
+  if (stale) {
+    console.log(
+      `⚠️  a previous run was interrupted (${stale.capturedAt}) — restoring from its journal first`,
+    );
+    if (!(await restoreWorld(stale))) {
+      console.error(
+        "❌ could not restore the previous run's snapshot; aborting",
+      );
+      process.exit(1);
+    }
+    clearJournal(JOURNAL);
+  }
+  const world = await captureWorld(JOURNAL);
+
   const countPoints = async (id: number) =>
     (await pm.getActivePointsForDevice(id, false, false)).length;
 
@@ -115,41 +146,12 @@ async function main() {
     `Members: seed=${seed.join(",")}${extra ? `  extra=${extra}` : ""}\n`,
   );
 
-  // 🛑 Record where every borrowed device lives BEFORE anything moves it, AND the bindings that move
-  // will destroy. See the header: this used to be a purely additive operation and is not one any
-  // more. Moving a device now detaches it from its old area *bindings and all* — so restoring
-  // `area_id` alone leaves the original site's hand-authored wiring gone, with the membership table
-  // byte-identical over the top of it. That is not hypothetical: it destroyed 23 real bindings on
-  // `liveone-dev` before this capture existed.
   const uuidByRid = new Map<number, string>();
-  const originalArea = new Map<string, string | null>();
-  const originalBindings: (typeof areaBindings.$inferSelect)[] = [];
-  for (const rid of members) {
-    const uuid = await DeviceRegistry.uuidForRid(rid, db);
-    uuidByRid.set(rid, uuid);
-    const [row] = await db
-      .select({ areaId: devices.areaId })
-      .from(devices)
-      .where(eq(devices.id, uuid))
-      .limit(1);
-    originalArea.set(uuid, row?.areaId ?? null);
-    originalBindings.push(
-      ...(await db
-        .select()
-        .from(areaBindings)
-        .where(
-          inArray(
-            areaBindings.pointUid,
-            db
-              .select({ id: pointsTable.id })
-              .from(pointsTable)
-              .where(eq(pointsTable.deviceId, uuid)),
-          ),
-        )),
-    );
-  }
+  for (const rid of members)
+    uuidByRid.set(rid, await DeviceRegistry.uuidForRid(rid, db));
+  const placedAt = new Map(world.placements);
   console.log(
-    `Borrowed ${members.length} device(s); captured ${originalBindings.length} binding(s) to restore.\n`,
+    `Snapshot: ${world.placements.length} placement(s), ${world.bindings.length} binding(s) journalled to ${JOURNAL}\n`,
   );
 
   let areaId: string | null = null;
@@ -170,7 +172,7 @@ async function main() {
       authorized: new Map(
         seed.map((rid) => [
           uuidByRid.get(rid)!,
-          originalArea.get(uuidByRid.get(rid)!) ?? null,
+          placedAt.get(uuidByRid.get(rid)!) ?? null,
         ]),
       ),
     });
@@ -251,10 +253,7 @@ async function main() {
         areaId,
         extra,
         new Map([
-          [
-            uuidByRid.get(extra)!,
-            originalArea.get(uuidByRid.get(extra)!) ?? null,
-          ],
+          [uuidByRid.get(extra)!, placedAt.get(uuidByRid.get(extra)!) ?? null],
         ]),
       );
       const ids = await memberHandles(areaId);
@@ -286,51 +285,14 @@ async function main() {
     // wrapped cleanup means the operator would see the smoke run pass while dev quietly lost its
     // membership. Wrapped so a restore failure cannot impersonate a test failure — but LOUD, and it
     // vetoes the delete below.
-    let restored = true;
-    // Bindings FIRST — a binding's area must exist and the device must be back in it for the row to
-    // mean anything, but `area_bindings` has no FK onto membership, so the order only has to put
-    // both back before anything reads them. Re-inserted by natural key, so a run that destroyed
-    // nothing re-inserts nothing.
-    for (const b of originalBindings) {
-      try {
-        await db
-          .insert(areaBindings)
-          .values(b)
-          .onConflictDoNothing({
-            target: [
-              areaBindings.areaId,
-              areaBindings.role,
-              areaBindings.metricType,
-              areaBindings.pointUid,
-            ],
-          });
-      } catch (err) {
-        console.error(`⚠️  could not restore binding ${b.id}:`, err);
-        restored = false;
-      }
-    }
-    for (const [uuid, was] of originalArea) {
-      try {
-        await db
-          .update(devices)
-          .set({ areaId: was })
-          .where(eq(devices.id, uuid));
-      } catch (err) {
-        console.error(
-          `⚠️  could not restore device ${uuid} to area ${was}:`,
-          err,
-        );
-        restored = false;
-      }
-    }
-    // 🛑 A failed restore VETOES the area delete. `devices.area_id` is ON DELETE SET NULL, so
-    // removing the throwaway area would turn "a real device is parked somewhere clearly named" into
-    // "a real device is in no area at all" — losing the only remaining record of where it is.
-    // Leaving the area behind is ugly and recoverable; deleting it is tidy and is not.
+    // 🛑 Put the WORLD back before deleting anything. `devices.area_id` is ON DELETE SET NULL, so
+    // deleting the scratch area first would strand whatever is still in it — and the journal is the
+    // only record of where it belonged.
+    const restored = await restoreWorld(world);
     if (!restored) {
       console.error(
-        `\n❌ NOT deleting area ${areaId}: it still holds a borrowed device that could not be ` +
-          `restored. Put the device(s) back, then delete the area by hand.`,
+        `\n❌ NOT deleting area ${areaId}: the world snapshot could not be fully restored. The ` +
+          `journal is at ${JOURNAL} — fix the cause and re-run, which will restore from it.`,
       );
       process.exitCode = 1;
     } else if (areaId) {
@@ -346,6 +308,8 @@ async function main() {
       } catch (cleanupErr) {
         console.error(`\n⚠️  Cleanup of area ${areaId} FAILED:`, cleanupErr);
       }
+      // Only once the world is back AND the scratch area is gone is the journal redundant.
+      clearJournal(JOURNAL);
     }
   }
 }

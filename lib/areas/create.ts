@@ -412,8 +412,11 @@ export async function removeMember(
  * Returns the area the device LEFT and whether the move actually APPLIED, so the caller can refresh
  * serving for both ends — a re-home invalidates the KV subscription registry and the point-series
  * cache of the source area just as much as the destination's, and refreshing only the destination
- * leaves the old area serving latest values for a device it no longer holds. `moved: false` means
- * either "already there" or "someone else moved it first"; in both cases nothing was written.
+ * leaves the old area serving latest values for a device it no longer holds.
+ *
+ * `moved: false, conflicted: false` is "already there" — success. `conflicted: true` is "someone
+ * moved it between authorization and the write": nothing was written, and this function does NOT
+ * know where the device is now, so the caller must refetch rather than be told.
  *
  * Departing bindings go with it, by exactly the predicate `removeMember` uses. A no-op move (already
  * there) short-circuits BEFORE the delete: re-stating a device's current area must not drop its
@@ -423,7 +426,7 @@ export async function rehomeDevice(
   deviceId: DeviceId,
   toAreaId: string | null,
   authorized: AuthorizedPlacements,
-): Promise<{ fromAreaId: string | null; moved: boolean }> {
+): Promise<{ fromAreaId: string | null; moved: boolean; conflicted: boolean }> {
   const db = requirePlanetscaleDb();
   const deviceUuid = Device.toUuid(deviceId);
   if (!authorized.has(deviceUuid))
@@ -432,7 +435,8 @@ export async function rehomeDevice(
   // decide against one state and write to another: a custody claim authorized while the device sat
   // in the caller's area A, followed by its owner moving it to B, would re-read B and take it.
   const fromAreaId = authorized.get(deviceUuid) ?? null;
-  if (fromAreaId === toAreaId) return { fromAreaId, moved: false };
+  if (fromAreaId === toAreaId)
+    return { fromAreaId, moved: false, conflicted: false };
 
   let moved = false;
   await db.transaction(async (tx) => {
@@ -456,7 +460,10 @@ export async function rehomeDevice(
     moved = true;
     if (fromAreaId) await detachBindings(tx, fromAreaId, deviceUuid);
   });
-  return { fromAreaId, moved };
+  // 🛑 `conflicted` is NOT the same as "already there". Both write nothing, but one is success and
+  // the other means the device is somewhere neither the caller nor this function knows — reporting
+  // `fromAreaId` as its current area would be a guess, and a wrong one.
+  return { fromAreaId, moved, conflicted: !moved };
 }
 
 /**

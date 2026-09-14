@@ -111,13 +111,21 @@ beforeEach(() => {
   } as any);
   // What `assertDevicesRehomable` observed while authorizing — the state the write is scoped on.
   mockRehomable.mockResolvedValue(new Map([[DEVICE_UUID, null]]) as never);
-  mockRehome.mockResolvedValue({ fromAreaId: null, moved: true } as any);
+  mockRehome.mockResolvedValue({
+    fromAreaId: null,
+    moved: true,
+    conflicted: false,
+  } as any);
 });
 
 describe("PATCH /api/v4/devices/{id}", () => {
   it("moves the device and refreshes serving at BOTH ends", async () => {
     const fromUuid = Area.toUuid(OTHER_AREA);
-    mockRehome.mockResolvedValue({ fromAreaId: fromUuid, moved: true } as any);
+    mockRehome.mockResolvedValue({
+      fromAreaId: fromUuid,
+      moved: true,
+      conflicted: false,
+    } as any);
     const res = await call({ areaId: AREA });
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({
@@ -137,6 +145,7 @@ describe("PATCH /api/v4/devices/{id}", () => {
     mockRehome.mockResolvedValue({
       fromAreaId: AREA_UUID,
       moved: true,
+      conflicted: false,
     } as any);
     const res = await call({ areaId: null });
     expect(res.status).toBe(200);

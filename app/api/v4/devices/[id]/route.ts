@@ -150,7 +150,7 @@ export async function GET(
  * `areaId: null` needs only the first, since there is no destination to authorize.
  *
  * 400 malformed id · 403 destination not yours · 404 no such device OR not yours to move ·
- * 422 bad body / ambient device.
+ * 409 the device moved under you · 422 bad body / ambient device.
  *
  * 🛑 "No such device" and "not yours to move" are the SAME 404, the §8.4 collapse. Holding a
  * well-formed `dv_` string is not permission to learn whether it names anything, and a distinct 403
@@ -244,11 +244,23 @@ export async function PATCH(
       );
   }
 
-  const { fromAreaId, moved } = await rehomeDevice(
+  const { fromAreaId, moved, conflicted } = await rehomeDevice(
     Device.encode(uuid),
     targetAreaUuid,
     authorized,
   );
+  // 🛑 Someone moved this device between the authorization and the write, so nothing was written and
+  // we do not know where it is now. A 200 here would have to name an area, and every candidate is a
+  // guess: the destination (not true), or where authorization saw it (also not true). 409 and refetch
+  // is the only honest answer.
+  if (conflicted)
+    return NextResponse.json(
+      {
+        error:
+          "This device moved while you were moving it — refetch and try again.",
+      },
+      { status: 409 },
+    );
   // 🛑 BOTH ends. The source area's KV subscriptions and point-series cache still name this device's
   // points; refreshing only the destination leaves it serving latest values for a device it no longer
   // holds. Skipped entirely on a no-op move, which touched nothing.
@@ -257,18 +269,11 @@ export async function PATCH(
     if (targetAreaUuid) await refreshAreaServing(targetAreaUuid);
   }
 
-  // 🛑 `areaId` reports where the device IS, not what was asked for. A `moved: false` from a lost
-  // race means the write did not apply, and echoing the requested destination would tell the caller
-  // their move succeeded when the device is somewhere else entirely.
+  // Past the conflict check, `moved: false` can only mean "already there" — so the destination IS
+  // where the device is, either way.
   return NextResponse.json({
     id: Device.encode(uuid),
-    areaId: moved
-      ? targetAreaUuid
-        ? Area.encode(targetAreaUuid)
-        : null
-      : fromAreaId
-        ? Area.encode(fromAreaId)
-        : null,
+    areaId: targetAreaUuid ? Area.encode(targetAreaUuid) : null,
     previousAreaId: fromAreaId ? Area.encode(fromAreaId) : null,
     moved,
   });

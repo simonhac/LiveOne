@@ -197,19 +197,25 @@ export async function GET(request: NextRequest) {
       // of the address would silently re-place every device in it — and a site this user may not own.
       // The writer refuses; the reconnect proceeds without it and says so. The device's own
       // name/owner/status are updated either way, which is what the reconnect is actually for.
-      const placement = await DeviceWriter.updateDevice(existingDevice.id, {
-        ownerClerkUserId: userId,
-        displayName: enphaseDevice.name || existingDevice.displayName,
-        // Slice 1a: `location` is now typed `AreaLocation` (it lands on `areas.location`) whereas it
-        // used to land in the untyped `systems.location` jsonb. Enphase's address has every field
-        // optional, so it does not satisfy `AreaLocation.country: string`. The cast preserves the exact
-        // pre-1a behaviour — `ensureAreaOfOne` cast this same value `as AreaLocation | null` when it
-        // copied it down — rather than inventing a country here. A partial address still reads fine:
-        // `region.ts` infers from `state`/`postcode` and tolerates a missing country.
-        location: (enphaseDevice.address ||
-          existingDevice.location) as AreaLocation | null,
-        status: "active", // Reactivate the device if it was removed
-      });
+      const placement = await DeviceWriter.updateDevice(
+        existingDevice.id,
+        {
+          ownerClerkUserId: userId,
+          displayName: enphaseDevice.name || existingDevice.displayName,
+          // Slice 1a: `location` is now typed `AreaLocation` (it lands on `areas.location`) whereas it
+          // used to land in the untyped `systems.location` jsonb. Enphase's address has every field
+          // optional, so it does not satisfy `AreaLocation.country: string`. The cast preserves the exact
+          // pre-1a behaviour — `ensureAreaOfOne` cast this same value `as AreaLocation | null` when it
+          // copied it down — rather than inventing a country here. A partial address still reads fine:
+          // `region.ts` infers from `state`/`postcode` and tolerates a missing country.
+          location: (enphaseDevice.address ||
+            existingDevice.location) as AreaLocation | null,
+          status: "active", // Reactivate the device if it was removed
+        },
+        // 🛑 best-effort, NOT require: a reconnect must not fail because the site's placement is not
+        // this device's to set. The owner/name/status half is what the reconnect is for.
+        { placement: "best-effort" },
+      );
       if (!placement.applied)
         console.log(
           `ENPHASE: kept the site's existing location (${placement.reason})`,
