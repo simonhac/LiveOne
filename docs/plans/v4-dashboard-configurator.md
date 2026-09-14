@@ -190,5 +190,5 @@ stops rendering it and that its scope shrinks accordingly.
   the shipped model and deleted v3.
 - [../architecture/areas-and-dashboards.md](../architecture/areas-and-dashboards.md) — the
   three-layer physical/semantic/presentation split.
-- [finish-grid-signals-retirement.md](finish-grid-signals-retirement.md) — the other proposal mined
+- [20260914-naming-bindings-and-area-settings.md](20260914-naming-bindings-and-area-settings.md) — Unit 2 absorbed the grid-signals retirement, the other proposal mined
   out of the same deleted doc.

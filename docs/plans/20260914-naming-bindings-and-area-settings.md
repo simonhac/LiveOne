@@ -7,10 +7,9 @@
 >
 > This document is self-contained. No other plan or conversation is required.
 >
-> It also **supersedes the remedy** in [finish-grid-signals-retirement.md](finish-grid-signals-retirement.md).
-> That document's diagnosis still stands (`lib/grid/context.ts` resolves a capability from
-> `area.location` at render time and should go); its proposed `areas.config.gridSignals` jsonb
-> pointer does not — see Stage 2.
+> It also **absorbs `finish-grid-signals-retirement.md`**, now deleted. That document's diagnosis is
+> reproduced under Unit 2 ("Grid signals — the first consumer"); its proposed `areas.config.gridSignals`
+> jsonb pointer is replaced by a binding, which gets the same property with a real FK.
 
 ## Why these are one plan
 
@@ -283,6 +282,82 @@ unrepresentable. `devices.area_id` gets exactly one meaning — placement, plus 
 the picker. Grid signals need no reconciler, no `areas.config.gridSignals` opt-out and no
 generated-vs-authored fight. And it is HA's actual model: the energy dashboard is configured by
 explicitly naming statistic ids, not derived from area membership.
+
+### Grid signals — the first consumer, and the path this deletes
+
+This subsection absorbs `finish-grid-signals-retirement.md`, which is retired. Its diagnosis is
+reproduced here because it is the only record of the evidence.
+
+**The vocabulary half already shipped.** `grid-signals` is not a card type — it is absent from
+`V4_CARD_TYPES` (`lib/dashboard/card-types.ts`). `oe-grid` is a first-class card type in its place,
+registered as a tile plugin (`components/dashboard/registry.tsx:78`) and catalogued
+(`lib/capabilities/catalog.ts:142-148`). The sibling rename `grid` → `house-to-grid` shipped too.
+
+**The resolution half did not, and was ported forward twice rather than deleted.** config-v4 Phase 13
+PR 5 re-pointed the area lookup at `legacy_handles` when `areas.legacy_system_id` was dropped; the
+device→0..1-area change re-pointed it again at `devices.area_id` (2026-09-14), because stopping the
+area-of-one mint would otherwise have left a newly onboarded device with no handle→area leg at all.
+`resolveGridContextForDevice` (`lib/grid/context.ts`) still does the full walk: area location →
+`nemRegionForLocation` → a grid-role point check → a lookup of the public OpenElectricity device
+serving that region. Its own comment records that it "runs inline on the dashboard server render" and
+must therefore swallow every DB fault so it can never 500 the dashboard.
+
+**It is load-bearing in two places, both in the capability layer.** `lib/capabilities/server.ts:90`
+mints the capability (`if (await resolveGridContextForDevice(handle)) caps.add("grid-signals")`) and
+`:154` calls it a second time to resolve `gridDeviceSystemId`, which becomes the `ctx.gridDevice` the
+strategy reads (`lib/capabilities/strategy.ts:45`) to emit the card (`:126-127`).
+
+**It is the one deliberate exception to the capability model.** `lib/capabilities/registry.ts:26-27`
+says so: compound capabilities are "a predicate over area config + external rows … not a
+point-presence scan". `lib/capabilities/derive.ts:14` names the complete set of non-point-derived
+capabilities as exactly two — `generator-running`, which is still a property of the area's own
+configured contents, and `grid-signals`, which is the only one reaching outside the area entirely, to
+a location and a globally-seeded public device.
+
+🛑 **And the AREA half has never worked — measured, not inferred.** `devicePlaysGridRole` joins
+`points → devices` on `devices.rid`, so a handle with no `devices` row matches nothing. Every area
+handle therefore resolves its location and NEM region correctly and then fails the grid-role check.
+On `liveone-dev`, handles 7, 8, 1000001, 1000002 and 1000003 all answer `grid-signals: false` — the
+Local Grid card has only ever rendered on a DEVICE-addressed dashboard. That is a second, independent
+reason to delete this path rather than repair it: the repair ("check the area's bindings") is a
+product change dressed as a bug fix, since a card would newly appear on five dashboards that do not
+have one today. **Treat that as a deliberate product decision when it happens, not a side effect.**
+
+**The consumer side already stopped caring about location**, which is what makes this cheap: the tile
+is bound to a device, not a place. `components/dashboard/tiles/oe-grid.tsx` reads the live
+price/emissions/renewables from the device's `latest`, and the region label comes from the device's
+own `vendorSiteId` payload. Only the *resolution* side still goes via location, so there is nothing
+to rewrite downstream.
+
+**What Unit 2 does about it.** An area names its grid feed by BINDING the ambient OpenElectricity
+device's points (role `grid`; metrics `rate` / `intensity` / `proportion` — never `power`, where the
+real site meters live). `grid-signals` then derives from the presence of those bindings, with no
+location lookup, no region derivation and no global device search at render time.
+`lib/grid/context.ts` and `lib/grid/types.ts` are deleted along with both `resolveGridContextForDevice`
+calls, and the three separate null-returns inside it collapse into "no binding".
+
+The headline property survives intact, and it is why the shape is worth the work: **the absence of
+the reference IS the off-grid rule.** An off-grid site binds no region device, so it offers no
+`grid-signals` capability, so the strategy emits no card and the picker greys it out. There is no
+conditional-render branch and no off-grid special case.
+
+**Seeding is one-off and derived from what is already true**, not asked of the user: run today's
+`resolveGridContextForDevice` over every area, bind what it resolves, and diff. An area whose
+bindings match what the walk would have returned is behaviour-identical by construction — which is
+the whole gate. Areas the walk declines become areas with no binding, i.e. off-grid, which is what
+they already render as. Afterwards the binding is editable like any other, which is a small
+improvement on its own: today an area in a state the postcode table maps wrongly has no override at
+all.
+
+Two risks specific to this consumer, both improved by using a binding rather than the `areas.config`
+pointer the retired document proposed. **A jsonb ref can dangle; an FK cannot** — `area_bindings.point_uid`
+is `NO ACTION`, so a bound point cannot be deleted out from under it, and the "treat an unresolvable
+ref as an empty slot" handling the old plan needed does not arise. **Existing flow history must not be
+disturbed** — and a binding to an ambient device cannot disturb it, because these are `rate`,
+`intensity` and `proportion` metrics, which `classifyEnergyStem` never admits to the flow matrix.
+Separately, confirm `lib/dashboard/access.ts`'s walk yields the intended share scope and nothing
+wider: a shared dashboard rendering `oe-grid` reads a public ownerless device's points, which is fine,
+but it should be checked rather than assumed.
 
 ### Risks
 
@@ -615,5 +690,5 @@ that an area's point set is now exactly its bindings.
 - **Any schema change needs explicit approval first.** Only Unit 4 requires one.
 - **Do not purge anything on prod** — measured at zero; the orphans visible on dev are mirror
   artifacts, not defects.
-- Do not follow [finish-grid-signals-retirement.md](finish-grid-signals-retirement.md)'s remedy; its
-  diagnosis is sound but its `areas.config` pointer is superseded by Unit 2.
+- The retired `finish-grid-signals-retirement.md` proposed an `areas.config.gridSignals` jsonb
+  pointer. Unit 2 uses a binding instead; do not reintroduce the pointer.
