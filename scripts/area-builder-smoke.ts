@@ -29,9 +29,9 @@
 import * as dotenv from "dotenv";
 import { DeviceConfigRegistry } from "@/lib/registry/device-config";
 import {
+  assertNoStaleJournal,
   captureWorld,
   clearJournal,
-  readJournal,
   restoreWorld,
 } from "@/scripts/utils/smoke-world-snapshot";
 dotenv.config({ path: ".env.local" });
@@ -80,30 +80,12 @@ async function main() {
   const db = requirePlanetscaleDb();
   const pm = PointManager.getInstance();
 
-  // 🛑 FIRST, before a single read. Recovery rewrites `devices.area_id` and `area_bindings`, and
-  // `PointManager` memoizes a handle's resolved point set — so recovering AFTER the member selection
-  // below left every cached set describing the damaged world, and the union assertions failed against
-  // a database that was by then correct. Nothing may be read until the world is the world.
-  //
-  // Snapshot BOTH tables before anything moves, journalled to disk. See
-  // `smoke-world-snapshot.ts` for why this is a whole-table copy rather than a list of the devices
-  // this script names — that list was wrong twice, and the second time a "successful" run still
-  // deleted a helper's blend bindings.
+  // 🛑 FIRST, before a single read and before any work. A journal left by an interrupted run means
+  // the database may still be holding borrowed devices; this REFUSES rather than replaying it, and
+  // prints the deliberate restore command. Replaying a whole-config photograph automatically would
+  // revert anything that legitimately changed since — see `smoke-world-snapshot.ts`.
   const JOURNAL = "/tmp/liveone-area-builder-smoke-world.json";
-  const stale = readJournal(JOURNAL);
-  if (stale) {
-    console.log(
-      `⚠️  a previous run was interrupted (${stale.capturedAt}) — restoring from its journal first`,
-    );
-    if (!(await restoreWorld(stale))) {
-      console.error(
-        "❌ could not restore the previous run's snapshot; aborting",
-      );
-      process.exit(1);
-    }
-    clearJournal(JOURNAL);
-  }
-  const world = await captureWorld(JOURNAL);
+  assertNoStaleJournal(JOURNAL);
 
   const countPoints = async (id: number) =>
     (await pm.getActivePointsForDevice(id, false, false)).length;
@@ -146,12 +128,16 @@ async function main() {
     `Members: seed=${seed.join(",")}${extra ? `  extra=${extra}` : ""}\n`,
   );
 
+  // 🛑 Journalled HERE, not at startup: everything above is validation that can exit without
+  // touching anything, and a journal left by a run that mutated nothing is pure litter — the next
+  // run would refuse on it for no reason. The next statement is the first write.
+  const world = await captureWorld(JOURNAL);
   const uuidByRid = new Map<number, string>();
   for (const rid of members)
     uuidByRid.set(rid, await DeviceRegistry.uuidForRid(rid, db));
   const placedAt = new Map(world.placements);
   console.log(
-    `Snapshot: ${world.placements.length} placement(s), ${world.bindings.length} binding(s) journalled to ${JOURNAL}\n`,
+    `Snapshot: ${world.placements.length} placement(s), ${world.bindings.length} binding(s) → ${JOURNAL}\n`,
   );
 
   let areaId: string | null = null;

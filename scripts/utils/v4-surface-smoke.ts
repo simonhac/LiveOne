@@ -68,10 +68,11 @@ import {
 // `replaceBindings` validates against.
 import { Device, type DeviceId } from "@/lib/ids";
 import { buildSubscriptionRegistry } from "@/lib/kv-cache-manager";
+import { getEnvironment } from "@/lib/env";
 import {
+  assertNoStaleJournal,
   captureWorld,
   clearJournal,
-  readJournal,
   restoreWorld,
   type WorldSnapshot,
 } from "@/scripts/utils/smoke-world-snapshot";
@@ -706,21 +707,11 @@ async function main(): Promise<void> {
   // moves. See `smoke-world-snapshot.ts`.
   let world: WorldSnapshot | null = null;
 
-  // 🛑 FIRST, before a single read — recovery rewrites membership and bindings, and anything already
-  // read describes the damaged world. See `area-builder-smoke.ts` for the run this cost.
-  const staleWorld = readJournal(WORLD_JOURNAL);
-  if (staleWorld) {
-    console.log(
-      `⚠️  a previous run was interrupted (${staleWorld.capturedAt}) — restoring from its journal first`,
-    );
-    if (!(await restoreWorld(staleWorld))) {
-      console.error(
-        "✗ could not restore the previous run's snapshot; aborting",
-      );
-      process.exit(1);
-    }
-    clearJournal(WORLD_JOURNAL);
-  }
+  // 🛑 REFUSE on a journal from an interrupted run; never replay one automatically. A journal is a
+  // photograph of the whole config, so replaying it is a blind write over every placement and every
+  // binding with no idea what has legitimately changed since — including the 2-hourly prod→dev sync.
+  // `assertNoStaleJournal` prints the deliberate restore command and exits.
+  assertNoStaleJournal(WORLD_JOURNAL);
   world = await captureWorld(WORLD_JOURNAL);
   console.log(
     `  world snapshot: ${world.placements.length} placement(s), ${world.bindings.length} binding(s) → ${WORLD_JOURNAL}`,
@@ -1210,7 +1201,20 @@ async function main(): Promise<void> {
     const noMembers = await call("POST", "/api/v4/areas", {
       body: { name: `${AREA_PREFIX} nomembers` },
     });
-    ok(noMembers.status === 422, "no members → 422", noMembers);
+    // A MISSING `members` key is a malformed body; an empty array would be a legal zero-device area.
+    ok(
+      noMembers.status === 422,
+      "a MISSING members key → 422 (an empty array is legal — a zero-device area is first-class)",
+      noMembers,
+    );
+    const emptyMembersCreate = await call("POST", "/api/v4/areas", {
+      body: { name: `${AREA_PREFIX} empty`, members: [] },
+    });
+    ok(
+      emptyMembersCreate.status === 201,
+      "members: [] CREATES — a site with no devices is legal, and is how you make one before moving devices in",
+      emptyMembersCreate,
+    );
     const badMember = await call("POST", "/api/v4/areas", {
       body: { name: `${AREA_PREFIX} badmember`, members: ["not-a-typeid"] },
     });
@@ -1381,13 +1385,20 @@ async function main(): Promise<void> {
 
     // ---------------------------------------------------------------- 5e. PUT members
     section("PUT /api/v4/areas/{id}/members — the declarative full replace");
-    const emptyMembers = await call("PUT", `/api/v4/areas/${areaId}/members`, {
-      body: { members: [] },
-    });
+    // 🛑 A MISSING `members` key is still 422; an EMPTY ARRAY is now 200. The distinction is the
+    // whole point: a zero-device area is first-class since the device→0..1-area change, but `PUT` is
+    // a full replace, so reading a malformed body as "no members" would let a client bug silently
+    // orphan every device in an area. Driven here rather than with `[]`, which would empty the
+    // fixture this section goes on to assert against.
+    const missingMembers = await call(
+      "PUT",
+      `/api/v4/areas/${areaId}/members`,
+      { body: {} },
+    );
     ok(
-      emptyMembers.status === 422,
-      "an empty membership → 422 (an area of zero members has no point set)",
-      emptyMembers,
+      missingMembers.status === 422,
+      "a MISSING members key → 422 (a malformed body must not read as 'empty this area')",
+      missingMembers,
     );
     const unreadableMember = await call(
       "PUT",
@@ -1449,13 +1460,20 @@ async function main(): Promise<void> {
         1,
       "re-adding the member does NOT resurrect its deleted binding",
     );
-    // A pure REORDER is a real edit, not a no-op: the array index is `area_members.ordinal`.
+    // 🛑 A pure REORDER is now a NO-OP, and that is the contract. The array index used to become
+    // `area_members.ordinal`; with one area per device there is no membership row to carry an
+    // ordinal, and order comes from `getAreaMemberDeviceIds`' `(helper-last, rid)` sort. So the
+    // assertion is that the returned set is unchanged — asserting the requested order would be
+    // asserting a property the server deliberately stopped having.
     const reordered = await call("PUT", `/api/v4/areas/${areaId}/members`, {
       body: { members: [fixture.deviceB, fixture.deviceA] },
     });
     ok(
-      reordered.body?.members?.[0]?.id === fixture.deviceB,
-      "a pure reorder is applied (ordinal = array index)",
+      reordered.status === 200 &&
+        [fixture.deviceA, fixture.deviceB].every((d) =>
+          reordered.body?.members?.some((m: any) => m.id === d),
+        ),
+      "a pure reorder changes nothing — order is the server's, not the request's",
       reordered.body?.members?.map((m: any) => m.id),
     );
     // 🛑 THE `AreaMember` CONTRACT, and the one v4 widening stage 13 needed. `members[]` used to carry
@@ -2785,11 +2803,32 @@ async function main(): Promise<void> {
     // above rebuilt the KV subscription registry while the borrowed devices were absent from their
     // real areas, so putting the rows back is not enough — without this the original sites stay
     // missing from the registry until something else rebuilds it.
-    try {
-      await buildSubscriptionRegistry();
-    } catch (err) {
-      console.error("  ! could not rebuild the subscription registry:", err);
+    //
+    // 🛑 GUARDED ON THE KV NAMESPACE, not on the database. There is ONE physical KV store shared by
+    // dev and prod, namespaced by `getEnvironment()` — which keys off `VERCEL_ENV`, not off the
+    // database URL. So `assertNotProd()` passing says nothing about which namespace this would
+    // write: with `VERCEL_ENV=production` in the shell, a dev-database run would rebuild the `prod:`
+    // subscriptions from dev's config and GC production's latest-value fields.
+    if (getEnvironment() === "prod") {
+      console.error(
+        `  ! NOT rebuilding the subscription registry: the KV namespace resolves to 'prod:' ` +
+          `(VERCEL_ENV=${process.env.VERCEL_ENV ?? "unset"}). Unset it and re-run.`,
+      );
+      failures++;
+    } else {
+      try {
+        await buildSubscriptionRegistry();
+      } catch (err) {
+        // 🛑 Counted as a failure, not merely logged: the rows are back but serving is not, and a
+        // PASS over the top of that is how the next person concludes the teardown is reliable.
+        console.error("  ! could not rebuild the subscription registry:", err);
+        failures++;
+      }
     }
+    // ⚠️ KNOWN LIMITATION, stated rather than papered over: this restores the subscription EDGES,
+    // not the latest VALUES. A borrowed device's `latest:` fields were garbage-collected when it
+    // left its real area, and nothing here repopulates them — on `liveone-dev` the 2-hourly
+    // `db:rebuild-dev-kv` leg does. Until then the borrowed devices' sites read stale.
     await trash();
     // 🛑 The backstop, and it must run even when `trash()` reported success — that is the whole point.
     // A non-zero count here means the HTTP teardown believed it had deleted something it had not.

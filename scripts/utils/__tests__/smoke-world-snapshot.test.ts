@@ -64,6 +64,7 @@ const fakeDb = {
 };
 
 import {
+  assertNoStaleJournal,
   captureWorld,
   clearJournal,
   readJournal,
@@ -149,6 +150,43 @@ describe("the world snapshot", () => {
   it("readJournal answers null for a missing or corrupt file", () => {
     expect(readJournal(join(dir, "nope.json"))).toBeNull();
     clearJournal(join(dir, "nope.json")); // must not throw
+  });
+
+  it("🛑 REFUSES on a stale journal rather than replaying it", async () => {
+    // The hazard the refusal exists for: a journal is a photograph of the WHOLE config, so replaying
+    // one is a blind write over every placement and every binding, with no idea what has
+    // legitimately changed since — a real re-home, or the 2-hourly prod→dev sync. Automatic revert
+    // of unknown edits is not a safety feature, so a human decides.
+    const path = join(dir, "stale.json");
+    await captureWorld(path);
+    const exit = jest.spyOn(process, "exit").mockImplementation((() => {
+      throw new Error("exited");
+    }) as never);
+    const err = jest.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      expect(() => assertNoStaleJournal(path)).toThrow("exited");
+      expect(exit).toHaveBeenCalledWith(1);
+      // …and it tells the operator how to act on it, both ways.
+      const printed = err.mock.calls.flat().join("\n");
+      expect(printed).toContain("restore-smoke-journal.ts");
+      expect(printed).toContain(`rm ${path}`);
+    } finally {
+      exit.mockRestore();
+      err.mockRestore();
+    }
+    // 🛑 And it did NOT write: refusing must not itself mutate anything.
+    expect(writes).toEqual([]);
+  });
+
+  it("does nothing at all when there is no journal", () => {
+    expect(() => assertNoStaleJournal(join(dir, "absent.json"))).not.toThrow();
+  });
+
+  it("stamps the journal with the database it came from", async () => {
+    // A journal is only meaningful against its own database; without this stamp one could be
+    // replayed over a different branch and every uuid would still "resolve".
+    const snap = await captureWorld(join(dir, "j6.json"));
+    expect(typeof snap.database).toBe("string");
   });
 
   afterEach(() => rmSync(dir, { recursive: true, force: true }));

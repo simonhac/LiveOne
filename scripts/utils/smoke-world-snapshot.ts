@@ -24,9 +24,20 @@
  * ## And it is written to disk before anything moves
  *
  * The snapshot used to live only in memory, so a `SIGKILL` between the first move and the `finally`
- * destroyed the only copy of the wiring the run had just deleted. The journal below is written
- * BEFORE the first mutation and deleted only after a clean restore, so an interrupted run leaves the
- * evidence on disk and `restoreWorld` can be re-run against it.
+ * destroyed the only copy of the wiring the run had just deleted. The journal is written BEFORE the
+ * first mutation and deleted only after a clean restore, so an interrupted run leaves the evidence
+ * on disk.
+ *
+ * ## 🛑 But the journal is EVIDENCE, not an autopilot
+ *
+ * The first cut replayed a stale journal automatically at startup, and that is a worse hazard than
+ * the one it fixes. A journal is a photograph of the whole config; replaying one is a blind
+ * `UPDATE`/`INSERT` over every device and binding, with no idea what has legitimately changed since.
+ * Leave a journal behind, move a device on purpose, run the script again, and it silently moves it
+ * back — and the 2-hourly prod→dev sync is another writer it would happily overwrite.
+ *
+ * So recovery is REFUSE AND TELL: {@link assertNoStaleJournal} stops the run and prints the command,
+ * and a human decides. An automatic revert of unknown edits is not a safety feature.
  */
 import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { inArray } from "drizzle-orm";
@@ -56,6 +67,15 @@ export interface BindingSnapshot {
 
 export interface WorldSnapshot {
   capturedAt: string;
+  /**
+   * Which database this was taken from — `user@host/db` as the pool resolved it.
+   *
+   * 🛑 A journal is only meaningful against the database it came from. Without this, a journal taken
+   * against `liveone-dev` could be replayed over a different branch — every uuid would still
+   * "resolve", because these are the same rows copied between environments, and the restore would
+   * quietly impose one environment's wiring on another.
+   */
+  database: string;
   /** `devices.id` → the area it was in. */
   placements: [string, string | null][];
   bindings: BindingSnapshot[];
@@ -69,6 +89,7 @@ export async function captureWorld(
   journalPath: string,
 ): Promise<WorldSnapshot> {
   const db = requirePlanetscaleDb();
+  const database = describeDatabase();
   const [devRows, bindRows] = await Promise.all([
     db.select({ id: devices.id, areaId: devices.areaId }).from(devices),
     db
@@ -85,6 +106,7 @@ export async function captureWorld(
   ]);
   const snap: WorldSnapshot = {
     capturedAt: new Date().toISOString(),
+    database,
     placements: devRows.map((d) => [d.id, d.areaId]),
     bindings: bindRows,
   };
@@ -153,6 +175,45 @@ export function readJournal(journalPath: string): WorldSnapshot | null {
   } catch {
     return null;
   }
+}
+
+/** `user@host/db` for the pool this process is holding — the journal's provenance stamp. */
+function describeDatabase(): string {
+  const url = process.env.PLANETSCALE_DATABASE_URL ?? "";
+  try {
+    const u = new URL(url);
+    return `${u.username}@${u.host}${u.pathname}`;
+  } catch {
+    return "(unknown)";
+  }
+}
+
+/**
+ * 🛑 REFUSE if a journal from an interrupted run is present. Do not replay it.
+ *
+ * Called first by both smoke scripts. A stale journal means a previous run died holding borrowed
+ * devices, and the database may or may not still be in that state — the script cannot tell, and
+ * neither can the journal. Replaying it blind would revert whatever has legitimately happened since;
+ * running ON TOP of it would take a fresh snapshot of a damaged world and make the damage permanent.
+ * Both are worse than stopping.
+ */
+export function assertNoStaleJournal(journalPath: string): void {
+  const stale = readJournal(journalPath);
+  if (!stale) return;
+  console.error(
+    `\n🛑 A previous run was interrupted and left a world journal.\n` +
+      `   captured: ${stale.capturedAt}\n` +
+      `   database: ${stale.database}\n` +
+      `   journal:  ${journalPath}\n\n` +
+      `   The database may still be holding borrowed devices. Nothing is replayed automatically:\n` +
+      `   a journal is a photograph of the WHOLE config, and replaying one would revert anything\n` +
+      `   that has legitimately changed since — including the 2-hourly prod→dev sync.\n\n` +
+      `   Inspect it, then either restore it:\n` +
+      `     npx tsx --env-file=.env.local scripts/utils/restore-smoke-journal.ts ${journalPath}\n` +
+      `   or, if the world is already fine, delete it:\n` +
+      `     rm ${journalPath}\n`,
+  );
+  process.exit(1);
 }
 
 export function clearJournal(journalPath: string): void {
