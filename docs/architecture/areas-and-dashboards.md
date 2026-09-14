@@ -119,10 +119,11 @@ what lets an area's `grid` role take its market signals from Amber or from the a
 OpenElectricity region device without either being a special case.
 
 One point was deliberately left behind. `grid.demand` — state-wide NEM operational demand — is a
-property of the region, not of this connection, and its metric type is `power` in **MW**, the same
-serving key the site's own meters use in W. Keeping it outside `bidi.grid.*` makes it unbindable to
-role `grid` by construction, so a megawatt cannot reach a watt slot by accident; admitting it later
-has to be written down as a decision. (None of the four is a flow stem in any case:
+property of the region, not of this connection, and its metric type is `power`, in **MW**. Its
+serving key is its own (`grid.demand/power`; the site meters are `bidi.grid/power`), but the **slot**
+would be shared: role `grid` at metric `power` is where the real meters bind, in watts. Keeping
+demand outside `bidi.grid.*` makes it unbindable to that role by construction, so a megawatt cannot
+reach a watt slot by accident; admitting it later has to be written down as a decision. (None of the four is a flow stem in any case:
 `classifyEnergyStem` admits `bidi.grid` exactly plus the `.import`/`.export`/`.controlled` pairs, so
 a rate, an intensity or a proportion can never enter the Sankey or make an area flow-eligible.)
 

@@ -42,7 +42,7 @@ SERIES_SPEC = [
     ("amber_export_val_c", 9, "bidi.grid.export",  "value",         "avg"),   # cents credited / 30-min interval
     ("amber_import_wh_m",  9, "bidi.grid.import",  "energy",        "delta"), # Amber-meter import Wh / interval
     ("amber_export_wh_m",  9, "bidi.grid.export",  "energy",        "delta"), # Amber-meter export Wh / interval
-    ("oe_intensity",  12, "grid.emissionsIntensity","intensity",    "avg"),   # tCO2e/MWh (*1000 -> gCO2/kWh)
+    ("oe_intensity",  12, "bidi.grid.emissionsIntensity","intensity", "avg"),  # tCO2e/MWh (*1000 -> gCO2/kWh)
 ]
 # Sanity-check expectations from the 2026-07-25 confirmation (warn on drift, do not fail).
 EXPECTED_PID = {

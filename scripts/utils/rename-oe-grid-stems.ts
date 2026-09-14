@@ -8,6 +8,10 @@
  * DRY-RUN BY DEFAULT. Without `--apply` it connects, reports exactly which rows it would change, and
  * writes nothing. `--revert` maps the other way, so the change is reversible in one command.
  *
+ * ⚠️ `--revert` inverts the PATH MAPPING, not the database state. It bumps `updated_at` again, and it
+ * sends back any OE row on a new path — including one minted after the rename — not just the six it
+ * moved. That is the right behaviour for undoing a rollout; it is not a point-in-time restore.
+ *
  *   grid.emissionsIntensity → bidi.grid.emissionsIntensity
  *   grid.price              → bidi.grid.spot
  *   grid.renewables         → bidi.grid.renewables
@@ -22,10 +26,21 @@
  * readings key on `point_rid`, so neither identity depends on the logical path. This is a rename of
  * a label, not a re-addressing of a series.
  *
- * **Afterwards, rebuild the KV cache** — the subscription registry and the `latest` map are keyed by
- * `logicalPath/metricType`, so they carry the old keys until rebuilt:
- *   dev:  npx tsx scripts/utils/rebuild-dev-kv-from-db.ts
- *   prod: npx tsx scripts/build-subscription-registry.ts
+ * **Afterwards, the KV cache.** Be precise about what needs doing, because the obvious command does
+ * NOT do it. A device's `latest` hash is keyed by `logicalPath/metricType` and is written ONLY on
+ * ingest (`PointManager`, via `updateLatestPointValue`), so:
+ *
+ *   - the NEW fields appear on the next OpenElectricity poll — minutes, no action needed;
+ *   - the OLD fields are NOT removed. `buildSubscriptionRegistry` GCs stale **area** fields
+ *     (`gcAreaLatestFields`) but nothing prunes a DEVICE hash, so `grid.price/rate` and friends
+ *     linger with a frozen timestamp until deleted by hand. Harmless to the Local Grid card, which
+ *     reads fixed keys, but anything ENUMERATING the device's latest map shows both copies.
+ *   - `npx tsx scripts/build-subscription-registry.ts` rebuilds the subscription registry, which is
+ *     keyed by device + point UUID and so does not depend on the logical path at all. Run it if an
+ *     area binds these points; it is not what heals the device map.
+ *
+ * On dev, `npx tsx scripts/utils/rebuild-dev-kv-from-db.ts` rebuilds the whole `dev:` namespace from
+ * the DB and therefore does clear the old fields — but see the note above about dev reverting.
  *
  * Connection handling, and why there is no automatic prod check, is
  * `scripts/ops/dashboard/db.ts` — the identity line printed before any work IS the check.
@@ -111,7 +126,8 @@ async function main() {
         await client.query("COMMIT");
         console.log(`\nApplied. ${changed} row(s) renamed.`);
         console.log(
-          "Now rebuild the KV cache — the `latest` map still carries the old keys.",
+          "The device `latest` map republishes under the new keys on the next poll; the OLD " +
+            "fields linger until deleted by hand (nothing GCs a device hash). See the header.",
         );
       } else {
         await client.query("ROLLBACK");

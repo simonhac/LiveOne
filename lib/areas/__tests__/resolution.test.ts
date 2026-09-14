@@ -208,8 +208,8 @@ describe("binding shape validation", () => {
   });
 
   // 🛑 Pins the DELETED carve-out. `bindingShapeMatches` used to return true for any `grid.*` stem
-  // on role `grid`, which made the megawatt `grid.demand` bindable into `grid`/`power` — the same
-  // serving key the site's own watt meters use. The three market signals were renamed into
+  // on role `grid`, which made the megawatt `grid.demand` bindable into the `grid`/`power` SLOT —
+  // where the site's own watt meters bind. The three market signals were renamed into
   // `bidi.grid.*` (where they match by the ordinary anchor rule) and demand was deliberately left
   // behind, so admitting it again is now a decision someone has to write down.
   it("no longer admits a bare `grid.*` stem to role grid — the carve-out is gone", () => {

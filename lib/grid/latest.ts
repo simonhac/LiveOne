@@ -12,11 +12,18 @@
  *   - grid.demand/power                      (MW)
  * Display-unit conversion happens in the card.
  *
- * ⚠️ The first three are the SAME serving keys Amber publishes (`bidi.grid.spot/rate`,
- * `bidi.grid.renewables/proportion`) — deliberately, so a wire can carry either source into the same
- * port. They do not collide here because this selector reads one device's `latest` map at a time,
- * and that device is the public OpenElectricity region device.
+ * ⚠️ TWO of them — `bidi.grid.spot/rate` and `bidi.grid.renewables/proportion` — are serving keys
+ * **Amber also publishes**, deliberately, so a wire can one day carry either source into the same
+ * port. (`bidi.grid.emissionsIntensity` is OE's alone; Amber has no emissions point.) The units
+ * differ where they overlap: OE's spot is `$/MWh`, Amber's is `cents_kWh`. Nothing converts between
+ * them yet, which is why `oeGridSelection` below refuses a payload that is not an OE region
+ * device.
  */
+
+import {
+  isNemRegion,
+  type NemRegion,
+} from "@/lib/vendors/openelectricity/types";
 
 const GRID_LATEST_PATHS = {
   price: "bidi.grid.spot/rate",
@@ -58,10 +65,14 @@ function pick(
 }
 
 /**
- * Extract the three grid signals from a `dashboardDataQuery` result (its `latest` map). Returns
- * null when the payload is absent or none of the three signals are present.
+ * Extract the four grid signals from a `dashboardDataQuery` result (its `latest` map). Returns null
+ * when the payload is absent or none of the signals are present.
+ *
+ * Module-local on purpose: the values alone are no longer sufficient evidence that this payload is
+ * OpenElectricity's (see `oeGridSelection`), so every caller should go through the gate rather than
+ * be able to reach round it.
  */
-export function gridLatestFromData(data: unknown): GridLiveValues | null {
+function gridLatestFromData(data: unknown): GridLiveValues | null {
   const latest = (
     data as { latest?: Record<string, LatestEntry | null> } | null | undefined
   )?.latest;
@@ -74,4 +85,33 @@ export function gridLatestFromData(data: unknown): GridLiveValues | null {
   if (!price && !emissionsIntensity && !renewables && !demand) return null;
 
   return { price, emissionsIntensity, renewables, demand };
+}
+
+/**
+ * The `oe-grid` tile's source gate: the live values AND the NEM region they belong to, or null.
+ *
+ * 🛑 **The region is a REQUIREMENT here, not a label.** `gridLatestFromData` above used to be
+ * sufficient evidence on its own: the keys it reads were OpenElectricity's alone, so "this payload
+ * carries the values" and "this is an OE region device" were the same statement. Renaming those
+ * points into `bidi.grid.*` (2026-09-14), so they match role `grid` by the ordinary anchor rule,
+ * moved two of them onto keys **Amber already publishes** — `bidi.grid.spot/rate` in `cents_kWh` and
+ * `bidi.grid.renewables/proportion`. The card renders price as `$N/MWh`, so without this check an
+ * Amber device would display 10 c/kWh as "$10/MWh", and the card picker would offer the tile on
+ * every Amber dashboard. Conversion at the sink is planned; it does not exist yet, so the gate is
+ * "is this actually the source whose units we hardcode".
+ *
+ * Safe as a gate because an OE device's `vendorSiteId` IS its region — `scripts/openelectricity/
+ * seed-devices.ts` writes it and `resolveGridContextForDevice` looks the device up by it, so there
+ * is no OE device for which it is absent. An AREA payload has no vendor site at all, which is
+ * correct: the region is a property of the device.
+ */
+export function oeGridSelection(
+  data: unknown,
+): { region: NemRegion; values: GridLiveValues } | null {
+  const values = gridLatestFromData(data);
+  if (!values) return null;
+  const siteId = (data as { device?: { vendorSiteId?: string | null } } | null)
+    ?.device?.vendorSiteId;
+  if (!siteId || !isNemRegion(siteId)) return null;
+  return { region: siteId, values };
 }

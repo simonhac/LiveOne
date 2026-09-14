@@ -57,10 +57,11 @@ them match role `grid` through the ordinary `stemMatchesRole` rule; before 2026-
 `grid.*` and were bindable only through a carve-out in `bindingShapeMatches`, now deleted.
 
 `grid.demand` stays outside it on purpose. State-wide operational demand is a property of the NEM
-region, not of this connection, and its metric type is `power` in **MW** — the same serving key the
-site's own meters use in W. Keeping it out of `bidi.grid.*` makes it unbindable to role `grid` by
-construction, so a megawatt cannot land in a watt slot by accident. Admitting it later is a decision,
-not a side effect.
+region, not of this connection, and its metric type is `power`, in **MW**. Its serving key is its own
+(`grid.demand/power`; the site meters are `bidi.grid/power`), but the **slot** would be shared — role
+`grid` at metric `power` is where the real meters bind, in watts. Keeping demand out of
+`bidi.grid.*` makes it unbindable to that role by construction, so a megawatt cannot land in a watt
+slot by accident. Admitting it later is a decision, not a side effect.
 
 None of the four is a flow stem: `classifyEnergyStem` admits `bidi.grid` exactly plus the
 `.import`/`.export`/`.controlled` pairs, so these points can never enter the Sankey or make an area

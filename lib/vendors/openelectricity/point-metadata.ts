@@ -14,9 +14,11 @@
  * `bindingShapeMatches`, which is now deleted.
  *
  * `grid.demand` stays OUT of that namespace on purpose: state-wide operational demand is a property
- * of the region, not of this connection, and its metric is `power`/MW — the same serving key the
- * real site meters use. Keeping it outside `bidi.grid.*` makes it unbindable to role `grid` by
- * construction, so the MW-into-a-W-slot hazard cannot arise by accident.
+ * of the region, not of this connection, and its metric type is `power`, in MW. Its serving key
+ * (`grid.demand/power`) is its own — the site meters are `bidi.grid/power` — but the SLOT is what
+ * would be shared: role `grid` at metric `power` is where the real meters bind, in watts. Keeping
+ * demand outside `bidi.grid.*` makes it unbindable to that role by construction, so the MW-into-a-W-
+ * slot hazard cannot arise by accident.
  *
  * None of the three is a flow stem: `classifyEnergyStem` admits `bidi.grid` exactly plus the
  * `.import`/`.export`/`.controlled` pairs, so a rate/intensity/proportion can never enter the

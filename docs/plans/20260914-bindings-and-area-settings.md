@@ -142,9 +142,10 @@ decision resolves.
 > `lib/vendors/openelectricity/point-metadata.ts` (`OE_STEMS`), the `slots.ts` carve-out is deleted,
 > and `lib/grid/latest.ts`, `lib/battery-provenance/load.ts`, the slot catalogue, the test fixtures
 > and the docs move with it. The six `points.logical_path` rows are **not** renamed yet —
-> `scripts/utils/rename-oe-grid-stems.ts` is the data half (dry-run by default, `--revert` is an
-> exact inverse), and it must be applied to **prod**: `points` is a `mode: "full"` leg of the 2-hourly
-> prod→dev sync, so a dev-only apply is overwritten within the hour.
+> `scripts/utils/rename-oe-grid-stems.ts` is the data half (dry-run by default; `--revert` inverts the
+> path mapping, though not the database state — it re-bumps `updated_at`), and it must be applied to
+> **prod**: `points` is a `mode: "full"` leg of the 2-hourly prod→dev sync, so a dev-only apply is
+> overwritten within the hour.
 >
 > 🛑 **Sequence: deploy the code, then apply the data, then rebuild KV — close together, and not
 > across 00:05 local.** The two halves are independent (`ensurePointInfo` short-circuits on an
@@ -157,6 +158,19 @@ decision resolves.
 >
 > No history moves: `points.id` is a uuidv5 over `(vendor, vendorSiteId, physicalPathTail)` and
 > readings key on `point_rid`, so neither identity depends on the logical path.
+>
+> ⚠️ **Two of the three new keys are Amber's**, which is the intent (one port, either source) but is
+> live before Unit 2 exists to convert. `bidi.grid.spot/rate` is `$/MWh` on OE and `cents_kWh` on
+> Amber. Two consequences, one closed and one deliberately left open:
+>
+> - **Closed here:** the `oe-grid` tile keyed on values alone, which only OE could satisfy before the
+>   rename. It would now light up on an Amber device and render 10 c/kWh as "$10/MWh" — and the card
+>   picker would offer it on every Amber dashboard. `oeGridSelection` (`lib/grid/latest.ts`) now
+>   requires a real NEM region, which is what "these units are OE's" actually rests on.
+> - **Open, and correctly so:** an area that bound BOTH sources to that serving key would get a
+>   mixed-unit chain, since `binding-chain.ts` groups on path + metric and nothing checks units. No
+>   area binds an OE point today, and the two answers are Unit 1.2 (the chain goes) and Unit 2 (the
+>   wire converts). Do not patch a half unit-check in ahead of them.
 
 ### The original decision
 

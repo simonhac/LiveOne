@@ -213,7 +213,8 @@ export function bindingShapeMatches(
   // They were renamed into `bidi.grid.*` instead — `bidi.grid` is the grid-CONNECTION namespace,
   // which Amber already uses for exactly these signals — so they now match by the ordinary rule and
   // the exception is gone. `grid.demand` (MW) was deliberately left behind, and is therefore no
-  // longer bindable to role `grid` without a new decision. See
+  // longer bindable to role `grid` — the slot where the site's own W meters live — without a new
+  // decision. See
   // lib/vendors/openelectricity/point-metadata.ts.
   return stemMatchesRole(point.logicalPathStem, role);
 }
