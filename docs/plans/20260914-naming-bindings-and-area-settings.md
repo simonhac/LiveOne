@@ -259,6 +259,32 @@ publishes that set **plus every unbound member point**. Nothing reconciles them 
 The XOR half has a second cost: because bindings are an override rather than an addition, **adding a
 first binding silently NARROWS an area** from "everything my devices produce" to "this one point".
 
+🛑 **And neither of those is what the architecture doc says.** `areas-and-dashboards.md` §3 states:
+
+> **Role resolution is per-role and explicit.** An area's _visible point set_ is always the union of
+> its members' points. Its _role resolution_ is per-role: if bindings exist for role R they define R;
+> otherwise R derives from members' points by stem match.
+
+So the documented design is **union for visibility, per-role for resolution** — and by that reading the
+KV registry is *correct* and `PointManager` is the deviation, which is the opposite of the framing this
+plan started with. `_resolvePointsForHandle` is neither per-role nor union: one binding in any role
+replaces the whole set, in every role.
+
+**This must be settled before Unit 2 is built, because it changes the remedy.** Three candidate
+resolutions, and they are genuinely different products:
+
+1. **Make the code match the doc** — union stays, resolution becomes per-role. Smallest conceptual
+   change; keeps an area usable with zero bindings; but keeps two concepts (visible set vs resolved
+   role) that must then be kept honest everywhere.
+2. **Make the doc match the code** — bindings are the whole set, all-or-nothing. This is what the rest
+   of this unit assumes.
+3. **Explicit-only** (this plan's current proposal) — bindings are the whole set *and* there is no
+   union to fall back to, so the "all-or-nothing" cliff disappears because there is only one mode.
+
+The measured fact that makes (3) cheap is unchanged: exactly one area per environment currently relies
+on the union at all. But (1) is the option that requires admitting the least, and it deserves an
+explicit rejection rather than being skipped past. **Do not start Unit 2 until this is decided.**
+
 It also makes `replaceBindings`' unconditional `DELETE ... WHERE area_id = $1` quietly dangerous:
 machine-written rows (`ensureHelperBindings`) survive only because callers happen to echo back every
 row they fetched. That is a convention held in the client, not an invariant held by the server.
@@ -670,6 +696,39 @@ area timezone ownership, derived fixed offsets and separately stored device offs
 Enphase location exception; durable health states, warnings, repair authorization, resume behavior and
 missing-history failure handling; the audit/migration rollout and environment-local sync rules; and
 that an area's point set is now exactly its bindings.
+
+## Architecture handover — what survives this plan
+
+🛑 **This plan is disposable; the architecture doc is not.** Every unit below names what it must write
+into `docs/architecture/` **in the same PR that lands it**. A unit is not done when its code merges —
+it is done when the invariant it establishes is recorded somewhere that outlives this file. When all
+four have landed, delete this document; git is the archive.
+
+**The survivor is [`../architecture/areas-and-dashboards.md`](../architecture/areas-and-dashboards.md)**,
+not a new file. Its §3 "Semantic: areas, membership, bindings" already owns this territory, and a
+second doc would duplicate and then drift. §7 "Decisions this doc used to assert — now overturned" is
+the established place to record a superseded position rather than silently editing one away.
+
+⚠️ One correction is already owed, independent of any unit: §3 describes role resolution as **per-role**
+("if bindings exist for role R they define R"). `PointManager._resolvePointsForHandle` is not per-role —
+it is **all-or-nothing over the whole area**: any binding at all, and the member union is skipped
+entirely. Whichever of those is intended, the doc and the code currently disagree.
+
+| Unit | Must be recorded in `areas-and-dashboards.md` when it lands |
+| --- | --- |
+| 1 Naming | Owner-scoped short names and the private-conflict rule; that device rename never renames its area; that `resolveOnboardingArea` still names the first area after the device |
+| 2 Bindings | **The core invariant: an area's serving set IS its bindings.** Placement (`devices.area_id`) vs serving (`area_bindings`) as separate concepts; the slot `(area, role, metric_type)` vs the **serving key** `{logical_path}/{metric_type}` that actually contends; that an ambient device can be BOUND but never PLACED; that grid signals are a binding, not a location walk. Add the retired member-union to §7 |
+| 3 Area Settings | Area owns timezone and location; the aggregation offset is DERIVED from standard time and is not independently editable; the device keeps its own offset; Enphase is the one remaining device→area location writer |
+| 4 Rebuild tracking | `boundaryCompatible` vs `needsRebuild` as distinct states, and that offset equality never proves a rebuild completed; that repair is operator-initiated and resumable, never automatic |
+
+Also owed on landing, per the Rollout section: `api.md` (route contracts and the deleted legacy
+routes), `data-model.md` (the offset columns and the rebuild-state table), `cli.md` and the generated
+CLI reference.
+
+**Why not write it now.** The architecture doc describes what IS. Three of the four invariants above
+are not true yet — writing them today would produce a doc that is wrong until the code catches up,
+which is precisely the rot the repo's conventions warn about. The exception is the §3 correction
+flagged above, which describes today and can be fixed whenever.
 
 ## Backlog — not scheduled here
 
