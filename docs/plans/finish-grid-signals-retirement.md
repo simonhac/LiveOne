@@ -1,6 +1,27 @@
 # Finish the grid-signals retirement
 
-> **Status:** proposed — not started (drafted 2026-08-01). Mined out of
+> 🛑 **Status 2026-09-14: the DIAGNOSIS stands; the REMEDY below is SUPERSEDED. Do not implement it.**
+>
+> Everything this document says about the problem is still true and still unfixed: grid-signals is the
+> one capability decided by where an area *is* rather than what it *contains*;
+> `lib/grid/context.ts` does a location walk at server-render time and must swallow every DB fault;
+> it was ported forward twice instead of being deleted; and the AREA half of `devicePlaysGridRole`
+> has never worked. Read the rest of this file for that evidence.
+>
+> What changed is the fix. The `areas.config.gridSignals` jsonb pointer proposed below was replaced by
+> **binding the shared ambient OpenElectricity device through `area_bindings`** — same "absence of the
+> reference IS the off-grid rule" property, but with a real FK instead of a danglable jsonb ref, no new
+> config slot, and no new resolution path. Two findings drove it: `area_bindings.metric_type` has no
+> CHECK constraint and `grid` is already an allowed role, so the binding needs **no migration**; and
+> Amber already binds non-flow market signals (`bidi.grid.spot/rate`, `bidi.grid.renewables/proportion`)
+> exactly this way, so the shape is proven rather than invented.
+>
+> The prerequisite shipped in #506 (`replaceBindings` now accepts an ownerless device's points without
+> membership). The rest lives in
+> [20260914-naming-bindings-and-area-settings.md](20260914-naming-bindings-and-area-settings.md),
+> Unit 2 — which also subsumes the "Seeding it" and "Verification" sections below.
+>
+> **Original header, retained for its evidence:** proposed — not started (drafted 2026-08-01). Mined out of
 > `docs/plans/dashboard-nested-tile-model.md` before that doc was deleted. That doc described the
 > **v3** dashboard model, which config-v4 Phase 14 removed (`lib/dashboard/v3.ts` gone,
 > `dashboards.descriptor` dropped by migration `0054`); none of its v3 machinery is carried forward.
