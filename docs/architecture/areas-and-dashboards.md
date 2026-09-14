@@ -73,9 +73,26 @@ at all rather than left unassigned, HA-style, is that the area is the sole home 
 timezone and the location, so an ambient onboarding would silently discard the site address the
 vendor supplies at the one moment it offers it.
 
-**Role resolution is per-role and explicit.** An area's _visible point set_ is always the union of
-its members' points. Its _role resolution_ is per-role: if bindings exist for role R they define R;
-otherwise R derives from members' points by stem match. Each `(role, metric)` slot resolves through
+🛑 **An area's served point set is all-or-nothing, and this doc used to claim otherwise.** The rule
+`PointManager._resolvePointsForHandle` actually implements is: **if the area has ANY binding, the
+bound points are the ENTIRE set** — in every role — and the member union is skipped; only an area
+with zero bindings falls back to the union of its members' points. It is not per-role, and the
+visible set is not "always the union".
+
+Two consequences worth stating plainly, because both are live today:
+
+- **Adding a first binding NARROWS an area**, silently, from everything its devices produce to that
+  one point. There is no warning and no error.
+- **The live map disagrees with the charts.** `buildSubscriptionRegistry` (`lib/kv-cache-manager.ts`)
+  unions bindings *and* member points, always — so a bound area's KV `latest` map carries points its
+  history and Sankey do not serve. Nothing reconciles the two.
+
+**This is decided, not merely noted: the union fallback is being retired** in favour of explicit
+bindings only — one mode, where an area's point set simply *is* its bindings — which also makes the
+KV and serving paths agree. Until that lands, the behaviour above is what the code does. See
+[`../plans/20260914-bindings-and-area-settings.md`](../plans/20260914-bindings-and-area-settings.md).
+
+**Within a role, resolution is explicit and ordered.** Each `(role, metric)` slot resolves through
 one deterministic chain:
 
 ```
@@ -104,14 +121,22 @@ fallbacks publish alongside the winner under `"{path}#{rank}"`, and `resolveChai
 `CHAIN_FALLBACK_STALE_MS`. Precedence is settled at READ time on purpose: it keeps the ingest path
 free of a read-modify-write, and staleness can only be judged honestly at the moment it is asked.
 
+> **Decided 2026-09-14, not yet built: the chain is being retired.** One or zero wires per serving
+> key, enforced in the writer. Measured, exactly one chain exists in the fleet (Kinkora
+> `bidi.battery/soc`, two devices reporting one battery). The paragraphs above describe what the code
+> does today; see [`../plans/20260914-bindings-and-area-settings.md`](../plans/20260914-bindings-and-area-settings.md)
+> Unit 1 for the retirement and the reasons.
+
 Until this existed, only `resolveSlotsFromData` — reachable solely through the read-only
 `/resolution` report — read `priority` at all. Every serving path took the bindings as an unordered
 set, so binding two points to one slot produced a coin flip: Kinkora's `bidi.battery/soc` answered
 both "304/304 days" and "81/304 days" to the same request, depending on which of two identical series
 ids landed last.
 
-This replaced v3's all-or-nothing cliff, where adding one binding silently switched an area from
-"union of members' points" to "bindings select everything".
+⚠️ What this replaced was the **coin flip inside one slot**, not the all-or-nothing cliff above. An
+earlier revision of this doc claimed the chain work retired that cliff too; it did not, and the two
+are independent. The cliff is still there (see the top of this section), and `resolveChainFields`
+only decides *which* of several instruments answers for one serving key.
 
 **Role vocabulary lives in code** (`lib/roles/registry.ts`), enforced in SQL by
 `area_bindings_role_check`. The `roles` table was a SQL projection of that registry — two sources of
@@ -231,6 +256,7 @@ Recorded explicitly, because they were stated confidently here and people rememb
 | **"Ours is more general than HA — a device can belong to several areas."** `area_members` was many-to-many. | **Overturned (2026-09-14).** A device is in **0 or 1** area (`devices.area_id`), which is exactly HA's shape. The generality was never used for anything a human authored — it existed so a device could sit in both its area-of-one and its real site — and it cost two real defects: every Kutis EV run read $0.00 for two months because something had to GUESS which of a device's areas priced it, and the flow-eligibility guard exists only to stop a child area claiming its parent's Sankey. `area_members` was dropped by migration 0074. |
 | **"An area must have at least one member."** Enforced in `replaceMembers`, `removeMember`, the create route and the builder dialog. | **Overturned (2026-09-14).** A zero-device area is first-class. The rule protected nothing — an area with no devices resolves to no points and drops out of flow eligibility on its own — and it is what forced "hide areas-of-one" to be a render-time convention instead of the structural "hide areas with no devices". |
 | **"A device's own area cannot take a second member."** `PUT …/members` refused with `409 AREA_OF_ONE_CANNOT_ADD` whenever the Area's `legacy_system_id` also named a device. | **Overturned (2026-09-09).** A verbatim carry-over from the legacy `POST /devices` handler that protected nothing still relied on: `?systemId=N` resolves **device-first** (`lib/dashboard/subject.ts`, locked) so growing such an Area cannot widen the legacy alias, and `lib/kv-subjects.ts` already reads BOTH legs of a colliding handle and unions them. The state it forbade already existed — `liveone-dev` handle 13 is a real Sigenergy device AND a 3-member Area with 12 bindings — because server-managed writers never passed through the route. Retiring the integer handle itself is scoped in `docs/plans/retire-the-integer-handle.md`. |
+| **"An area's visible point set is always the union of its members' points, and role resolution is per-role."** Stated in §3, together with the claim that the priority-chain work had retired v3's all-or-nothing cliff. | **Never true (corrected 2026-09-14).** This described an intent, not the code. `PointManager._resolvePointsForHandle` has always been all-or-nothing across the whole area: any binding, in any role, and the member union is skipped entirely. The chain work retired the *coin flip within one slot*, which is a different thing. The doc also contradicted itself — §6 correctly described the parity harness as exercising "the bindings override and the membership union". The fix is to remove the union rather than the cliff: bindings become the only mode. |
 | **"Additive coexistence, NOT demolition"** — legacy per-system dashboards coexist with composition dashboards indefinitely.             | **Overturned.** Config-v4's definition of done is _one shape, not two_: no runtime branch on dashboard shape, no adapter, no rewriter, one card registry, one write surface. Phase 14 **dropped** `descriptor` (migration 0054).                                               |
 | Points addressed by `(system_id, index)` with `point_uid` as a secondary stable identity.                                               | **Superseded.** `points.id` _is_ the identity and the address; the separate index and its allocator are gone.                                                                                                                                                                  |
 | `dashboard_share_tokens` + legacy owner-scoped `share_tokens` as two systems.                                                           | **Unified** into one `share_tokens` table, one semantics.                                                                                                                                                                                                                      |
@@ -248,6 +274,18 @@ Recorded explicitly, because they were stated confidently here and people rememb
 - **The v4 dashboard configurator** — the largest remaining capability gap. The model supports
   adding, removing, reordering and hiding cards; there is **no UI** for it, only a hand-written
   whole-doc `PUT`. See [`../plans/v4-dashboard-configurator.md`](../plans/v4-dashboard-configurator.md).
+- **Explicit bindings only (decided, not built).** Retire the membership-union fallback described in
+  §3, so an area's point set simply *is* its bindings — one resolution mode instead of two that
+  disagree, and the silent-narrowing cliff becomes unrepresentable. Also deletes
+  `lib/grid/context.ts`: grid signals become an ordinary binding to the ambient OpenElectricity
+  device rather than a location walk run inline on the dashboard server render. The same unit
+  retires the priority chain: one or zero wires per serving key. See
+  [`../plans/20260914-bindings-and-area-settings.md`](../plans/20260914-bindings-and-area-settings.md).
+- **Unit classes on wires (decided, not built).** Compatibility becomes same unit *class*; input
+  ports declare the unit they compute in; conversion happens at the sink on read; readings stay
+  native. Replaces five converters that today don't know each other and let MW through unscaled. The
+  model is in [`../plans/20260910-block-model.md`](../plans/20260910-block-model.md) "The type";
+  scheduled as bindings-plan Unit 2.
 - **Point-level share narrowing** (§5) — the one remaining access tightening.
 - **Nobody consumes the resolver yet.** `GET /api/v4/areas/{id}/resolution` serves the deterministic
   per-slot resolution described in §3, but the battery-provenance fold still picks its inputs by

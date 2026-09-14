@@ -91,7 +91,7 @@ export interface ProvenanceInputs {
   /**
    * c/kWh MEASURED feed-in — the area's bound `bidi.grid.export/rate` series, and the ONLY source of a
    * feed-in tariff. All null where the area binds no export rate, which is what "this site's tariff is
-   * not measured" means until a tariff device publishes one for it (docs/plans/block-model.md). It is
+   * not measured" means until a tariff device publishes one for it (docs/plans/20260910-block-model.md). It is
    * both the solar opportunity-cost basis and, negated, the `revenueC` sell price — see
    * `lib/battery-provenance/tariff.ts` for why one series reads two ways.
    */

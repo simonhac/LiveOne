@@ -1,6 +1,11 @@
 # Fold on the resolver — make the deterministic slot resolver the fold's source selector
 
-> **Status:** proposed — not started (drafted 2026-08-01). Mined out of the retired
+> **Status:** proposed — not started (drafted 2026-08-01). **Sequenced 2026-09-14 to follow
+> bindings-plan Unit 1** (explicit-only bindings, chain retired): the resolver's semantics change
+> underneath this move, and under one-or-zero wires the per-serving-key half of the
+> `ordinal`-vs-`priority` disagreement enumerated below collapses. What survives — which serving key
+> within a slot the fold takes — must be re-measured after the chain is gone, before this is built.
+> Mined out of the retired
 > `docs/plans/info-producers-consumers.md`, whose model was nominally absorbed into
 > [config-v4-clean-sheet.md](completed/config-v4-clean-sheet.md) §4.3–4.4. The resolver that plan
 > describes was built; the "first consumer" half of it never was, so the analysis is re-stated here
