@@ -75,6 +75,17 @@ export interface RunPeriodEvent {
  */
 export interface RunPeriodsResponse {
   role: string;
+  /**
+   * Whether a run detector for this `(handle, role)` exists at all.
+   *
+   * 🛑 The reason this is on the wire: `events: []` alone cannot tell "the detector produced nothing
+   * in this window" apart from "nothing here is tracked for this role", and a client that renders the
+   * first message for the second state makes a confident false claim. It did — a dashboard bracketed
+   * four EV charge sessions on its chart while the panel beneath reported none. Optional because a
+   * response served by an older deployment carries no such field; treat `undefined` as tracked, since
+   * that is the state every caller already assumed.
+   */
+  tracked?: boolean;
   events: RunPeriodEvent[];
   /** What the detector follows (unit + label for `avgSignal`). Null when it can't be resolved. */
   signal?: RunSignalMeta | null;

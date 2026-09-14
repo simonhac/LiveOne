@@ -10,7 +10,7 @@ import {
   points,
   type DerivedInterval,
 } from "@/lib/db/planetscale/schema";
-import { getAreaForDevice } from "@/lib/areas/resolve";
+import { DeviceConfigRegistry } from "@/lib/registry/device-config";
 import {
   getRunDetectorForDevices,
   type ResolvedRunDetector,
@@ -325,6 +325,27 @@ async function resolveDetector(
 }
 
 /**
+ * WHOSE provenance to overlay: the area the handle is being VIEWED through.
+ *
+ * 🔒 **DEVICE-FIRST**, the same lock as `memberDevices` and `PointManager._resolvePointsForHandle`.
+ * For a handle that names a device the answer is `devices.area_id` — the area the device is actually
+ * a member of. This used to be `getAreaForDevice`, which reads `legacy_handles.handle -> area_id` and
+ * so returns the eagerly-minted AREA-OF-ONE. A re-homed device has left that shell, so the overlay was
+ * asked of an area binding none of the meters that priced the run; `withAreaProvenance` found no
+ * sidecar row and fell through to the legacy columns — a right answer from the wrong source, and one
+ * that stops being right the moment those columns are not populated.
+ *
+ * Two other sites had already made exactly this move by name: `lib/grid/context.ts` ("a RE-HOMED
+ * device resolved its shell's location rather than its site's") and
+ * `app/api/devices/[systemId]/location/route.ts`. This was the last caller, so `getAreaForDevice` is
+ * deleted rather than left armed. See `docs/plans/exact-resolution-or-refuse.md`.
+ */
+async function resolveViewingArea(handle: number): Promise<string | null> {
+  const device = await DeviceConfigRegistry.deviceByHandle(handle);
+  if (device) return device.areaId;
+  return (await DeviceConfigRegistry.areaByHandle(handle))?.id ?? null;
+}
+/**
  * GET /api/device/{systemId}/run-periods?role=generator&period=30d
  *
  * Bounded, indexed read of persisted device run periods. The open (NULL end_time) period renders
@@ -357,16 +378,22 @@ export async function GET(
     const tz = subjectDisplayTimezone(authResult.subject);
     const db = requirePlanetscaleDb();
 
-    // The intervals hang off the run detector for this (handle, role). No detector configured →
-    // no rows, which is the same empty response this endpoint has always given for an untracked
-    // system. Resolved through the shared handle→area mapping so reader and writer always agree,
-    // then through the area's members (see `resolveDetector`).
+    // The intervals hang off the run detector for this (handle, role).
+    //
+    // 🛑 `detector === null` is served as `tracked: false`, NOT as an empty `events` array alone. The
+    // two are different facts — "this detector produced nothing in this window" and "nothing here is
+    // tracked for this role" — and collapsing them is what let one page bracket four EV charge
+    // sessions on its chart while the panel beneath it said "No charge sessions in this period", with
+    // nothing reporting a problem. Same rule as `energyKwh` below: an unknown is not a zero.
+    //
+    // This is not cosmetic. `/api/device/(.*)` is in `shareableRoutes`, so this answers anonymous
+    // `?access=` viewers, who have no CLI to check it against.
     const detector = await resolveDetector(systemId, role);
 
     // WHOSE numbers to serve. `{systemId}` is the handle being viewed, and the area behind it is the
     // one whose meters this caller is looking through — so it is also the area whose provenance
     // belongs in the response. Null (a handle with no area) leaves the legacy columns in place.
-    const viewingAreaId = (await getAreaForDevice(systemId))?.id ?? null;
+    const viewingAreaId = await resolveViewingArea(systemId);
 
     // Paged mode (limit present): most-recent-first, page back through ALL history. Used by the
     // dashboard `runs` card. Bounded by limit (no time window).
@@ -402,6 +429,7 @@ export async function GET(
       const events = page.map((r) => toEvent(r, shape));
       return NextResponse.json({
         role,
+        tracked: detector !== null,
         events,
         signal,
         columns: shape.columns,
@@ -500,6 +528,7 @@ export async function GET(
 
     return NextResponse.json({
       role,
+      tracked: detector !== null,
       events,
       signal,
       columns: shape.columns,

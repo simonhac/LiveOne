@@ -305,7 +305,8 @@
           "role": "ev",
           "systemId": 12,
           "timezoneOffsetMin": 600,
-          "title": "EV charging"
+          "title": "EV charging",
+          "untrackedText": "No EV charge detector for this device"
         }
       }
     ]
@@ -337,7 +338,8 @@
           "role": "generator",
           "systemId": 12,
           "timezoneOffsetMin": 600,
-          "title": "Generator runs"
+          "title": "Generator runs",
+          "untrackedText": "No generator run detector for this device"
         }
       }
     ]
@@ -366,7 +368,8 @@
           "role": "generator",
           "systemId": 1,
           "timezoneOffsetMin": 600,
-          "title": "Generator runs"
+          "title": "Generator runs",
+          "untrackedText": "No generator run detector for this device"
         }
       }
     ]

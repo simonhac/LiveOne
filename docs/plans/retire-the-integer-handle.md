@@ -34,6 +34,15 @@ unambiguous. A third mechanism, the `AREA_OF_ONE_CANNOT_ADD` guard in
 `app/api/v4/areas/[id]/members/route.ts`, was removed on 2026-09-09 as redundant with these two —
 that removal is what surfaced this plan.
 
+⚠️ **That count is low.** There are in fact FIVE resolvers of this integer, giving four different
+answers: `_resolvePointsForHandle` and `getAreaMemberPointsForServing` (device-first), the two above,
+and `memberDevices` (`lib/capabilities/server.ts:65`) which is **area-first** — nobody put it in step,
+and on 2026-09-15 it produced a user-visible wrong answer. Each resolver is guarded by a prose claim
+about production data and every one of those claims has since drifted off it, including this file's own
+reading of `subject.ts` above. The incident, and the census that makes the set enumerable rather than
+remembered, are in [exact-resolution-or-refuse.md](exact-resolution-or-refuse.md) — whose Phase 1 is
+step 1 below, done mechanically.
+
 ## Scope
 
 Measured on `main` at `500c8d2b` (non-test):

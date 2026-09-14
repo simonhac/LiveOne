@@ -1,9 +1,5 @@
 /**
- * Resolve the Area that represents a logical system. An Area is located by its integer addressing
- * handle: a single-device Area wraps one physical device (handle == its `devices.rid`); a multi-device
- * Area draws its points across child devices via `area_bindings` (the handle names no device of its
- * own — resolved area-natively by `DeviceConfigRegistry.areaByHandle`). The single-vs-multi
- * distinction is structural (membership), not a stored `kind`.
+ * The Area → integer addressing handle direction of the `legacy_handles` map.
  *
  * ⚠️ **The handle map is `legacy_handles`, NOT `areas.legacy_system_id`** (config-v4 Phase 13 PR 5).
  * Both area write paths (`createArea`, `DeviceWriter.ensureAreaOfOne`) fill `legacy_handles` inside
@@ -12,35 +8,29 @@
  * `areas_legacy_system_unique` was, and it is the table that OUTLIVES the column (PR 6 drops it).
  * Verified 22/22 areas agreeing on `liveone-dev` before the swap — the same proof
  * `lib/registry/device-config.ts:fetchAreaForHandle` ran for its own leg.
+ *
+ * 🛑 **The other direction — handle → Area — is DELETED, deliberately.** `getAreaForDevice` lived
+ * here and answered the area leg of a handle *without ever seeing the device leg*, which made every
+ * caller built on it structurally incapable of noticing that a handle names both. Its name said
+ * "ForDevice"; what it returned was the eagerly-minted area-of-one, which a re-homed device has left.
+ * Two callers shipped wrong answers off it before it went. Ask `DeviceConfigRegistry.deviceByHandle`
+ * and `areaByHandle` side by side instead — both are per-request memoized, so seeing both legs costs
+ * nothing, and the precedence between them becomes a decision the call site makes in the open rather
+ * than one this file made silently on its behalf. See `docs/plans/exact-resolution-or-refuse.md`.
  */
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import { legacyHandles } from "@/lib/db/planetscale/schema";
 import { eq } from "drizzle-orm";
 
-export interface ResolvedArea {
-  id: string;
-}
-
-/** The Area the handle `systemId` names, per `legacy_handles`, or null when it names no Area. */
-export async function getAreaForDevice(
-  systemId: number,
-): Promise<ResolvedArea | null> {
-  const [row] = await requirePlanetscaleDb()
-    .select({ areaId: legacyHandles.areaId })
-    .from(legacyHandles)
-    .where(eq(legacyHandles.handle, systemId))
-    .limit(1);
-  // A handle row can exist naming ONLY a device (`area_id IS NULL`) — that is not an Area hit.
-  if (!row?.areaId) return null;
-  return { id: row.areaId };
-}
-
 /**
- * The integer addressing handle for an Area uuid — the inverse of `getAreaForDevice`. For an
- * area-of-one this is the physical device's `rid`; for a multi-device area it is the areas-backed
- * virtual-device handle that `getActivePointsForDevice` resolves to child points. Returns null when
- * the uuid is unknown or the Area carries no handle. Used to map a dashboard's per-card Areas back to
- * the systemIds its share scope authorizes.
+ * The integer addressing handle for an Area uuid. For an area-of-one this is the physical device's
+ * `rid`; for a multi-device area it is the areas-backed virtual-device handle that
+ * `getActivePointsForDevice` resolves to child points. Returns null when the uuid is unknown or the
+ * Area carries no handle. Used to map a dashboard's per-card Areas back to the systemIds its share
+ * scope authorizes.
+ *
+ * Unambiguous in this direction, which is why it survives: `legacy_handles.area_id` is partial-unique,
+ * so one Area has at most one handle. The reverse is not a function — a handle can name two things.
  *
  * Equivalent to `DeviceRegistry.handleForArea`, but takes a RAW uuid: areas invert the TypeID seam
  * (raw uuid internal, `ar_…` only at the wire), so routing through the codec would mean an
