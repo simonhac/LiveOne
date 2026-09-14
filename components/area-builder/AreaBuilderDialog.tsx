@@ -291,8 +291,10 @@ export default function AreaBuilderDialog({
    * server-managed `helper` ones, so the replace declares the truth rather than relying on the route's
    * "a helper is never evicted by omission" carve-out.
    *
-   * Order is significant (array index becomes `area_members.ordinal`), which is why the edit applies to
-   * the loaded order rather than rebuilding a set.
+   * 🛑 Order is NOT significant. The array index used to become `area_members.ordinal`; with one
+   * area per device there is no membership row left to carry an order, and the server treats the
+   * list as a SET. The edit still applies to the loaded order rather than rebuilding a set, because
+   * that keeps the diff the user sees minimal — not because the order means anything.
    */
   const replaceMembers = async (next: DeviceId[]) => {
     if (!activeAreaId) return;

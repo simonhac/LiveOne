@@ -520,7 +520,18 @@ async function runRecompute(ctx: Ctx): Promise<number> {
 export interface WireChangeOffset {
   device: { id: string; systemId: number; name: string; vendor: string };
   offset: { from: number; to: number };
-  area: { id: string; name: string; offsetMin: number } | null;
+  /**
+   * The device's area — REPORTED, never written. This verb moves `devices.day_offset_min` alone;
+   * `divergesAfter` says whether that leaves the device bucketing on a different boundary from the
+   * site it sits in (legal — the two offsets key different tables — but worth saying out loud).
+   */
+  area: {
+    id: string;
+    name: string;
+    dayOffsetMin: number;
+    otherDevices: string[];
+    divergesAfter: boolean;
+  } | null;
   span: { startDay: string; endDay: string; rows: number } | null;
   days: number;
   points: number;
@@ -563,13 +574,39 @@ export function renderChangeOffset(r: WireChangeOffset, passes = 1): string {
   const out = [
     `device       ${r.device.systemId}  ${r.device.name}  (${r.device.vendor})`,
     `offset       ${signed(r.offset.from)} → ${signed(r.offset.to)}`,
-    `area         ${r.area ? `${r.area.name} (offset moves with the device)` : "(none)"}`,
+    `area         ${
+      r.area
+        ? `${r.area.name}  buckets on ${signed(r.area.dayOffsetMin)}${
+            r.area.divergesAfter
+              ? "  ⚠️ NOT moved by this command"
+              : " (unchanged, already equal)"
+          }`
+        : "(none — ambient device)"
+    }`,
     `history      ${
       r.span
         ? `${r.span.startDay} → ${r.span.endDay}   ${r.span.rows} agg_1d row(s), ${r.days} day(s), ${r.points} point(s)`
         : `no agg_1d rows — offset moves, nothing to rebuild`
     }`,
   ];
+
+  // 🛑 The one thing this command deliberately does NOT do, said before it is done rather than after.
+  // `devices.day_offset_min` keys `point_readings_agg_1d`; `areas.day_offset_min` keys the area's
+  // flow matrix and provenance. They are allowed to differ — but only on purpose.
+  if (r.area?.divergesAfter) {
+    out.push(
+      "",
+      `⚠️  The area "${r.area.name}" keeps bucketing on ${signed(r.area.dayOffsetMin)}, so its flow`,
+      `    matrix and battery provenance will use a different day boundary from this device's`,
+      `    daily totals.${
+        r.area.otherDevices.length > 0
+          ? ` ${r.area.otherDevices.length} other device(s) share it: ${r.area.otherDevices.join(", ")}.`
+          : " This device is its only tenant."
+      }`,
+      `    If the AREA should move too, that is a separate, deliberate call:`,
+      `      PATCH /api/v4/areas/{ar_} { "dayOffsetMin": ${r.offset.to} }`,
+    );
+  }
 
   if (r.dryRun) {
     out.push(

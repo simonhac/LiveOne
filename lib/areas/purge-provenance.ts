@@ -34,7 +34,7 @@
  * self-renewable-fraction, price, price-opportunity, stored-energy}` — onto the Area's HELPER device
  * (vendor `helper`, the "· derived" ones), and binds them at ordinal 100–105. Those readings are
  * `point_rid`-keyed, not `area_id`-keyed, so they are the one layer with no clean `WHERE area_id`:
- * it takes `points ⋈ devices ⋈ area_members`. Nothing in the DAO could delete them — `delete1dRange`
+ * it takes `points ⋈ devices` (matched on `devices.area_id`). Nothing in the DAO could delete them — `delete1dRange`
  * is day-ranged and fleet-wide — so `ReadingsDao.deleteAggsForPoints` was added for this. It lives
  * there, not here, because `agg_5m`/`agg_1d` are hot tables behind the readings seam that
  * `scripts/check-readings-boundary.mjs` gates; THIS file resolves which points, the DAO deletes them.

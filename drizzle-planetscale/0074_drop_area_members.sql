@@ -1,0 +1,80 @@
+-- 0074 — drop `area_members` and `devices.primary_area_id`. The CONTRACT half, and IRREVERSIBLE.
+--
+-- 🛑 APPLY ONLY AFTER THE CODE IS DEPLOYED, where "deployed" includes the 2-hourly prod→dev sync
+-- Action, which runs `main`. Its manifest listed `area_members` and repointed `primary_area_id`; a
+-- drop ahead of that merge makes every sync run abort on a 42P01.
+--
+-- WHAT IS ACTUALLY BEING LOST, said plainly rather than gated ceremonially. `area_members` holds the
+-- PRE-0071 membership and has had no reader and no writer since Stage 4; `primary_area_id` holds the
+-- eagerly-minted area-of-one each device was born with and lost its last reader when `baseSelect`
+-- moved onto `devices.area_id`. Both are superseded, not summarised — and neither is a backup of the
+-- other, because they have DISAGREED by design for weeks: a device re-homed since the flip has a
+-- stale `area_members` row and a `primary_area_id` naming a shell it left. So "does the frozen table
+-- still match the live column" is NOT a useful gate; it is false on purpose, and gating on it would
+-- only teach the next person to delete the gate.
+--
+-- The areas themselves are NOT deleted. The emptied areas-of-one stay, still addressable through
+-- `legacy_handles.area_id`, which is what keeps any retained `point_readings_flow_attr_1d` /
+-- `battery_provenance_daily` history readable. Measured at 0 rows on prod for every one of them, but
+-- the NO ACTION firewall stays regardless.
+--
+-- In particular there is deliberately NO gate comparing `area_members` to `devices.area_id` on an
+-- area that still holds flow or provenance history. That gate was written, run, and deleted: it
+-- fires five times on dev, and all five are the settled decisions of this change — Kutis leaving
+-- the Kutis and Kuti House areas for High Street Kew, OpenElectricity NEM Victoria going ambient
+-- out of two site areas, Daylesford Selectronic leaving its own shell. Frozen history attributing
+-- energy to a device that has since moved is the INTENDED outcome ("freeze, do not purge"), so a
+-- gate on it is a gate that is false on purpose — which only teaches the next person to delete
+-- gates.
+--
+-- So what remains below are the two invariants that make the columns unnecessary in the first
+-- place, both of which are 0 on dev and must stay 0.
+
+--> statement-breakpoint
+-- GATE A: the placement invariant. An ACTIVE device has an owner and an area, or neither.
+--
+-- This is what replaces both dropped columns, so it is the thing to prove before they go. An owned
+-- device with no area is the failure the drop makes unrecoverable: afterwards nothing records where
+-- it used to be. An OWNERLESS device WITH an area is the opposite failure and is worse than it looks
+-- — `assertDevicesRehomable` refuses to move one, so it is trapped in that area permanently, and
+-- nothing, not even an admin, can free it.
+DO $$ DECLARE n int; BEGIN
+  SELECT count(*) INTO n FROM devices
+   WHERE status = 'active'
+     AND (owner_user_id IS NOT NULL) IS DISTINCT FROM (area_id IS NOT NULL);
+  IF n > 0 THEN
+    RAISE EXCEPTION 'GATE A: % active device(s) violate the placement invariant (owned XOR ambient). Owned-but-ambient loses its last record of where it belonged; ownerless-but-placed is trapped there for ever.', n;
+  END IF;
+END $$;
+
+--> statement-breakpoint
+-- GATE B: no ACTIVE device sits in a non-active area.
+--
+-- The other way a device becomes unreachable with nothing left to say where it came from. An active
+-- device parked in an archived area is not served, not listed and not obviously broken — and after
+-- `primary_area_id` goes there is no second opinion about where it belongs. Measured 0 on dev.
+DO $$ DECLARE n int; BEGIN
+  SELECT count(*) INTO n
+    FROM devices d JOIN areas a ON a.id = d.area_id
+   WHERE d.status = 'active' AND a.status <> 'active';
+  IF n > 0 THEN
+    RAISE EXCEPTION 'GATE B: % active device(s) sit in a non-active area. Re-home them first — after this migration nothing records where they came from.', n;
+  END IF;
+END $$;
+
+--> statement-breakpoint
+-- What is being discarded, on the record. Not a gate: both numbers are expected to be non-zero and
+-- neither is recoverable or wanted. They are here so the apply log says how much frozen membership
+-- this migration threw away, which is the only place that will ever be written down.
+DO $$ DECLARE m int; p int; BEGIN
+  SELECT count(*) INTO m FROM area_members;
+  SELECT count(*) INTO p FROM devices WHERE primary_area_id IS NOT NULL;
+  RAISE NOTICE 'dropping % frozen area_members row(s) and % primary_area_id value(s)', m, p;
+END $$;
+
+--> statement-breakpoint
+-- No CASCADE. Nothing references `area_members`, and if that turns out to be wrong the right
+-- outcome is a refusal naming the dependant, not a silent drop of whatever it was.
+DROP TABLE "area_members";--> statement-breakpoint
+ALTER TABLE "devices" DROP CONSTRAINT "devices_primary_area_id_areas_id_fk";--> statement-breakpoint
+ALTER TABLE "devices" DROP COLUMN "primary_area_id";

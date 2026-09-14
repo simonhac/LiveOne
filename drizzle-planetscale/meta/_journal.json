@@ -512,6 +512,20 @@
       "when": 1789355946953,
       "tag": "0072_primary_area_id_nullable",
       "breakpoints": true
+    },
+    {
+      "idx": 73,
+      "version": "7",
+      "when": 1789357831342,
+      "tag": "0073_users_default_area",
+      "breakpoints": true
+    },
+    {
+      "idx": 74,
+      "version": "7",
+      "when": 1789358441122,
+      "tag": "0074_drop_area_members",
+      "breakpoints": true
     }
   ]
 }

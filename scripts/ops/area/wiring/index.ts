@@ -3,8 +3,8 @@
  *
  * The verbs that were missing on 2026-09-09, when wiring a new area could only be done by
  * hand-driving a logged-in browser. They deliberately drop the table names from the operator's
- * vocabulary: `area_members` becomes **devices** (which devices are in the area) and `area_bindings`
- * becomes **role** (which point fills an area's `(role, metric)` slot, and in what order).
+ * vocabulary: `devices.area_id` becomes **devices** (which devices are in the area) and
+ * `area_bindings` becomes **role** (which point fills an area's `(role, metric)` slot, and in what order).
  *
  * 🛑 **A binding is not point metadata.** It is AREA-SCOPED ROLE RESOLUTION: "in *this* area, the
  * `grid/rate` slot is filled by *these* points, in this order". The same point can be bound in one

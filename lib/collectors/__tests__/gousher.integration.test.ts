@@ -90,7 +90,7 @@ beforeAll(async () => {
       vendor: vendor === "fronius" ? "fusher" : vendor,
       vendorSiteId: vendor,
       name: vendor,
-      primaryAreaId: areaId,
+      areaId,
       dayOffsetMin: 0,
     });
     await db.insert(legacyHandles).values({ handle: rid, deviceId: id });

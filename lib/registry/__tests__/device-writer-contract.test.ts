@@ -13,21 +13,31 @@
  * not catch it: it compiles and fails at runtime. That is the same failure shape as the 2026-07-27
  * create-path FK defect, which is why this is pinned at runtime and not just in a docstring.
  *
- * ## 2. The three-step insert order
+ * ## 2. The two-step insert order
  *
- * `areas` → `devices` → `legacy_handles`, each required by the NEXT one's foreign key. The fake exec
- * below ENFORCES those FKs, which is what makes this a real test rather than a transcription of the
- * implementation: run it against the pre-fix ordering (handle mapping first) and it fails with 23503,
- * exactly as `POST /api/devices` and both connect callbacks did on production.
+ * `devices` → `legacy_handles`, the second required by the first's foreign key. The fake exec below
+ * ENFORCES those FKs, which is what makes this a real test rather than a transcription of the
+ * implementation: run it against the pre-fix ordering (handle mapping first) and it fails with
+ * 23503, exactly as `POST /api/devices` and both connect callbacks did on production.
  *
- * The fourth step — the `area_members` row — went with Stage 4 of the device→0..1-area change.
+ * Two of the original four steps are gone and the test asserts their ABSENCE, because in both cases
+ * doing them again is silently wrong rather than loud. The `area_members` row went with Stage 4
+ * (writing it would make it disagree with `devices.area_id` on the first re-home). The `areas`
+ * insert — the eagerly-minted area-of-one — went with Stage 5, and with it the `legacy_handles` AREA
+ * leg: a device is now placed in an area that ALREADY EXISTS and already owns a handle, so
+ * re-asserting one would turn every second device in a site into a 23505 on
+ * `legacy_handles_area_unique`.
  *
- * ## 3. A new device is PLACED in the area it mints
+ * ## 3. Placement is decided by `resolveOnboardingArea`, and only for an OWNED device
  *
- * `devices.area_id` is membership now, and it is written inline with the device row. Between the
- * resolver flip and Stage 4 nothing wrote it here, so every newly-minted device landed AMBIENT: it
- * resolved into no area, and `ensureHelperDevice` — which dedupes on that column — missed every time
- * and minted an unbounded run of helpers. Pinned below, because nothing else would have raised.
+ * `devices.area_id` is membership, written inline with the device row. Two failure modes are pinned:
+ *
+ * - Leaving it NULL for an owned device. The insert still succeeds, the device still polls, nothing
+ *   raises — it is simply in no area, and `ensureHelperDevice`, which dedupes on that column, misses
+ *   every time and mints an unbounded run of helpers. That is what happened between the Stage-3
+ *   resolver flip and Stage 4.
+ * - Setting it for an OWNERLESS device. `assertDevicesRehomable` refuses to move one, so placing it
+ *   at birth traps it in an area nothing — not even an admin — can free it from.
  */
 import { describe, expect, it, jest, beforeEach } from "@jest/globals";
 import { areas, devices } from "@/lib/db/planetscale/schema";
@@ -71,11 +81,8 @@ const exec = {
           store.areas.add(v.id as string);
         } else if (name === "devices") {
           ops.push("devices");
-          if (!store.areas.has(v.primaryAreaId as string))
-            throw fkViolation("devices_primary_area_id_areas_id_fk");
-          // `devices.area_id` FKs `areas(id)` too (migration 0070), so the membership write is
-          // subject to the SAME ordering constraint as `primary_area_id` — which is why folding
-          // membership into this row did not cost the step it replaced.
+          // `devices.area_id` FKs `areas(id)`, so a device may only be placed in an area that
+          // already exists — which since Stage 5 means one the writer did NOT create.
           if (v.areaId != null && !store.areas.has(v.areaId as string))
             throw fkViolation("devices_area_id_areas_id_fk");
           store.devices.set(v.id as string, {
@@ -123,14 +130,33 @@ jest.mock("@/lib/registry/device-registry", () => ({
       const cur = store.handles.get(handle) ?? { deviceId: null, areaId: null };
       store.handles.set(handle, { ...cur, deviceId: uuid });
     },
+    // Still stubbed even though the writer no longer calls it: the assertion that matters is that
+    // `ops` never contains this, and a stub that throws would only prove the writer does not call a
+    // throwing function.
     ensureAreaForHandle: async (handle: number, areaId: string) => {
       ops.push("legacy_handles.area_id");
-      if (!store.areas.has(areaId))
-        throw fkViolation("legacy_handles_area_id_areas_id_fk");
       const cur = store.handles.get(handle) ?? { deviceId: null, areaId: null };
       store.handles.set(handle, { ...cur, areaId });
     },
   },
+}));
+
+// The area a new OWNED device is placed in. Stubbed rather than exercised — `resolveOnboardingArea`
+// has its own tests — but it PRE-CREATES the area in the fake store, so the FK the writer's insert
+// is subject to is real: a writer that placed a device in an area nobody created would 23503 here.
+const ONBOARDING_AREA = "11111111-1111-7111-8111-111111111111";
+const resolveOnboardingArea = jest.fn(async () => {
+  ops.push("resolveOnboardingArea");
+  store.areas.add(ONBOARDING_AREA);
+  return {
+    areaId: ONBOARDING_AREA,
+    createdAreaId: ONBOARDING_AREA,
+    recordedAsDefault: true,
+  };
+});
+jest.mock("@/lib/areas/onboarding", () => ({
+  resolveOnboardingArea: (...args: unknown[]) =>
+    (resolveOnboardingArea as (...a: unknown[]) => unknown)(...args),
 }));
 
 import { DeviceWriter } from "../device-writer";
@@ -141,6 +167,7 @@ beforeEach(() => {
   store.areas.clear();
   store.devices.clear();
   store.handles.clear();
+  resolveOnboardingArea.mockClear();
 });
 
 const CREATE = {
@@ -173,27 +200,64 @@ describe("DeviceWriter.createSystem — the returned handle", () => {
   });
 });
 
-describe("DeviceWriter.createSystem — the three-step insert order", () => {
-  it("writes areas → devices → legacy_handles, and no membership row", async () => {
+describe("DeviceWriter.createSystem — the two-step insert order", () => {
+  it("resolves placement, then writes devices → legacy_handles.device_id, and nothing else", async () => {
     await DeviceWriter.createDevice(CREATE);
     expect(ops).toEqual([
-      "areas",
+      "resolveOnboardingArea",
       "devices",
       "legacy_handles.device_id",
-      "legacy_handles.area_id",
     ]);
     // 🛑 `area_members` is frozen. A write here would make it disagree with `devices.area_id` — the
     // column every reader moved to — on the very first re-home.
     expect(ops).not.toContain("area_members");
+    // 🛑 The writer does not create areas. Re-introducing the mint would give every new device its
+    // own shell again — the 14-of-17 proliferation this change exists to end — and nothing would
+    // fail: the device would work, in an area nobody asked for.
+    expect(ops).not.toContain("areas");
+    // 🛑 And it does not claim the handle's AREA leg. The area it places into already owns a handle,
+    // so this would be a 23505 on `legacy_handles_area_unique` for the second device in any site.
+    expect(ops).not.toContain("legacy_handles.area_id");
   });
 
-  it("🛑 mints the area-of-one and PLACES the device in it", async () => {
+  it("🛑 PLACES an owned device in the area onboarding resolved", async () => {
     const created = await DeviceWriter.createDevice(CREATE);
-    expect(store.areas.has(created.areaId)).toBe(true);
+    expect(created.areaId).toBe(ONBOARDING_AREA);
     // The regression this pins: with `area_id` left NULL the insert still succeeds, the device still
     // polls, and nothing raises — it is simply in no area, and the helper dedupe that reads this
     // column mints a fresh helper on every call for ever.
-    expect(store.devices.get(created.deviceUuid)?.areaId).toBe(created.areaId);
+    expect(store.devices.get(created.deviceUuid)?.areaId).toBe(ONBOARDING_AREA);
+  });
+
+  it("🛑 leaves an OWNERLESS device ambient, and never asks for an area", async () => {
+    const created = await DeviceWriter.createDevice({
+      ...CREATE,
+      ownerClerkUserId: null,
+      vendorType: "openelectricity",
+    });
+    expect(created.areaId).toBeNull();
+    expect(store.devices.get(created.deviceUuid)?.areaId).toBeNull();
+    // Not merely "ends up null": onboarding is not consulted at all. There is no owner to have a
+    // default, and an area minted here would trap a device `assertDevicesRehomable` refuses to move.
+    expect(resolveOnboardingArea).not.toHaveBeenCalled();
+    expect(ops).toEqual(["devices", "legacy_handles.device_id"]);
+  });
+
+  it("places a HELPER directly in the area it serves, without consulting onboarding", async () => {
+    store.areas.add(ONBOARDING_AREA);
+    const created = await DeviceWriter.createHelperDevice({
+      ownerClerkUserId: "user_test",
+      areaId: ONBOARDING_AREA,
+      vendorSiteId: "helper:area:ar_x",
+      displayName: "Somewhere · derived",
+      timezoneOffsetMin: 600,
+    });
+    expect(created.areaId).toBe(ONBOARDING_AREA);
+    expect(store.devices.get(created.deviceUuid)?.areaId).toBe(ONBOARDING_AREA);
+    // One insert, one area. The helper used to be minted into an area-of-one and MOVED here
+    // afterwards, and the window between the two is where the duplicate-helper bug lived.
+    expect(resolveOnboardingArea).not.toHaveBeenCalled();
+    expect(ops).toEqual(["devices", "legacy_handles.device_id"]);
   });
 });
 

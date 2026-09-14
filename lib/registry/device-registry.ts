@@ -115,8 +115,9 @@ async function addrForDevice(
  * Device uuid -> integer handle, read from `devices.rid` rather than `legacy_handles`.
  *
  * Same direction as `addrsForDevices`, different source, and the difference is load-bearing for
- * `area_members` (config-v4 Phase 12 slice H). `area_members.device_id` FKs `devices.id`, so a member's
- * `devices` row is guaranteed to exist and this lookup can never come up short. `legacy_handles` carries
+ * membership (config-v4 Phase 12 slice H). Membership IS `devices.area_id`, a column on the row
+ * itself, so a member's `devices` row is guaranteed to exist and this lookup can never come up
+ * short. `legacy_handles` carries
  * NO constraint tying it to either table — slice A found dev sitting two handles behind prod — and a
  * miss there would silently DROP a member from an area's point set rather than raise. The two agree
  * today (18/18 on dev, zero handle<>rid mismatches); this just makes agreement unnecessary.

@@ -57,25 +57,37 @@ export interface ChangeDayOffsetPlan {
   readonly span: { startDay: string; endDay: string; rows: number } | null;
   readonly days: string[];
   /**
-   * The area whose stored offset this will move with the device, and why it is safe to.
+   * The device's area, and what this change does to the relationship between the two buckets.
+   * **REPORT ONLY — nothing in here is written.**
    *
-   * This is the device's own AREA-OF-ONE (`devices.primary_area_id`), not the site area it is a
-   * member of (`devices.area_id`). The two diverged at migration 0071 and the distinction is now
-   * load-bearing: since the bucketing flip a rebuild reads `devices.day_offset_min`, so moving the
-   * area is no longer what makes the change stick — it is what keeps `areas.timezone_offset_min`
-   * from drifting away from the device it was minted for. Naming the SITE area here instead would
-   * refuse every device that is in one, which is every device this verb exists for.
+   * 🛑 This verb used to move `areas.timezone_offset_min`/`day_offset_min` alongside the device, and
+   * to REFUSE when that area had other tenants. The area it moved was the device's own AREA-OF-ONE
+   * (`devices.primary_area_id`), which migration 0073 drops — and pointing the same behaviour at the
+   * SITE area instead would refuse every device that is in one, i.e. every device this verb exists
+   * for (it was built for Kinkora Fronius, one of six devices in Kinkora Unified).
    *
-   * `otherMembers` is still checked rather than assumed, and it reads `devices.area_id` — "what
-   * actually lives in this area today", which for a re-homed device's area-of-one is nothing at
-   * all. The stale `area_members` row would have answered "this device", and refused.
+   * So the verb is now device-only, which is also what the rest of the stack already believes: since
+   * the stage-3b bucketing flip `recomputeAgg1dForDay` reads `devices.day_offset_min` and nothing
+   * else, so the device write is the whole of the change. The two offsets have separate jobs —
+   * `devices.day_offset_min` keys `point_readings_agg_1d`, `areas.day_offset_min` keys the
+   * AREA-keyed tables (`point_readings_flow_attr_1d.day`, `battery_provenance_daily.day`) — and a
+   * device may legitimately bucket differently from the site it sits in.
+   *
+   * What is NOT legitimate is doing it by accident, so `divergesAfter` says when the two part
+   * company and the caller is expected to SAY SO. That is the same divergence the report-only census
+   * entry watches; the remedy, when it is one, is to move the area deliberately
+   * (`PATCH /api/v4/areas/{ar_} { dayOffsetMin }`, or the device settings dialog when the device is
+   * the area's only tenant).
    */
   readonly area: {
     id: string;
     name: string;
-    offsetMin: number;
-    /** Members other than this device and its area's helper. Non-empty ⇒ refuse. */
-    otherMembers: string[];
+    /** `areas.day_offset_min` — unchanged by this operation. */
+    dayOffsetMin: number;
+    /** Devices in this area other than this one and the area's helper. */
+    otherDevices: string[];
+    /** True when the device's new offset will no longer equal the area's. */
+    divergesAfter: boolean;
   } | null;
 }
 
@@ -135,7 +147,9 @@ export async function planChangeDayOffset(
     .select({
       uuid: devices.id,
       dayOffsetMin: devices.dayOffsetMin,
-      areaId: devices.primaryAreaId,
+      // `devices.area_id` — the area the device IS IN, nullable. NOT `primary_area_id`, the shell
+      // area-of-one this once moved alongside the device; see the `area` field's docstring.
+      areaId: devices.areaId,
     })
     .from(devices)
     .where(eq(devices.rid, deviceRid))
@@ -182,37 +196,39 @@ export async function planChangeDayOffset(
       ? { startDay, endDay, rows: existing1d?.rows ?? 0 }
       : null;
 
-  const [areaRow] = await db
-    .select({
-      id: areas.id,
-      name: areas.name,
-      offsetMin: areas.timezoneOffsetMin,
-    })
-    .from(areas)
-    .where(eq(areas.id, device.areaId))
-    .limit(1);
-
+  // An AMBIENT device (`area_id IS NULL`) has no area to diverge from, and this is the common case
+  // for the producers that most need re-bucketing.
   let area: ChangeDayOffsetPlan["area"] = null;
-  if (areaRow) {
-    // Everything in the area that is neither this device nor a helper. A helper is derived output of
-    // the area itself, so it is not another tenant of the offset.
-    //
-    // 🛑 Reads `devices.area_id` (migration 0071), not `area_members`. The two answer differently now
-    // and the NEW one is the question worth asking: an area-of-one whose device has been re-homed to
-    // a site area still carries its stale `area_members` row, so the old query would report the
-    // device as a co-tenant of an area nothing actually lives in and refuse a re-bucket that touches
-    // nobody. That is exactly Kinkora Fronius, the device this verb was built for.
-    const others = await db
-      .select({ name: devices.name })
-      .from(devices)
-      .where(
-        and(
-          eq(devices.areaId, areaRow.id),
-          ne(devices.id, device.uuid),
-          ne(devices.vendor, "helper"),
-        ),
-      );
-    area = { ...areaRow, otherMembers: others.map((o) => o.name) };
+  if (device.areaId) {
+    const [areaRow] = await db
+      .select({
+        id: areas.id,
+        name: areas.name,
+        dayOffsetMin: areas.dayOffsetMin,
+      })
+      .from(areas)
+      .where(eq(areas.id, device.areaId))
+      .limit(1);
+    if (areaRow) {
+      // Everything in the area that is neither this device nor a helper. A helper is derived output
+      // of the area itself, so it is not another tenant of the bucket — it is reported separately
+      // from the real co-tenants only because naming it would be noise.
+      const others = await db
+        .select({ name: devices.name })
+        .from(devices)
+        .where(
+          and(
+            eq(devices.areaId, areaRow.id),
+            ne(devices.id, device.uuid),
+            ne(devices.vendor, "helper"),
+          ),
+        );
+      area = {
+        ...areaRow,
+        otherDevices: others.map((o) => o.name),
+        divergesAfter: areaRow.dayOffsetMin !== newOffsetMin,
+      };
+    }
   }
 
   return {
@@ -230,10 +246,10 @@ export async function planChangeDayOffset(
  * as much of the rebuild as fits in `deadlineMs`, resuming from `resumeFrom`.
  *
  * 🛑 NOT atomic across all three, and cannot be — the rebuild is hundreds of round trips and holding
- * a transaction open across it would pin a connection for minutes. The offset write IS transactional
- * and goes FIRST, so the only interruptible state is "offset correct, later days not yet rebuilt":
- * visible in `nextDay`, and resumable. The reverse order would leave the far worse state — rows
- * rebuilt on a boundary the device does not claim, indistinguishable from correct ones.
+ * a transaction open across it would pin a connection for minutes. The offset write is a single
+ * statement and goes FIRST, so the only interruptible state is "offset correct, later days not yet
+ * rebuilt": visible in `nextDay`, and resumable. The reverse order would leave the far worse state —
+ * rows rebuilt on a boundary the device does not claim, indistinguishable from correct ones.
  *
  * `resumeFrom` skips both the offset write and the delete, because a resumed pass must not re-delete
  * the days an earlier pass already rebuilt.
@@ -262,24 +278,13 @@ export async function applyChangeDayOffset(
     );
   }
 
-  await db.transaction(async (tx) => {
-    await tx
-      .update(devices)
-      .set({ dayOffsetMin: plan.newOffsetMin, updatedAt: new Date() })
-      .where(eq(devices.rid, deviceRid));
-    if (plan.area) {
-      // Both columns, together — the coupling `updateAreaMeta` and `DeviceWriter.updateDevice`
-      // already keep, and the one migration 0070's second gate asserts.
-      await tx
-        .update(areas)
-        .set({
-          timezoneOffsetMin: plan.newOffsetMin,
-          dayOffsetMin: plan.newOffsetMin,
-          updatedAt: new Date(),
-        })
-        .where(eq(areas.id, plan.area.id));
-    }
-  });
+  // 🛑 ONE column, and deliberately not a transaction with anything: `devices.day_offset_min` is the
+  // sole key `recomputeAgg1dForDay` buckets on, so this write is the whole of the change. The
+  // companion `areas` update this used to carry went with the area-of-one — see `ChangeDayOffsetPlan.area`.
+  await db
+    .update(devices)
+    .set({ dayOffsetMin: plan.newOffsetMin, updatedAt: new Date() })
+    .where(eq(devices.rid, deviceRid));
 
   let deleted1d = 0;
   if (plan.span) {

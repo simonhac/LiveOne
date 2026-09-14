@@ -243,7 +243,7 @@ async function main() {
         ]),
       );
       const ids = await memberHandles(areaId);
-      assert(ids.includes(extra), `area_members now includes ${extra}`);
+      assert(ids.includes(extra), `area now holds ${extra}`);
       const grown = await countPoints(H);
       assert(
         grown === expectedUnion + (await countPoints(extra)),

@@ -54,7 +54,6 @@ import * as schema from "@/lib/db/planetscale/schema";
 import {
   amberForecastHistory,
   areaBindings,
-  areaMembers,
   areas,
   areaCalendarTokens,
   automations,
@@ -408,14 +407,6 @@ export const REFERENCE_LEDGER: LedgerEntry[] = [
     },
   },
   {
-    column: areaMembers.areaId,
-    verdict: { protectedBy: "fk", onDelete: "cascade" },
-  },
-  {
-    column: areaMembers.deviceId,
-    verdict: { protectedBy: "fk", onDelete: "cascade" },
-  },
-  {
     column: areaBindings.areaId,
     verdict: { protectedBy: "fk", onDelete: "cascade" },
   },
@@ -440,15 +431,12 @@ export const REFERENCE_LEDGER: LedgerEntry[] = [
     },
   },
   {
-    column: devices.primaryAreaId,
-    verdict: { protectedBy: "fk", onDelete: "no action" },
-  },
-  {
-    // The Home-Assistant-shaped edge (migration 0070): 0 or 1 area per device. SET NULL rather than
-    // NO ACTION because NULL is a first-class state here — deleting an area moves its devices to the
-    // unassigned bucket instead of blocking the delete. That is not a weaker guarantee than
-    // `primaryAreaId`'s: nothing derived hangs off this column. The area-keyed derived tables key on
-    // their OWN `area_id`, and `point_readings_flow_attr_1d`'s NO ACTION firewall is untouched.
+    // The Home-Assistant-shaped edge (migration 0070), and since 0074 the ONLY device→area edge:
+    // 0 or 1 area per device. SET NULL rather than NO ACTION because NULL is a first-class state
+    // here — deleting an area moves its devices to the unassigned bucket instead of blocking the
+    // delete. That is not weaker than the `primary_area_id` NO ACTION it replaced: nothing derived
+    // hangs off this column. The area-keyed derived tables key on their OWN `area_id`, and
+    // `point_readings_flow_attr_1d`'s NO ACTION firewall is untouched.
     column: devices.areaId,
     verdict: { protectedBy: "fk", onDelete: "set null" },
   },
@@ -579,6 +567,14 @@ export const REFERENCE_LEDGER: LedgerEntry[] = [
       reason:
         "🛑 It HAS an FK — `ON DELETE SET NULL` — which is precisely why it needs naming anyway. The FK guarantees the column never dangles, and that is the whole problem: the user's default is silently emptied and they land somewhere else at next login with nothing saying why. An enforced constraint is not the same as a visible outcome.",
     },
+  },
+  {
+    // The same shape as `defaultDashboardId` above, and deliberately NOT given the same verdict.
+    // Emptying this one is recoverable by design: `resolveOnboardingArea` treats a blank default as
+    // "no default recorded" and mints a site for the next connection, so the outcome of deleting
+    // the area is an extra area, not a user stranded somewhere they did not choose.
+    column: users.defaultAreaId,
+    verdict: { protectedBy: "fk", onDelete: "set null" },
   },
 
   // -- Derivations and automations.

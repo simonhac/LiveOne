@@ -138,6 +138,25 @@ export const users = pgTable(
     dayOffsetMin: integer("day_offset_min"),
     displayTimezone: text("display_timezone"),
     location: jsonb("location").$type<AreaLocation>(),
+    // The area a newly onboarded device of this user's is placed in (migration 0073).
+    //
+    // Onboarding needs an answer to "where does this device go?" that is neither "nowhere" nor "its
+    // own private shell". Before the area-of-one was retired the answer was structural — every
+    // device minted its own area, which is the proliferation that change exists to end. Home
+    // Assistant can leave a discovered device area-less because HA is one home and an area-less
+    // device still renders; here an area is the sole home of the display timezone and the location,
+    // so an area-less onboarding would silently discard the site address the Enphase callback
+    // supplies.
+    //
+    // NULL is normal, not a defect: it means "no default recorded yet", and the onboarding path then
+    // mints a site area for the connection (the pre-0073 behaviour) and — if that was this user's
+    // FIRST area — records it here. So the column self-populates and needs no UI to start working.
+    //
+    // ON DELETE SET NULL: deleting the default area returns the user to "no default recorded",
+    // which is a state onboarding already handles, rather than blocking the delete.
+    defaultAreaId: uuid("default_area_id").references(() => areas.id, {
+      onDelete: "set null",
+    }),
     createdAt: tsMs("created_at").notNull().defaultNow(),
     updatedAt: tsMs("updated_at").notNull().defaultNow(),
   },
@@ -793,8 +812,8 @@ export type NewDashboardGrant = typeof dashboardGrants.$inferInsert;
 // into a coherent energy site. Replaced vendor_type='composite' fake devices rows.
 //
 // An Area is a grouping of 0..N member devices, and a device is in 0 or 1 Area — Home Assistant's
-// shape. Membership is the single nullable column `devices.area_id` (migration 0071); `area_members`
-// is FROZEN and read by nothing. A zero-device Area is legal.
+// shape. Membership is the single nullable column `devices.area_id` (migration 0071); its
+// many-to-many predecessor `area_members` was dropped by 0074. A zero-device Area is legal.
 // The single-vs-multi distinction is STRUCTURAL (membership), not a stored `kind` — the
 // `kind` column was dropped in migration 0019, and the `source_system_id` seam in P6.
 //
@@ -1013,7 +1032,7 @@ export const derivationSources = pgTable(
   },
   (table) => ({
     // One point per slot — exactly what a jsonb object with fixed keys meant. Composite natural
-    // key, no surrogate (the `area_members` pattern), which is what lets prod-dev-sync copy this
+    // key, no surrogate, which is what lets prod-dev-sync copy this
     // table with a plain by-PK upsert.
     pk: primaryKey({
       columns: [table.derivationId, table.slot],
@@ -1283,9 +1302,8 @@ export const legacyHandles = pgTable(
 // ============================================================================
 // config-v4 registries (migration 0035)
 //
-// The successors to systems/point_info/area_devices/polling_status. Not a uniform group:
-// `area_members` and `device_state` are PRIMARY, while `devices` and `points` are still mirrored
-// by lib/registry/v4-mirror.ts.
+// The successors to systems/point_info/area_devices/polling_status. `area_members` was the fourth
+// and is gone (migration 0074) — membership collapsed into `devices.area_id`.
 // ============================================================================
 
 // Global device rid allocator. Seeded at max(systems.id)+1 by registry-sync so devices.rid preserves
@@ -1312,18 +1330,9 @@ export const devices = pgTable(
     slug: text("slug"), // ← systems.alias
     model: text("model"),
     serial: text("serial"),
-    // The eagerly-minted area-of-one each device was born with. ⚠️ **VESTIGIAL, and on its way out.**
-    //
-    // 🛑 SUPERSEDED by `areaId` below (migration 0070). Its `NOT NULL` was dropped by migration 0072,
-    // which is the whole point of that migration: while it stood, an area-less device could be
-    // represented, resolved and served but NOT INSERTED, so `insertDeviceToPg` had to keep minting a
-    // shell area for every new device. Migration 0073 drops the column outright.
-    //
-    // Nothing reads it. Do not add a reader — `areaId` is the area a device is IN, and the two have
-    // answered differently for every re-homed device since 0071.
-    primaryAreaId: uuid("primary_area_id").references(() => areas.id),
     // The device's area, Home-Assistant shaped: 0 or 1, nullable, and the SOLE edge once 0072 lands
-    // (`area_members` goes with it). NULL is a first-class state — HA's "not assigned to an area"
+    // (the many-to-many `area_members` went with migration 0074). NULL is a first-class state — HA's
+    // "not assigned to an area"
     // bucket — and is what an ownerless ambient producer (the OpenElectricity NEM regions, HA's
     // `entry_type=DeviceEntryType.SERVICE`) sits at permanently: consumers reach it by REFERENCE
     // (`lib/grid/context.ts` resolves area.location → NEM region → the public device), never by
@@ -1450,34 +1459,15 @@ export const points = pgTable(
   }),
 );
 
-// area_members — 🛑 **FROZEN. Nothing reads it and nothing writes it.** It was area→member-device
-// membership until migration 0071 backfilled `devices.area_id` and the resolver flipped onto it;
-// these rows are the PRE-FLIP membership, kept as a record until migration 0072 drops the table.
+// area_members — GONE (migration 0074). It was the area→member-device many-to-many, and the claim
+// that it made us "more general than Home Assistant" inverted: a device is in 0 or 1 area
+// (`devices.area_id`), which is exactly HA's shape. The generality was never used for anything a
+// human authored — it existed so a device could sit in BOTH its eagerly-minted area-of-one and its
+// real site — and it cost two production defects: every Kutis EV run priced at $0.00 for two months
+// because something had to guess which of a device's areas priced it, and the flow-eligibility
+// dedupe that stopped a child area claiming its parent's Sankey.
 //
-// Querying it will answer, and will answer wrongly: a device re-homed since the flip still has its
-// old row here, and a device placed since the flip has none. `lib/areas/members.ts` is the only
-// module that should speak about membership at all.
-//
-// The one live reference left is `DeviceWriter.deleteDevice`, which clears a device's rows before
-// deleting it — the `device_id` FK is real and would otherwise raise 23503.
-export const areaMembers = pgTable(
-  "area_members",
-  {
-    areaId: uuid("area_id")
-      .notNull()
-      .references(() => areas.id, { onDelete: "cascade" }),
-    deviceId: uuid("device_id")
-      .notNull()
-      .references(() => devices.id, { onDelete: "cascade" }),
-    ordinal: integer("ordinal").notNull().default(0),
-  },
-  (table) => ({
-    pk: primaryKey({
-      columns: [table.areaId, table.deviceId],
-      name: "area_members_pk",
-    }),
-  }),
-);
+// `lib/areas/members.ts` is the only module that should speak about membership.
 
 // device_state ← polling_status. 1:1 operational satellite of devices; written every poll, and since
 // Phase 12 slice C the ONLY operational-state table (polling_status is frozen — see its header).
@@ -1774,8 +1764,6 @@ export type DeviceRow = typeof devices.$inferSelect;
 export type NewDeviceRow = typeof devices.$inferInsert;
 export type PointRow = typeof points.$inferSelect;
 export type NewPointRow = typeof points.$inferInsert;
-export type AreaMember = typeof areaMembers.$inferSelect;
-export type NewAreaMember = typeof areaMembers.$inferInsert;
 export type DeviceState = typeof deviceState.$inferSelect;
 export type NewDeviceState = typeof deviceState.$inferInsert;
 export type User = typeof users.$inferSelect;

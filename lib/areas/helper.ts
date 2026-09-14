@@ -5,14 +5,15 @@
  * NOT ownerless).
  *
  * "Exactly one Area" is structural since migration 0071 — `devices.area_id`, one nullable column —
- * rather than a convention over `area_members` rows. That is what makes the dedupe below reliable.
+ * rather than a convention over the many-to-many `area_members` it replaced. That is what makes the
+ * dedupe below reliable, and since Stage 5 the helper is CREATED in its Area rather than minted
+ * elsewhere and moved, so there is no window in which it exists and the dedupe cannot see it.
  */
 import { and, asc, eq } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import { areas, devices } from "@/lib/db/planetscale/schema";
 import { DeviceWriter } from "@/lib/registry/device-writer";
 import { helperSiteId } from "./helper-site-id";
-import { setDeviceArea } from "./members";
 
 /**
  * Ensure the Area's helper device exists and is a member, returning its integer handle (`devices.rid`).
@@ -29,7 +30,6 @@ export async function ensureHelperDevice(areaId: string): Promise<number> {
       displayName: areas.name,
       owner: areas.ownerUserId,
       tzOff: areas.timezoneOffsetMin,
-      tz: areas.displayTimezone,
     })
     .from(areas)
     .where(eq(areas.id, areaId))
@@ -55,25 +55,14 @@ export async function ensureHelperDevice(areaId: string): Promise<number> {
 
   const helper = await DeviceWriter.createHelperDevice({
     ownerClerkUserId: area.owner,
+    // 🛑 The helper is created IN the Area, in one insert. It used to be minted into an area-of-one
+    // and then moved here by a follow-up `setDeviceArea`, which is what opened the window the
+    // duplicate-helper bug lived in: the dedupe above reads `devices.area_id`, so between the insert
+    // and the move the helper existed and was invisible to the very check meant to find it.
+    areaId,
     vendorSiteId: helperSiteId(areaId),
     displayName: `${area.displayName ?? "Area"} · derived`,
     timezoneOffsetMin: area.tzOff,
-    displayTimezone: area.tz,
   });
-  // The uuid comes straight off the create (slice 1a): `createHelperDevice` INSERTS the `devices` row
-  // rather than mirroring one, so it already knows the identity and hands it back. This used to
-  // re-derive it via `ensureDeviceRow(helper.id)` to "re-assert the row in case the mirror hiccupped" — a
-  // hedge that only meant something while the row was a COPY of a `systems` row written by someone else.
-  // There is no second writer to lose a race with now, so the extra round trip goes with it.
-  //
-  // 🛑 This MOVES the helper out of the area-of-one its create just minted and into the Area it
-  // serves — and it is the write the dedupe above reads. Between the resolver flip (which pointed the
-  // dedupe at `devices.area_id`) and this line, the two disagreed: the dedupe asked a column no writer
-  // set, so it missed every time and this function minted a FRESH helper on every call. That is the
-  // duplicate-helper bug (two `Craig Unified · derived` on dev) in its unbounded form — nothing caps
-  // it — and it is now structurally impossible, because membership IS a column on the row being
-  // deduped.
-  const helperDeviceId = helper.deviceId;
-  await setDeviceArea(db, helperDeviceId, areaId);
   return helper.id;
 }

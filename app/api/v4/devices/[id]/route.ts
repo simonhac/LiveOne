@@ -115,10 +115,9 @@ export async function GET(
     model: row.model,
     serial: row.serial,
     commissionedOn: row.commissionedOn,
-    primaryAreaId: Area.encode(row.primaryAreaId),
-    // The area the device is IN — nullable, because a device is in 0 or 1 area. Distinct from
-    // `primaryAreaId`, which is the eagerly-minted area-of-one it was born with and which the
-    // resolver stopped consulting at migration 0071.
+    // The area the device is IN — nullable, because a device is in 0 or 1 area. This used to sit
+    // beside a `primaryAreaId` naming the eagerly-minted area-of-one; that shell is no longer minted
+    // and its column is dropped by migration 0073, so this is the only area a device has.
     areaId: row.areaId ? Area.encode(row.areaId) : null,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),

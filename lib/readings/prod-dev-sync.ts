@@ -222,14 +222,12 @@ const FULL: FullTable[] = [
       children: [],
     },
   },
-  ...["users", "share_tokens"].map(
-    (name): FullTable => ({ name, mode: "full", onConflict: "update" }),
-  ),
+  { name: "share_tokens", mode: "full", onConflict: "update" },
   // areas' uuid PK is generated independently on dev, so dev can hold the same logical Area (same
   // handle / owner+alias) under a different uuid. The by-PK upsert then trips a secondary
   // unique index (areas_owner_alias_unique). `idDrift` clears the mismatched
-  // dev Area (+ its FK children) so prod's uuid lands. FK-first: areas here, then area_members /
-  // area_bindings / the incremental flow legs re-populate under the correct uuid.
+  // dev Area (+ its FK children) so prod's uuid lands. FK-first: areas here, then area_bindings /
+  // the incremental flow legs re-populate under the correct uuid.
   {
     name: "areas",
     mode: "full",
@@ -249,9 +247,6 @@ const FULL: FullTable[] = [
         { table: "legacy_handles", parentCol: "area_id", keyCols: ["handle"] },
       ],
       children: [
-        // `area_members` is deliberately NOT listed: its `area_id` FK is ON DELETE CASCADE, so a cleared
-        // drifted area takes its membership with it, and the `area_members` leg below repopulates under
-        // prod's uuid. (`area_devices` sat here until slice H dropped it.)
         { table: "area_bindings", cols: ["area_id"] },
         { table: "point_readings_flow_attr_1d", cols: ["area_id"] },
         { table: "battery_provenance_daily", cols: ["area_id"] },
@@ -261,10 +256,19 @@ const FULL: FullTable[] = [
         // later leg — it is an ordinary clear-and-repopulate child like the four above.
         { table: "legacy_handles", cols: ["area_id"] },
       ],
-      // Both FKs below are NOT NULL / NO ACTION, so a post-cutover drifted area that owns a device
-      // BLOCKS the parent delete outright: this is the failure that froze liveone-dev from
-      // 2026-07-25 (`devices_primary_area_id_areas_id_fk`). They name the same
-      // LOGICAL area as prod's incoming row, so they are MOVED onto prod's uuid instead of deleted.
+      // A drifted area a device SITS IN must not be deleted out from under it. `devices.area_id` is
+      // ON DELETE SET NULL, so unlike its NOT NULL / NO ACTION predecessor `primary_area_id` it would
+      // not BLOCK the parent delete — it would silently make the device ambient, which is worse: the
+      // sync would report success and dev would quietly lose a placement. (The NO ACTION version of
+      // that failure is what froze liveone-dev from 2026-07-25 on
+      // `devices_primary_area_id_areas_id_fk`; the column went with migration 0074 and this leg
+      // inherits its job.) A device names the same LOGICAL area as prod's incoming row, so it is
+      // MOVED onto prod's uuid instead.
+      //
+      // 🛑 `users.default_area_id` (migration 0073) is likewise SET NULL and is deliberately NOT
+      // repointed: `users` syncs `full`/`update` in its own leg ABOVE this one, so prod's value —
+      // already prod's uuid — overwrites whatever dev held, and a repoint here would write dev's
+      // stale answer over it.
       //
       // 🛑 `derivations` is NOT here, and — more importantly — it is not in `children` either. The
       // argument that moved it out of `children` still holds and must not be lost: a derivation is
@@ -279,7 +283,7 @@ const FULL: FullTable[] = [
       // outright, so there is no longer an `area_id` for a realigning area to strand. The
       // protection it stood for moved to `derivation_sources.point_id`'s FK ("you cannot delete a
       // point a live derivation reads").
-      repoint: [{ table: "devices", cols: ["primary_area_id"] }],
+      repoint: [{ table: "devices", cols: ["area_id"] }],
       // Nullable columns behind areas_owner_alias_unique. Cleared on the drifted dev row so prod's row
       // can be inserted alongside it, which the repoint UPDATE needs as its FK target. The drifted row
       // is deleted moments later, in the same transaction.
@@ -295,12 +299,18 @@ const FULL: FullTable[] = [
   },
   // ── config-v4 v4 registries (Phase 12 slice A) ──────────────────────────────
   // These were populated on dev by scripts/config-v4/registry-sync.ts — cutover scaffolding that Phase 12
-  // DELETES — so without them here dev's registries freeze at the last manual run (they were 4 rows short
-  // of the legacy membership table when this landed; slice H has since made `area_members` primary and
-  // dropped that table). They are also no longer dark: point_readings and both agg
+  // DELETES — so without them here dev's registries freeze at the last manual run. They are also
+  // no longer dark: point_readings and both agg
   // twins FK point_rid → points.rid, so a point minted on prod that never reaches dev's `points` breaks
   // the incremental readings legs outright — the same class of failure as the areas FK that froze dev for
   // three days. FK order within the group: devices (→ areas) → everything else (→ devices).
+  // 🛑 AFTER `areas`, and it used to be before. `users.default_area_id` (migration 0073) FKs
+  // `areas(id)`, so prod's value names an area that must already be in dev or the upsert 23503s.
+  // Running after also REPAIRS the one way this sync can clear it: the `areas` leg above deletes a
+  // drifted dev area, and that FK is ON DELETE SET NULL, so dev's default would silently blank —
+  // this leg then writes prod's answer over the hole. (`users.default_dashboard_id` needs the same
+  // treatment and already has it: `dashboards` is the first leg of all.)
+  { name: "users", mode: "full", onConflict: "update" },
   {
     name: "devices",
     mode: "full",
@@ -320,7 +330,6 @@ const FULL: FullTable[] = [
       children: [],
       repoint: [
         { table: "points", cols: ["device_id"] },
-        { table: "area_members", cols: ["device_id"] },
         { table: "device_state", cols: ["device_id"] },
         { table: "legacy_handles", cols: ["device_id"] },
       ],
@@ -362,7 +371,6 @@ const FULL: FullTable[] = [
     },
   },
   // Natural composite/1:1 PKs, no surrogate — plain by-PK upserts, after both FK parents.
-  { name: "area_members", mode: "full", onConflict: "update" },
   { name: "device_state", mode: "full", onConflict: "update" },
   // Frozen-at-cutover handle→device/area map. Previously left out of the manifest deliberately, but it is
   // also an areas idDrift CHILD — so a realigning area cleared its handle rows with no later leg to restore
@@ -433,7 +441,7 @@ const FULL: FullTable[] = [
   // parent list would be real machinery for a case that cannot occur — but it is the seam to widen
   // if a zero-source derivation ever becomes legal.
   //
-  // No `idDrift`: the PK is the natural key `(derivation_id, slot)` — the `area_members` pattern —
+  // No `idDrift`: the PK is the natural key `(derivation_id, slot)`, no surrogate —
   // and `device_id` needs no repoint of its own, because the `devices` idDrift leg's `points`
   // repoint carries it through the `ON UPDATE CASCADE` on the composite FK into `points`.
   {

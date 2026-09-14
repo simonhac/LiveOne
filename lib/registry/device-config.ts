@@ -111,7 +111,7 @@ export interface DeviceConfigView {
  *
  * The identity was split out from {@link DeviceConfigView} because of ONE caller that could not supply
  * it: the now-deleted `synthesizeAreaView`, which fabricated this shape from a multi-device Area — by
- * definition no `devices` row and therefore no `deviceId`/`uuid`/`primary_area_id`. That caller is gone
+ * definition no `devices` row and therefore no `deviceId`/`uuid`/`area_id`. That caller is gone
  * (config-v4 Phase 13 PR 2): every remaining reader of `DeviceConfigView` addresses a real device, so
  * the split could in principle collapse back into `DeviceRecord`. Left as-is for this PR — it is a type
  * simplification, not a behaviour change, and PR 2's diff is already large.
@@ -125,17 +125,14 @@ export interface DeviceRecord extends DeviceConfigView {
   /** Raw `devices.id`. Data-layer only; above this seam use `deviceId`. */
   readonly uuid: string;
   /**
-   * The device's area-of-one (`devices.primary_area_id`, NOT NULL) — VESTIGIAL. It is not the
-   * device's area and nothing resolves through it any more; it survives only because the column is
-   * still NOT NULL, which is the one thing forcing a new device to mint an area. Migration 0072
-   * drops both.
-   */
-  readonly primaryAreaId: string;
-  /**
    * The Area this device is IN (`devices.area_id`, migration 0071) — nullable, because a device is in
-   * 0 or 1 Area. Not to be confused with `primaryAreaId`: that is the eagerly-minted area-of-one the
-   * device was born with, which since the Stage 3 flip means nothing to the resolver and survives
-   * only because its column is still NOT NULL.
+   * 0 or 1 Area, Home-Assistant shaped. NULL is a first-class state, not a missing value: it is the
+   * unassigned bucket, and where an ambient producer (the ownerless OpenElectricity NEM regions)
+   * sits permanently.
+   *
+   * This is the ONLY area a device has. Its predecessor `primaryAreaId` — the eagerly-minted
+   * area-of-one every device was born with — stopped being projected here when the mint stopped, and
+   * migration 0073 drops the column.
    */
   readonly areaId: string | null;
 }
@@ -176,8 +173,7 @@ type JoinRow = {
  * 🛑 And it joins `devices.area_id` — the area the device IS IN — not `primary_area_id`, the
  * eagerly-minted area-of-one it was born with. Placement is a fact about where a device sits, so it
  * has to come from the same area membership does; joining the shell would mean a device's timezone
- * and its site's timezone could disagree with nothing to reconcile them. This is the LAST live read
- * of `primary_area_id`, which is what makes the column droppable.
+ * and its site's timezone could disagree with nothing to reconcile them.
  *
  * Moving it was a data change as well as a code one, and the data went FIRST: two prod site areas
  * carried no location of their own while their members' areas-of-one did, so the move would have
@@ -203,7 +199,6 @@ function toRecord(row: JoinRow): DeviceRecord {
   return {
     deviceId: Device.encode(d.id),
     uuid: d.id,
-    primaryAreaId: d.primaryAreaId,
     areaId: d.areaId,
     id: d.rid,
     ownerClerkUserId: d.ownerUserId,
