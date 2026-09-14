@@ -38,11 +38,11 @@ export interface ApiSession {
    * The headers every request of this session must carry — today, `x-liveone-admin` when and only
    * when `--admin` was given and honoured.
    *
-   * 🛑 Exposed because the WRITE verbs call `apiFetch` directly rather than through `get`, and the
-   * first cut of this attached the header inside `get` alone. The consequence was silent and exactly
-   * backwards: `liveone device area` and the two area-wiring PUTs would have been authorized as a
-   * plain user while the reads that chose their arguments were fleet-wide. Spread this into every
-   * `apiFetch` init a session makes.
+   * 🛑 The WRITE verbs call `apiFetch` directly rather than through `get`, so they do NOT carry this
+   * unless they spread it — and today they deliberately do not need to. This PR's rule is that READS
+   * are opt-in (`actingAsAdmin`) while WRITES keep the unconditional `isAdmin` they have always had,
+   * so no write route consults the header. Spread it here when that changes; see
+   * `docs/architecture/api.md`, which is where the whole write side converting is scoped.
    */
   headers: Record<string, string>;
   /** GET `path`, returning the parsed body. Non-2xx maps through `apiFetch`'s vocabulary. */

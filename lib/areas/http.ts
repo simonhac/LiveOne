@@ -23,6 +23,7 @@ import {
   assertDevicesRehomable,
   AreaAccessError,
   AreaValidationError,
+  type AuthorizedPlacements,
 } from "@/lib/areas/create";
 import { listReadableAreas, type ReadableArea } from "@/lib/areas/list";
 import type { AreaLocation } from "@/lib/areas/types";
@@ -150,7 +151,16 @@ export async function loadReadableArea(
 
 /** `resolveMemberDeviceRefs` outcome — the readable member set, or a status the caller maps to a 4xx. */
 export type MemberRefsResult =
-  | { ok: true; deviceIds: DeviceId[]; systemIds: number[] }
+  | {
+      ok: true;
+      deviceIds: DeviceId[];
+      systemIds: number[];
+      /**
+       * What the firewall OBSERVED while authorizing — each device's area at that moment. The DAO
+       * scopes its writes on it, so the decision and the write are about the same state.
+       */
+      authorized: AuthorizedPlacements;
+    }
   | { ok: false; status: 403 | 422; message: string };
 
 /**
@@ -185,7 +195,8 @@ export async function resolveMemberDeviceRefs(
       message: "members must be an array of dv_ ids",
     };
   }
-  if (refs.length === 0) return { ok: true, deviceIds: [], systemIds: [] };
+  if (refs.length === 0)
+    return { ok: true, deviceIds: [], systemIds: [], authorized: new Map() };
   const deviceIds: DeviceId[] = [];
   for (const ref of refs) {
     const parsed = typeof ref === "string" ? Device.parse(ref) : null;
@@ -222,8 +233,9 @@ export async function resolveMemberDeviceRefs(
     }
     systemIds.push(rid);
   }
+  let authorized: AuthorizedPlacements;
   try {
-    await assertDevicesRehomable(userId, isAdmin, systemIds);
+    authorized = await assertDevicesRehomable(userId, isAdmin, systemIds);
   } catch (err) {
     if (err instanceof AreaAccessError)
       return { ok: false, status: 403, message: err.message };
@@ -231,7 +243,7 @@ export async function resolveMemberDeviceRefs(
       return { ok: false, status: 422, message: err.message };
     throw err;
   }
-  return { ok: true, deviceIds, systemIds };
+  return { ok: true, deviceIds, systemIds, authorized };
 }
 
 /**

@@ -143,6 +143,8 @@ export async function POST(request: NextRequest) {
       displayTimezone,
       location,
       memberSystemIds: members.systemIds,
+      // 🛑 The state the firewall authorized against — the move applies only where it still holds.
+      authorized: members.authorized,
     });
     // 🛑 Membership, KV and the point-series cache all key off this — never return before it runs,
     // and refresh the areas the new members were taken OUT of too, or each goes on serving a device

@@ -75,6 +75,17 @@ export class AreaValidationError extends Error {
 const AREA_ALIAS_UNIQUE = "areas_owner_alias_unique";
 
 /**
+ * Where each device WAS when it was authorized — `devices.id` → its `area_id` at that moment.
+ *
+ * 🛑 This is not a convenience; it is the authorization CARRIED FORWARD, and every move applies only
+ * `WHERE area_id` still equals what this map recorded. Scoping a write on a SECOND, later read (the
+ * first cut of this) closes nothing: a custody claim authorized against area A, followed by the
+ * owner moving the device to B, would simply re-read B and take it from there — deciding against one
+ * state and writing to another.
+ */
+export type AuthorizedPlacements = Map<string, string | null>;
+
+/**
  * Assert the caller may place each `systemId` in an area they own — the no-escalation firewall.
  *
  * 🛑 **This used to ask only "can the caller READ it", and that is no longer a sufficient question.**
@@ -102,7 +113,8 @@ export async function assertDevicesRehomable(
   userId: string,
   isAdmin: boolean,
   systemIds: number[],
-): Promise<void> {
+): Promise<AuthorizedPlacements> {
+  const observed: AuthorizedPlacements = new Map();
   for (const sid of systemIds) {
     const dev = await DeviceConfigRegistry.deviceByHandle(sid);
     if (!dev) throw new AreaValidationError(`System ${sid} not found`);
@@ -110,10 +122,12 @@ export async function assertDevicesRehomable(
       throw new AreaValidationError(
         `Device ${sid} is ambient (no owner) and cannot be placed in an area — reference it by id instead`,
       );
+    observed.set(dev.uuid, dev.areaId);
     if (isAdmin || dev.ownerClerkUserId === userId) continue;
     if (dev.areaId && (await areaOwner(dev.areaId)) === userId) continue;
     throw new AreaAccessError(`No access to system ${sid}`);
   }
+  return observed;
 }
 
 /** Who owns an area, for the custody leg above. Null for an unknown area. */
@@ -135,6 +149,12 @@ export interface CreateAreaInput {
   location?: AreaLocation | null;
   /** Member device systemIds. Each is MOVED into the new area, leaving whatever area it was in. */
   memberSystemIds: number[];
+  /**
+   * What `assertDevicesRehomable` observed about each member — its `devices.id` → the area it was in
+   * when the caller was authorized. The move applies only where that still holds; the route supplies
+   * it, because the route is where the authorization happened.
+   */
+  authorized: AuthorizedPlacements;
 }
 
 /**
@@ -191,7 +211,12 @@ export async function createArea(
           // — its eagerly-minted area-of-one, normally, but possibly a site area someone else owns,
           // which is why the route runs `assertDevicesRehomable` before it gets here — and that
           // area's bindings onto its points go with it. Ordinal is gone with the membership row.
-          for (const vacated of await moveDevicesInto(tx, id, deviceIds))
+          for (const vacated of await moveDevicesInto(
+            tx,
+            id,
+            deviceIds,
+            input.authorized,
+          ))
             vacatedAreas.add(vacated);
         }
       });
@@ -259,11 +284,12 @@ export async function updateAreaMeta(
 export async function addMember(
   areaId: string,
   systemId: number,
+  authorized: AuthorizedPlacements,
 ): Promise<string[]> {
   const db = requirePlanetscaleDb();
   const deviceId = await DeviceRegistry.uuidForRid(systemId, db);
   return db.transaction(async (tx) => [
-    ...(await moveDevicesInto(tx, areaId, [deviceId])),
+    ...(await moveDevicesInto(tx, areaId, [deviceId], authorized)),
   ]);
 }
 
@@ -302,49 +328,27 @@ async function detachBindings(
 }
 
 /**
- * Where each of these devices is RIGHT NOW — read once, so a move can clean up the area each one is
- * actually leaving. Only devices that have an area appear.
- */
-async function currentAreaOf(
-  exec: Db | Parameters<Parameters<Db["transaction"]>[0]>[0],
-  deviceUuids: string[],
-): Promise<Map<string, string>> {
-  if (deviceUuids.length === 0) return new Map();
-  const rows = await exec
-    .select({ id: devices.id, areaId: devices.areaId })
-    .from(devices)
-    .where(inArray(devices.id, deviceUuids));
-  return new Map(
-    rows
-      .filter((r): r is typeof r & { areaId: string } => r.areaId != null)
-      .map((r) => [r.id, r.areaId]),
-  );
-}
-
-/**
- * Move `deviceUuids` into `areaId`, detaching each from whatever area it was in — bindings and all.
- * Returns the areas they LEFT, so the caller can refresh serving at both ends.
+ * Move `deviceUuids` into `areaId`, detaching each from the area `authorized` recorded it in —
+ * bindings and all. Returns the areas actually VACATED, so the caller can refresh serving at both
+ * ends.
  *
- * 🛑 The UPDATE is scoped on the area the device was read in (`area_id IS NOT DISTINCT FROM …`), so a
- * device that moved between the read and the write is left alone rather than clobbered. Without it a
- * caller whose custody lapsed mid-request would still take the device.
+ * 🛑 **The UPDATE goes FIRST and the binding delete is conditional on it.** A move is only real if
+ * the device is still where AUTHORIZATION saw it, so the write is scoped on that — a device someone
+ * else moved in the meantime becomes a no-op rather than a theft. Deleting the bindings before
+ * knowing that would destroy a live area's wiring on behalf of a move that never happened, which is
+ * the worst failure available here: bindings are authored by hand and nothing rebuilds them.
  */
 async function moveDevicesInto(
   tx: Parameters<Parameters<Db["transaction"]>[0]>[0],
   areaId: string,
   deviceUuids: string[],
+  authorized: AuthorizedPlacements,
 ): Promise<Set<string>> {
   const vacated = new Set<string>();
-  if (deviceUuids.length === 0) return vacated;
-  const before = await currentAreaOf(tx, deviceUuids);
   for (const uuid of deviceUuids) {
-    const from = before.get(uuid) ?? null;
+    const from = authorized.get(uuid) ?? null;
     if (from === areaId) continue; // already here — no detach, no write
-    if (from) {
-      await detachBindings(tx, from, uuid);
-      vacated.add(from);
-    }
-    await tx
+    const applied = await tx
       .update(devices)
       .set({ areaId, updatedAt: new Date() })
       .where(
@@ -352,7 +356,13 @@ async function moveDevicesInto(
           eq(devices.id, uuid),
           from === null ? isNull(devices.areaId) : eq(devices.areaId, from),
         ),
-      );
+      )
+      .returning({ id: devices.id });
+    if (applied.length === 0) continue; // moved out from under us — leave everything alone
+    if (from) {
+      await detachBindings(tx, from, uuid);
+      vacated.add(from);
+    }
   }
   return vacated;
 }
@@ -399,10 +409,11 @@ export async function removeMember(
  * device in" (the device settings dialog, and the only way to say *not assigned*). Home Assistant has
  * the same pair, for the same reason.
  *
- * Returns the area the device LEFT, so the caller can refresh serving for both ends — a re-home
- * invalidates the KV subscription registry and the point-series cache of the source area just as much
- * as the destination's, and refreshing only the destination leaves the old area serving latest values
- * for a device it no longer holds.
+ * Returns the area the device LEFT and whether the move actually APPLIED, so the caller can refresh
+ * serving for both ends — a re-home invalidates the KV subscription registry and the point-series
+ * cache of the source area just as much as the destination's, and refreshing only the destination
+ * leaves the old area serving latest values for a device it no longer holds. `moved: false` means
+ * either "already there" or "someone else moved it first"; in both cases nothing was written.
  *
  * Departing bindings go with it, by exactly the predicate `removeMember` uses. A no-op move (already
  * there) short-circuits BEFORE the delete: re-stating a device's current area must not drop its
@@ -411,24 +422,21 @@ export async function removeMember(
 export async function rehomeDevice(
   deviceId: DeviceId,
   toAreaId: string | null,
+  authorized: AuthorizedPlacements,
 ): Promise<{ fromAreaId: string | null; moved: boolean }> {
   const db = requirePlanetscaleDb();
   const deviceUuid = Device.toUuid(deviceId);
-  const [row] = await db
-    .select({ areaId: devices.areaId })
-    .from(devices)
-    .where(eq(devices.id, deviceUuid))
-    .limit(1);
-  if (!row) throw new AreaValidationError(`Device ${deviceId} not found`);
-  const fromAreaId = row.areaId;
+  if (!authorized.has(deviceUuid))
+    throw new AreaValidationError(`Device ${deviceId} was not authorized`);
+  // 🛑 The area AUTHORIZATION saw, not a fresh read. Re-reading here and scoping on that would
+  // decide against one state and write to another: a custody claim authorized while the device sat
+  // in the caller's area A, followed by its owner moving it to B, would re-read B and take it.
+  const fromAreaId = authorized.get(deviceUuid) ?? null;
   if (fromAreaId === toAreaId) return { fromAreaId, moved: false };
 
+  let moved = false;
   await db.transaction(async (tx) => {
-    if (fromAreaId) await detachBindings(tx, fromAreaId, deviceUuid);
-    // 🛑 Scoped on the area the device was read in. The authorization above was decided against THAT
-    // state, so a device that moved in between must not be taken on the strength of a custody claim
-    // that has since lapsed — the write becomes a no-op instead.
-    await tx
+    const applied = await tx
       .update(devices)
       .set({ areaId: toAreaId, updatedAt: new Date() })
       .where(
@@ -438,9 +446,17 @@ export async function rehomeDevice(
             ? isNull(devices.areaId)
             : eq(devices.areaId, fromAreaId),
         ),
-      );
+      )
+      .returning({ id: devices.id });
+    // 🛑 The move goes FIRST and the binding delete is conditional on it having applied. Zero rows
+    // means someone moved the device out from under us; deleting a live area's bindings on behalf of
+    // a move that did not happen is the worst outcome available, because bindings are hand-authored
+    // and nothing rebuilds them.
+    if (applied.length === 0) return;
+    moved = true;
+    if (fromAreaId) await detachBindings(tx, fromAreaId, deviceUuid);
   });
-  return { fromAreaId, moved: true };
+  return { fromAreaId, moved };
 }
 
 /**
@@ -489,6 +505,7 @@ export async function rehomeDevice(
 export async function replaceMembers(
   areaId: string,
   desired: DeviceId[],
+  authorized: AuthorizedPlacements,
 ): Promise<string[]> {
   const wanted = [...new Set(desired)];
   if (wanted.length !== desired.length)
@@ -540,6 +557,7 @@ export async function replaceMembers(
         tx,
         areaId,
         wanted.map((id) => Device.toUuid(id)),
+        authorized,
       )),
     ];
   });

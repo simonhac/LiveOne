@@ -109,6 +109,8 @@ import { PUT as bindingsPUT } from "../areas/[id]/bindings/route";
 const mockAuth = jest.mocked(requireAuth);
 const mockLoadOwner = jest.mocked(loadAreaForOwner);
 const mockResolveMembers = jest.mocked(resolveMemberDeviceRefs);
+/** Stands in for what `assertDevicesRehomable` observed; asserted by identity below. */
+const AUTHORIZED = new Map<string, string | null>([["device-uuid", "area-x"]]);
 const mockMembers = jest.mocked(loadAreaMembers);
 const mockBindings = jest.mocked(loadAreaBindings);
 const mockCaps = jest.mocked(capabilitiesForDevice);
@@ -160,6 +162,7 @@ beforeEach(() => {
     ok: true,
     deviceIds: [DEVICE_A, DEVICE_B],
     systemIds: [1, 2],
+    authorized: AUTHORIZED,
   } as any);
   mockMembers.mockResolvedValue([
     {
@@ -469,10 +472,14 @@ describe("PUT /api/v4/areas/{id}/members", () => {
       params,
     );
     expect(res.status).toBe(200);
-    expect(mockReplaceMembers).toHaveBeenCalledWith(AREA_UUID, [
-      DEVICE_A,
-      DEVICE_B,
-    ]);
+    expect(mockReplaceMembers).toHaveBeenCalledWith(
+      AREA_UUID,
+      [DEVICE_A, DEVICE_B],
+      // 🛑 The state the firewall authorized against — pinned by IDENTITY, so this asserts the route
+      // FORWARDS what the firewall observed rather than taking a second, later reading of its own.
+      // A re-read would decide against one state and write to another.
+      AUTHORIZED,
+    );
     expect((await res.json()).members[0].id).toBe(DEVICE_A);
     expect(mockRefresh).toHaveBeenCalledWith(AREA_UUID);
   });
@@ -487,10 +494,14 @@ describe("PUT /api/v4/areas/{id}/members", () => {
       params,
     );
     expect(res.status).toBe(200);
-    expect(mockReplaceMembers).toHaveBeenCalledWith(AREA_UUID, [
-      DEVICE_A,
-      DEVICE_B,
-    ]);
+    expect(mockReplaceMembers).toHaveBeenCalledWith(
+      AREA_UUID,
+      [DEVICE_A, DEVICE_B],
+      // 🛑 The state the firewall authorized against — pinned by IDENTITY, so this asserts the route
+      // FORWARDS what the firewall observed rather than taking a second, later reading of its own.
+      // A re-read would decide against one state and write to another.
+      AUTHORIZED,
+    );
     expect(mockRefresh).toHaveBeenCalledWith(AREA_UUID);
   });
 

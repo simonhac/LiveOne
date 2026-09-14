@@ -192,7 +192,12 @@ export async function GET(request: NextRequest) {
       // Update existing device (reactivate if it was removed)
       console.log("ENPHASE: Updating existing system");
 
-      await DeviceWriter.updateDevice(existingDevice.id, {
+      // 🛑 The placement half may be REFUSED, and a reconnect must not fail on that. Placement lives
+      // on the AREA now, so if this device shares a site with others, handing the site Enphase's idea
+      // of the address would silently re-place every device in it — and a site this user may not own.
+      // The writer refuses; the reconnect proceeds without it and says so. The device's own
+      // name/owner/status are updated either way, which is what the reconnect is actually for.
+      const placement = await DeviceWriter.updateDevice(existingDevice.id, {
         ownerClerkUserId: userId,
         displayName: enphaseDevice.name || existingDevice.displayName,
         // Slice 1a: `location` is now typed `AreaLocation` (it lands on `areas.location`) whereas it
@@ -205,6 +210,10 @@ export async function GET(request: NextRequest) {
           existingDevice.location) as AreaLocation | null,
         status: "active", // Reactivate the device if it was removed
       });
+      if (!placement.applied)
+        console.log(
+          `ENPHASE: kept the site's existing location (${placement.reason})`,
+        );
 
       // Store tokens with the existing device ID
       const storeResult = await storeEnphaseTokens(

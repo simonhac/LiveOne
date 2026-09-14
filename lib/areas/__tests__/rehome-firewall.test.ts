@@ -12,7 +12,11 @@
  */
 import { describe, it, expect, beforeEach, jest } from "@jest/globals";
 
-type FakeDevice = { ownerClerkUserId: string | null; areaId: string | null };
+type FakeDevice = {
+  uuid: string;
+  ownerClerkUserId: string | null;
+  areaId: string | null;
+};
 
 let fleet: Map<number, FakeDevice>;
 let areaOwners: Map<string, string | null>;
@@ -58,10 +62,11 @@ beforeEach(() => {
     ["area-theirs", THEM],
   ]);
   fleet = new Map<number, FakeDevice>([
-    [1, { ownerClerkUserId: ME, areaId: "area-mine" }],
-    [2, { ownerClerkUserId: THEM, areaId: "area-theirs" }],
-    [3, { ownerClerkUserId: THEM, areaId: "area-mine" }],
-    [4, { ownerClerkUserId: null, areaId: null }], // an OpenElectricity NEM region
+    [1, { uuid: "dev-1", ownerClerkUserId: ME, areaId: "area-mine" }],
+    [2, { uuid: "dev-2", ownerClerkUserId: THEM, areaId: "area-theirs" }],
+    [3, { uuid: "dev-3", ownerClerkUserId: THEM, areaId: "area-mine" }],
+    // an OpenElectricity NEM region
+    [4, { uuid: "dev-4", ownerClerkUserId: null, areaId: null }],
   ]);
 });
 
@@ -69,12 +74,21 @@ const run = (rids: number[], isAdmin = false) =>
   assertDevicesRehomable(ME, isAdmin, rids);
 
 describe("assertDevicesRehomable", () => {
-  it("allows a device you own", async () => {
-    await expect(run([1])).resolves.toBeUndefined();
+  it("allows a device you own, and REPORTS where it saw it", async () => {
+    // 🛑 The returned map is the authorization carried forward: every move is scoped on it, so the
+    // decision and the write are about the same state. Returning nothing is what let a custody claim
+    // authorized against area A be applied to a device that had since moved to B.
+    await expect(run([1])).resolves.toEqual(new Map([["dev-1", "area-mine"]]));
   });
 
   it("allows admin anything with an owner", async () => {
-    await expect(run([1, 2, 3], true)).resolves.toBeUndefined();
+    await expect(run([1, 2, 3], true)).resolves.toEqual(
+      new Map([
+        ["dev-1", "area-mine"],
+        ["dev-2", "area-theirs"],
+        ["dev-3", "area-mine"],
+      ]),
+    );
   });
 
   it("🛑 REFUSES someone else's device sitting in someone else's area", async () => {
@@ -86,7 +100,7 @@ describe("assertDevicesRehomable", () => {
   it("allows someone else's device that is in an area YOU own — custody, not ownership", async () => {
     // Craig's devices sit in Craig Unified; its owner must be able to move them between their own
     // areas without owning each device. It is leaving a place they are already responsible for.
-    await expect(run([3])).resolves.toBeUndefined();
+    await expect(run([3])).resolves.toEqual(new Map([["dev-3", "area-mine"]]));
   });
 
   it("🛑 REFUSES an AMBIENT device outright, for every caller including admin", async () => {

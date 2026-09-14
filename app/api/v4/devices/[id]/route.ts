@@ -149,12 +149,13 @@ export async function GET(
  *
  * `areaId: null` needs only the first, since there is no destination to authorize.
  *
- * 400 malformed id · 403 not yours to move · 404 no such device · 422 bad body / ambient device.
- * Unlike `GET`, "not yours" is a 403 rather than being folded into the 404: this verb is addressed by
- * a `dv_` id the caller already holds, and `assertDevicesRehomable` has to be able to say WHICH of
- * its two legs refused — "you do not own it and it is not in an area you own" is actionable, and a
- * bare 404 for a device you can see in a picker is not. That is the same split `requireDeviceAccess`
- * makes (404 for no row, 403 for no access).
+ * 400 malformed id · 403 destination not yours · 404 no such device OR not yours to move ·
+ * 422 bad body / ambient device.
+ *
+ * 🛑 "No such device" and "not yours to move" are the SAME 404, the §8.4 collapse. Holding a
+ * well-formed `dv_` string is not permission to learn whether it names anything, and a distinct 403
+ * would confirm the existence of any device a caller cared to guess at. The DESTINATION's 403 is
+ * different and is kept: the caller demonstrably knows that area exists, because they named it.
  */
 export async function PATCH(
   request: NextRequest,
@@ -209,16 +210,24 @@ export async function PATCH(
   // with CUSTODY of someone else's device is not in it (custody is exactly the case the picker
   // cannot express); and a DISABLED device is filtered out of it, so a device could not be re-homed
   // precisely when you most want to tidy it away. Found in review.
+  let authorized;
   try {
     // 🛑 `isAdmin`, not `actingAsAdmin`, and deliberately. This PR's rule is that READS are opt-in
     // (`x-liveone-admin`) while WRITES keep the unconditional admin they have always had —
     // `loadAreaForOwner` and `requireDeviceAccess` both grant it without asking, and this route
     // would be the lone exception if it did otherwise. Moving the whole write side onto the opt-in
     // is the right end state and is one coherent change; see docs/architecture/api.md.
-    await assertDevicesRehomable(auth.userId, auth.isAdmin, [row.rid]);
+    authorized = await assertDevicesRehomable(auth.userId, auth.isAdmin, [
+      row.rid,
+    ]);
   } catch (err) {
+    // 🛑 `AreaAccessError` collapses into the SAME 404 as "no such device". Holding a well-formed
+    // `dv_` string is not permission to learn whether it names anything: a 403 here would confirm the
+    // existence of any device an attacker cared to guess at, and would echo its integer handle while
+    // doing so. `AreaValidationError` stays a 422 because it is a statement about a device the caller
+    // has already been shown to be entitled to (ambient, or the id resolves to no row at all).
     if (err instanceof AreaAccessError)
-      return NextResponse.json({ error: err.message }, { status: 403 });
+      return NextResponse.json({ error: "Device not found" }, { status: 404 });
     if (err instanceof AreaValidationError)
       return NextResponse.json({ error: err.message }, { status: 422 });
     throw err;
@@ -238,6 +247,7 @@ export async function PATCH(
   const { fromAreaId, moved } = await rehomeDevice(
     Device.encode(uuid),
     targetAreaUuid,
+    authorized,
   );
   // 🛑 BOTH ends. The source area's KV subscriptions and point-series cache still name this device's
   // points; refreshing only the destination leaves it serving latest values for a device it no longer
@@ -247,9 +257,18 @@ export async function PATCH(
     if (targetAreaUuid) await refreshAreaServing(targetAreaUuid);
   }
 
+  // 🛑 `areaId` reports where the device IS, not what was asked for. A `moved: false` from a lost
+  // race means the write did not apply, and echoing the requested destination would tell the caller
+  // their move succeeded when the device is somewhere else entirely.
   return NextResponse.json({
     id: Device.encode(uuid),
-    areaId: targetAreaUuid ? Area.encode(targetAreaUuid) : null,
+    areaId: moved
+      ? targetAreaUuid
+        ? Area.encode(targetAreaUuid)
+        : null
+      : fromAreaId
+        ? Area.encode(fromAreaId)
+        : null,
     previousAreaId: fromAreaId ? Area.encode(fromAreaId) : null,
     moved,
   });

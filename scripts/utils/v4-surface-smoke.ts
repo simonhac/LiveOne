@@ -57,10 +57,12 @@ import { shareTokens } from "@/lib/db/planetscale/schema";
 import { eq, inArray, like } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import {
+  areaBindings as areaBindingsTable,
   areas,
   dashboards as dashboardsTable,
   devices as devicesTable,
   legacyHandles,
+  points as pointsTable,
 } from "@/lib/db/planetscale/schema";
 // The server's OWN binding predicate, so the fixture this script builds cannot drift from the rules
 // `replaceBindings` validates against.
@@ -498,6 +500,59 @@ async function captureDeviceAreas(
   return new Map(rows.map((r) => [r.id, r.areaId]));
 }
 
+/**
+ * The BINDINGS a borrow will destroy, and the restore that puts them back.
+ *
+ * 🛑 Restoring `devices.area_id` is not enough. Moving a device into the scratch area detaches it
+ * from its real one *bindings and all*, and `area_bindings` rows are hand-authored — nothing rebuilds
+ * them. Without this the membership table comes back byte-identical while the original site's wiring
+ * is silently gone. That is not hypothetical: it destroyed 23 real bindings on `liveone-dev`.
+ */
+async function captureDeviceBindings(
+  deviceUuids: string[],
+): Promise<(typeof areaBindingsTable.$inferSelect)[]> {
+  if (deviceUuids.length === 0) return [];
+  const db = requirePlanetscaleDb();
+  return db
+    .select()
+    .from(areaBindingsTable)
+    .where(
+      inArray(
+        areaBindingsTable.pointUid,
+        db
+          .select({ id: pointsTable.id })
+          .from(pointsTable)
+          .where(inArray(pointsTable.deviceId, deviceUuids)),
+      ),
+    );
+}
+
+async function restoreDeviceBindings(
+  rows: (typeof areaBindingsTable.$inferSelect)[],
+): Promise<boolean> {
+  const db = requirePlanetscaleDb();
+  let ok = true;
+  for (const b of rows) {
+    try {
+      await db
+        .insert(areaBindingsTable)
+        .values(b)
+        .onConflictDoNothing({
+          target: [
+            areaBindingsTable.areaId,
+            areaBindingsTable.role,
+            areaBindingsTable.metricType,
+            areaBindingsTable.pointUid,
+          ],
+        });
+    } catch (err) {
+      console.error(`  ! could not restore binding ${b.id}:`, err);
+      ok = false;
+    }
+  }
+  return ok;
+}
+
 async function restoreBorrowedDevices(
   original: Map<string, string | null>,
 ): Promise<boolean> {
@@ -734,6 +789,7 @@ async function main(): Promise<void> {
   // Filled once the fixture is chosen; restored in the `finally`. Declared out here so the restore
   // runs even if the run dies between choosing the fixture and finishing.
   const borrowedAreas = new Map<string, string | null>();
+  let borrowedBindings: (typeof areaBindingsTable.$inferSelect)[] = [];
 
   try {
     // ---------------------------------------------------------------- 1. GET /areas
@@ -1210,12 +1266,15 @@ async function main(): Promise<void> {
     const handleA = fixture.handleOf.get(fixture.deviceA)!;
     const handleB = fixture.handleOf.get(fixture.deviceB)!;
     // 🛑 Record where the fixture devices live BEFORE anything moves them. See `captureDeviceAreas`.
-    for (const [uuid, was] of await captureDeviceAreas(
-      [fixture.deviceA, fixture.deviceB].map((d) =>
-        Device.toUuid(d as DeviceId),
-      ),
-    ))
+    const borrowedUuids = [fixture.deviceA, fixture.deviceB].map((d) =>
+      Device.toUuid(d as DeviceId),
+    );
+    for (const [uuid, was] of await captureDeviceAreas(borrowedUuids))
       borrowedAreas.set(uuid, was);
+    borrowedBindings = await captureDeviceBindings(borrowedUuids);
+    console.log(
+      `  captured ${borrowedBindings.length} binding(s) on the borrowed devices, to restore at teardown`,
+    );
 
     // ---------------------------------------------------------------- 5b. POST /areas
     section("POST /api/v4/areas");
@@ -2781,6 +2840,7 @@ async function main(): Promise<void> {
     // area after this would leave every borrowed device ambient — see `captureDeviceAreas`. If it
     // fails, the sweep below refuses to delete the area that still holds them, and the run fails.
     if (!(await restoreBorrowedDevices(borrowedAreas))) failures++;
+    if (!(await restoreDeviceBindings(borrowedBindings))) failures++;
     await trash();
     // 🛑 The backstop, and it must run even when `trash()` reported success — that is the whole point.
     // A non-zero count here means the HTTP teardown believed it had deleted something it had not.

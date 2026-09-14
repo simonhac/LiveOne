@@ -1,4 +1,4 @@
-import { eq, max, sql } from "drizzle-orm";
+import { and, eq, max, ne, sql } from "drizzle-orm";
 import { isProduction } from "@/lib/env";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import { uniqueViolationDetail, violatedUniqueName } from "@/lib/db/pg-error";
@@ -338,10 +338,39 @@ async function createHelperDevice(params: {
  * would be a NEW behaviour that silently overwrites a user-set area name — out of scope for a
  * conversion, and the kind of blanket copy-down `ensureAreaOfOne` explicitly refused.
  */
+/** Does this area hold a device other than `systemId` that is not its own derived helper? */
+async function areaHasOtherTenants(
+  tx: DeviceRegistryExec,
+  areaId: string,
+  systemId: number,
+): Promise<boolean> {
+  const rows = await tx
+    .select({ rid: devices.rid })
+    .from(devices)
+    .where(
+      and(
+        eq(devices.areaId, areaId),
+        ne(devices.rid, systemId),
+        ne(devices.vendor, "helper"),
+      ),
+    )
+    .limit(1);
+  return rows.length > 0;
+}
+
+/**
+ * What happened to the placement half of a patch. `applied: true` when there was nothing to place or
+ * the write landed; a `reason` when the caller asked for a placement change that could not be made.
+ */
+interface PlacementOutcome {
+  applied: boolean;
+  reason?: string;
+}
+
 async function updateDevice(
   systemId: number,
   patch: DevicePatch,
-): Promise<void> {
+): Promise<PlacementOutcome> {
   const deviceSet: Partial<typeof devices.$inferInsert> = {};
   if (patch.ownerClerkUserId !== undefined)
     deviceSet.ownerUserId = patch.ownerClerkUserId;
@@ -370,6 +399,7 @@ async function updateDevice(
     areaSet.displayTimezone = patch.displayTimezone;
   if (patch.location !== undefined) areaSet.location = patch.location;
 
+  let placement: PlacementOutcome = { applied: true };
   await requirePlanetscaleDb().transaction(async (tx) => {
     await tx.update(devices).set(deviceSet).where(eq(devices.rid, systemId));
     if (Object.keys(areaSet).length > 0) {
@@ -378,26 +408,34 @@ async function updateDevice(
       // resolves placement from. It used to be the handle's area (`legacy_handles`), i.e. the
       // eagerly-minted area-of-one, and once the placement READ moved to `devices.area_id` that
       // became a silent no-op: for any re-homed device, `PATCH /api/admin/devices/{id}/settings`
-      // would answer 200, echo the new timezone, and the next GET would return the old one. Found in
-      // review — the read moved and the write did not.
-      //
-      // An AMBIENT device has no area, so a placement edit on one updates nothing. That is correct
-      // rather than a gap: an ambient device has no place, which is what ambient means.
-      //
-      // ⚠️ The area may be SHARED. Editing a member's timezone or location through a per-device
-      // dialog now edits the site, for every device in it. That is the honest consequence of
-      // placement being an area property, and it is why the plan splits `DeviceSettingsDialog`;
-      // until it does, the surface is at least consistent with what it reads back.
+      // would answer 200, echo the new timezone, and the next GET would return the old one.
       const [current] = await tx
         .select({ areaId: devices.areaId })
         .from(devices)
         .where(eq(devices.rid, systemId))
         .limit(1);
-      if (current?.areaId) {
+      if (!current?.areaId) {
+        // An AMBIENT device has no place — that is what ambient means — so there is nowhere to write
+        // this. Reported rather than swallowed: the caller was told to change something and nothing
+        // changed, and a 200 over the top of that is how a user learns not to trust the form.
+        placement = { applied: false, reason: "device is not in any site" };
+      } else if (await areaHasOtherTenants(tx, current.areaId, systemId)) {
+        // 🛑 A SHARED area. Placement belongs to the site, so writing it from a DEVICE-addressed
+        // route would let one device's settings — or, worse, an OAuth reconnect handing over a vendor
+        // address — silently re-place every other device in the site, and a site the caller may not
+        // even own. Refused here rather than authorized at each caller, because there are several and
+        // they do not all have a user to ask. Edit the AREA to move a shared site.
+        placement = {
+          applied: false,
+          reason:
+            "this device shares a site with others — edit the site's location/timezone instead",
+        };
+      } else {
         await tx.update(areas).set(areaSet).where(eq(areas.id, current.areaId));
       }
     }
   });
+  return placement;
 }
 
 /**

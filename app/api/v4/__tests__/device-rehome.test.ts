@@ -109,7 +109,8 @@ beforeEach(() => {
     id: AREA_UUID,
     ownerClerkUserId: "user_1",
   } as any);
-  mockRehomable.mockResolvedValue(undefined);
+  // What `assertDevicesRehomable` observed while authorizing — the state the write is scoped on.
+  mockRehomable.mockResolvedValue(new Map([[DEVICE_UUID, null]]) as never);
   mockRehome.mockResolvedValue({ fromAreaId: null, moved: true } as any);
 });
 
@@ -125,7 +126,7 @@ describe("PATCH /api/v4/devices/{id}", () => {
       previousAreaId: OTHER_AREA,
       moved: true,
     });
-    expect(mockRehome).toHaveBeenCalledWith(DEVICE, AREA_UUID);
+    expect(mockRehome).toHaveBeenCalledWith(DEVICE, AREA_UUID, expect.any(Map));
     // 🛑 Both. The source area's subscriptions still name this device's points.
     expect(mockRefresh.mock.calls.map((c) => c[0]).sort()).toEqual(
       [fromUuid, AREA_UUID].sort(),
@@ -139,7 +140,7 @@ describe("PATCH /api/v4/devices/{id}", () => {
     } as any);
     const res = await call({ areaId: null });
     expect(res.status).toBe(200);
-    expect(mockRehome).toHaveBeenCalledWith(DEVICE, null);
+    expect(mockRehome).toHaveBeenCalledWith(DEVICE, null, expect.any(Map));
     // There is no destination to own, so the area load must not even be attempted.
     expect(mockLoadArea).not.toHaveBeenCalled();
     expect(mockRefresh).toHaveBeenCalledWith(AREA_UUID);
@@ -156,10 +157,15 @@ describe("PATCH /api/v4/devices/{id}", () => {
     expect(mockRefresh).not.toHaveBeenCalled();
   });
 
-  it("🛑 403s when the caller may not TAKE the device out of where it is", async () => {
+  it("🛑 404s — not 403 — when the caller may not TAKE the device out of where it is", async () => {
+    // The §8.4 collapse. Holding a well-formed `dv_` string is not permission to learn whether it
+    // names anything, so "no such device" and "not yours to move" must be indistinguishable; a 403
+    // would confirm the existence of any device a caller cared to guess at, and the message would
+    // have echoed its integer handle while doing so.
     mockRehomable.mockRejectedValue(new AreaAccessError("No access"));
     const res = await call({ areaId: AREA });
-    expect(res.status).toBe(403);
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({ error: "Device not found" });
     expect(mockRehome).not.toHaveBeenCalled();
   });
 
@@ -204,9 +210,11 @@ describe("PATCH /api/v4/devices/{id}", () => {
     expect(mockVisible).not.toHaveBeenCalled();
   });
 
-  it("404s only when there is NO SUCH DEVICE", async () => {
+  it("…and an unknown device id gets the SAME 404, byte for byte", async () => {
     mockDb.mockReturnValue(selectChain([]) as any);
-    expect((await call({ areaId: AREA })).status).toBe(404);
+    const res = await call({ areaId: AREA });
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({ error: "Device not found" });
   });
 
   it("🛑 does NOT gate on the picker's visible set", async () => {

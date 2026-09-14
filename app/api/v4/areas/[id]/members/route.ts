@@ -63,7 +63,11 @@ export async function PUT(
 
   let vacated: string[] = [];
   try {
-    vacated = await replaceMembers(area.id, members.deviceIds);
+    vacated = await replaceMembers(
+      area.id,
+      members.deviceIds,
+      members.authorized,
+    );
   } catch (err) {
     if (err instanceof AreaValidationError)
       return NextResponse.json({ error: err.message }, { status: 422 });

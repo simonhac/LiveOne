@@ -3,7 +3,7 @@ import { eq } from "drizzle-orm";
 import { requireDeviceAccess } from "@/lib/api-auth";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import { areas } from "@/lib/db/planetscale/schema";
-import { getAreaForDevice } from "@/lib/areas/resolve";
+import { DeviceConfigRegistry } from "@/lib/registry/device-config";
 import {
   mergeAreaLocation,
   type AreaLocationPatch,
@@ -21,14 +21,19 @@ import type { AreaLocation } from "@/lib/areas/types";
  * GET: read access. PUT: owner/admin write — merge-patches the location and returns the derived region.
  */
 
-/** The current location for `systemId`'s Area (null if the handle has no Area). Read-only. */
+/**
+ * The current location of the site `systemId` is IN (null when it is in none). Read-only.
+ *
+ * 🛑 `devices.area_id`, not `getAreaForDevice` — see the PUT. The read and the write have to name the
+ * same area or this editor shows one value and saves another.
+ */
 async function readLocation(systemId: number): Promise<AreaLocation | null> {
-  const area = await getAreaForDevice(systemId);
-  if (!area) return null;
+  const device = await DeviceConfigRegistry.deviceByHandle(systemId);
+  if (!device?.areaId) return null;
   const [row] = await requirePlanetscaleDb()
     .select({ location: areas.location })
     .from(areas)
-    .where(eq(areas.id, area.id))
+    .where(eq(areas.id, device.areaId))
     .limit(1);
   return row?.location ?? null;
 }
@@ -83,16 +88,36 @@ export async function PUT(
   });
   if (auth instanceof NextResponse) return auth;
 
-  // Location is an Area/site property. Never mint an Area here — areas are explicit: if this handle is
-  // not a real Area, refuse. Group the device into a site (createArea) to give it a location.
-  const area = await getAreaForDevice(systemId);
-  if (!area)
+  // Location is an Area/site property. Never mint an Area here — areas are explicit.
+  //
+  // 🛑 The device's CURRENT area (`devices.area_id`), not `getAreaForDevice`, which resolves
+  // `legacy_handles.handle → area_id` — the eagerly-minted area-of-one. Once placement READS moved to
+  // `devices.area_id`, writing the shell here made this endpoint answer 200 with the new location
+  // while both `device-config` and the actual site kept the old one. A device with no area is
+  // AMBIENT and has nowhere to put a location, which is exactly what the message below says.
+  const device = await DeviceConfigRegistry.deviceByHandle(systemId);
+  if (!device?.areaId)
     return NextResponse.json(
       {
         error:
           "This device isn't part of a site — create a site and add the device to it to set a location.",
       },
       { status: 422 },
+    );
+  const area = { id: device.areaId };
+
+  // 🛑 Write access to the DEVICE is not write access to its SITE. A site can hold devices belonging
+  // to several owners, so without this the owner of any member could re-place a site they do not own
+  // — and a location move re-derives the NEM region, which re-prices everything the site reports.
+  const [owner] = await requirePlanetscaleDb()
+    .select({ ownerUserId: areas.ownerUserId })
+    .from(areas)
+    .where(eq(areas.id, area.id))
+    .limit(1);
+  if (!(auth.isAdmin || owner?.ownerUserId === auth.userId))
+    return NextResponse.json(
+      { error: "This site belongs to someone else" },
+      { status: 403 },
     );
 
   const db = requirePlanetscaleDb();

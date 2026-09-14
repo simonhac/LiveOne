@@ -127,6 +127,7 @@ const INPUT = {
   timezoneOffsetMin: 600,
   displayTimezone: "Australia/Melbourne",
   memberSystemIds: [],
+  authorized: new Map(),
 };
 
 describe("createArea — alias collision", () => {

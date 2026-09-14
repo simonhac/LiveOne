@@ -37,6 +37,7 @@ jest.mock("@/lib/areas/create", () => {
     AreaValidationError,
     assertDevicesRehomable: jest.fn(async () => {
       if (rehomableThrows) throw rehomableThrows;
+      return new Map();
     }),
   };
 });
@@ -70,6 +71,8 @@ describe("resolveMemberDeviceRefs", () => {
       ok: true,
       deviceIds: [B, A],
       systemIds: [2, 1],
+      // 🛑 What the firewall OBSERVED while authorizing — the state the DAO scopes its writes on.
+      authorized: new Map(),
     });
   });
 
@@ -78,6 +81,7 @@ describe("resolveMemberDeviceRefs", () => {
       ok: true,
       deviceIds: [],
       systemIds: [],
+      authorized: new Map(),
     });
   });
 

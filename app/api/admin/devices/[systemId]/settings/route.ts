@@ -208,7 +208,19 @@ export async function PATCH(
       }
     }
 
-    await DeviceWriter.updateDevice(systemId, updates);
+    const placement = await DeviceWriter.updateDevice(systemId, updates);
+    // 🛑 A placement edit that could not be applied must not answer `success: true` with the value
+    // the caller typed echoed back. Placement lives on the AREA, so a device that is ambient or
+    // shares a site with others has nowhere of its own to put it — and the next GET would return the
+    // old value, which is how a user learns not to trust a form. 409: the request was well-formed
+    // and refused by the state of the world, not by the body.
+    if (!placement.applied)
+      return NextResponse.json(
+        {
+          error: `Could not change this device's location or timezone: ${placement.reason}.`,
+        },
+        { status: 409 },
+      );
 
     // Revalidate dashboard paths to refresh server-side data
     revalidatePath("/dashboard", "layout");

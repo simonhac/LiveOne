@@ -44,9 +44,13 @@ async function main() {
   const { planetscaleDb, requirePlanetscaleDb } = await import(
     "@/lib/db/planetscale"
   );
-  const { areas, devices, legacyHandles } = await import(
-    "@/lib/db/planetscale/schema"
-  );
+  const {
+    areaBindings,
+    areas,
+    devices,
+    legacyHandles,
+    points: pointsTable,
+  } = await import("@/lib/db/planetscale/schema");
   const { createArea, addMember, replaceBindings, removeMember } = await import(
     "@/lib/areas/create"
   );
@@ -59,7 +63,7 @@ async function main() {
   const { bindingShapeMatches } = await import("@/lib/areas/slots");
   const { ROLES } = await import("@/lib/roles/registry");
   type RoleId = import("@/lib/roles/registry").RoleId;
-  const { eq } = await import("drizzle-orm");
+  const { eq, inArray } = await import("drizzle-orm");
 
   if (!planetscaleDb) {
     console.error(
@@ -111,10 +115,15 @@ async function main() {
     `Members: seed=${seed.join(",")}${extra ? `  extra=${extra}` : ""}\n`,
   );
 
-  // 🛑 Record where every borrowed device lives BEFORE anything moves it. See the header: this used
-  // to be a purely additive operation and is not one any more.
+  // 🛑 Record where every borrowed device lives BEFORE anything moves it, AND the bindings that move
+  // will destroy. See the header: this used to be a purely additive operation and is not one any
+  // more. Moving a device now detaches it from its old area *bindings and all* — so restoring
+  // `area_id` alone leaves the original site's hand-authored wiring gone, with the membership table
+  // byte-identical over the top of it. That is not hypothetical: it destroyed 23 real bindings on
+  // `liveone-dev` before this capture existed.
   const uuidByRid = new Map<number, string>();
   const originalArea = new Map<string, string | null>();
+  const originalBindings: (typeof areaBindings.$inferSelect)[] = [];
   for (const rid of members) {
     const uuid = await DeviceRegistry.uuidForRid(rid, db);
     uuidByRid.set(rid, uuid);
@@ -124,7 +133,24 @@ async function main() {
       .where(eq(devices.id, uuid))
       .limit(1);
     originalArea.set(uuid, row?.areaId ?? null);
+    originalBindings.push(
+      ...(await db
+        .select()
+        .from(areaBindings)
+        .where(
+          inArray(
+            areaBindings.pointUid,
+            db
+              .select({ id: pointsTable.id })
+              .from(pointsTable)
+              .where(eq(pointsTable.deviceId, uuid)),
+          ),
+        )),
+    );
   }
+  console.log(
+    `Borrowed ${members.length} device(s); captured ${originalBindings.length} binding(s) to restore.\n`,
+  );
 
   let areaId: string | null = null;
   try {
@@ -139,6 +165,14 @@ async function main() {
       displayTimezone: "Australia/Melbourne",
       location: null,
       memberSystemIds: seed,
+      // This script IS the authorization — it drives the DAO directly, below HTTP. The map states
+      // where it observed each member, which is exactly what the move is scoped on.
+      authorized: new Map(
+        seed.map((rid) => [
+          uuidByRid.get(rid)!,
+          originalArea.get(uuidByRid.get(rid)!) ?? null,
+        ]),
+      ),
     });
     areaId = created.id;
     const H = created.legacySystemId;
@@ -213,7 +247,16 @@ async function main() {
       "cleared bindings → union restored",
     );
     if (extra) {
-      await addMember(areaId, extra);
+      await addMember(
+        areaId,
+        extra,
+        new Map([
+          [
+            uuidByRid.get(extra)!,
+            originalArea.get(uuidByRid.get(extra)!) ?? null,
+          ],
+        ]),
+      );
       const ids = await memberHandles(areaId);
       assert(ids.includes(extra), `area_members now includes ${extra}`);
       const grown = await countPoints(H);
@@ -244,6 +287,28 @@ async function main() {
     // membership. Wrapped so a restore failure cannot impersonate a test failure — but LOUD, and it
     // vetoes the delete below.
     let restored = true;
+    // Bindings FIRST — a binding's area must exist and the device must be back in it for the row to
+    // mean anything, but `area_bindings` has no FK onto membership, so the order only has to put
+    // both back before anything reads them. Re-inserted by natural key, so a run that destroyed
+    // nothing re-inserts nothing.
+    for (const b of originalBindings) {
+      try {
+        await db
+          .insert(areaBindings)
+          .values(b)
+          .onConflictDoNothing({
+            target: [
+              areaBindings.areaId,
+              areaBindings.role,
+              areaBindings.metricType,
+              areaBindings.pointUid,
+            ],
+          });
+      } catch (err) {
+        console.error(`⚠️  could not restore binding ${b.id}:`, err);
+        restored = false;
+      }
+    }
     for (const [uuid, was] of originalArea) {
       try {
         await db
@@ -286,7 +351,10 @@ async function main() {
 }
 
 main()
-  .then(() => process.exit(0))
+  // 🛑 `process.exitCode`, not a hardcoded 0. The cleanup sets `exitCode = 1` when it could not put a
+  // borrowed device back, and `process.exit(0)` here OVERRODE it — so a run that left real devices
+  // displaced on a shared database reported success to the operator and to CI. Found in review.
+  .then(() => process.exit(process.exitCode ?? 0))
   .catch((e) => {
     console.error("\n❌", e);
     process.exit(1);
