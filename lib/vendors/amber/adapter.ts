@@ -1,4 +1,5 @@
 import { BaseVendorAdapter } from "../base-adapter";
+import { amberDeviceName } from "./device-name";
 import type {
   TestConnectionResult,
   CredentialField,
@@ -544,7 +545,7 @@ export class AmberAdapter extends BaseVendorAdapter {
         success: true,
         deviceInfo: {
           vendorSiteId: site.id,
-          displayName: `Amber - ${site.network} (${site.nmi})`,
+          displayName: amberDeviceName(site),
           model: "Amber Electric",
           serial: site.nmi,
         },

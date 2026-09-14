@@ -72,6 +72,8 @@ Data goes to stdout; all diagnostics go to stderr. Mutating commands are **dry b
       - [liveone dashboard link revoke](../scripts/ops/CLI_README.md#liveone-dashboard-link-revoke) — Revoke a share link. Idempotent.  _(writes)_
     - [liveone dashboard delete](../scripts/ops/CLI_README.md#liveone-dashboard-delete) — Delete a dashboard — and every grant and share link on it.  _(writes)_
   - [liveone device](../scripts/ops/CLI_README.md#liveone-device) — Inspect devices — config, metadata, points, latest values, history.
+    - [liveone device rename](../scripts/ops/CLI_README.md#liveone-device-rename) — Change a device's display name; preserve its area, wiring and history.  _(writes)_
+    - [liveone device vendor-identity](../scripts/ops/CLI_README.md#liveone-device-vendor-identity) — Verify an Amber device's distributor and NMI at its stored vendor site.
     - [liveone device list](../scripts/ops/CLI_README.md#liveone-device-list) — List the devices you can read: id, handle, vendor, status, name.
     - [liveone device show](../scripts/ops/CLI_README.md#liveone-device-show) — A device's full aggregate: metadata, config, adapter state, capabilities, points.
     - [liveone device points](../scripts/ops/CLI_README.md#liveone-device-points) — A device's point inventory: pt_… id, path, metric, unit.

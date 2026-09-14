@@ -39,6 +39,12 @@ const success = (argv: string[]) => {
 };
 
 describe("the write gate", () => {
+  it("rename requires a device and name, and is dry-run by default", () => {
+    const args = ["rename", "9", "Amber CitiPower NMI 6102849089"];
+    expect(success(args).dryRun).toBe(true);
+    expect(success([...args, "--apply"]).dryRun).toBe(false);
+    expect(failure(["rename", "9"])).toMatch(/name/);
+  });
   // The harness installs --apply/--dry-run/--yes from `mutates`, but only on the verbs that declare
   // it. A read verb that grew the flags would be advertising a gate it does not honour.
   it("recompute is dry by default and offers --apply", () => {
@@ -53,7 +59,7 @@ describe("the write gate", () => {
     expect(success([...args, "--apply"]).dryRun).toBe(false);
   });
 
-  it.each(["list", "show", "points", "latest", "history"])(
+  it.each(["list", "show", "points", "latest", "history", "vendor-identity"])(
     "%s has no write flags at all",
     (verb) => {
       const args = verb === "list" ? [verb] : [verb, "kutis"];
