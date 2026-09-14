@@ -70,9 +70,9 @@ type DevicePollingState = typeof pgDeviceState.$inferSelect;
  * `devices` genuinely has no counterpart: `ratings`, `solarSize`, `batterySize` → `config.spec`.
  *
  * `location`, `timezoneOffsetMin` and `displayTimezone` are PLACEMENT: they come from the device's
- * area, resolved through `resolvePlacement` (lib/areas/placement.ts), which falls back to the platform
- * default for a device that has no area. They are never nullable on this shape — a caller should not
- * have to know whether the device is placed.
+ * area (`devices.area_id`), resolved through `resolvePlacement` (lib/areas/placement.ts), which falls
+ * back to the platform default for an AMBIENT device — one in no area. They are never nullable on
+ * this shape — a caller should not have to know whether the device is placed.
  */
 export interface DeviceConfigView {
   // --- DeviceWithPolling-compatible surface (see module header) ---
@@ -124,7 +124,12 @@ export interface DeviceRecord extends DeviceConfigView {
   readonly deviceId: DeviceId;
   /** Raw `devices.id`. Data-layer only; above this seam use `deviceId`. */
   readonly uuid: string;
-  /** The device's area-of-one (`devices.primary_area_id`, NOT NULL). */
+  /**
+   * The device's area-of-one (`devices.primary_area_id`, NOT NULL) — VESTIGIAL. It is not the
+   * device's area and nothing resolves through it any more; it survives only because the column is
+   * still NOT NULL, which is the one thing forcing a new device to mint an area. Migration 0072
+   * drops both.
+   */
   readonly primaryAreaId: string;
   /**
    * The Area this device is IN (`devices.area_id`, migration 0071) — nullable, because a device is in
@@ -167,6 +172,17 @@ type JoinRow = {
  * not aggregated, invisible in admin, and no error raised anywhere. That was survivable only while
  * `devices.primary_area_id` was NOT NULL. It is the single highest-risk line in the device→0..1-area
  * change; `resolvePlacement` exists so the LEFT join costs nothing downstream.
+ *
+ * 🛑 And it joins `devices.area_id` — the area the device IS IN — not `primary_area_id`, the
+ * eagerly-minted area-of-one it was born with. Placement is a fact about where a device sits, so it
+ * has to come from the same area membership does; joining the shell would mean a device's timezone
+ * and its site's timezone could disagree with nothing to reconcile them. This is the LAST live read
+ * of `primary_area_id`, which is what makes the column droppable.
+ *
+ * Moving it was a data change as well as a code one, and the data went FIRST: two prod site areas
+ * carried no location of their own while their members' areas-of-one did, so the move would have
+ * silently dropped Craig Enphase's postcode and both Craig's and Daylesford Selectronic's
+ * coordinates. Those were merged up into `Craig Unified` and `Daylesford` before this line changed.
  */
 function baseSelect(db = requirePlanetscaleDb()) {
   return db
@@ -176,7 +192,7 @@ function baseSelect(db = requirePlanetscaleDb()) {
       device_state: getTableColumns(pgDeviceState),
     })
     .from(pgDevices)
-    .leftJoin(pgAreas, eq(pgAreas.id, pgDevices.primaryAreaId))
+    .leftJoin(pgAreas, eq(pgAreas.id, pgDevices.areaId))
     .leftJoin(pgDeviceState, eq(pgDeviceState.deviceId, pgDevices.id));
 }
 

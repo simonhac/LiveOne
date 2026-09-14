@@ -35,9 +35,15 @@ function enphaseWindow(device: DeviceConfigView, now: Date) {
         typeof device.location === "string"
           ? JSON.parse(device.location)
           : device.location;
-      if (loc.lat && loc.lon) {
+      // 🛑 `lng`, not `lon`. `AreaLocation` (lib/areas/types.ts) spells it `lng`, and nothing has
+      // ever written `lon` into `areas.location` — so this branch has NEVER been taken and every
+      // Enphase device has silently used the Melbourne default since the field was added. Found
+      // while moving placement onto `devices.area_id`; the practical delta is under a minute of
+      // dawn/dusk for a Melbourne-suburb site, and the window rounds to 30-minute boundaries either
+      // way, so this corrects the code without moving any current poll schedule.
+      if (loc.lat && loc.lng) {
         lat = loc.lat;
-        lon = loc.lon;
+        lon = loc.lng;
       }
     } catch {
       // Malformed location — the Melbourne default still yields a sane window.

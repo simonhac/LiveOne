@@ -44,30 +44,44 @@ export interface ResolvedPlacement {
 }
 
 /**
- * The floor of the resolution chain: what a device with no area (and, from migration 0070, no owner
- * default) is placed at.
+ * The floor of the resolution chain: what an AMBIENT device — one in no area, with no owner default
+ * (migration 0070) — is placed at.
  *
- * 🛑 These two values are NOT self-consistent, and that is deliberate — they reproduce
- * `insertDeviceToPg`'s existing `?? 600` / `?? "Australia/Melbourne"` defaults byte-for-byte.
- * `Australia/Melbourne` observes DST so it is +660 for part of the year, while the offset is a fixed
- * +600; `lib/date-utils.ts:126` maps offset 600 to `Australia/Brisbane` precisely because Brisbane is
- * the zone that actually equals it year-round. Changing the default to Brisbane would be a defensible
- * fix but it would silently move the display timezone of every device onboarded through
- * `POST /api/devices` and the Enphase OAuth callback, neither of which passes one — a data change
- * dressed as a cleanup. Left alone; fix it deliberately or not at all.
+ * 🛑 **`Australia/Brisbane`, not Melbourne, and the two halves must stay self-consistent.** Brisbane
+ * is the only Australian zone that actually equals the +600 beside it, year-round;
+ * `lib/date-utils.ts:126` already maps offset 600 → Brisbane for exactly that reason. Melbourne
+ * observes DST, so pairing it with a fixed +600 states a contradiction for half the year.
+ *
+ * An earlier pass left this as Melbourne on the reasoning that changing it "would silently move the
+ * display timezone of every device onboarded through `POST /api/devices` and the Enphase OAuth
+ * callback, neither of which passes one". **That was measured and is wrong.** Those two paths never
+ * reach this constant: `insertDeviceToPg` carries its OWN `?? 600` / `?? "Australia/Melbourne"`
+ * literals for the area it mints (`device-writer.ts`), which are the ONBOARDING default and a
+ * separate decision — a new household connection in Victoria really is Melbourne. This constant has
+ * exactly one production reader, `toRecord`'s `resolvePlacement(row.areas)`, and it is only reached
+ * when the joined area is NULL.
+ *
+ * So who is actually placed here: the ownerless OpenElectricity NEM regions, and nothing else. They
+ * are ambient by design (Home Assistant's `entry_type=SERVICE`) and were deliberately SEEDED with
+ * `Australia/Brisbane` — `scripts/openelectricity/seed-devices.ts` says "AEST (UTC+10), no DST",
+ * because NEM market time has no DST. This makes the floor agree with the only thing standing on it.
+ *
+ * **This is also the answer to "do the OE devices need to be in areas?" — no.** Everything an area
+ * was giving them is now either on the device (`day_offset_min`) or correct here.
  */
 export const PLATFORM_DEFAULT_PLACEMENT: ResolvedPlacement = {
-  timezoneOffsetMin: 600, // AEST
-  displayTimezone: "Australia/Melbourne",
+  timezoneOffsetMin: 600, // AEST (UTC+10), no DST — the NEM market clock
+  displayTimezone: "Australia/Brisbane", // the only zone that equals +600 all year
   location: null,
 };
 
 /**
  * Resolve a device's placement from its area, falling back to the platform default.
  *
- * Pass `null` for a device with no area. The owner tier of the chain lands with migration 0070's
- * `users.{day_offset_min,display_timezone,location}` columns; until then the chain is two-tier and
- * the fallback branch is unreachable, because `devices.primary_area_id` is still NOT NULL.
+ * Pass `null` for an AMBIENT device — one in no area. That branch is live now that `device-config.ts`
+ * joins `devices.area_id`: the two ownerless OpenElectricity NEM regions take it. The owner tier
+ * (migration 0070's `users.{day_offset_min,display_timezone,location}`) is still unwired, so the
+ * chain is two-tier in practice.
  */
 export function resolvePlacement(
   area: AreaPlacement | null | undefined,
