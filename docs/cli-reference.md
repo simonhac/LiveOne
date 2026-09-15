@@ -79,6 +79,8 @@ still reach stderr.
       - [liveone dashboard link revoke](../scripts/ops/CLI_README.md#liveone-dashboard-link-revoke) — Revoke a share link. Idempotent.  _(writes)_
     - [liveone dashboard delete](../scripts/ops/CLI_README.md#liveone-dashboard-delete) — Delete a dashboard — and every grant and share link on it.  _(writes)_
   - [liveone device](../scripts/ops/CLI_README.md#liveone-device) — Inspect devices — config, metadata, points, latest values, history.
+    - [liveone device archive](../scripts/ops/CLI_README.md#liveone-device-archive) — Retire a device: keep every row and reading, stop treating it as active.  _(writes)_
+    - [liveone device delete](../scripts/ops/CLI_README.md#liveone-device-delete) — Destroy an archived device, its points and its history. Irreversible.  _(writes)_
     - [liveone device rename](../scripts/ops/CLI_README.md#liveone-device-rename) — Change a device's display name; preserve its area, wiring and history.  _(writes)_
     - [liveone device vendor-identity](../scripts/ops/CLI_README.md#liveone-device-vendor-identity) — Verify an Amber device's distributor and NMI at its stored vendor site.
     - [liveone device list](../scripts/ops/CLI_README.md#liveone-device-list) — List the devices you can read: id, handle, vendor, status, name.

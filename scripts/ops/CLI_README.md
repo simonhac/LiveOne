@@ -65,6 +65,8 @@ still reach stderr.
       - [liveone dashboard link revoke](#liveone-dashboard-link-revoke)  _(writes)_
     - [liveone dashboard delete](#liveone-dashboard-delete)  _(writes)_
   - [liveone device](#liveone-device)
+    - [liveone device archive](#liveone-device-archive)  _(writes)_
+    - [liveone device delete](#liveone-device-delete)  _(writes)_
     - [liveone device rename](#liveone-device-rename)  _(writes)_
     - [liveone device vendor-identity](#liveone-device-vendor-identity)
     - [liveone device list](#liveone-device-list)
@@ -2129,8 +2131,12 @@ Http-only: every verb calls the deployed API as you (`liveone auth login`), and 
 `target: <origin> as <you>` on stderr first — read it to know which environment answered.
 Ids are per-environment.
 
-Every verb here READS except `rename`, `recompute`, `change-offset` and `area`, which write and are
-dry-run by default.
+Every verb here READS except `rename`, `recompute`, `change-offset`, `area`, `archive` and
+`delete`, which write and are dry-run by default.
+
+Retiring a device is TWO verbs and they are not synonyms: `archive` stops it being active and
+keeps every reading (reversible, `--undo`); `delete` destroys the row AND the history it owns,
+refuses unless the device is already archived, and has no --force.
 
 Usage:
   liveone device <subcommand> [options]
@@ -2138,6 +2144,8 @@ Usage:
   Read-only. This command changes nothing.
 
 Subcommands:
+  archive                Retire a device: keep every row and reading, stop treating it as active.  (writes)
+  delete                 Destroy an archived device, its points and its history. Irreversible.  (writes)
   rename                 Change a device's display name; preserve its area, wiring and history.  (writes)
   vendor-identity        Verify an Amber device's distributor and NMI at its stored vendor site.
   list                   List the devices you can read: id, handle, vendor, status, name.
@@ -2172,6 +2180,137 @@ External access:
 Exit codes:
   0    success
   1    completed, with findings or no results
+  2    usage error
+  3    authentication failure
+  5    upstream failure
+  130  interrupted
+```
+
+#### liveone device archive
+
+Retire a device: keep every row and reading, stop treating it as active.
+
+```
+Retire a device: keep every row and reading, stop treating it as active.
+
+When to use:
+  Use this when a device should stop being polled, listed and served, but its history must stay
+  readable. It is also the required first step before `device delete`.
+
+REVERSIBLE. The row, its points and every reading survive untouched. `--undo` puts it back.
+
+Archiving is still gated: an area or dashboard that names the device would go quiet with no
+error anywhere, so anything that would stop working is named first.
+
+Usage:
+  liveone device archive <device>... [options]
+
+  This command WRITES. It is dry by default: nothing changes without --apply.
+
+Arguments:
+  <device>               One or more devices: dv_… id, integer handle, slug or name
+
+Options:
+  --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
+  --undo                     Un-archive instead: set the device back to active
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
+  --apply                    Actually write. Without it nothing is changed.
+  --dry-run                  Report what would change and write nothing (the default)
+  --yes                      Skip the confirmation prompt. Required with --apply off a terminal.
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
+
+Examples:
+  liveone device archive 16
+  liveone device archive 16 --apply
+  liveone device archive 16 --undo --apply
+
+Exit codes:
+  0    success
+  1    the server refused (the reason names what would go quiet)
+  2    usage error
+  3    authentication failure
+  5    upstream failure
+  130  interrupted
+```
+
+#### liveone device delete
+
+Destroy an archived device, its points and its history. Irreversible.
+
+```
+Destroy an archived device, its points and its history. Irreversible.
+
+When to use:
+  Use this to finally remove a device you have already archived and cleared. If you only want it
+  to stop being polled and served, `device archive` is the whole operation.
+
+🛑 IRREVERSIBLE, and there is deliberately NO --force.
+
+This DESTROYS what the device owns — its points, their raw readings and both aggregate
+rollups, and its poll sessions. Unlike `area delete`, that is not a refusal: a point cannot
+exist without its device, so keeping the history is not an option the schema offers. The dry
+run prints the SPAN of what would go, so the size of the decision is visible first.
+
+Two interlocks, neither waivable:
+  1. the device must already be ARCHIVED (`liveone device archive <device> --apply`);
+  2. nothing may still REFERENCE it — a derivation reading or writing its points, an area
+     binding selecting one, a managed poller, a point command. The refusal names each, the
+     column it lives in, and the verb that clears it.
+
+The device's integer handle SURVIVES: `legacy_handles.device_id` is nulled, not deleted, so a
+handle shared with an area keeps resolving through that area.
+
+Usage:
+  liveone device delete <device>... [options]
+
+  This command WRITES. It is dry by default: nothing changes without --apply.
+
+Arguments:
+  <device>               One or more devices: dv_… id, integer handle, slug or name
+
+Options:
+  --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
+  --apply                    Actually write. Without it nothing is changed.
+  --dry-run                  Report what would change and write nothing (the default)
+  --yes                      Skip the confirmation prompt. Required with --apply off a terminal.
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
+
+Examples:
+  liveone device delete 16
+  liveone device delete 16 --apply
+
+Exit codes:
+  0    success
+  1    the server refused (the reason names every dependent)
   2    usage error
   3    authentication failure
   5    upstream failure

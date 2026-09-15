@@ -715,7 +715,7 @@ export const REFERENCE_LEDGER: LedgerEntry[] = [
     verdict: {
       protectedBy: "deliberately-unprotected",
       reason:
-        "`action.pointId` has no FK, but a point is never deleted by a config path (`point_commands.point_id` and `area_bindings.point_uid` both hold NO ACTION FKs against it), so there is no delete to refuse. Extracted anyway, so `liveone doctor refs` can find one that has already gone.",
+        "`action.pointId` has no FK. It used to say a point is never deleted by a config path, so there was no delete to refuse — that stopped being true when `hardDeleteDevice` shipped, which deletes a device's points outright. `deviceDependents` now scans this path (and the two in `trigger`) against the device's owned points and REFUSES, so the protection is real rather than incidental; the verdict stays unprotected because it is the scan, not a constraint, that provides it.",
     },
   },
   {
