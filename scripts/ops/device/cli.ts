@@ -40,6 +40,11 @@ import {
 } from "../shared";
 import { configSpec, CONFIG_HANDLERS } from "./config";
 import { coverageSpec, runCoverage } from "./coverage";
+import {
+  DEVICE_ARCHIVE_SPEC,
+  DEVICE_DELETE_SPEC,
+  DEVICE_RETIRE_HANDLERS,
+} from "./retire";
 
 const DEVICE_ARG = {
   name: "device",
@@ -75,10 +80,15 @@ export const deviceCommand = defineCommand({
     "Http-only: every verb calls the deployed API as you (`liveone auth login`), and prints\n" +
     "`target: <origin> as <you>` on stderr first — read it to know which environment answered.\n" +
     "Ids are per-environment.\n\n" +
-    "Every verb here READS except `rename`, `recompute`, `change-offset` and `area`, which write and are\n" +
-    "dry-run by default.",
+    "Every verb here READS except `rename`, `recompute`, `change-offset`, `area`, `archive` and\n" +
+    "`delete`, which write and are dry-run by default.\n\n" +
+    "Retiring a device is TWO verbs and they are not synonyms: `archive` stops it being active and\n" +
+    "keeps every reading (reversible, `--undo`); `delete` destroys the row AND the history it owns,\n" +
+    "refuses unless the device is already archived, and has no --force.",
   uses: ["api"],
   subcommands: {
+    archive: DEVICE_ARCHIVE_SPEC,
+    delete: DEVICE_DELETE_SPEC,
     rename: {
       name: "rename",
       summary:
@@ -883,6 +893,7 @@ async function runDeviceArea(ctx: Ctx): Promise<number> {
 }
 
 const HANDLERS: Record<string, (ctx: Ctx) => Promise<number>> = {
+  ...DEVICE_RETIRE_HANDLERS,
   rename: runRename,
   "vendor-identity": runVendorIdentity,
   list: runList,

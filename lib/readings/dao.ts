@@ -1647,6 +1647,59 @@ async function deleteAggsForPoints(
 }
 
 /**
+ * Delete every RAW reading belonging to a point set. Returns how many went.
+ *
+ * The raw twin of {@link deleteAggsForPoints}, and it exists for one caller: `hardDeleteDevice`.
+ * `points.device_id` and `point_readings.point_rid` are both NO ACTION, so a device cannot be
+ * deleted while any of its points hold a reading — the raw rows have to go first, and they can only
+ * go from in here, behind the seam.
+ *
+ * 🛑 Deliberately has no "all points" form, for {@link deleteAggsForPoints}' reason: an empty
+ * `pointRids` deletes nothing and returns zero rather than degenerating into an unfiltered delete of
+ * the largest table in the database.
+ *
+ * 🛑 Counted with `rowCount`, not `.returning()`. A device can hold millions of raw rows and the
+ * aggregate twin's `returning({ pointRid })` would stream every one of them back to Node to be
+ * discarded — fine for the six derived points that caller retires, not fine here.
+ */
+async function deleteRawForPoints(
+  pointRids: number[],
+  exec?: ReadingsExec,
+): Promise<number> {
+  if (pointRids.length === 0) return 0;
+  const db = exec ?? requirePlanetscaleDb();
+  const r = await db
+    .delete(pointReadings)
+    .where(inArray(pointReadings.pointRid, pointRids));
+  return r.rowCount ?? 0;
+}
+
+/**
+ * The instants a point set's RAW readings span, or `null` when it has none.
+ *
+ * 🛑 A SPAN, not a count, and that is the point. `point_readings` is the biggest table here and
+ * `COUNT(*)` over a year of one device's minutely history is a scan measured in seconds — the exact
+ * shape CLAUDE.md rules out. `min`/`max` ride the `(point_rid, measurement_time)` index, and a date
+ * range tells an operator more about what a delete would destroy than a row count does anyway.
+ */
+async function rawSpanMsForPoints(
+  pointRids: number[],
+  exec?: ReadingsExec,
+): Promise<{ minMs: number; maxMs: number } | null> {
+  if (pointRids.length === 0) return null;
+  const db = exec ?? requirePlanetscaleDb();
+  const [r] = await db
+    .select({
+      min: sql<Date | null>`min(${pointReadings.measurementTime})`,
+      max: sql<Date | null>`max(${pointReadings.measurementTime})`,
+    })
+    .from(pointReadings)
+    .where(inArray(pointReadings.pointRid, pointRids));
+  if (!r?.min || !r?.max) return null;
+  return { minMs: r.min.getTime(), maxMs: r.max.getTime() };
+}
+
+/**
  * The `agg_1d` day span a point set actually occupies, plus its row count. Returns `null` when the
  * points have no 1d rows at all.
  *
@@ -2221,6 +2274,8 @@ export const ReadingsDao = {
   updateRawValues,
   earliestAgg5mMs,
   deleteAggsForPoints,
+  deleteRawForPoints,
+  rawSpanMsForPoints,
   countAggsForPoints,
   deviceIdsWithAgg5mSince,
   latestAgg5mIntervalMsForDevice,

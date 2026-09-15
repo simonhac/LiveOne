@@ -231,6 +231,12 @@ describe("every route the bypass exposes authorizes for itself", () => {
     // The owner-scoped sibling (same file): requireAuth then owner-or-admin on the resolved area.
     // Needed by the area sub-resources `/api/v4/areas/{id}/members` and `/bindings`.
     "loadAreaForOwner",
+    // The DEVICE twin (lib/devices/http.ts), needed by `/api/v4/devices/{id}/dependents`. Listed on
+    // exactly the same terms as `loadAreaForOwner`, and it meets them: every path begins with
+    // `requireAuth`, and the only non-error return is behind `auth.isAdmin || row.ownerUserId ===
+    // auth.userId`. It reads WITHOUT a status filter on purpose — the lifecycle verbs operate on
+    // archived devices — which widens WHICH rows it can resolve, never WHOSE.
+    "loadDeviceForOwner",
     // The derivations surface (`/api/v4/derivations*`). Its route
     // modules are two-line delegations, so the string that appears in them is the IMPORT — and that
     // is the honest thing to match on here, because the property being asserted is about the

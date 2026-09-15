@@ -12,6 +12,9 @@ import { DeviceConfigRegistry } from "@/lib/registry/device-config";
 import { capabilitiesForDevice } from "@/lib/capabilities/server";
 import { Area, Device, Point } from "@/lib/ids";
 import { loadAreaForAuth } from "@/lib/areas/http";
+import { loadDeviceForOwner } from "@/lib/devices/http";
+import { refuseIfReliedUpon } from "@/lib/integrity/http";
+import { hardDeleteDevice, DeviceNotArchivedError } from "@/lib/devices/delete";
 import {
   assertDevicesRehomable,
   refreshAreaServing,
@@ -193,7 +196,62 @@ export async function PATCH(
   const body = (await request.json().catch(() => null)) as {
     areaId?: unknown;
     name?: unknown;
+    status?: unknown;
   } | null;
+
+  // The LIFECYCLE field, handled alone for `name`'s reason: combining a retire with a re-home or a
+  // rename makes one request mean two decisions, and the refusal for either would roll back both.
+  //
+  // 🛑 Only the two ends of the lifecycle are accepted here. `disabled` is a third value the CHECK
+  // constraint allows and NOTHING in the codebase distinguishes from `archived` — every consumer
+  // tests `status === 'active'`. Exposing it on a new wire surface would mint a second spelling for
+  // one state, which is exactly what migration 0075 spent a rename removing.
+  if (body && typeof body === "object" && "status" in body) {
+    if (Object.keys(body).some((key) => key !== "status"))
+      return NextResponse.json(
+        {
+          error:
+            "Send status alone; do not combine a retire with other changes",
+        },
+        { status: 422 },
+      );
+    if (body.status !== "active" && body.status !== "archived")
+      return NextResponse.json(
+        { error: "status must be 'active' or 'archived'" },
+        { status: 422 },
+      );
+    const authed = await loadDeviceForOwner(request, id);
+    if ("error" in authed) return authed.error;
+
+    // 🛑 THE ARCHIVE INTERLOCK, and it belongs HERE rather than only in the CLI preview.
+    //
+    // Archiving makes a device stop being served, so anything that names it goes quiet with no error
+    // anywhere. Without this the CLI's dry run printed "the server WILL REFUSE this" and then
+    // `--apply` succeeded — a preview that lies in the direction that teaches people to ignore it —
+    // and a direct PATCH bypassed the advertised interlock entirely. The area twin has always done
+    // this (`app/api/v4/areas/[id]/route.ts`); this route was the one that did not.
+    //
+    // Only when ARCHIVING: un-archiving removes no reference and cannot be refused for one.
+    if (body.status === "archived" && authed.device.status !== "archived") {
+      const relied = await refuseIfReliedUpon(
+        request,
+        "device",
+        authed.device.uuid,
+      );
+      if ("response" in relied) return relied.response;
+    }
+
+    await DeviceWriter.updateDevice(authed.device.rid, {
+      status: body.status,
+    });
+    revalidatePath("/dashboard");
+    return NextResponse.json({
+      id: Device.encode(uuid),
+      name: authed.device.name,
+      status: body.status,
+      previousStatus: authed.device.status,
+    });
+  }
   if (body && typeof body === "object" && "name" in body) {
     if (Object.keys(body).some((key) => key !== "name"))
       return NextResponse.json(
@@ -338,4 +396,67 @@ export async function PATCH(
     previousAreaId: fromAreaId ? Area.encode(fromAreaId) : null,
     moved,
   });
+}
+
+/**
+ * `DELETE /api/v4/devices/{dv_…}` — destroy an archived device and everything it owns.
+ *
+ * Two interlocks, neither waivable, and deliberately NO `?force=true` (unlike the shared
+ * `refuseIfReliedUpon` adapter): the device must already be archived, and nothing may still
+ * reference it. See `hardDeleteDevice` for where the owned/referenced line is drawn and why.
+ */
+export async function DELETE(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  const { id } = await params;
+  const authed = await loadDeviceForOwner(request, id);
+  if ("error" in authed) return authed.error;
+  const { device } = authed;
+
+  // A cheap, friendly pre-check ONLY — the authoritative one is inside `hardDeleteDevice`, under a
+  // row lock. This exists so the common case gets a 409 naming the archive verb without opening a
+  // transaction, and is deliberately not the thing being relied on.
+  if (device.status !== "archived")
+    return NextResponse.json(
+      {
+        error:
+          "That device is not archived, and delete is not the archive verb",
+        detail: {
+          code: "device-active",
+          status: device.status,
+          fix: "PATCH { status: 'archived' } first, confirm nothing misses it, then delete",
+        },
+      },
+      { status: 409 },
+    );
+
+  try {
+    const result = await hardDeleteDevice(device.uuid);
+    if (!result.ok)
+      return NextResponse.json(
+        {
+          error: `That device is still relied upon by ${result.dependents.length} thing(s)`,
+          detail: {
+            code: "relied-upon",
+            dependents: result.dependents,
+            fix: "clear each of them first — this delete has no force",
+          },
+        },
+        { status: 409 },
+      );
+    revalidatePath("/dashboard");
+    return NextResponse.json({ success: true, deleted: result.deleted });
+  } catch (err) {
+    if (err instanceof DeviceNotArchivedError)
+      return NextResponse.json(
+        {
+          error:
+            "That device stopped being archived while the delete was deciding",
+          detail: { code: "device-active", fix: "re-read it and try again" },
+        },
+        { status: 409 },
+      );
+    throw err;
+  }
 }

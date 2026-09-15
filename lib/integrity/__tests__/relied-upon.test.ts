@@ -95,3 +95,156 @@ describe("automation dependents", () => {
     expect(await findDependents("automation", "au-uuid")).toEqual([]);
   });
 });
+
+describe("device dependents", () => {
+  /** `deviceDependents` uses `innerJoin`, which the shared stub above does not carry. */
+  function stubDeviceDb(results: unknown[][]) {
+    const queue = [...results];
+    const builder: Record<string, unknown> = {};
+    for (const m of [
+      "select",
+      "from",
+      "where",
+      "limit",
+      "orderBy",
+      "groupBy",
+      "innerJoin",
+    ])
+      builder[m] = () => builder;
+    builder.then = (resolve: (v: unknown) => unknown) =>
+      Promise.resolve(queue.shift() ?? []).then(resolve);
+    return builder;
+  }
+
+  const DEV = "01a0a00a-1dcb-7c7b-8580-fd59501666f5";
+  const PT = "01a0a00a-1dcb-7c7b-8580-fd5950166600";
+
+  /**
+   * The destructive query order, so a test can queue results positionally:
+   *   dashboards · own points · the device row · [area name] ·
+   *   derivation sources · derivation outputs · area bindings · pollers · commands · automations
+   */
+  const destructiveResults = (
+    over: Partial<Record<string, unknown[]>> = {},
+  ) => [
+    over.dashboards ?? [],
+    over.points ?? [{ id: PT, rid: 7, name: "p" }],
+    over.device ?? [{ areaId: null, rid: 16 }],
+    over.sources ?? [],
+    over.outputs ?? [],
+    over.bindings ?? [],
+    over.pollers ?? [{ n: 0 }],
+    over.commands ?? [{ n: 0 }],
+    over.automations ?? [],
+  ];
+
+  it("🛑 refuses over an automation that names one of the device's points", async () => {
+    // The regression this leg exists for. `ledger.ts` classified `automations.action.pointId` as
+    // unprotected BECAUSE "a point is never deleted by a config path" — `hardDeleteDevice` made that
+    // false, and without this scan the rule would be left dangling with nothing having refused.
+    mockDb.mockReturnValue(
+      stubDeviceDb(
+        destructiveResults({
+          automations: [
+            {
+              id: "01a0a00a-1dcb-7c7b-8580-fd59501666aa",
+              name: "Charge overnight",
+              trigger: {},
+              action: { pointId: PT },
+            },
+          ],
+        }),
+      ) as never,
+    );
+    const deps = await findDependents("device", DEV, { destructive: true });
+    expect(deps.map((d) => d.kind)).toContain("automation");
+    expect(deps.find((d) => d.kind === "automation")!.via).toContain(
+      "automations.trigger/.action",
+    );
+  });
+
+  it("finds the trigger's two point paths, not just the action's", async () => {
+    // `source.pointId` and the exercise trigger's nested `unless.loadPointId` — the census's own
+    // comment calls the third reference "exactly the drift this exists to catch".
+    for (const trigger of [
+      { source: { pointId: PT } },
+      { unless: { loadPointId: PT } },
+    ]) {
+      mockDb.mockReturnValue(
+        stubDeviceDb(
+          destructiveResults({
+            automations: [
+              {
+                id: "01a0a00a-1dcb-7c7b-8580-fd59501666ab",
+                name: "x",
+                trigger,
+                action: {},
+              },
+            ],
+          }),
+        ) as never,
+      );
+      const deps = await findDependents("device", DEV, { destructive: true });
+      expect(deps.map((d) => d.kind)).toContain("automation");
+    }
+  });
+
+  it("ignores an automation naming somebody else's point", async () => {
+    mockDb.mockReturnValue(
+      stubDeviceDb(
+        destructiveResults({
+          automations: [
+            {
+              id: "01a0a00a-1dcb-7c7b-8580-fd59501666ac",
+              name: "other",
+              trigger: { source: { pointId: "some-other-point" } },
+              action: {},
+            },
+          ],
+        }),
+      ) as never,
+    );
+    const deps = await findDependents("device", DEV, { destructive: true });
+    expect(deps.map((d) => d.kind)).not.toContain("automation");
+  });
+
+  it("the ARCHIVE question stops before the destructive legs", async () => {
+    // Archiving destroys nothing, so the data legs must not be reported as obstacles to it —
+    // otherwise archiving a device with any history would be impossible, which is every device.
+    mockDb.mockReturnValue(
+      stubDeviceDb([
+        [],
+        [{ id: PT, rid: 7, name: "p" }],
+        [{ areaId: null, rid: 16 }],
+      ]) as never,
+    );
+    const deps = await findDependents("device", DEV, { destructive: false });
+    expect(deps).toEqual([]);
+  });
+
+  it("names the device's area membership, with the effect the scope implies", async () => {
+    const withArea = (destructive: boolean) =>
+      stubDeviceDb([
+        [],
+        [{ id: PT, rid: 7, name: "p" }],
+        [{ areaId: "01a0a00a-1dcb-7c7b-8580-fd5950166611", rid: 16 }],
+        [{ name: "Kutis" }],
+        [],
+        [],
+        [],
+        [{ n: 0 }],
+        [{ n: 0 }],
+        [],
+      ]) as never;
+
+    mockDb.mockReturnValue(withArea(false));
+    const archive = await findDependents("device", DEV, { destructive: false });
+    expect(archive.find((d) => d.kind === "area")!.effect).toBe(
+      "silently-dropped",
+    );
+
+    mockDb.mockReturnValue(withArea(true));
+    const del = await findDependents("device", DEV, { destructive: true });
+    expect(del.find((d) => d.kind === "area")!.effect).toBe("cascade-deleted");
+  });
+});

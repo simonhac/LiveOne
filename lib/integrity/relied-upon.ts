@@ -31,7 +31,7 @@
  * reference must be classified there, and a test fails by name when one is not. Without it this
  * file is a list of the references someone happened to remember.
  */
-import { and, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 
 type PgDb = ReturnType<typeof requirePlanetscaleDb>;
@@ -54,16 +54,26 @@ import {
   batteryProvenanceDaily,
   dashboardGrants,
   dashboards,
+  derivationSources,
   derivations,
   derivedIntervalProvenance,
   derivedIntervals,
   devices,
+  managedPollers,
+  pointCommands,
   points,
   pointReadingsFlowAttr1d,
   shareTokens,
   users,
 } from "@/lib/db/planetscale/schema";
-import { Area, Automation, Dashboard, Device, Point } from "@/lib/ids";
+import {
+  Area,
+  Automation,
+  Dashboard,
+  Derivation,
+  Device,
+  Point,
+} from "@/lib/ids";
 import { helperSiteId } from "@/lib/areas/helper-site-id";
 
 /**
@@ -75,7 +85,12 @@ const LEGACY_HELPER_PREFIX = "helper:area:";
 import { scanDocRefs } from "@/lib/dashboard/doc-refs";
 
 /** The kinds of row a delete can be refused for. */
-export type Subject = "area" | "dashboard" | "automation" | "derivation";
+export type Subject =
+  | "area"
+  | "device"
+  | "dashboard"
+  | "automation"
+  | "derivation";
 
 /**
  * What happens to a dependent if the delete goes ahead anyway. This is the field that decides
@@ -134,6 +149,236 @@ async function dashboardsReferencing(
     });
   }
   return hits;
+}
+
+/**
+ * Everything that references a Device.
+ *
+ * ## The line this function draws: OWNED vs REFERENCED
+ *
+ * A device is not an area. An area's dependents are other objects that happen to point at it — a
+ * calendar feed, a dashboard node, a day of Sankey — and every one of them outlives it, which is why
+ * `areaDependents` refuses over all of them. A device's POINTS and their READINGS are not like that:
+ * they are constitutive. A point cannot exist without its device (`points.device_id` is NOT NULL),
+ * so "delete the device but keep its points" is not a state the schema can hold. Refusing over them
+ * would make the verb unusable on every device that has ever recorded anything, which is all of them.
+ *
+ * So the rule is:
+ *
+ *   - **Owned** — points, their raw and aggregate readings, `device_state`, the `legacy_handles`
+ *     device leg, and the device's two archives (`sessions`, `amber_forecast_history`). These are
+ *     destroyed WITH the device; see `lib/devices/delete.ts` for why the archives count as owned
+ *     here when the ledger files them as rows that outlive what they describe. They are not
+ *     listed here as refusals; `hardDeleteDevice` reports their extent (spans, not counts) so the
+ *     dry run can say what goes.
+ *   - **Referenced** — anything that names the device or one of its points from OUTSIDE and would
+ *     survive it. Every one of these is a refusal, named with the column it lives in and the verb
+ *     that clears it.
+ *
+ * Every edge in `./ledger.ts` pointing at `devices.id`, `devices.rid` or `points.id`/`points.rid` is
+ * accounted for by one of those two lists. That is the completeness claim, and `ledger.test.ts` is
+ * what keeps it true when a column is added.
+ *
+ * 🛑 The hot reading tables are NOT touched here — `lib/integrity/` is not on the readings-seam
+ * allowlist (`scripts/check-readings-boundary.mjs`). Extent comes from `ReadingsDao` in the writer,
+ * not from this scan.
+ */
+async function deviceDependents(
+  uuid: string,
+  destructive: boolean,
+  db: ReliedUponExec,
+): Promise<Dependent[]> {
+  const out = await dashboardsReferencing(Device.encode(uuid), db);
+
+  // The device's own points, resolved once: several legs below ask "does anything outside name one
+  // of these?", and asking the same question five times over is how the list and the delete drift.
+  const ownPoints = await db
+    .select({ id: points.id, rid: points.rid, name: points.name })
+    .from(points)
+    .where(eq(points.deviceId, uuid));
+  const pointIds = ownPoints.map((p) => p.id);
+
+  // Membership. Named under BOTH scopes and the wording differs, exactly as the area twin does:
+  // archiving leaves `devices.area_id` alone and the device simply goes quiet where it stands.
+  const [row] = await db
+    .select({ areaId: devices.areaId, rid: devices.rid })
+    .from(devices)
+    .where(eq(devices.id, uuid))
+    .limit(1);
+  if (row?.areaId) {
+    const [a] = await db
+      .select({ name: areas.name })
+      .from(areas)
+      .where(eq(areas.id, row.areaId))
+      .limit(1);
+    out.push({
+      kind: "area",
+      id: Area.encode(row.areaId),
+      name: a?.name ?? null,
+      via: "devices.area_id",
+      effect: destructive ? "cascade-deleted" : "silently-dropped",
+      fix: "take it out of the area first: liveone area devices remove <area> <device> --apply",
+    });
+  }
+
+  if (!destructive) return out;
+
+  // ---------------------------------------------------------------------------------------------
+  // DESTRUCTIVE-ONLY. Everything below is a NO ACTION foreign key: untreated each surfaces as a raw
+  // 23503 naming a constraint, which is the error this module exists to turn into a sentence.
+  // ---------------------------------------------------------------------------------------------
+
+  // A run detector or HWS model reachable from this device — by the device itself (migration 0063)
+  // or by one of its points filling a slot. Not reproducible: a derivation is authored config, and
+  // deleting the device would leave it pointed at nothing.
+  const sourceRows = await db
+    .select({
+      derivationId: derivationSources.derivationId,
+      name: derivations.name,
+    })
+    .from(derivationSources)
+    .innerJoin(derivations, eq(derivations.id, derivationSources.derivationId))
+    .where(
+      pointIds.length > 0
+        ? or(
+            eq(derivationSources.deviceId, uuid),
+            inArray(derivationSources.pointId, pointIds),
+          )
+        : eq(derivationSources.deviceId, uuid),
+    );
+  for (const d of new Map(sourceRows.map((r) => [r.derivationId, r])).values())
+    out.push({
+      kind: "derivation",
+      id: Derivation.encode(d.derivationId),
+      name: d.name,
+      via: "derivation_sources.device_id / .point_id (NO ACTION)",
+      effect: "cascade-deleted",
+      fix: "delete it first: liveone derivation delete <dx_> (disable it first — that verb says so)",
+    });
+
+  // A derivation whose OUTPUT lands on one of this device's points — the HWS model's modelled
+  // temperature, say. Distinct from the sources leg above: a detector can read elsewhere and write
+  // here, so neither leg implies the other.
+  if (pointIds.length > 0)
+    for (const d of await db
+      .select({ id: derivations.id, name: derivations.name })
+      .from(derivations)
+      .where(inArray(derivations.outputPointId, pointIds)))
+      out.push({
+        kind: "derivation-output",
+        id: Derivation.encode(d.id),
+        name: d.name,
+        via: "derivations.output_point_id (NO ACTION)",
+        effect: "cascade-deleted",
+        fix: "delete that derivation first — its output point lives on this device",
+      });
+
+  // An area binding SELECTING one of this device's points. Authored configuration, and no recompute
+  // rebuilds it — the same argument `areaDependents` makes for its own bindings leg.
+  if (pointIds.length > 0)
+    for (const b of await db
+      .select({ areaId: areaBindings.areaId, pointUid: areaBindings.pointUid })
+      .from(areaBindings)
+      .where(inArray(areaBindings.pointUid, pointIds)))
+      out.push({
+        kind: "area-binding",
+        id: Point.encode(b.pointUid),
+        name: null,
+        via: "area_bindings.point_uid (NO ACTION)",
+        effect: "cascade-deleted",
+        fix: `clear it first: liveone area role clear ${Area.encode(b.areaId)} --apply`,
+      });
+
+  // The control plane. A managed poller is what actually fetches this device; a point command is a
+  // queued or historical write to it. Both NO ACTION, so both block, and both are operator state
+  // rather than anything a rebuild restores.
+  const [pollers] = await db
+    .select({ n: sql<number>`count(*)::int` })
+    .from(managedPollers)
+    .where(eq(managedPollers.deviceId, uuid));
+  if (pollers && pollers.n > 0)
+    out.push({
+      kind: "managed-poller",
+      id: `${pollers.n}`,
+      name: null,
+      via: "managed_pollers.device_id (NO ACTION)",
+      effect: "cascade-deleted",
+      fix: "retire the poller before the device it polls",
+    });
+
+  // 🛑 BOTH FKs, because they are INDEPENDENT. `point_commands.device_id` and `.point_id` are two
+  // separate NO ACTION constraints and the schema does not enforce that the command's device owns
+  // the point it names. A schema-valid row pointing at another device but at one of THESE points
+  // escapes a device_id-only predicate and then blocks the point delete with a raw 23503 — which is
+  // the error this module exists to replace with a sentence.
+  const [cmds] = await db
+    .select({ n: sql<number>`count(*)::int` })
+    .from(pointCommands)
+    .where(
+      pointIds.length > 0
+        ? or(
+            eq(pointCommands.deviceId, uuid),
+            inArray(pointCommands.pointId, pointIds),
+          )
+        : eq(pointCommands.deviceId, uuid),
+    );
+  if (cmds && cmds.n > 0)
+    out.push({
+      kind: "point-command",
+      id: `${cmds.n} record(s)`,
+      name: null,
+      via: "point_commands.device_id (NO ACTION)",
+      effect: "cascade-deleted",
+      fix: "the audit trail of every control write to this device — clear it deliberately",
+    });
+
+  // 🛑 AUTOMATIONS, and this leg exists because THIS CHANGE invalidated the reason it did not.
+  //
+  // `./ledger.ts` classifies `automations.action.pointId` as deliberately-unprotected, and the
+  // recorded justification is: *"a point is never deleted by a config path … so there is no delete
+  // to refuse."* That was true until `hardDeleteDevice`, which IS a config path that deletes points.
+  // Leaving it unscanned would let a device whose points are named only by an automation delete
+  // clean, silently breaking an authored rule — the exact class the census exists to prevent. The
+  // ledger entry has been corrected to say so.
+  //
+  // Three jsonb paths, no FK on any of them: `trigger.source.pointId`, `trigger.unless.loadPointId`
+  // (the exercise trigger's third reference) and `action.pointId`. Scanned by reading the rows and
+  // matching in JS rather than by a jsonb predicate, so a shape change degrades to "no match found"
+  // rather than to a SQL error — and DISABLED rules are scanned too, because a disabled automation
+  // is configuration that is expected to work when it is re-enabled.
+  if (pointIds.length > 0) {
+    const owned = new Set(pointIds);
+    for (const a of await db
+      .select({
+        id: automations.id,
+        name: automations.name,
+        trigger: automations.trigger,
+        action: automations.action,
+      })
+      .from(automations)) {
+      // Through `unknown`: the columns are typed as the closed v1 vocabularies, and a structural
+      // cast from those would be a compile error. Reading them as plain records is the point — this
+      // scan must survive a shape it does not know about.
+      const t = (a.trigger ?? {}) as unknown as Record<string, unknown>;
+      const src = (t.source ?? {}) as Record<string, unknown>;
+      const unless = (t.unless ?? {}) as Record<string, unknown>;
+      const act = (a.action ?? {}) as unknown as Record<string, unknown>;
+      const named = [src.pointId, unless.loadPointId, act.pointId].filter(
+        (v): v is string => typeof v === "string" && owned.has(v),
+      );
+      if (named.length === 0) continue;
+      out.push({
+        kind: "automation",
+        id: Automation.encode(a.id),
+        name: a.name,
+        via: "automations.trigger/.action → pointId (jsonb, no FK)",
+        effect: "dangles",
+        fix: "re-point or delete the automation — nothing would notice this reference breaking",
+      });
+    }
+  }
+
+  return out;
 }
 
 /**
@@ -561,6 +806,10 @@ export async function findDependents(
 ): Promise<Dependent[]> {
   const db = opts.exec ?? requirePlanetscaleDb();
   switch (subject) {
+    case "device":
+      // Same scope split as `area`: the ARCHIVE question is config references only, because
+      // archiving a device destroys nothing. Only `DELETE /api/v4/devices/{id}` passes `destructive`.
+      return deviceDependents(uuid, opts.destructive === true, db);
     case "area":
       // Defaults to the ARCHIVE scope, because that is what every pre-existing caller means. Only
       // `DELETE /api/v4/areas/{id}` passes `destructive`, and it is the only caller that destroys a
