@@ -31,8 +31,9 @@ export interface DetectConfig {
   delayOnMs: number;
   /**
    * HA delay_off: the max gap between consecutive on-samples that still counts as one run.
-   * Once there has been no on-sample for delayOffMs the run is closed at its last on-sample;
-   * this also decides whether the final run is left open (running now). Folds in "staleness".
+   * Once there has been no on-sample for delayOffMs the run is closed at (or just after, under a
+   * `midpoint` {@link boundaryMode}) its last on-sample; this also decides whether the final run is
+   * left open (running now). Folds in "staleness".
    */
   delayOffMs: number;
   /**
@@ -56,9 +57,28 @@ export interface DetectConfig {
   /** Recompute "as of" time (epoch-ms), injected. The final run stays open iff now − lastOn ≤ delayOff. */
   nowMs: number;
   /**
-   * Boundary assignment. "edge" (default) uses the first/last on-sample. "midpoint" places the
-   * start midway between the previous (off) sample and the first on-sample for an unbiased
-   * duration; the end always falls back to the last on-sample (runs close on a gap, not an edge).
+   * Boundary assignment. "edge" (default) uses the first/last on-sample verbatim.
+   *
+   * "midpoint" places EACH boundary midway between the run's outermost on-sample and the
+   * neighbouring sample outside it: the start midway between the previous sample and the first
+   * on-sample, the end midway between the last on-sample and the next sample. A device seen on at
+   * `t` and off at `t + c` switched somewhere in between, and the midpoint is the unbiased estimate
+   * of where — so a run of `n` on-samples spans `n × cadence`, which is exactly the span the flow
+   * matrix integrates its energy over.
+   *
+   * 🛑 IT MUST BE BOTH ENDS. Until 2026-09 the midpoint was applied to the START only and the end
+   * fell back to the last on-sample, so every run spanned `(n − 0.5) × cadence` and
+   * {@link allocatePowerToWindows} integrated half a sample interval less energy than the Sankey
+   * band above it — a flat 0.283 kWh per run on the Kutis charger (6.86 kW, 300 s cadence), which
+   * is 11% of a 22-minute session. It read as a rounding difference and was not: it was a fixed
+   * debt per run, so it grew with the number of sessions, not with their length.
+   *
+   * Each extension is CAPPED at half the observed on-sample cadence ({@link
+   * medianOnSampleIntervalMs}). Without the cap a run adjacent to a data gap has its boundary
+   * dragged half the gap — and `signalIntegrator` reconstructs a STEP there, holding the run's own
+   * power flat across it, so a three-hour gap manufactures ~10 kWh of charging that never happened.
+   * When polls are on time the cap is not reached (`min(c/2, c/2)`), so this changes nothing in the
+   * ordinary case. With no measurable cadence (< 4 on-intervals) the uncapped midpoint stands.
    */
   boundaryMode?: "edge" | "midpoint";
   /**
@@ -207,12 +227,22 @@ export function effectiveDelayOffMs(
   samples: Sample[],
   cfg: DetectConfig,
 ): number {
+  return delayOffFromCadence(medianOnSampleIntervalMs(samples, cfg), cfg);
+}
+
+/**
+ * {@link effectiveDelayOffMs} with the cadence already in hand. Split out because the walk needs
+ * the same cadence for the boundary cap, and measuring it twice invites the two answers to drift.
+ */
+function delayOffFromCadence(
+  cadenceMs: number | null,
+  cfg: DetectConfig,
+): number {
   const k = cfg.delayOffCadenceMultiple ?? DEFAULT_DELAY_OFF_CADENCE_MULTIPLE;
   if (k <= 0) return cfg.delayOffMs;
-  const cadence = medianOnSampleIntervalMs(samples, cfg);
-  return cadence === null
+  return cadenceMs === null
     ? cfg.delayOffMs
-    : Math.max(cfg.delayOffMs, cadence * k);
+    : Math.max(cfg.delayOffMs, cadenceMs * k);
 }
 
 interface OpenRun {
@@ -220,6 +250,13 @@ interface OpenRun {
   startMs: number;
   firstOnMs: number;
   lastOnMs: number;
+  /**
+   * The first sample of ANY kind (off, or null/missing) strictly after `lastOnMs`, or null while
+   * the last thing seen was the on-sample itself. The mirror of the walk's `prevSampleMs`, which
+   * likewise counts nulls — a missing reading is still evidence of WHEN the next observation
+   * happened, which is all the midpoint needs. Reset every time `lastOnMs` advances.
+   */
+  nextSampleAfterLastOnMs: number | null;
   count: number;
   sum: number;
   max: number;
@@ -248,12 +285,16 @@ function finalize(
  *
  * Rules: a run opens on the first on-sample and stays open while on-samples keep arriving within
  * `delayOffMs` of each other (brief off/null samples within the gap are bridged). A sample (on,
- * off, or null) arriving more than `delayOffMs` after the last on-sample closes the run at that
+ * off, or null) arriving more than `delayOffMs` after the last on-sample closes the run on that
  * last on-sample; an on-sample beyond the gap starts a new run. An on-sample that resumes after an
  * OFF stretch containing a control edge (`boundaryEventsMs`) also starts a new run, however short
  * that stretch was. The final run is left open
  * (endMs = null) iff `now − lastOn ≤ delayOffMs`. Closed runs shorter than `delayOnMs` are
  * dropped (the open run is exempt). Metrics are over the raw on-sample values.
+ *
+ * Where the reported boundaries sit relative to those on-samples is {@link
+ * DetectConfig.boundaryMode} — and under `midpoint` a closed run extends past its last on-sample,
+ * so `endMs` is NOT in general the timestamp of any sample.
  */
 export function detectRunPeriods(
   samples: Sample[],
@@ -266,8 +307,21 @@ export function detectRunPeriods(
   }
   const midpoint = cfg.boundaryMode === "midpoint";
   const rows = normalizeSamples(samples);
-  // Measured once, from the same rows, before the walk — so every gap test below uses one value.
-  const delayOffMs = effectiveDelayOffMs(rows, cfg);
+  // Measured once, from the same rows, before the walk — so every gap test below uses one value,
+  // and the boundary cap and the gap floor cannot disagree about what the cadence is.
+  const cadenceMs = medianOnSampleIntervalMs(rows, cfg);
+  const delayOffMs = delayOffFromCadence(cadenceMs, cfg);
+  // How far a `midpoint` boundary may reach past the outermost on-sample: half the way to the
+  // neighbouring sample, but never more than half a cadence. See `DetectConfig.boundaryMode`.
+  const halfCadenceMs = cadenceMs === null ? null : cadenceMs / 2;
+  const extendMs = (gapMs: number): number =>
+    halfCadenceMs === null ? gapMs / 2 : Math.min(gapMs / 2, halfCadenceMs);
+  // The one place a closed run's end is decided — three call sites close runs, and letting each
+  // spell it out is how the end came to disagree with the start in the first place.
+  const closeAt = (run: OpenRun): number =>
+    midpoint && run.nextSampleAfterLastOnMs != null
+      ? run.lastOnMs + extendMs(run.nextSampleAfterLastOnMs - run.lastOnMs)
+      : run.lastOnMs;
   const boundaries = [...(cfg.boundaryEventsMs ?? [])].sort((a, b) => a - b);
   const hasBoundaryIn = (afterMs: number, throughMs: number): boolean =>
     boundaries.some((b) => b > afterMs && b <= throughMs);
@@ -289,7 +343,7 @@ export function detectRunPeriods(
   for (const s of rows) {
     // Gap-close: any sample beyond delayOff from the last on-sample ends the open run.
     if (run && s.tMs - run.lastOnMs > delayOffMs) {
-      periods.push(finalize(run, run.lastOnMs, "gap"));
+      periods.push(finalize(run, closeAt(run), "gap"));
       run = null;
       state = false;
       offSinceLastOn = false;
@@ -297,7 +351,10 @@ export function detectRunPeriods(
     }
 
     if (s.value === null) {
-      // Error/missing: counts toward the gap clock (handled above) but is not classified.
+      // Error/missing: counts toward the gap clock (handled above) but is not classified. It still
+      // dates the next observation, so it can bound a midpoint end exactly as an off-sample does.
+      if (run && run.nextSampleAfterLastOnMs === null)
+        run.nextSampleAfterLastOnMs = s.tMs;
       prevSampleMs = s.tMs;
       continue;
     }
@@ -309,19 +366,22 @@ export function detectRunPeriods(
       // Boundary split: the engine stopped and started again inside the anti-flap window, and the
       // control signal moved in that gap — so these are two runs however brief the gap was.
       if (run && offSinceLastOn && hasBoundaryIn(run.lastOnMs, s.tMs)) {
-        periods.push(finalize(run, run.lastOnMs, "boundary"));
+        periods.push(finalize(run, closeAt(run), "boundary"));
         run = null;
         aRunHasClosed = true;
       }
       if (!run) {
         const startMs =
-          midpoint && prevSampleMs != null ? (prevSampleMs + s.tMs) / 2 : s.tMs;
+          midpoint && prevSampleMs != null
+            ? s.tMs - extendMs(s.tMs - prevSampleMs)
+            : s.tMs;
         run = {
           // Read BEFORE the flag is cleared below, and only meaningful once something has closed.
           precededByDataGap: aRunHasClosed && !offSeenSinceLastOnSample,
           startMs,
           firstOnMs: s.tMs,
           lastOnMs: s.tMs,
+          nextSampleAfterLastOnMs: null,
           count: 1,
           sum: s.value,
           max: s.value,
@@ -329,6 +389,9 @@ export function detectRunPeriods(
         };
       } else {
         run.lastOnMs = s.tMs;
+        // The run reaches past this sample now, so whatever off/null samples it bridged are no
+        // longer the thing that follows it.
+        run.nextSampleAfterLastOnMs = null;
         run.count += 1;
         run.sum += s.value;
         if (s.value > run.max) run.max = s.value;
@@ -337,6 +400,8 @@ export function detectRunPeriods(
       offSinceLastOn = false;
       offSeenSinceLastOnSample = false;
     } else {
+      if (run && run.nextSampleAfterLastOnMs === null)
+        run.nextSampleAfterLastOnMs = s.tMs;
       offSinceLastOn = true;
       offSeenSinceLastOnSample = true;
     }
@@ -349,7 +414,7 @@ export function detectRunPeriods(
     if (cfg.nowMs - run.lastOnMs <= delayOffMs) {
       periods.push(finalize(run, null, null));
     } else {
-      periods.push(finalize(run, run.lastOnMs, "gap"));
+      periods.push(finalize(run, closeAt(run), "gap"));
     }
   }
 

@@ -182,11 +182,17 @@ const WATT_MS_PER_KWH = 3_600_000_000;
  * between the last off sample and the first on sample, and interpolating across it would both
  * charge the run a ramp it never drew and leak the run's power backwards into the idle gap.
  *
- * At a run END the same rule holds the final sample interval flat at its LEFT value instead of
+ * At a run END the same rule holds the trailing part-interval flat at its LEFT value instead of
  * trapezoiding down, which slightly over-reads a run whose power was falling as it finished. That is
- * accepted rather than special-cased: it is one interval per run, it is nil for the near-constant
+ * accepted rather than special-cased: it is a half-interval per run, it is nil for the near-constant
  * loads this path serves (an EV charger holds its rate), and using a second reconstruction here
  * would mean the two allocators disagreed about what the same signal did.
+ *
+ * 🛑 That end rule only has anything to bite on because a `midpoint` run now ENDS past its last
+ * on-sample. While the boundary was the last on-sample itself there was no trailing interval at all,
+ * and the "same trapezoid as the flow matrix" promise above was false by exactly half a sample
+ * interval per run — 0.283 kWh a session on the Kutis charger. `energy-from-power.test.ts` asserts
+ * the promise directly now; do not weaken the end boundary without reading it.
  */
 export function allocatePowerToWindows(
   windows: EnergyWindow[],

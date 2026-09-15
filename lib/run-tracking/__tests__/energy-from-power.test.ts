@@ -15,6 +15,7 @@ import {
   type EnergyWindow,
   type SignalSample,
 } from "@/lib/run-tracking/energy";
+import { detectRunPeriods, type DetectConfig } from "@/lib/run-tracking/detect";
 import { constantIntensity } from "@/lib/run-tracking/intensity";
 
 const T0 = 1_700_000_000_000;
@@ -168,5 +169,136 @@ describe("allocatePowerToWindows", () => {
     expect(prov.costC).toBeCloseTo(180, 3);
     expect(prov.emissionsG).toBeCloseTo(4200, 0);
     expect(prov.renewableKwh).toBeCloseTo(3, 3);
+  });
+});
+
+/**
+ * The promise `allocatePowerToWindows` makes in prose — "the same trapezoid the flow matrix
+ * integrates power with, so a run's kWh agrees with the Sankey band it sits under rather than
+ * contradicting it" — asserted directly, end to end, detector included.
+ *
+ * Nothing checked it, and it was false. `boundaryMode: "midpoint"` was applied to the run's START
+ * and never to its END, so a run of `n` on-samples spanned `(n − 0.5)` sample intervals while the
+ * flow matrix integrated `n` of them. The shortfall is half an interval of run power PER RUN — a
+ * flat 0.283 kWh on the Kutis charger (6.86 kW on a 300 s cadence) — so it reads as rounding on a
+ * single long session and compounds with the number of sessions. Five sessions in a week put the
+ * runs card at 68.6 kWh under a Sankey node saying 70.0.
+ *
+ * These go through `detectRunPeriods` on purpose: the defect lived in the boundaries, not in the
+ * allocator, and a test that hand-writes the window cannot see it.
+ */
+describe("a run's energy agrees with the flow matrix's band", () => {
+  const CADENCE = 5 * MIN; // the Sigenergy charger's poll interval
+  const evCfg: DetectConfig = {
+    lowerW: null,
+    upperW: 100, // the live Kutis detector's threshold
+    hysteresisW: 0,
+    delayOnMs: 0,
+    delayOffMs: 900_000,
+    nowMs: T0 + 10_000 * MIN, // far past the tail, so every run closes
+    boundaryMode: "midpoint",
+  };
+
+  /**
+   * Exactly what `computeFlowAccounting` does to a power series with no energy overlay
+   * (`lib/aggregation/flow-matrix-core.ts`): trapezoid every consecutive sample pair. This is the
+   * number the Sankey's `load.ev` node carries.
+   */
+  function flowMatrixKwh(samples: SignalSample[]): number {
+    let kwh = 0;
+    for (let i = 1; i < samples.length; i++) {
+      const a = samples[i - 1].value;
+      const b = samples[i].value;
+      if (a === null || b === null) continue;
+      kwh +=
+        ((a + b) / 2) * ((samples[i].tMs - samples[i - 1].tMs) / 3_600_000);
+    }
+    return kwh / 1000;
+  }
+
+  /** Zeros, then `watts` one per `CADENCE`, then zeros — the shape of a charge session. */
+  function session(watts: number[], leadingZeros = 2, trailingZeros = 2) {
+    const values = [
+      ...Array<number>(leadingZeros).fill(0),
+      ...watts,
+      ...Array<number>(trailingZeros).fill(0),
+    ];
+    return values.map((w, i) => p(T0 + i * CADENCE, w));
+  }
+
+  /** Detect, allocate, and total exactly what `derived_intervals.energy_kwh` would hold. */
+  function runEnergyKwh(signal: SignalSample[]): {
+    kwh: number;
+    runs: number;
+  } {
+    const periods = detectRunPeriods(
+      signal.map((x) => ({ tMs: x.tMs, value: x.value })),
+      evCfg,
+    );
+    const windows: EnergyWindow[] = periods.map((x) => ({
+      startMs: x.startMs,
+      endMs: x.endMs,
+    }));
+    const kwh = energyFromAllocation(
+      allocatePowerToWindows(windows, signal, evCfg.nowMs),
+    ).reduce<number>((sum, x) => sum + (x ?? 0), 0);
+    return { kwh, runs: periods.length };
+  }
+
+  /**
+   * `energyFromAllocation` rounds each run to 3 dp on the way to the column, so a total of `r` runs
+   * can sit up to `r × 0.5 mWh` off the continuous integral. That is the ONLY slack allowed here:
+   * anything larger is a boundary disagreement, which is what this suite exists to catch. Half a
+   * sample interval — the defect — is 283 mWh, three orders of magnitude outside it.
+   */
+  function expectAgreement(signal: SignalSample[]) {
+    const { kwh, runs } = runEnergyKwh(signal);
+    expect(runs).toBeGreaterThan(0);
+    expect(Math.abs(kwh - flowMatrixKwh(signal))).toBeLessThanOrEqual(
+      runs * 0.0005,
+    );
+    return kwh;
+  }
+
+  it.each([1, 2, 5, 16, 42])(
+    "matches on a flat %i-sample session",
+    (n: number) => {
+      const signal = session(Array<number>(n).fill(6860));
+      // And the absolute value is n WHOLE sample intervals, not n − ½ of them — which is the
+      // arithmetic the old boundary got wrong, independently of what the flow matrix says.
+      expect(expectAgreement(signal)).toBeCloseTo(
+        (6.86 * n * CADENCE) / 3_600_000,
+        3,
+      );
+    },
+  );
+
+  it("matches when the charger's rate drifts through the session", () => {
+    // The real 14 Sep 13:08 session, sample for sample. Stored as 2.573 kWh against a Sankey band
+    // of 2.857 — the missing 0.284 is the half interval this test now forbids.
+    const signal = session([6860, 6860, 6850, 6870, 6840]);
+    expect(expectAgreement(signal)).toBeCloseTo(2.8567, 3);
+  });
+
+  it("matches across a dropped poll mid-session", () => {
+    // One missing sample inside the run (600 s instead of 300 s). Under delayOff, so it bridges —
+    // and both integrations trapezoid the doubled interval identically.
+    expectAgreement(
+      session(Array<number>(8).fill(6860)).filter((_, i) => i !== 5),
+    );
+  });
+
+  it("matches across several sessions in one window — the card's footer total", () => {
+    // Where the old defect compounded: the debt was per RUN, so the week's total drifted with how
+    // often the car was plugged in rather than with how long it charged. Three sessions here; the
+    // real week had five, and was 1.4 kWh light.
+    const signal = [
+      ...session(Array<number>(42).fill(6835), 2, 0),
+      ...session(Array<number>(32).fill(6766), 4, 0),
+      ...session(Array<number>(5).fill(6856), 4, 4),
+    ].map((x, i) => p(T0 + i * CADENCE, x.value));
+    const { runs } = runEnergyKwh(signal);
+    expect(runs).toBe(3);
+    expectAgreement(signal);
   });
 });

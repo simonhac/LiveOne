@@ -60,6 +60,15 @@ const GENERATOR_DEFAULTS: DetectorDefaults = {
  *    `assignEnergyToPeriods` needs a window wide enough to hold two counter readings before it can
  *    report any energy at all (fewer than two ⇒ null). Midpoint also removes the systematic
  *    half-interval late start that `edge` gives every run.
+ *
+ *    🛑 Midpoint means BOTH ENDS, and it did not until 2026-09. The end fell back to the last
+ *    on-sample, so a run spanned `(n − 0.5)` sample intervals while the flow matrix integrated `n`,
+ *    and a power-integrated run's kWh came in a flat half-interval light — 0.283 kWh per session on
+ *    the Kutis charger (6.86 kW at 300 s), which is how a week showing 70.0 kWh of EV charging in
+ *    the Sankey showed 68.6 kWh across the five sessions underneath it. A fixed debt PER RUN reads
+ *    like rounding and is not; it scales with how often the car is plugged in. The counter-backed
+ *    Kinkora detector never showed it, because there both the run and the Sankey read the same
+ *    register. See `DetectConfig.boundaryMode`.
  */
 const EV_DEFAULTS: DetectorDefaults = {
   hysteresisW: 0,
