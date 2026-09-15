@@ -148,6 +148,103 @@ describe("detectRunPeriods", () => {
     expect(broken).toHaveLength(2);
   });
 
+  /**
+   * The boundary asymmetry that made a week of EV charging read 68.6 kWh under a Sankey band
+   * saying 70.0. `midpoint` was applied to the start and never to the end, so every run spanned
+   * half a sample interval less than the device was actually on, and the power allocator
+   * integrated exactly that much less energy than the flow matrix. See
+   * `energy-from-power.test.ts` for the arithmetic; these pin the boundaries themselves.
+   */
+  describe("midpoint boundaries are symmetric", () => {
+    // A 6-sample run on a 1-minute cadence, with an off-sample either side and enough on-intervals
+    // (5 ≥ 4) for a cadence to be measurable. Closes on the gap after T0+9MIN.
+    const CADENCE = MIN;
+    const run6 = [
+      s(T0, 0), // off
+      ...[1, 2, 3, 4, 5, 6].map((m) => s(T0 + m * MIN, -1000)),
+      s(T0 + 7 * MIN, 0), // off — this is what the end midpoints against
+      s(T0 + 10 * MIN, 0), // > delayOff after the last on-sample ⇒ close
+    ];
+
+    it("ends half a cadence after the last on-sample, so the run spans n × cadence", () => {
+      const [period] = detectRunPeriods(
+        run6,
+        cfg({ boundaryMode: "midpoint" }),
+      );
+      expect(period.startMs).toBe(T0 + MIN - CADENCE / 2);
+      expect(period.endMs).toBe(T0 + 6 * MIN + CADENCE / 2);
+      // The whole point: six on-samples at a one-minute cadence is six minutes of running, not
+      // five and a half. This is the number `allocatePowerToWindows` integrates over.
+      expect(period.endMs! - period.startMs).toBe(6 * CADENCE);
+    });
+
+    it("leaves edge mode exactly where it was", () => {
+      const [period] = detectRunPeriods(run6, cfg({ boundaryMode: "edge" }));
+      expect(period.startMs).toBe(T0 + MIN);
+      expect(period.endMs).toBe(T0 + 6 * MIN);
+    });
+
+    it("caps a late poll's extension at half a cadence, not half the gap to it", () => {
+      // The next observation lands 2.5 minutes after the last on-sample instead of one. Half of
+      // THAT is not a better estimate of when the device switched — and `signalIntegrator` holds
+      // the run's own power flat across the extension, so an uncapped midpoint manufactures the
+      // energy to match. 75 s of drag becomes 30 s.
+      const latePoll = [
+        s(T0, 0),
+        ...[1, 2, 3, 4, 5, 6].map((m) => s(T0 + m * MIN, -1000)),
+        s(T0 + 6 * MIN + 150_000, 0), // within delayOff (180s), so it does bound the end
+        s(T0 + 20 * MIN, 0), // ⇒ close
+      ];
+      const [period] = detectRunPeriods(
+        latePoll,
+        cfg({ boundaryMode: "midpoint" }),
+      );
+      expect(period.endMs).toBe(T0 + 6 * MIN + CADENCE / 2);
+    });
+
+    it("does not extend across a data gap at all", () => {
+      // Nothing at all is heard for twenty minutes after the last on-sample: the run is closed by
+      // the very sample that reveals the gap. There is no observation bounding the end, so the
+      // detector declines to place one — `precededByDataGap`'s counterpart at the closing edge.
+      const withGap = [
+        s(T0, 0),
+        ...[1, 2, 3, 4, 5, 6].map((m) => s(T0 + m * MIN, -1000)),
+        s(T0 + 26 * MIN, 0),
+      ];
+      const [period] = detectRunPeriods(
+        withGap,
+        cfg({ boundaryMode: "midpoint" }),
+      );
+      expect(period.endMs).toBe(T0 + 6 * MIN);
+    });
+
+    it("keeps the end on the last on-sample when no sample follows it", () => {
+      // The tail of a recompute chunk: there is no later observation to midpoint against, so the
+      // detector declines to guess rather than extending into data it has not read.
+      const [period] = detectRunPeriods(
+        [s(T0, 0), ...[1, 2, 3, 4, 5, 6].map((m) => s(T0 + m * MIN, -1000))],
+        cfg({ boundaryMode: "midpoint" }),
+      );
+      expect(period.endMs).toBe(T0 + 6 * MIN);
+    });
+
+    it("midpoints against a null sample as readily as an off one", () => {
+      // A missing reading is not evidence the device was off, but it does date the next
+      // observation — which is all the midpoint needs. Mirrors the start, which counts nulls too.
+      const withNull = [
+        s(T0, 0),
+        ...[1, 2, 3, 4, 5, 6].map((m) => s(T0 + m * MIN, -1000)),
+        s(T0 + 7 * MIN, null),
+        s(T0 + 10 * MIN, 0),
+      ];
+      const [period] = detectRunPeriods(
+        withNull,
+        cfg({ boundaryMode: "midpoint" }),
+      );
+      expect(period.endMs).toBe(T0 + 6 * MIN + CADENCE / 2);
+    });
+  });
+
   it("places the start at the midpoint of the crossing interval in midpoint mode", () => {
     const samples = [
       s(T0, 0), // off

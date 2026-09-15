@@ -286,6 +286,77 @@ describe("allocateCounterToWindows", () => {
     expect(prov.costC).toBeCloseTo(kwh! * 70, 6);
     expect(prov.emissionsG).toBeCloseTo(kwh! * 1000, 6);
   });
+
+  /**
+   * The symmetric `midpoint` end (2026-09) widened every EV run by half a sample interval. That was
+   * the fix for the POWER allocator, whose runs read half an interval light against the Sankey — but
+   * the counter allocator was never wrong, and must not be moved: checked on prod, the
+   * counter-backed Kinkora detector's run totals equalled its flow matrix to 3 dp on all ten days
+   * sampled, and re-running its real readings under both rules gives the same kWh to the mWh across
+   * 13 runs.
+   *
+   * The reason it is immune is the reason the allocator takes the signal at all: a straddling step
+   * is divided by how hard the device was WORKING either side of the edge, not by the clock. Past
+   * the last on-sample the signal is zero, so widening the window there claims a share of nothing.
+   */
+  describe("widening a run's end does not move a counter-backed run's energy", () => {
+    const ON = T0 + MIN;
+    const LAST_ON = T0 + 5 * MIN;
+    // The real shape: the charger is drawing THROUGH its last on-sample and off by the next one.
+    const signal = chargerSignal(ON, LAST_ON + 30_000, 5000);
+    // Ticks straddling both boundaries, so there is something to reallocate at each end.
+    const counter = [
+      r(T0, 0),
+      r(T0 + 2 * MIN, 400),
+      r(T0 + 4 * MIN, 800),
+      r(T0 + 6 * MIN, 1200),
+    ];
+    const NOW = T0 + 8 * MIN;
+    const split = (endMs: number) =>
+      assignEnergyToPeriods(
+        [
+          { startMs: T0, endMs: ON }, // the gap ahead of the run
+          { startMs: ON, endMs }, // the run
+          { startMs: endMs, endMs: NOW }, // the gap behind it
+        ],
+        counter,
+        NOW,
+        signal,
+      );
+
+    it("transfers from the gap behind it, and only from there", () => {
+      const [aheadOld, runOld, behindOld] = split(LAST_ON); // pre-2026-09: the last on-sample
+      const [aheadNew, runNew, behindNew] = split(LAST_ON + 15_000); // half a cadence past it
+      // Whatever the run gains, the gap behind it gives up — exactly. Nothing is minted at the
+      // boundary and the run ahead of it is not touched.
+      expect(runNew! - runOld!).toBeCloseTo(behindOld! - behindNew!, 9);
+      expect(runNew!).toBeGreaterThanOrEqual(runOld!);
+      expect(aheadNew).toBeCloseTo(aheadOld!, 9);
+    });
+
+    it("conserves the metered total either way", () => {
+      // 1200 Wh crossed the register; where the run's end is placed cannot change that, and the
+      // share that is not the run's stays in the gaps rather than being discarded.
+      for (const endMs of [LAST_ON, LAST_ON + 15_000]) {
+        const total = split(endMs).reduce<number>(
+          (sum, x) => sum + (x ?? 0),
+          0,
+        );
+        expect(total).toBeCloseTo(1.2, 9);
+      }
+    });
+
+    it("claims nothing from a stretch the signal says was idle", () => {
+      // The property that keeps the counter path where it is. Widening into time the device was
+      // demonstrably not drawing adds no energy, because the share is decided by the signal
+      // integral over the overlap and that integral is zero. Re-running the real Kinkora readings
+      // under both end rules moves not one mWh across 13 runs for exactly this reason.
+      const idleEnd = LAST_ON + 90_000; // well past the charger's last non-zero sample
+      const [, runAtSwitch] = split(LAST_ON + 30_000);
+      const [, runIntoIdle] = split(idleEnd);
+      expect(runIntoIdle).toBeCloseTo(runAtSwitch!, 9);
+    });
+  });
 });
 
 /** Daylesford's prod device-1 constants (config.batteryProvenance.generatorSource). */
