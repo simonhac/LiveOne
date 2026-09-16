@@ -30,6 +30,10 @@
       "schedule": "45 14 * * *"
     },
     {
+      "path": "/api/cron/repair-attr",
+      "schedule": "20 * * * *"
+    },
+    {
       "path": "/api/cron/db-stats",
       "schedule": "0 2,14 * * *"
     }
@@ -54,6 +58,9 @@
       "maxDuration": 60
     },
     "app/api/cron/repair-coverage/route.ts": {
+      "maxDuration": 300
+    },
+    "app/api/cron/repair-attr/route.ts": {
       "maxDuration": 300
     }
   }

@@ -42,9 +42,39 @@ export const REHEAL_TRAILING_MS = SETTLEMENT_WINDOW_MS + 24 * 60 * 60 * 1000;
  *  trailing-oldest day) so the seam OVERLAPS the trailing window (harmless: trailing stamps first) instead
  *  of leaving a multi-tz gap. */
 const REHEAL_CEILING_LAG_DAYS = 3;
-/** Per-run cap on the scattered backlog — bounds the nightly reheal so it can never grind all history; a
- *  version-bump backlog drains oldest-first over successive nights. */
-const REHEAL_MAX_DAYS_PER_RUN = 20;
+/**
+ * Wall-clock budget for the scattered backlog — the REAL bound on the nightly reheal.
+ *
+ * A count cap alone could not size the run: the cost of a handle is its SPAN plus a 7-day warm-up,
+ * not its number of stale days, so "20 days" meant anything from one warm-up to twenty. Worse, the
+ * warm-up is paid per handle per run regardless of how many days come with it — repairing 3 days
+ * costs ~10 days of reading and repairing 100 contiguous days costs ~107 — so a small cap is the
+ * expensive way to drain a backlog, not the safe one. A version bump makes every stored day stale at
+ * once (1058 area-days at the time of writing), which at 20/night is ~53 nights.
+ *
+ * Same shape as `healStaleAgg1dForDevice`'s deadline. Override with `REHEAL_BUDGET_MS` to measure.
+ */
+const REHEAL_BUDGET_MS = Number(process.env.REHEAL_BUDGET_MS ?? 60_000);
+/**
+ * Backstop on the SELECT, not on the work — the deadline decides how much of it gets done. Kept so a
+ * pathological backlog cannot return an unbounded row set, and so the oldest-first ordering still has
+ * something to order.
+ */
+const REHEAL_MAX_DAYS_PER_RUN = Number(
+  process.env.REHEAL_MAX_DAYS_PER_RUN ?? 500,
+);
+/**
+ * Days per recompute call, so the budget is checkable often enough to MEAN anything.
+ *
+ * 🛑 A handle's whole stale span used to go in one call, which made the deadline unenforceable: it
+ * is checked between calls, so one handle with a long backlog runs to completion no matter what.
+ * Measured on the dev mirror against a 60s budget: a single handle's 202-day span took 177s — near
+ * enough to blow a 300s function on its own. Chunking makes the bound real.
+ *
+ * 30 rather than `CHUNK_MS`'s 14: every chunk pays its own 7-day warm-up, so this trades ~19%
+ * overhead (7/37) for a granularity that still checks in ~every 25s at the measured ~0.9s/day.
+ */
+const REHEAL_CHUNK_DAYS = Number(process.env.REHEAL_CHUNK_DAYS ?? 30);
 
 /** All Area handles that have a bound battery (role='battery', metric='power') — the recompute targets. */
 export async function listBatteryProvenanceHandles(): Promise<number[]> {
@@ -252,6 +282,21 @@ export async function recomputeRange(
   }
 }
 
+export interface RehealResult {
+  /** Area-days actually rebuilt this run. */
+  days: number;
+  /** Handles actually processed. */
+  handles: number;
+  /** Area-days the SELECT returned — what this run could have done with unlimited time. */
+  selected: number;
+  /** Selected days left unhealed because the budget ran out. They roll to the next run. */
+  remaining: number;
+  /** True when the budget stopped the run before the selection was exhausted. */
+  timedOut: boolean;
+  /** Wall-clock ms spent rebuilding. */
+  elapsedMs: number;
+}
+
 /**
  * Bounded, oldest-first reheal of the SCATTERED `point_readings_flow_attr_1d` backlog the contiguous
  * trailing recompute (recomputeRange over the settlement window) can't reach: days OLDER than the window
@@ -259,17 +304,23 @@ export async function recomputeRange(
  * (`version < FLOW_ATTR_VERSION`). Recomputing re-materialises the day and — being past the cutoff —
  * stamps `finalized_at`, so each day is handled once and drops out of the backlog.
  *
- * Capped per run (REHEAL_MAX_DAYS_PER_RUN) so it can never grind all history; a version-bump backlog drains
- * over successive nights. Steady-state backlog is ~empty (routine late data is WITHIN the window, handled by
- * the trailing pass). Runs LAST in the daily heal, best-effort — a hiccup here must never roll back the
- * already-committed trailing pass.
+ * Bounded by a wall-clock BUDGET (REHEAL_BUDGET_MS), checked between handles, with
+ * REHEAL_MAX_DAYS_PER_RUN a backstop on the SELECT. Steady-state backlog is ~empty (routine late data
+ * is WITHIN the window, handled by the trailing pass). Runs LAST in the daily heal, best-effort — a
+ * hiccup here must never roll back the already-committed trailing pass.
+ *
+ * The result reports SELECTED vs HEALED separately, and whether the budget ran out, so "how far did
+ * it get" is answerable from the log line instead of by inference. `scripts/utils/reheal-flow-attr.ts`
+ * runs exactly this and prints the same numbers.
  */
 export async function rehealStaleAttrDays(
   nowMs: number,
-  opts: { limit?: number } = {},
-): Promise<{ days: number; handles: number }> {
+  opts: { limit?: number; budgetMs?: number; now?: () => number } = {},
+): Promise<RehealResult> {
   const db = requirePlanetscaleDb();
   const limit = opts.limit ?? REHEAL_MAX_DAYS_PER_RUN;
+  const clock = opts.now ?? Date.now;
+  const deadline = clock() + (opts.budgetMs ?? REHEAL_BUDGET_MS);
 
   // Representative tz for the ceiling. It's late-biased, so a few hours of inter-area tz difference only
   // widens the (harmless) overlap with the trailing window — it can never open a seam gap.
@@ -303,13 +354,38 @@ export async function rehealStaleAttrDays(
     .orderBy(asc(pointReadingsFlowAttr1d.day))
     .limit(limit);
 
-  if (rows.length === 0) return { days: 0, handles: 0 };
+  if (rows.length === 0)
+    return {
+      days: 0,
+      handles: 0,
+      selected: 0,
+      remaining: 0,
+      timedOut: false,
+      elapsedMs: 0,
+    };
 
   // Group the selected days by handle, then recompute each handle's [oldest, newest] span in ONE window
   // call (one 7-day warm-up + fold, vs one per day). After a version bump the oldest-N stale days are
-  // contiguous per handle, so the span stays small. updateLatest + writeCheckpoints are LEFT OFF: rehealing
-  // an old day must not clobber the live KV latest, and the O(today) reconcile never reads a checkpoint
-  // this old.
+  // contiguous per handle, so the span stays small.
+  //
+  // `updateLatest` is LEFT OFF — rehealing an old day must not clobber the live KV latest.
+  //
+  // 🛑 `writeCheckpoints` is ON, and used not to be. The reasoning for leaving it off was that "the
+  // O(today) reconcile never reads a checkpoint this old", which is true of
+  // `reconcileBatteryProvenanceFromCheckpoint` (the minutely path, which asks as of TODAY) and false
+  // of the one that matters here: `tryLoadSeededProvenanceInputs`, the READ path, asks as of the
+  // REQUESTED WINDOW's start day (`dayIndexStartingAtOrBefore(targetStartMs)`). `SEED_LOOKBACK_DAYS`
+  // is relative to that day, not to now — so a chart of noon three weeks ago seeds from that week's
+  // midnight checkpoint and rolls forward, and `MAX_SEED_STALENESS_MS` bounds how stale the ANCHOR is,
+  // never how far the fold plays forward (replay from a checkpoint is exact).
+  //
+  // So a historical day with no checkpoint costs every later request an extra WARMUP_MS (7 days) of
+  // agg_5m, forever. That is not hypothetical: a model-version bump distrusts every stored checkpoint
+  // at once (1024 days of them, back to 2025-08-17), the nightly trusted writer only covers its ~96h
+  // trailing window, and this sweep is the ONLY thing that revisits the rest — so with it off, one
+  // bump permanently un-seeds all history. Safe to write here: the window recompute applies the full
+  // WARMUP_MS lead-in itself and certifies its own warmth, and the write is already gated on
+  // `hasBattery && !config && inputsAreCanonical`, over midnights strictly inside the window.
   const byHandle = new Map<number, { tz: number; days: string[] }>();
   for (const r of rows) {
     if (r.handle == null) continue;
@@ -318,22 +394,49 @@ export async function rehealStaleAttrDays(
     else byHandle.set(r.handle, { tz: r.tz, days: [r.day] });
   }
 
-  for (const [handle, { tz, days }] of byHandle) {
+  const startedAt = clock();
+  let healedDays = 0;
+  let timedOut = false;
+  // A Set, not a counter incremented after the inner loop: `break outer` skips whatever follows it,
+  // so a run stopped mid-handle reported "0 handle(s)" beside a non-zero day count.
+  const touched = new Set<number>();
+
+  outer: for (const [handle, { tz, days }] of byHandle) {
     const sorted = [...days].sort();
-    const [winStartSec] = dayToUnixRangeForAggregation(
-      parseDate(sorted[0]),
-      tz,
-    );
-    const [, winEndSec] = dayToUnixRangeForAggregation(
-      parseDate(sorted[sorted.length - 1]),
-      tz,
-    );
-    await recomputeBatteryProvenanceForWindowBestEffort(
-      handle,
-      winStartSec * 1000,
-      winEndSec * 1000,
-      { writeRollup: true, nowMs },
-    );
+    for (let i = 0; i < sorted.length; i += REHEAL_CHUNK_DAYS) {
+      // 🛑 Checked between CHUNKS, and never before the very first one: a budget already spent on
+      // arrival must still make SOME progress, or an over-subscribed run stalls the backlog forever
+      // while logging that it was busy. Checking between handles alone did not bound anything — see
+      // REHEAL_CHUNK_DAYS.
+      if (healedDays > 0 && clock() >= deadline) {
+        timedOut = true;
+        break outer;
+      }
+      const chunk = sorted.slice(i, i + REHEAL_CHUNK_DAYS);
+      const [winStartSec] = dayToUnixRangeForAggregation(
+        parseDate(chunk[0]),
+        tz,
+      );
+      const [, winEndSec] = dayToUnixRangeForAggregation(
+        parseDate(chunk[chunk.length - 1]),
+        tz,
+      );
+      await recomputeBatteryProvenanceForWindowBestEffort(
+        handle,
+        winStartSec * 1000,
+        winEndSec * 1000,
+        { writeRollup: true, writeCheckpoints: true, nowMs },
+      );
+      healedDays += chunk.length;
+      touched.add(handle);
+    }
   }
-  return { days: rows.length, handles: byHandle.size };
+  return {
+    days: healedDays,
+    handles: touched.size,
+    selected: rows.length,
+    remaining: rows.length - healedDays,
+    timedOut,
+    elapsedMs: clock() - startedAt,
+  };
 }

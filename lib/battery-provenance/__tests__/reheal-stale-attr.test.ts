@@ -84,33 +84,83 @@ describe("rehealStaleAttrDays", () => {
     const now = Date.parse("2026-01-15T00:05:00Z");
     const res = await rehealStaleAttrDays(now, { limit: 20 });
 
-    expect(res).toEqual({ days: 4, handles: 2 });
+    expect(res).toMatchObject({
+      days: 4,
+      handles: 2,
+      selected: 4,
+      remaining: 0,
+      timedOut: false,
+    });
     expect(recomputeMock).toHaveBeenCalledTimes(2);
     // handle 8 → one window spanning its oldest..newest stale day
     expect(recomputeMock).toHaveBeenCalledWith(
       8,
       winStart("2025-12-01"),
       winEnd("2025-12-03"),
-      { writeRollup: true, nowMs: now },
+      { writeRollup: true, writeCheckpoints: true, nowMs: now },
     );
     // handle 13 → single-day window
     expect(recomputeMock).toHaveBeenCalledWith(
       13,
       winStart("2025-11-20"),
       winEnd("2025-11-20"),
-      { writeRollup: true, nowMs: now },
+      { writeRollup: true, writeCheckpoints: true, nowMs: now },
     );
   });
 
-  it("never sets updateLatest / writeCheckpoints (no clobbering live KV, no old-checkpoint churn)", async () => {
+  it("never sets updateLatest (no clobbering the live KV) but DOES write checkpoints", async () => {
+    // 🛑 The two flags have different justifications and used to share one. `updateLatest` must stay
+    // off — rehealing an old day must not touch the live latest. `writeCheckpoints` must be ON: the
+    // READ path (`tryLoadSeededProvenanceInputs`) seeds as of the REQUESTED WINDOW's start day, not
+    // as of today, so a historical day with no checkpoint costs every later chart of that period an
+    // extra 7-day warm-up read — and a model-version bump distrusts every stored checkpoint at once,
+    // leaving this sweep the only thing that would ever rewrite them.
     requireDb.mockReturnValue(
       makeDb([{ handle: 8, tz: TZ, day: "2025-12-01" }]),
     );
     await rehealStaleAttrDays(Date.parse("2026-01-15T00:05:00Z"));
     const opts = recomputeMock.mock.calls[0][3];
     expect(opts.updateLatest).toBeUndefined();
-    expect(opts.writeCheckpoints).toBeUndefined();
+    expect(opts.writeCheckpoints).toBe(true);
     expect(opts.writeRollup).toBe(true);
+  });
+
+  it("stops at the wall-clock budget, and says how far it got", async () => {
+    const backlog: Row[] = [
+      { handle: 8, tz: TZ, day: "2025-12-01" },
+      { handle: 13, tz: TZ, day: "2025-12-02" },
+      { handle: 21, tz: TZ, day: "2025-12-03" },
+    ];
+    requireDb.mockReturnValue(makeDb(backlog));
+    // A clock that jumps a minute per read: the first handle runs, then the budget is spent.
+    let t = 0;
+    const now = () => (t += 60_000);
+    const res = await rehealStaleAttrDays(Date.now(), {
+      budgetMs: 30_000,
+      now,
+    });
+    expect(res.handles).toBe(1);
+    expect(res.days).toBe(1);
+    expect(res.selected).toBe(3);
+    expect(res.remaining).toBe(2);
+    expect(res.timedOut).toBe(true);
+    expect(recomputeMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("always does one handle, even when the budget is already spent", async () => {
+    // Otherwise an over-subscribed run stalls the backlog forever while logging that it was busy.
+    requireDb.mockReturnValue(
+      makeDb([
+        { handle: 8, tz: TZ, day: "2025-12-01" },
+        { handle: 13, tz: TZ, day: "2025-12-02" },
+      ]),
+    );
+    const res = await rehealStaleAttrDays(Date.now(), {
+      budgetMs: -1,
+      now: () => 1_000_000,
+    });
+    expect(res.handles).toBe(1);
+    expect(res.timedOut).toBe(true);
   });
 
   it("caps the backlog at the per-run limit (oldest-first)", async () => {
@@ -133,7 +183,7 @@ describe("rehealStaleAttrDays", () => {
   it("no-ops on an empty backlog", async () => {
     requireDb.mockReturnValue(makeDb([]));
     const res = await rehealStaleAttrDays(Date.now());
-    expect(res).toEqual({ days: 0, handles: 0 });
+    expect(res).toMatchObject({ days: 0, handles: 0, selected: 0 });
     expect(recomputeMock).not.toHaveBeenCalled();
   });
 });
