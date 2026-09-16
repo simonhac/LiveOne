@@ -1,0 +1,38 @@
+-- 0077 — index `point_readings.session_id`, so a session row can be DELETED.
+--
+-- WHY. `point_readings.session_id` carries a NO ACTION FK to `sessions`. Postgres enforces that on
+-- the PARENT side, so deleting one session means proving no reading references it — and with no index
+-- on this column that proof is a sequential scan of the largest table in the database, once per
+-- session row. Measured on `liveone-dev` 2026-09-15: `DELETE FROM sessions WHERE device_rid = $1`
+-- for a single 16-point device ran **5 h 25 m** before being cancelled, holding locks that queued the
+-- 2-hourly prod→dev sync behind it. It is not slow; it does not finish.
+--
+-- It unblocks two things that both read as application bugs without it: `hardDeleteDevice`
+-- (`lib/devices/delete.ts`), which cannot retire a device that has any history, and the session
+-- retention sweep in `docs/deferred/session-response-retention.md`, whose own note already says
+-- deleting old sessions "is blocked by `point_readings.session_id`'s ON DELETE NO ACTION FK".
+--
+-- 🛑 DO NOT APPLY THIS FILE TO PROD WITH `db:pg:migrate` / `pg-migrate`.
+--
+-- The statement below is deliberately PLAIN `CREATE INDEX`, because that is what drizzle-kit emits,
+-- what a fresh database and CI need, and what `liveone-dev` can take (crons are off there). On prod
+-- `point_readings` is ~15.6M rows and a plain `CREATE INDEX` holds ACCESS EXCLUSIVE for the whole
+-- build — an ingest outage, which is precisely the incident `docs/plans/deploy-time-migrations.md`
+-- names as the likeliest one. `CREATE INDEX CONCURRENTLY` cannot be used here either, because it
+-- cannot run inside a transaction and every drizzle migration runs in one.
+--
+-- So prod takes the by-hand path, the same one migration 0028 took for `pr5m_updated_at_idx`:
+--
+--   1. apply this file to `liveone-dev` normally (`npm run db:pg:migrate`);
+--   2. on prod, over a direct `pg` connection with NO `BEGIN`:
+--        CREATE INDEX CONCURRENTLY IF NOT EXISTS "pr_session_id_idx"
+--          ON "point_readings" USING btree ("session_id");
+--   3. verify it came out valid — a failed concurrent build leaves an INVALID index that is never
+--      used and must be dropped and retried:
+--        SELECT indisvalid FROM pg_index WHERE indexrelid = 'pr_session_id_idx'::regclass;
+--   4. record it, copying dev's EXACT hash and created_at so the two journals agree:
+--        INSERT INTO drizzle.__drizzle_migrations (hash, created_at) VALUES (…, …);
+--
+-- Expect ~500 MB and a build measured in minutes. See [[prod-ddl-manual-apply-gotchas]].
+
+CREATE INDEX "pr_session_id_idx" ON "point_readings" USING btree ("session_id");

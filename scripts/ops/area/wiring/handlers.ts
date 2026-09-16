@@ -7,7 +7,7 @@
  */
 import { EXIT, failWith, type Ctx } from "@/lib/cli/cli";
 import { withApiSession } from "@/lib/cli-kit/api-session";
-import { usage } from "../../shared";
+import { bool, usage } from "../../shared";
 import {
   isHelper,
   loadAggregate,
@@ -23,7 +23,9 @@ import { putBindings, putMembers } from "./client";
 
 async function runDevicesList(ctx: Ctx): Promise<number> {
   return withApiSession(ctx, async (s) => {
-    const agg = await loadAggregate(s, ctx.args[0]);
+    const agg = await loadAggregate(s, ctx.args[0], {
+      includeArchived: bool(ctx, "includeArchived") === true,
+    });
     ctx.emit({ area: agg.area, members: agg.members }, () =>
       [
         `${agg.area.name} (${agg.area.id})`,
@@ -59,7 +61,9 @@ function membershipWriter(
     withApiSession(
       ctx,
       async (s) => {
-        const agg = await loadAggregate(s, ctx.args[0]);
+        const agg = await loadAggregate(s, ctx.args[0], {
+          includeArchived: bool(ctx, "includeArchived") === true,
+        });
         const named = await resolveDevices(s, ctx.args.slice(1));
         const current = agg.members.map((m) => m.id);
 
@@ -185,7 +189,9 @@ function membershipWriter(
 
 async function runRoleList(ctx: Ctx): Promise<number> {
   return withApiSession(ctx, async (s) => {
-    const agg = await loadAggregate(s, ctx.args[0]);
+    const agg = await loadAggregate(s, ctx.args[0], {
+      includeArchived: bool(ctx, "includeArchived") === true,
+    });
     const { points: pool, unreadable } = await loadPointPool(s, agg.members);
     const wantPoints = ctx.flags.points === true;
 
@@ -263,7 +269,9 @@ async function runRoleSet(ctx: Ctx): Promise<number> {
   return withApiSession(
     ctx,
     async (s) => {
-      const agg = await loadAggregate(s, ctx.args[0]);
+      const agg = await loadAggregate(s, ctx.args[0], {
+        includeArchived: bool(ctx, "includeArchived") === true,
+      });
       const [role, metric] = [ctx.args[1], ctx.args[2]];
       const refs = ctx.args.slice(3);
       if (!refs.length)
@@ -338,7 +346,9 @@ async function runRoleClear(ctx: Ctx): Promise<number> {
   return withApiSession(
     ctx,
     async (s) => {
-      const agg = await loadAggregate(s, ctx.args[0]);
+      const agg = await loadAggregate(s, ctx.args[0], {
+        includeArchived: bool(ctx, "includeArchived") === true,
+      });
       const [role, metric] = [ctx.args[1], ctx.args[2]];
       const { points: pool } = await loadPointPool(s, agg.members);
 

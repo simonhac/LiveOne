@@ -162,7 +162,10 @@ describe("membershipWriter, against an unreadable departing device", () => {
                 members: members.map((m) => ({ ...m })),
                 bindings: [],
               };
-            if (p === "/api/v4/devices")
+            // The LIST, with or without its query string — `resolveDevices` asks for
+            // `?includeInactive=true` so a membership verb can still name an archived member.
+            // Matched before the per-device regex below, which would otherwise swallow it.
+            if (p === "/api/v4/devices" || p.startsWith("/api/v4/devices?"))
               return {
                 devices: members.map((m) => ({ ...m, legacySystemId: 0 })),
               };

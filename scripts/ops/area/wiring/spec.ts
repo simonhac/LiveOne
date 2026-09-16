@@ -5,7 +5,7 @@
  * declaration, so a documented flag cannot drift from an accepted one.
  */
 import { type CommandSpec } from "@/lib/cli/cli";
-import { BASE_URL_FLAG } from "../../shared";
+import { BASE_URL_FLAG, INCLUDE_ARCHIVED_FLAG } from "../../shared";
 
 const AREA_ARG = {
   name: "area",
@@ -30,7 +30,7 @@ export const DEVICES_SPEC = {
       name: "list",
       summary: "The area's member devices.",
       args: [AREA_ARG],
-      flags: { ...BASE_URL_FLAG },
+      flags: { ...BASE_URL_FLAG, ...INCLUDE_ARCHIVED_FLAG },
       examples: ["liveone area devices list kew"],
     },
     add: {
@@ -50,7 +50,7 @@ export const DEVICES_SPEC = {
           help: "Devices to add",
         },
       ],
-      flags: { ...BASE_URL_FLAG },
+      flags: { ...BASE_URL_FLAG, ...INCLUDE_ARCHIVED_FLAG },
       exitCodes: {
         1: "the server refused the membership (the reason says why)",
       },
@@ -76,7 +76,7 @@ export const DEVICES_SPEC = {
           help: "Devices to remove",
         },
       ],
-      flags: { ...BASE_URL_FLAG },
+      flags: { ...BASE_URL_FLAG, ...INCLUDE_ARCHIVED_FLAG },
       exitCodes: {
         1: "the server refused the membership (the reason says why)",
       },
@@ -99,7 +99,7 @@ export const DEVICES_SPEC = {
           help: "The complete membership",
         },
       ],
-      flags: { ...BASE_URL_FLAG },
+      flags: { ...BASE_URL_FLAG, ...INCLUDE_ARCHIVED_FLAG },
       exitCodes: {
         1: "the server refused the membership (the reason says why)",
       },
@@ -132,6 +132,7 @@ export const ROLE_SPEC = {
       args: [AREA_ARG],
       flags: {
         ...BASE_URL_FLAG,
+        ...INCLUDE_ARCHIVED_FLAG,
         points: {
           type: "boolean",
           help: "Also list every bindable point on the area's devices, marking which are unbound",
@@ -174,7 +175,7 @@ export const ROLE_SPEC = {
           help: "Points, highest priority first: pt_ id, logicalPath, or device:logicalPath",
         },
       ],
-      flags: { ...BASE_URL_FLAG },
+      flags: { ...BASE_URL_FLAG, ...INCLUDE_ARCHIVED_FLAG },
       exitCodes: { 1: "the server refused the binding (the reason says why)" },
       examples: [
         "liveone area role set kew grid rate 'amber:bidi.grid.import/rate'",
@@ -197,7 +198,7 @@ export const ROLE_SPEC = {
           help: "Optional: just this metric of that role",
         },
       ],
-      flags: { ...BASE_URL_FLAG },
+      flags: { ...BASE_URL_FLAG, ...INCLUDE_ARCHIVED_FLAG },
       exitCodes: { 1: "the server refused the change (the reason says why)" },
       examples: [
         "liveone area role clear kew grid rate --apply",

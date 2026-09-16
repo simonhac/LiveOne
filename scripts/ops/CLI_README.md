@@ -3660,6 +3660,7 @@ Arguments:
 
 Options:
   --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
+  --include-archived         Also consider archived areas (they are hidden from every listing by default)
 
 Common options:
   --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
@@ -3712,6 +3713,7 @@ Arguments:
 
 Options:
   --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
+  --include-archived         Also consider archived areas (they are hidden from every listing by default)
 
 Common options:
   --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
@@ -3768,6 +3770,7 @@ Arguments:
 
 Options:
   --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
+  --include-archived         Also consider archived areas (they are hidden from every listing by default)
 
 Common options:
   --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
@@ -3822,6 +3825,7 @@ Arguments:
 
 Options:
   --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
+  --include-archived         Also consider archived areas (they are hidden from every listing by default)
 
 Common options:
   --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
@@ -3929,6 +3933,7 @@ Arguments:
 
 Options:
   --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
+  --include-archived         Also consider archived areas (they are hidden from every listing by default)
   --points                   Also list every bindable point on the area's devices, marking which are unbound
 
 Common options:
@@ -3986,6 +3991,7 @@ Arguments:
 
 Options:
   --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
+  --include-archived         Also consider archived areas (they are hidden from every listing by default)
 
 Common options:
   --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
@@ -4042,6 +4048,7 @@ Arguments:
 
 Options:
   --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
+  --include-archived         Also consider archived areas (they are hidden from every listing by default)
 
 Common options:
   --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)

@@ -4,6 +4,7 @@ jest.mock("@/lib/db/planetscale", () => ({ requirePlanetscaleDb: jest.fn() }));
 
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import { findDependents } from "../relied-upon";
+import { Area } from "@/lib/ids";
 
 /**
  * The finders, driven against a stub that returns what the DRIVER returns rather than what the
@@ -246,5 +247,135 @@ describe("device dependents", () => {
     mockDb.mockReturnValue(withArea(true));
     const del = await findDependents("device", DEV, { destructive: true });
     expect(del.find((d) => d.kind === "area")!.effect).toBe("cascade-deleted");
+  });
+});
+
+describe("the area/helper deadlock", () => {
+  /**
+   * 🛑 The two carve-outs here exist because without them the lifecycles deadlocked: an area could
+   * not be ARCHIVED while it held its own helper (and `ensureHelperDevice` re-homes the helper back,
+   * so "remove it first" was advice that could not be followed), and the helper could not be
+   * archived or deleted while it was in an area. Nothing could retire an area with battery
+   * provenance, which is every area worth retiring.
+   */
+  const AREA = "01a0a00a-1dcb-7c7b-8580-fd5950166611";
+  const HELPER = "01a0a00a-1dcb-7c7b-8580-fd59501666dd";
+  const PT = "01a0a00a-1dcb-7c7b-8580-fd5950166600";
+
+  function stubDeviceDb(results: unknown[][]) {
+    const queue = [...results];
+    const b: Record<string, unknown> = {};
+    for (const m of [
+      "select",
+      "from",
+      "where",
+      "limit",
+      "orderBy",
+      "groupBy",
+      "innerJoin",
+    ])
+      b[m] = () => b;
+    b.then = (r: (v: unknown) => unknown) =>
+      Promise.resolve(queue.shift() ?? []).then(r);
+    return b;
+  }
+
+  it("an area's OWN helper does not block ARCHIVING it", async () => {
+    // areaDependents order: dashboards · automations · members · [destructive legs…]
+    mockDb.mockReturnValue(
+      stubDb([
+        [], // dashboards
+        [], // automations
+        [
+          {
+            id: HELPER,
+            name: "Kutis · derived",
+            vendor: "helper",
+            vendorSiteId: `helper:area:${Area.encode(AREA)}`,
+          },
+        ],
+      ]) as never,
+    );
+    const deps = await findDependents("area", AREA, { destructive: false });
+    expect(deps).toEqual([]);
+  });
+
+  it("but it IS named on a DELETE, because it would be left dangling", async () => {
+    mockDb.mockReturnValue(
+      stubDb([
+        [],
+        [],
+        [
+          {
+            id: HELPER,
+            name: "Kutis · derived",
+            vendor: "helper",
+            vendorSiteId: `helper:area:${Area.encode(AREA)}`,
+          },
+        ],
+        [], // orphan-helper leg
+        [{ n: 0 }], // bindings
+        [{ n: 0 }], // flow matrix
+        [{ n: 0 }], // battery provenance
+        [], // calendar tokens
+        [{ n: 0 }], // interval provenance
+        [], // user defaults
+      ]) as never,
+    );
+    const deps = await findDependents("area", AREA, { destructive: true });
+    const helper = deps.find((d) => d.kind === "helper-device");
+    expect(helper).toBeDefined();
+    expect(helper!.effect).toBe("dangles");
+    // The fix must name a verb that EXISTS — "re-home it" was unfollowable.
+    expect(helper!.fix).toContain("liveone device delete");
+  });
+
+  it("a NON-helper member still blocks an archive", async () => {
+    // The carve-out is for the area's own server-managed helper, nothing wider.
+    mockDb.mockReturnValue(
+      stubDb([
+        [],
+        [],
+        [
+          {
+            id: "01a0a00a-1dcb-7c7b-8580-fd59501666ee",
+            name: "Kutis",
+            vendor: "sigenergy",
+            vendorSiteId: "102026062300090",
+          },
+        ],
+      ]) as never,
+    );
+    const deps = await findDependents("area", AREA, { destructive: false });
+    expect(deps.map((d) => d.kind)).toEqual(["device"]);
+  });
+
+  it("an ARCHIVED area does not block its device's archive or delete", async () => {
+    // The other half of the deadlock. An archived area serves nothing, so "it would go quiet" is
+    // already true and cannot be a reason to refuse.
+    const rows = (status: string) => [
+      [], // dashboards
+      [{ id: PT, rid: 7, name: "p" }], // own points
+      [{ areaId: AREA, rid: 16 }], // the device row
+      [{ name: "Kutis", status }], // the area
+      [],
+      [],
+      [],
+      [{ n: 0 }],
+      [{ n: 0 }],
+      [], // destructive legs
+    ];
+
+    mockDb.mockReturnValue(stubDeviceDb(rows("archived")) as never);
+    const archived = await findDependents("device", HELPER, {
+      destructive: true,
+    });
+    expect(archived.map((d) => d.kind)).not.toContain("area");
+
+    mockDb.mockReturnValue(stubDeviceDb(rows("active")) as never);
+    const active = await findDependents("device", HELPER, {
+      destructive: true,
+    });
+    expect(active.map((d) => d.kind)).toContain("area");
   });
 });

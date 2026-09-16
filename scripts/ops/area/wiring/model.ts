@@ -65,18 +65,33 @@ export const isHelper = (m: WireMember) => m.vendor === "helper";
 export async function loadAggregate(
   s: ApiSession,
   ref: string,
+  opts: { includeArchived?: boolean } = {},
 ): Promise<Aggregate> {
+  // 🛑 `includeArchived` reaches HERE, not only the route. A ref is matched against the LIST
+  // (`resolveRef`), so an area the list omits is unaddressable — including by its literal `ar_` id.
+  // Without it the wiring verbs could not name an archived area at all, which is the one state you
+  // most need them in: retiring an area is archive → clear what it holds → delete, and the middle
+  // step was unreachable. Found while trying to retire an area whose helper device blocked it.
   const { areas } = await s.get<{
     areas: Array<{
       id: string | null;
       displayName: string;
       legacySystemId: number | null;
     }>;
-  }>("/api/v4/areas");
+  }>(
+    opts.includeArchived
+      ? "/api/v4/areas?includeArchived=true"
+      : "/api/v4/areas",
+  );
   const area = resolveRef(
     areas.map((a) => ({ ...a, name: a.displayName })),
     ref,
-    { noun: "area", listCmd: "liveone area list" },
+    {
+      noun: "area",
+      listCmd: opts.includeArchived
+        ? "liveone area list --include-archived"
+        : "liveone area list",
+    },
   );
   const body = await s.get<{
     area: { id: string; name: string };
@@ -204,15 +219,30 @@ export function resolvePoint(
   );
 }
 
+/**
+ * Resolve device refs for the MEMBERSHIP verbs (`area devices add|remove|set`).
+ *
+ * 🛑 `includeInactive`, and it is load-bearing rather than tidy. A ref is matched against the LIST
+ * (see `resolveRef`), so a device the list omits is unaddressable — including by its literal `dv_`
+ * id. Without this, an ARCHIVED device that is still a member of an area could not be named, and
+ * therefore could not be removed from it: `area devices remove` answered "no device matches" for the
+ * one device it most needed to address. Retiring a device is remove → archive → delete, and any
+ * order but that exact one dead-ended.
+ *
+ * Found while retiring a device whose area membership blocked its archive. Widening WHICH devices are
+ * addressable, never WHOSE: the route still authorizes every one of them.
+ */
 export async function resolveDevices(
   s: ApiSession,
   refs: string[],
 ): Promise<WireMember[]> {
-  const { devices } = await s.get<{ devices: WireMember[] }>("/api/v4/devices");
+  const { devices } = await s.get<{ devices: WireMember[] }>(
+    "/api/v4/devices?includeInactive=true",
+  );
   return refs.map((r) =>
     resolveRef(devices, r, {
       noun: "device",
-      listCmd: "liveone device list",
+      listCmd: "liveone device list --include-inactive",
     }),
   );
 }

@@ -540,6 +540,13 @@
       "when": 1789396760212,
       "tag": "0076_areas_status_archived",
       "breakpoints": true
+    },
+    {
+      "idx": 77,
+      "version": "7",
+      "when": 1789518735450,
+      "tag": "0077_point_readings_session_id_idx",
+      "breakpoints": true
     }
   ]
 }

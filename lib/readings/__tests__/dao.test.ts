@@ -1181,3 +1181,51 @@ describe("ReadingsDao admin views — relocated verbatim from readings-read-pg",
     expect(out[0].row_num).toBe("7");
   });
 });
+
+/**
+ * The span readers, driven against rows shaped like what the DRIVER returns rather than what the
+ * type annotation claims.
+ *
+ * 🛑 This is the second instance of one trap, and the reason it is pinned here. `sql<T>` is a
+ * COMPILE-TIME annotation on a raw fragment — drizzle attaches no runtime decoder — so an aggregated
+ * timestamp arrives as whatever node-postgres produced. `rawSpanMsForPoints` was written as
+ * `sql<Date>` + `.getTime()`: it typechecked, every unit test passed (they mock the DAO), and it
+ * threw `r.min.getTime is not a function` as a 500 the first time a real caller hit it.
+ * `relied-upon.test.ts` opens with the same lesson about `derivationDependents`.
+ */
+describe("span readers decode what pg actually returns", () => {
+  it("rawSpanMsForPoints parses the naive UTC timestamp STRING", async () => {
+    const { exec } = makeFakeExec([
+      // node-postgres hands back a string for an aggregated naive timestamp, not a Date.
+      { minT: "2026-01-14 03:05:00", maxT: "2026-09-15 22:40:00" },
+    ]);
+    const span = await ReadingsDao.rawSpanMsForPoints([1, 2], exec);
+    expect(span).toEqual({
+      minMs: Date.parse("2026-01-14T03:05:00Z"),
+      maxMs: Date.parse("2026-09-15T22:40:00Z"),
+    });
+  });
+
+  it("rawSpanMsForPoints returns null when the points hold nothing", async () => {
+    const { exec } = makeFakeExec([{ minT: null, maxT: null }]);
+    expect(await ReadingsDao.rawSpanMsForPoints([1], exec)).toBeNull();
+  });
+
+  it("rawSpanMsForPoints short-circuits on an empty point set", async () => {
+    // Deliberately has no "all points" form: an empty list must never widen to an unfiltered scan.
+    // The canned row is deliberately NON-empty — if the guard were dropped this would return a span,
+    // so `null` proves the query was never issued rather than merely that it found nothing.
+    const { exec } = makeFakeExec([
+      { minT: "2026-01-14 03:05:00", maxT: "2026-09-15 22:40:00" },
+    ]);
+    expect(await ReadingsDao.rawSpanMsForPoints([], exec)).toBeNull();
+  });
+
+  it("deleteRawForPoints short-circuits on an empty point set", async () => {
+    // The same guard, and here it is the difference between deleting nothing and deleting the
+    // largest table in the database.
+    const { exec, deletes } = makeFakeExec([]);
+    expect(await ReadingsDao.deleteRawForPoints([], exec)).toBe(0);
+    expect(deletes).toEqual([]);
+  });
+});
