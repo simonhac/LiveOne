@@ -10,6 +10,7 @@ import {
   decideExercise,
   importKw,
   isDue,
+  isSelfCommandedRun,
   longestLoadedStretch,
   type LoadedSample,
   type LoadedStretch,
@@ -100,6 +101,20 @@ describe("isDue", () => {
   });
 });
 
+/**
+ * 🛑 VERIFIED AGAINST PRODUCTION, 2026-09-16 — do not "correct" these signs from first principles.
+ *
+ * The stored `point_readings.value` for Daylesford's `bidi.grid/power`
+ * (`pt_5v404b4m93bf8aytkrzvhvs3z1`) is NEGATIVE while the generator supplies the house. The point
+ * carries `points.transform = 'i'`, and `/api/history` flips it on read — which is why that API
+ * shows +3813 W for the 2026-09-12 run while the column holds −3813. This module reads
+ * `ReadingsDao.readRaw`, i.e. the column, so the negation below is correct.
+ *
+ * The tell, if you ever need to re-establish it without DB access: an `'i'` point's `min` and `max`
+ * come back from `/api/history` the wrong way round, because negation reverses order. Daylesford's
+ * grid series violates `min ≤ avg ≤ max` in exactly the buckets of a generator run; its battery and
+ * load series never do.
+ */
 describe("importKw — the sign convention", () => {
   it("reads NEGATIVE watts as import", () => {
     expect(importKw(-2300)).toBe(2.3);
@@ -111,6 +126,44 @@ describe("importKw — the sign convention", () => {
 
   it("is zero at zero", () => {
     expect(importKw(0)).toBe(0);
+  });
+});
+
+describe("isSelfCommandedRun", () => {
+  const T = at("2026-09-17T09:00:00+10:00");
+  /** A 30-minute exercise commanded on the hour. */
+  const OURS = [{ requestedAtMs: T, minutes: 30 }];
+
+  it("claims a run that starts just after our command", () => {
+    expect(isSelfCommandedRun(T + 20_000, OURS)).toBe(true);
+  });
+
+  it("claims a run that starts late in the commanded window (a slow crank, a re-latch)", () => {
+    expect(isSelfCommandedRun(T + 29 * 60_000, OURS)).toBe(true);
+  });
+
+  it("does NOT claim a run that starts well after the commanded run could have", () => {
+    expect(isSelfCommandedRun(T + 40 * 60_000, OURS)).toBe(false);
+  });
+
+  it("🛑 does NOT claim a run already under way when we commanded", () => {
+    // Attribution is by START instant on purpose. A run in progress is `decideExercise`'s open-run
+    // branch, not ours — and claiming it would discount somebody else's outage work.
+    expect(isSelfCommandedRun(T - 20 * 60_000, OURS)).toBe(false);
+  });
+
+  it("tolerates a detector boundary rounding the start slightly early", () => {
+    expect(isSelfCommandedRun(T - 60_000, OURS)).toBe(true);
+  });
+
+  it("claims nothing when we commanded nothing", () => {
+    expect(isSelfCommandedRun(T, [])).toBe(false);
+  });
+
+  it("falls back to the tail window for a command that carried no duration", () => {
+    const noValue = [{ requestedAtMs: T, minutes: null }];
+    expect(isSelfCommandedRun(T + 60_000, noValue)).toBe(true);
+    expect(isSelfCommandedRun(T + 20 * 60_000, noValue)).toBe(false);
   });
 });
 

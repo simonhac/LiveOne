@@ -116,6 +116,10 @@ export async function GET(
         subsystem: p.subsystem,
         active: p.active,
         control: p.control ?? null,
+        // The field that silently decides a series' SIGN ('i' = stored inverted, flipped on read).
+        // Emitted because it was previously exposed by no read path at all, which made a
+        // mis-signed point undiagnosable without direct DB access.
+        transform: p.transform ?? null,
       }))
     : undefined;
 

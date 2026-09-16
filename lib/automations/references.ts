@@ -119,6 +119,25 @@ export async function checkReferences(
       return unprocessable(
         `the load point must be in W (this one is in '${load.point.unit ?? "?"}')`,
       );
+    // A UNIDIRECTIONAL point fails OPEN, which is worse than the unit trap: `load/power` is always
+    // positive, so `importKw` clamps every sample to zero and the rule exercises the engine every
+    // single week no matter what it has already done — while looking like it is working.
+    if (!load.point.logicalPath?.startsWith("bidi."))
+      return unprocessable(
+        `the load point must be a bidirectional channel (bidi.…); ` +
+          `'${load.point.logicalPath ?? "?"}' is unidirectional and would never register import`,
+      );
+    if (load.point.metricType !== "power")
+      return unprocessable(
+        `the load point must be a power point (this one is '${load.point.metricType ?? "?"}')`,
+      );
+    // NOTE: deliberately NOT refusing `action.value >= unless.minMinutes`, which looks
+    // self-defeating (a 30-minute exercise clearing its own 30-minute bar) and was specified as a
+    // guard here. It is the SHIPPED DEFAULT — `EXERCISE_DEFAULTS.minMinutes` is 30 and 30 is the
+    // natural run length — so refusing it would 422 the product's own default shape, and PATCHing
+    // the live Daylesford rule. The alternation it guarded against is fixed properly upstream, by
+    // discounting our own runs from the lookback (`isSelfCommandedRun`), which does not depend on
+    // the two numbers differing.
   }
 
   const actionPoint = await loadPointByUuid(action.pointId);

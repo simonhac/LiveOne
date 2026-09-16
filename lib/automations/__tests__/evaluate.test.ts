@@ -48,6 +48,7 @@ jest.mock("@/lib/automations/store", () => ({
   recordFired: jest.fn(),
   disableAutomation: jest.fn(),
   intervalsOverlapping: jest.fn(),
+  ownCommandsInWindow: jest.fn(),
   recordExerciseOutcome: jest.fn(),
   claimExerciseSlot: jest.fn(),
 }));
@@ -179,6 +180,8 @@ beforeEach(() => {
   mockStore.recordFired.mockResolvedValue(undefined);
   mockStore.disableAutomation.mockResolvedValue(undefined);
   mockStore.intervalsOverlapping.mockResolvedValue([]);
+  // No self-commanded runs by default, so a run in the lookback counts as somebody else's work.
+  mockStore.ownCommandsInWindow.mockResolvedValue([]);
   // Both are compare-and-set now: the claim hands back the revision it took, and the outcome write
   // reports whether it applied. A bare `undefined` here would read as a LOST CAS everywhere.
   mockStore.recordExerciseOutcome.mockResolvedValue(true);
@@ -1121,6 +1124,113 @@ describe("evaluateExercise", () => {
       expect.objectContaining({
         runStart: new Date(EX_SLOT),
         context: expect.objectContaining({ outcome: "satisfied" }),
+      }),
+    );
+  });
+
+  it("🛑 OUR OWN exercise does not satisfy the next one — otherwise the rule alternates weeks", async () => {
+    // Deliberately WELL above the bar, so attribution is the only variable between this test and
+    // the control below. (In the field it is worse than this: ramp is negligible, so a commanded
+    // 30-minute run yields ~30 loaded minutes and sits exactly ON a `minMinutes: 30` bar.)
+    const iv = runInterval(2 * 24 * 60, 45);
+    mockStore.intervalsOverlapping.mockResolvedValue([iv] as never);
+    mockReadRaw.mockResolvedValue(
+      loadSeries(iv.startTime.getTime(), iv.endTime.getTime(), 3.5),
+    );
+    mockStore.ownCommandsInWindow.mockResolvedValue([
+      { requestedAtMs: iv.startTime.getTime() - 20_000, minutes: 30 },
+    ] as never);
+    mockStore.listEnabled.mockResolvedValue([exerciseRow()]);
+
+    const summary = await evaluateAutomations(EX_NOW);
+
+    expect(summary.exercise.satisfied).toBe(0);
+    expect(summary.exercise.fired).toBe(1);
+    expect(mockDispatch).toHaveBeenCalled();
+  });
+
+  it("🛑 a failed command lookup costs the TICK, not the slot — the next tick retries", async () => {
+    // The deploy-into-a-live-grace-window question. If the new `point_commands` read rejects, the
+    // per-row catch counts it and steps over; nothing may claim, consume or move the watermark, or
+    // a transient query error would silently cost the occurrence.
+    const iv = runInterval(2 * 24 * 60, 45);
+    mockStore.intervalsOverlapping.mockResolvedValue([iv] as never);
+    mockStore.ownCommandsInWindow.mockRejectedValue(
+      new Error("connection terminated unexpectedly") as never,
+    );
+    mockStore.listEnabled.mockResolvedValue([exerciseRow()]);
+
+    const summary = await evaluateAutomations(EX_NOW);
+
+    expect(summary.errors).toBe(1);
+    expect(mockDispatch).not.toHaveBeenCalled();
+    expect(mockStore.claimExerciseSlot).not.toHaveBeenCalled();
+    expect(mockStore.recordExerciseOutcome).not.toHaveBeenCalled();
+
+    // The next tick, with the query healthy again, still finds the slot due and acts on it.
+    jest.clearAllMocks();
+    mockStore.listEnabled.mockResolvedValue([exerciseRow()]);
+    mockStore.intervalsOverlapping.mockResolvedValue([]);
+    mockStore.ownCommandsInWindow.mockResolvedValue([]);
+    mockStore.claimExerciseSlot.mockResolvedValue({ revision: 4 } as never);
+    mockStore.recordExerciseOutcome.mockResolvedValue(true);
+    mockDispatch.mockResolvedValue({
+      kind: "completed",
+      ok: true,
+    } as PointActionOutcome);
+    mockLoadPoint.mockResolvedValue({
+      point: { id: ACT_PT_UUID },
+      deviceRid: DEVICE_RID,
+    } as never);
+    mockDevice.mockResolvedValue({ id: DEVICE_RID } as never);
+    mockDetectors.mockResolvedValue([
+      detector({ displayTimezone: "Australia/Melbourne" }),
+    ] as never);
+    mockOpenRun.mockResolvedValue(null as never);
+
+    const retry = await evaluateAutomations(EX_NOW + 60_000);
+    expect(retry.exercise.fired).toBe(1);
+  });
+
+  it("the SAME run satisfies when nobody can show we started it", async () => {
+    // The control: identical evidence, no matching command. A genuine outage-driven run of this
+    // length is exactly what the skip condition exists for.
+    const iv = runInterval(2 * 24 * 60, 45);
+    mockStore.intervalsOverlapping.mockResolvedValue([iv] as never);
+    mockReadRaw.mockResolvedValue(
+      loadSeries(iv.startTime.getTime(), iv.endTime.getTime(), 3.5),
+    );
+    mockStore.listEnabled.mockResolvedValue([exerciseRow()]);
+
+    const summary = await evaluateAutomations(EX_NOW);
+
+    expect(summary.exercise.satisfied).toBe(1);
+    expect(mockDispatch).not.toHaveBeenCalled();
+  });
+
+  it("records how many runs were weighed and how many were discounted as ours", async () => {
+    const iv = runInterval(2 * 24 * 60, 45);
+    mockStore.intervalsOverlapping.mockResolvedValue([iv] as never);
+    mockReadRaw.mockResolvedValue(
+      loadSeries(iv.startTime.getTime(), iv.endTime.getTime(), 3.5),
+    );
+    mockStore.ownCommandsInWindow.mockResolvedValue([
+      { requestedAtMs: iv.startTime.getTime() - 20_000, minutes: 30 },
+    ] as never);
+    mockStore.listEnabled.mockResolvedValue([exerciseRow()]);
+
+    await evaluateAutomations(EX_NOW);
+
+    // The dispatch path records through claimExerciseSlot + recordExerciseOutcome; the counts ride
+    // on the context so `automation show` can say why an empty `evidence` is not an idle week.
+    expect(mockStore.recordExerciseOutcome).toHaveBeenCalledWith(
+      AU_UUID,
+      expect.objectContaining({
+        context: expect.objectContaining({
+          outcome: "fired",
+          runsConsidered: 0,
+          runsExcluded: 1,
+        }),
       }),
     );
   });

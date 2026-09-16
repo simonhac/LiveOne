@@ -72,6 +72,52 @@ export function importKw(rawW: number): number {
   return Math.max(0, -rawW) / 1000;
 }
 
+/** One dispatch this rule made: when we asked, and for how long. */
+export interface CommandedRun {
+  requestedAtMs: number;
+  /** The commanded duration in minutes; null if the command carried no value. */
+  minutes: number | null;
+}
+
+/**
+ * How far either side of a command a run may start and still be counted as that command's doing.
+ *
+ * LEAD covers a detector boundary rounding a start slightly before the command that caused it;
+ * TAIL covers crank, a restart under the latch, and the hub releasing a touch late.
+ *
+ * Both are generous on purpose, because the two errors are not symmetric — and note the direction,
+ * which is the opposite of the intuitive one. Over-attributing DISCARDS a run from the evidence, so
+ * the rule is less likely to be satisfied and exercises the engine again: an unnecessary run.
+ * Under-attributing counts our own exercise as evidence and SKIPS the next one, letting the engine
+ * wet-stack — the failure this whole feature exists to prevent. So when in doubt, claim the run.
+ */
+const ATTRIBUTION_LEAD_MS = 120_000;
+const ATTRIBUTION_TAIL_MS = 300_000;
+
+/**
+ * Was this run started by one of OUR OWN dispatches?
+ *
+ * 🛑 The `unless` window means "runtime over the last week APART FROM the run we started". Without
+ * this the rule satisfies itself: a 30-minute exercise yields ~30 loaded minutes (measured on prod
+ * — ramp is negligible, a commanded 10-minute run produced ~10 loaded minutes), which clears a
+ * `minMinutes: 30` bar and skips the FOLLOWING week. The result is a generator exercised every
+ * other Thursday by a rule that reads as weekly.
+ *
+ * Attribution is by START instant, not overlap: a run already under way when we commanded is not
+ * ours, and `decideExercise`'s open-run branch is what handles that case.
+ */
+export function isSelfCommandedRun(
+  runStartMs: number,
+  commands: CommandedRun[],
+): boolean {
+  return commands.some((c) => {
+    const from = c.requestedAtMs - ATTRIBUTION_LEAD_MS;
+    const to =
+      c.requestedAtMs + (c.minutes ?? 0) * 60_000 + ATTRIBUTION_TAIL_MS;
+    return runStartMs >= from && runStartMs <= to;
+  });
+}
+
 export interface LoadedSample {
   tMs: number;
   value: number | null;
@@ -168,6 +214,10 @@ export interface ExerciseInputs {
   evidence: LoadedStretch | null;
   /** True when the run detector currently has an open interval. */
   openRun: boolean;
+  /** Runs in the lookback that were weighed (i.e. not our own). */
+  runsConsidered?: number;
+  /** Runs in the lookback discounted as started by this rule — see `isSelfCommandedRun`. */
+  runsExcluded?: number;
 }
 
 export type ExerciseDecision =
@@ -180,7 +230,13 @@ export function exerciseContext(
   slot: Slot,
   outcome: ExerciseOutcome,
   nowMs: number,
-  extra?: { reason?: string; evidence?: LoadedStretch | null; final?: boolean },
+  extra?: {
+    reason?: string;
+    evidence?: LoadedStretch | null;
+    final?: boolean;
+    runsConsidered?: number;
+    runsExcluded?: number;
+  },
 ): ExerciseArmedContext {
   const ctx: ExerciseArmedContext = {
     kind: "exercise",
@@ -190,6 +246,11 @@ export function exerciseContext(
   };
   if (extra?.reason) ctx.reason = extra.reason;
   if (extra?.final) ctx.final = true;
+  // Recorded even when zero: "no runs to weigh" and "one run, discounted as ours" are the two
+  // readings of an empty `evidence`, and only these tell them apart on the record.
+  if (extra?.runsConsidered !== undefined)
+    ctx.runsConsidered = extra.runsConsidered;
+  if (extra?.runsExcluded !== undefined) ctx.runsExcluded = extra.runsExcluded;
   if (extra?.evidence)
     ctx.evidence = {
       minutes: extra.evidence.minutes,
@@ -216,11 +277,18 @@ export function decideExercise(
   nowMs: number,
 ): ExerciseDecision {
   const { slot, evidence } = input;
+  const counts = {
+    runsConsidered: input.runsConsidered,
+    runsExcluded: input.runsExcluded,
+  };
 
   if (evidence !== null && evidence.minutes >= input.minMinutes)
     return {
       kind: "consume",
-      context: exerciseContext(slot, "satisfied", nowMs, { evidence }),
+      context: exerciseContext(slot, "satisfied", nowMs, {
+        evidence,
+        ...counts,
+      }),
     };
 
   if (nowMs > slot.atMs + input.graceMinutes * 60_000)
@@ -230,7 +298,7 @@ export function decideExercise(
         slot,
         input.openRun ? "missed-running" : "missed",
         nowMs,
-        { evidence },
+        { evidence, ...counts },
       ),
     };
 
@@ -240,6 +308,7 @@ export function decideExercise(
       context: exerciseContext(slot, "waiting", nowMs, {
         reason: "a run is already in progress",
         evidence,
+        ...counts,
       }),
     };
 

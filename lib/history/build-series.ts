@@ -50,6 +50,23 @@ function applyTransform(
 }
 
 /**
+ * Which stored aggregation field actually backs a requested one, once `transform` is accounted for.
+ *
+ * 🛑 Negation REVERSES order, so an inverted series' minimum is the negated stored MAXIMUM. Only
+ * this lookup knows both fields exist — `applyTransform` sees one value at a time and cannot swap
+ * anything. Without it `/api/history` served `min > max` for every `'i'` point, which is how the
+ * Daylesford generator's 5-minute buckets came back as min 3854 / avg 3813 / max 3779.
+ *
+ * `avg`, `last`, `delta` and `quality` are order-free and pass through untouched.
+ */
+function sourceAggField(transform: string | null, field: string): string {
+  if (transform !== "i") return field;
+  if (field === "min") return "max";
+  if (field === "max") return "min";
+  return field;
+}
+
+/**
  * Convert the uniform `AggRow[]` into OpenNEM series. `firstEpoch`/`lastEpoch` are the request
  * window bounds (epoch-ms). `debug`, when supplied, is mutated in place (query/series tracking);
  * pass `undefined` for the shadow PG path so it never touches the served request's debug object.
@@ -111,7 +128,12 @@ export async function buildSeriesFromAggRows(
   const allSeries: OpenNEMDataSeries[] = [];
 
   for (const series of seriesInfos) {
-    const key = `${series.point.systemId}.${series.point.index}.${series.aggregationField}`;
+    // An inverted series reads its extremes from the OPPOSITE stored field — see `sourceAggField`.
+    const srcField = sourceAggField(
+      series.point.transform,
+      series.aggregationField,
+    );
+    const key = `${series.point.systemId}.${series.point.index}.${srcField}`;
     let rows = rowsByPointAndField.get(key) || [];
 
     // Apply transform (skip for quality which is a string)

@@ -239,7 +239,15 @@ beforeEach(() => {
         point: {
           id: uuid,
           logicalPath: uuid === LOAD_PT_UUID ? "bidi.grid" : "ev.charge",
-          metricType: uuid === SRC_PT_UUID ? "added" : "active",
+          // The load point is a real power channel: `bidi.grid/power`, metricType "power". It was
+          // fixtured as "active" — a shape that cannot exist — until the exercise checks started
+          // asserting on it.
+          metricType:
+            uuid === SRC_PT_UUID
+              ? "added"
+              : uuid === LOAD_PT_UUID
+                ? "power"
+                : "active",
           unit:
             uuid === SRC_PT_UUID ? "kWh" : uuid === LOAD_PT_UUID ? "W" : null,
         },
@@ -434,6 +442,55 @@ describe("POST /api/v4/automations", () => {
     });
     expect(res.status).toBe(422);
     expect((await res.json()).error).toContain("must be in W");
+  });
+
+  it("🛑 422s a UNIDIRECTIONAL load point — it would satisfy the rule every single week", async () => {
+    // Worse than the unit trap because it fails OPEN the other way: `load/power` is always
+    // positive, so `importKw` clamps every sample to zero, no stretch is ever found, and the engine
+    // is exercised on every slot regardless of what it has already done.
+    mockLoadPoint.mockImplementation(
+      async (uuid: string) =>
+        ({
+          point: {
+            id: uuid,
+            logicalPath: "load",
+            metricType: "power",
+            unit: "W",
+          },
+          deviceRid: 10,
+        }) as never,
+    );
+    const res = await post({
+      areaId: AREA,
+      mode: "standing",
+      trigger: exerciseTrigger,
+      action: setValueAction,
+    });
+    expect(res.status).toBe(422);
+    expect((await res.json()).error).toContain("bidirectional");
+  });
+
+  it("🛑 422s a load point that is not a power point", async () => {
+    mockLoadPoint.mockImplementation(
+      async (uuid: string) =>
+        ({
+          point: {
+            id: uuid,
+            logicalPath: "bidi.grid",
+            metricType: "energy",
+            unit: "W",
+          },
+          deviceRid: 10,
+        }) as never,
+    );
+    const res = await post({
+      areaId: AREA,
+      mode: "standing",
+      trigger: exerciseTrigger,
+      action: setValueAction,
+    });
+    expect(res.status).toBe(422);
+    expect((await res.json()).error).toContain("power point");
   });
 
   it("🛑 422s set_value paired with a charge-session trigger", async () => {

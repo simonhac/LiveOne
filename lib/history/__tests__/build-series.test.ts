@@ -94,6 +94,67 @@ describe("buildSeriesFromAggRows", () => {
     expect(out[0].history.data).toEqual([-10, null]);
   });
 
+  it("🛑 an inverted series reads its extremes from the OPPOSITE stored field", async () => {
+    // Negation reverses order, so the minimum of an inverted series is the negated stored MAXIMUM.
+    // Negating each field in place (the original bug) served min > max: Daylesford's generator run
+    // came back as min 3854 / avg 3813 / max 3779, and any chart drawing a band got it upside down.
+    const point = fakePoint({ index: 7, systemId: 1, transform: "i" });
+    const allRows: AggRow[] = [
+      {
+        system_id: 1,
+        point_id: 7,
+        interval_end: FIVE,
+        avg: -3813,
+        min: -3854, // the most NEGATIVE stored sample = the largest import
+        max: -3779,
+      },
+    ];
+    const [min, avg, max] = await Promise.all(
+      (["min", "avg", "max"] as const).map((field) =>
+        buildSeriesFromAggRows(
+          allRows,
+          [seriesInfo(point, field)],
+          "5m",
+          device,
+          FIVE,
+          FIVE,
+        ),
+      ),
+    );
+
+    expect(min[0].history.data).toEqual([3779]);
+    expect(avg[0].history.data).toEqual([3813]);
+    expect(max[0].history.data).toEqual([3854]);
+    // The property that actually matters, and the one the prod probe checks.
+    expect(min[0].history.data[0]).toBeLessThanOrEqual(
+      avg[0].history.data[0] as number,
+    );
+    expect(avg[0].history.data[0]).toBeLessThanOrEqual(
+      max[0].history.data[0] as number,
+    );
+  });
+
+  it("leaves an untransformed series' extremes alone", async () => {
+    const point = fakePoint({ index: 8, systemId: 1 });
+    const allRows: AggRow[] = [
+      { system_id: 1, point_id: 8, interval_end: FIVE, min: 281, max: 427 },
+    ];
+    const [min, max] = await Promise.all(
+      (["min", "max"] as const).map((field) =>
+        buildSeriesFromAggRows(
+          allRows,
+          [seriesInfo(point, field)],
+          "5m",
+          device,
+          FIVE,
+          FIVE,
+        ),
+      ),
+    );
+    expect(min[0].history.data).toEqual([281]);
+    expect(max[0].history.data).toEqual([427]);
+  });
+
   it("passes a quality (string) series through unchanged", async () => {
     const point = fakePoint({ index: 4, systemId: 1 });
     const allRows: AggRow[] = [

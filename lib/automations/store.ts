@@ -5,12 +5,24 @@
  * bare drizzle chains (a route test that asserts on a chain is asserting on drizzle, not on us).
  * Every write stamps `updatedAt` and bumps `revision` (see `stamped()` below).
  */
-import { and, asc, eq, gte, inArray, isNull, lte, or, sql } from "drizzle-orm";
+import {
+  and,
+  asc,
+  eq,
+  gte,
+  inArray,
+  isNull,
+  lte,
+  ne,
+  or,
+  sql,
+} from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import {
   automations,
   devices,
   derivedIntervals,
+  pointCommands,
   type AutomationAction,
   type AutomationArmedContext,
   type AutomationMode,
@@ -20,6 +32,8 @@ import {
   type ExerciseArmedContext,
 } from "@/lib/db/planetscale/schema";
 import { ownerDeviceIdForDerivation } from "@/lib/derivations/resolve";
+import { Automation } from "@/lib/ids";
+import type { CommandedRun } from "./exercise";
 
 export async function listForArea(areaUuid: string): Promise<AutomationRow[]> {
   return requirePlanetscaleDb()
@@ -252,6 +266,70 @@ export async function intervalsOverlapping(
       ),
     )
     .orderBy(asc(derivedIntervals.startTime));
+}
+
+/**
+ * The longest run this control plane will ever latch, in ms — `deepsea:generator`'s descriptor caps
+ * `generator_run_request_min` at 360. Used only to widen the command lookup far enough back that a
+ * command issued BEFORE the lookback can still be matched to a run inside it.
+ *
+ * The lookup must reach back by the longest MATCHABLE span, not merely the longest run: attribution
+ * allows a run to start up to `ATTRIBUTION_TAIL_MS` after the latch expires, so a command that far
+ * outside the lookback can still claim a run inside it. Deliberately generous — over-fetching costs
+ * a few rows, under-fetching silently reinstates the bug this function exists to kill.
+ */
+const MAX_COMMANDED_RUN_MS = 360 * 60_000;
+const COMMAND_LOOKUP_SLACK_MS = 10 * 60_000;
+
+/**
+ * Every command THIS automation issued AT THIS POINT that could have started a run in [fromMs, toMs].
+ *
+ * `requested_by` carries the literal `automation:au_…` form `fireExercise` writes, so a run started
+ * by a human through the UI — or by a different rule — is correctly NOT matched. Scoped to the
+ * action point as well, so re-homing a rule onto another generator cannot make the OLD generator's
+ * commands discount the new one's runs (and because `point_commands_point_idx` supports it).
+ *
+ * 🛑 Only `rejected` is excluded, NOT everything that is not `ok`. A hub TIMEOUT is explicitly
+ * ambiguous — `hub-client.ts` says in as many words that a start "MAY have taken effect" — and it
+ * lands as `failed`; a `pending` row is a dispatch whose outcome we never recorded. Treating either
+ * as "started nothing" is how the original bug survives: the engine runs, we do not recognise the
+ * run as ours, and next week's exercise is suppressed by our own work. `rejected` is the one status
+ * that means the hub refused, so nothing started.
+ *
+ * The asymmetry is deliberate and follows this module's stated discipline: over-attributing costs
+ * an unnecessary exercise; under-attributing skips a needed one and lets the engine wet-stack.
+ */
+export async function ownCommandsInWindow(
+  automationUuid: string,
+  actionPointUuid: string,
+  fromMs: number,
+  toMs: number,
+): Promise<CommandedRun[]> {
+  const rows = await requirePlanetscaleDb()
+    .select({
+      requestedAt: pointCommands.requestedAt,
+      value: pointCommands.value,
+    })
+    .from(pointCommands)
+    .where(
+      and(
+        eq(
+          pointCommands.requestedBy,
+          `automation:${Automation.encode(automationUuid)}`,
+        ),
+        eq(pointCommands.pointId, actionPointUuid),
+        ne(pointCommands.status, "rejected"),
+        gte(
+          pointCommands.requestedAt,
+          new Date(fromMs - MAX_COMMANDED_RUN_MS - COMMAND_LOOKUP_SLACK_MS),
+        ),
+        lte(pointCommands.requestedAt, new Date(toMs)),
+      ),
+    );
+  return rows.map((r) => ({
+    requestedAtMs: r.requestedAt.getTime(),
+    minutes: r.value,
+  }));
 }
 
 /**
