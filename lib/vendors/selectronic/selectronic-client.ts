@@ -1,4 +1,4 @@
-import fetch, { Headers, Response } from "node-fetch";
+import fetch from "node-fetch";
 import * as cheerio from "cheerio";
 import { ERROR_MESSAGES } from "@/config";
 
@@ -47,12 +47,24 @@ export interface ApiResponse<T> {
 }
 
 // Select.Live API Configuration
+/**
+ * select.live is a web portal, not an API: `/login` is a form POST and the data endpoint is a
+ * dashboard route. There is no token auth to move to — the session cookie IS the session.
+ *
+ * There was a `magicWindow` here (minutes 48-52, believed unavailable). Measured over 30 days on
+ * prod it is no longer true: minutes 48, 49 and 51 had ZERO failures and 52 matched the all-hours
+ * baseline. Only minute 50 shows anything (3.4%), and those are `Authentication failed` and
+ * `socket hang up` — the portal declining to LOG YOU IN, not declining to serve data, which is
+ * why reusing a session across polls matters more than any window handling.
+ *
+ * The window that does exist is daily, not hourly: 75% of all failures are HTTP 504 in the
+ * 00:00-00:20 Sydney rollover, peaking at 00:15-00:17. It is not special-cased here — the client
+ * reports what happened and the minutely poll re-attempts, which is all the old branch achieved.
+ */
 const SELECTLIVE_API = {
   baseUrl: "https://select.live",
   loginEndpoint: "/login",
   dataEndpoint: "/dashboard/hfdata",
-  magicWindowStart: 48, // API unavailable from minute 48
-  magicWindowEnd: 52, // until minute 52 of each hour
 } as const;
 
 interface Credentials {
@@ -76,6 +88,18 @@ export interface DeviceInfo {
 export class SelectronicFetchClient {
   private cookies: Map<string, string> = new Map();
   private lastAuthTime?: Date;
+
+  /**
+   * Milliseconds since this client last authenticated, or `null` if it never has.
+   *
+   * The caller decides how long a session may be reused (`SELECTRONIC_SESSION_TTL_MS`); the client
+   * just reports its own age. Reading it here rather than tracking the time in the adapter keeps
+   * the answer correct when the 401 handler below re-authenticates mid-poll — the adapter would
+   * not see that, and would go on believing the session was as old as its last explicit login.
+   */
+  public sessionAgeMs(): number | null {
+    return this.lastAuthTime ? Date.now() - this.lastAuthTime.getTime() : null;
+  }
   private credentials: Credentials;
 
   constructor(credentials: Credentials) {
@@ -86,13 +110,6 @@ export class SelectronicFetchClient {
   /**
    * Check if we're in the magic window (48-52 minutes past hour)
    */
-  private isInMagicWindow(): boolean {
-    const minute = new Date().getMinutes();
-    return (
-      minute >= SELECTLIVE_API.magicWindowStart &&
-      minute <= SELECTLIVE_API.magicWindowEnd
-    );
-  }
 
   /**
    * Parse cookies from Set-Cookie headers
@@ -392,9 +409,6 @@ export class SelectronicFetchClient {
    */
   public async fetchData(): Promise<ApiResponse<SelectronicData>> {
     try {
-      // Check if we're in magic window but don't warn unless it fails
-      const inMagicWindow = this.isInMagicWindow();
-
       // Ensure we have cookies
       if (this.cookies.size === 0) {
         console.log("[Selectronic] No cookies, authenticating...");
@@ -441,20 +455,6 @@ export class SelectronicFetchClient {
       }
 
       if (!response.ok) {
-        // Check if it's a magic window error (usually 500 or 503)
-        if (
-          inMagicWindow &&
-          (response.status === 500 || response.status === 503)
-        ) {
-          console.warn("[API] Request failed during magic window (48-52 min)");
-          return {
-            success: false,
-            error: `${ERROR_MESSAGES.MAGIC_WINDOW} (HTTP ${response.status})`,
-            errorCode: String(response.status),
-            timestamp: new Date(),
-          };
-        }
-
         return {
           success: false,
           error: `HTTP ${response.status}: ${response.statusText}`,

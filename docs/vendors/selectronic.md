@@ -89,22 +89,34 @@ The API returns JSON with real-time inverter data:
 
 The select.live authentication has some quirks that need to be handled:
 
-1. **Session Management**: Sessions expire after inactivity. Need to re-authenticate when requests fail with 401.
+1. **Session Management**: the session cookie lives in a private Map inside
+   `SelectronicFetchClient`, so the ADAPTER caches the client (`SelectronicAdapter.clientCache`)
+   to keep it across polls, re-authenticating once `sessionAgeMs()` passes
+   `SELECTRONIC_SESSION_TTL_MS` (20 min against a ~30 min server session). A client whose session
+   the portal rejects (`errorKind: "auth"`) is evicted; an upstream failure that says nothing about
+   the session — a 504, a reset — is not.
+
+   🛑 Cache the CLIENT, not a flag. The previous cache stored the string `"authenticated"` and was
+   never read back, so every poll built a cookieless client and the client's own
+   `cookies.size === 0` guard logged in again: measured on prod, **57 fetches produced 57 logins**,
+   49 of them on polls where the cache had "hit". That is ~1440 logins/day where ~44 suffice (one
+   per Vercel process lifetime, ~33 min).
 
 2. **Rate Limiting**: The API appears to have undocumented rate limits. Implement exponential backoff.
 
-3. **Magic Window Bug**: There's a known issue where the API returns 500 errors during minutes 48-52 of each hour. During this window, cache the last known good data.
+3. **Availability windows** — measured over 30 days to 2026-09-16, one device, 0.31% overall
+   failure rate (136 of ~43,200 polls). Two patterns, and **neither is the "magic window" this doc
+   used to describe**:
 
-```typescript
-// Handle the "magic window" bug
-const now = new Date();
-const minute = now.getMinutes();
-
-if (minute >= 48 && minute <= 52) {
-  // Return cached data during the problematic window
-  return lastKnownGoodData;
-}
-```
+   - **Daily rollover, 00:00-00:20 Sydney.** 75% of all failures: `HTTP 504 Gateway Timeout`, a
+     consistent ~2.05 s, peaking hard at 00:15-00:17. Undocumented until now, and by far the
+     bigger of the two. Not special-cased in code — the minutely poll re-attempts and a single
+     missed interval is cheap.
+   - **Minute ~50 of each hour**, the residue of the old 48-52 window. Minutes 48, 49 and 51 now
+     have **zero** failures and minute 52 matches the all-hours baseline; only minute 50 shows
+     anything, at 3.4%. Those failures are `Authentication failed` and `socket hang up` — the
+     portal declining to LOG YOU IN, not declining to serve data, which is why session reuse
+     matters more here than any window handling.
 
 ### Proxy Authentication Service
 
@@ -170,7 +182,8 @@ def proxy_login():
 
 - **401 Unauthorized**: Session expired, need to re-authenticate
 - **404 Not Found**: Invalid system number
-- **500 Internal Server Error**: Server error or "magic window" bug
+- **500 Internal Server Error**: Server error
+- **504 Gateway Timeout**: overwhelmingly the 00:00-00:20 Sydney rollover (see above)
 - **503 Service Unavailable**: System offline or maintenance
 
 ### Retry Strategy
@@ -189,14 +202,6 @@ async function fetchWithRetry(
         // Re-authenticate and retry
         await authenticate();
         continue;
-      }
-
-      if (response.status === 500) {
-        const minute = new Date().getMinutes();
-        if (minute >= 48 && minute <= 52) {
-          // Magic window - use cached data
-          throw new Error("Magic window period - use cache");
-        }
       }
 
       if (response.ok) {
@@ -270,13 +275,7 @@ class SelectronicClient {
   }
 
   async fetchData(): Promise<SelectronicData> {
-    // Check for magic window
-    const minute = new Date().getMinutes();
-    if (minute >= 48 && minute <= 52) {
-      throw new Error("API unavailable during magic window (48-52 minutes)");
-    }
-
-    // Ensure authenticated
+    // Ensure authenticated — the session, not the clock, is what to check.
     if (!this.isSessionValid()) {
       await this.authenticate();
     }
