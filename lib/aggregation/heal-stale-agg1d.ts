@@ -53,6 +53,20 @@ export interface HealResult {
   healed: string[];
   agg1dDays: number;
   provenanceAreas: number;
+  /**
+   * Why the sweep did not run, when it threw. **Absent means it ran.**
+   *
+   * 🛑 THE FIELD EXISTS BECAUSE ITS ABSENCE COST FIVE DAYS. The catch below is right — a backstop
+   * must not be the reason a backfill does not happen — but it made a PERMANENT failure and "nothing
+   * was stale" the same observable: both returned an empty result and the only trace was one
+   * `console.error` nobody reads. `staleAgg1dLocalDays` shipped in #462 emitting a GROUP BY Postgres
+   * refuses (42803), threw on every device on both callers every night, healed nothing, and was
+   * found only when someone went looking through the logs for an unrelated reason.
+   *
+   * A caller that can raise an alarm must therefore be able to tell the two apart. Swallowing the
+   * throw and reporting the failure are not in tension; doing only the first is what was wrong.
+   */
+  failed?: string;
 }
 
 /**
@@ -152,6 +166,11 @@ export async function healStaleAgg1dForDevice(
     return { found, healed, agg1dDays, provenanceAreas };
   } catch (err) {
     console.error(`[${label}] system ${device.id}: stale sweep failed:`, err);
-    return empty;
+    // Still `empty` — the caller's own work must proceed — but NAMED, so a caller with an alert
+    // channel can say the backstop is dead rather than silently reporting a healthy fleet.
+    return {
+      ...empty,
+      failed: err instanceof Error ? err.message : String(err),
+    };
   }
 }
