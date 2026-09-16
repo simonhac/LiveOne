@@ -377,6 +377,11 @@ export default function NodeTooltip({
               <MetricStat caption="energy" metric={data.energy} first />
               <MetricStat caption="emissions" metric={data.emissions} />
               <MetricStat caption="cost" metric={data.cost} />
+              {/* Grid export only — under COST, because it answers the question COST leaves open
+                  there ($0.00: exported energy costs nothing to produce, but it earns). */}
+              {data.earnings && (
+                <MetricStat caption="earnings" metric={data.earnings} />
+              )}
               <MetricStat caption="renewable" metric={data.renewable} />
             </>
           ) : (

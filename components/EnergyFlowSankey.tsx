@@ -80,6 +80,12 @@ export type SankeyNodeTooltip = {
       energy: SankeyMetric;
       emissions: SankeyMetric;
       cost: SankeyMetric;
+      /**
+       * Feed-in EARNINGS — set only by the grid-export node, where `cost` is structurally $0
+       * (cost prices energy by its source, and exported energy costs nothing to produce). Optional
+       * because every other node has nothing to earn.
+       */
+      earnings?: SankeyMetric;
       renewable: SankeyMetric;
       estimatedPct?: number;
     }
