@@ -26,6 +26,18 @@ export class SigenergyAdapter extends BaseVendorAdapter {
 
   protected pollIntervalMinutes = 5;
 
+  /**
+   * 30 s rather than the inherited 20 s, so it sits ABOVE `LIVE_POLL_TIMEOUT_MS` (25 s).
+   *
+   * The order matters more than either number. `withDeadline` frees the WORKER, not the socket, so
+   * a deadline below the request timeout leaves the request running after the tick has given up on
+   * it — a zombie holding a connection and still able to write its session row minutes later (prod
+   * has one at 237 s). With the request dying first the deadline is a pure backstop that should
+   * never fire. A poll that must also re-authenticate can still reach AUTH + LIVE_POLL and overrun
+   * it, but the token is cached for ~12 h so that is roughly twice a day.
+   */
+  readonly pollDeadlineMs = 30_000;
+
   readonly credentialFields: CredentialField[] = [
     {
       name: "username",

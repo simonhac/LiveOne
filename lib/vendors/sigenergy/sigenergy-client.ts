@@ -39,11 +39,47 @@ const openapiBase = (region: SigenRegion) =>
 export type SigenAuthMode = "legacy" | "openapi" | "auto";
 type ResolvedAuthMode = "legacy" | "openapi";
 
+/**
+ * Per-REQUEST socket budgets. Sigenergy's cloud does not fail fast: a bad gateway is answered at
+ * ~49-55 s, so without an `AbortSignal` a request waits on THEIR timeout, not ours. These sit
+ * below that band on the live path and above it on the batch paths, because the two want opposite
+ * things — see each constant.
+ */
+
+/**
+ * The 5-minute live poll. Deliberately below `SigenergyAdapter.pollDeadlineMs` (30 s) so the
+ * REQUEST dies before the worker gives up on it; a socket timeout above the deadline would only
+ * shorten the zombie, not remove it. 98.75% of live polls finish under 1 s (prod, Aug-Sep 2026,
+ * n=13074; p50 ~270 ms, p95 ~600 ms), and cutting here costs 3 otherwise-successful polls in 46
+ * days — each a single 5-minute interval that `derive-power` heals. Clears the ~11 s cluster seen
+ * during the 2026-08-19 vendor incident with 14 s to spare.
+ */
+export const LIVE_POLL_TIMEOUT_MS = 25_000;
+
+/**
+ * Login and refresh. Tighter than the live poll because it is a PREREQUISITE of one: a poll that
+ * must re-authenticate spends this before it spends `LIVE_POLL_TIMEOUT_MS`. The token is cached
+ * per credential set with a ~12 h refresh, so this is on the critical path roughly twice a day
+ * rather than every poll.
+ */
+export const AUTH_TIMEOUT_MS = 15_000;
+
+/**
+ * The nightly statistics backfill. ABOVE the vendor's ~49-55 s give-up on purpose: unlike the live
+ * poll there is no outer retry behind it, so a request that would have been answered must be given
+ * the chance. Cutting a nightly run short loses a whole day, not one interval.
+ */
+export const BACKFILL_TIMEOUT_MS = 60_000;
+
+/** Device provisioning — interactive and rare, so a slow answer beats a wrong one. */
+const PROVISION_TIMEOUT_MS = 30_000;
+
 export type SigenergyErrorKind =
   | "auth"
   | "rate-limit"
   | "http"
   | "shape"
+  | "timeout"
   | "network";
 
 /** Typed error so the adapter can distinguish bad-creds from throttling from transport faults. */
@@ -278,15 +314,33 @@ export class SigenergyClient {
       .slice(0, 32);
   }
 
-  /** Shared fetch wrapper that maps HTTP + API-level status into typed SigenergyErrors. */
-  private async apiFetch(url: string, init: RequestInit): Promise<unknown> {
+  /**
+   * Shared fetch wrapper that maps HTTP + API-level status into typed SigenergyErrors.
+   *
+   * `timeoutMs` defaults to the AUTH budget because login and refresh are its only direct callers;
+   * everything else arrives through `apiGet`, which always passes its call site's own.
+   */
+  private async apiFetch(
+    url: string,
+    init: RequestInit,
+    timeoutMs = AUTH_TIMEOUT_MS,
+  ): Promise<unknown> {
     let res: Response;
     try {
-      res = await fetch(url, init);
+      res = await fetch(url, {
+        ...init,
+        signal: AbortSignal.timeout(timeoutMs),
+      });
     } catch (err) {
+      // `AbortSignal.timeout` rejects with a TimeoutError, which is worth keeping distinct from a
+      // connection fault: it is the difference between "they never answered" and "they refused".
+      // `classifyReadError` maps the kind straight through to the `error.type` metric label.
+      const timedOut = err instanceof Error && err.name === "TimeoutError";
       throw new SigenergyError(
-        `Network error calling ${url}: ${err instanceof Error ? err.message : String(err)}`,
-        "network",
+        timedOut
+          ? `Timed out after ${timeoutMs} ms calling ${url}`
+          : `Network error calling ${url}: ${err instanceof Error ? err.message : String(err)}`,
+        timedOut ? "timeout" : "network",
       );
     }
 
@@ -342,15 +396,34 @@ export class SigenergyClient {
     return json ?? text;
   }
 
-  /** GET wrapper that retries transient faults (network / HTTP 5xx) with a short backoff. */
-  private async apiGet(url: string, retries = 2): Promise<unknown> {
+  /**
+   * GET wrapper that retries transient faults (network / timeout / HTTP 5xx) with a short backoff.
+   *
+   * `retries` is a PER-CALL-SITE decision, not a property of the vendor. A path with an outer retry
+   * above it wants none: the live poll is re-attempted every minute until its 5-minute window is
+   * filled (`adapter.ts` "boundary-aligned scheduling"), and measured on prod 118 of 151 failure
+   * episodes were a single failed poll — recovery comes from the next MINUTE, not from an 800 ms
+   * backoff against a gateway that is still returning 502. Retrying in-process there only
+   * multiplies one bad poll into three vendor timeouts. A path with nothing above it — the nightly
+   * backfill — wants the ladder, because its alternative is losing the day.
+   */
+  private async apiGet(
+    url: string,
+    opts: { retries?: number; timeoutMs: number },
+  ): Promise<unknown> {
+    const { retries = 2, timeoutMs } = opts;
     for (let attempt = 0; ; attempt++) {
       try {
-        return await this.apiFetch(url, { headers: this.authHeaders() });
+        return await this.apiFetch(
+          url,
+          { headers: this.authHeaders() },
+          timeoutMs,
+        );
       } catch (err) {
         const transient =
           err instanceof SigenergyError &&
           (err.kind === "network" ||
+            err.kind === "timeout" ||
             (err.kind === "http" && (err.status ?? 0) >= 500));
         if (!transient || attempt >= retries) throw err;
         await new Promise((r) => setTimeout(r, 800 * (attempt + 1)));
@@ -531,7 +604,10 @@ export class SigenergyClient {
       this.token!.authMode === "legacy"
         ? `${legacyBase(this.region)}/device/owner/station/home`
         : `${openapiBase(this.region)}/openapi/system`;
-    const json = await this.apiGet(url);
+    const json = await this.apiGet(url, {
+      retries: 2,
+      timeoutMs: PROVISION_TIMEOUT_MS,
+    });
     const raw = this.unwrap(json);
     const d = (Array.isArray(raw) ? raw[0] : raw) as Record<string, unknown>;
     const id = d.stationId ?? d.id ?? d.stationSnCode ?? d.systemId;
@@ -561,7 +637,10 @@ export class SigenergyClient {
       this.token!.authMode === "legacy"
         ? `${legacyBase(this.region)}/device/sigen/station/energyflow?id=${encodeURIComponent(stationId)}`
         : `${openapiBase(this.region)}/openapi/systems/${encodeURIComponent(stationId)}/energyFlow?systemId=${encodeURIComponent(stationId)}`;
-    return parseEnergyFlow(await this.apiGet(url));
+    // No in-process retry: the minutely cron re-attempts this window. See `apiGet`.
+    return parseEnergyFlow(
+      await this.apiGet(url, { retries: 0, timeoutMs: LIVE_POLL_TIMEOUT_MS }),
+    );
   }
 
   /**
@@ -591,7 +670,10 @@ export class SigenergyClient {
       `&endDate=${encodeURIComponent(date)}` +
       `&dateFlag=${dateFlag}` +
       `&fulfill=false`;
-    const json = await this.apiGet(url);
+    const json = await this.apiGet(url, {
+      retries: 2,
+      timeoutMs: BACKFILL_TIMEOUT_MS,
+    });
     const d = maybeJson(this.unwrap(json)) as Record<string, unknown>;
     const totals = extractEnergyTotals(d);
     const rawList = Array.isArray(d.itemList) ? d.itemList : [];

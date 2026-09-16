@@ -58,6 +58,10 @@
  * sides, nothing is written. A long outage is honestly unknown and a broken line is the correct
  * rendering; extrapolating off the end of a run would be inventing data, not recovering it.
  *
+ * The one exception is `EV_SPLIT_CEILING_W`: when the total is small enough that the EV cannot be
+ * charging, the split needs no inference, so the span cap does not apply and the vendor's own
+ * exact total is kept rather than discarded alongside a split we could not make.
+ *
  * ## Accuracy
  *
  * ## Counter dropouts
@@ -130,6 +134,24 @@ const WH_TO_W = 60 / 5;
  * (`lib/battery-provenance/load.ts`) bounds its fill for the same reason.
  */
 export const MAX_INTERP_INTERVALS = 3;
+
+/**
+ * Total household load at or below which the EV / rest-of-house split needs no inference.
+ *
+ * `ev <= total` by definition, so a total this small bounds the EV's own share to the same figure
+ * — and it is far below any AC charge rate (6 A single phase is ~1.4 kW; every charge run detected
+ * at Kutis averages 6.8-6.9 kW, min 6790 W). The EV is therefore not charging, there is nothing to
+ * split off, and the worst case if that is somehow wrong is a 500 W misattribution for one
+ * 5-minute interval (42 Wh).
+ *
+ * Deliberately NOT span-capped like `MAX_INTERP_INTERVALS`. That cap exists because a straight
+ * line between distant samples is fiction; this rule draws no line at all, deciding per-interval
+ * from the total alone, so the length of the hole is irrelevant. Without it a Sigenergy outage
+ * longer than `maxSpanMs` discards the vendor's OWN exact total load purely because the split
+ * could not be inferred — which is what emptied 8 intervals on 2026-09-15 (01:55-02:30Z) while
+ * solar, grid and battery were filled from the same payload.
+ */
+export const EV_SPLIT_CEILING_W = 500;
 
 /** The six energy counters for one 5-minute interval, in Wh. `null` = not reported. */
 export interface IntervalEnergyWh {
@@ -467,6 +489,15 @@ export function computeDerivedPowerReadings(params: {
       if (!availableTails.has("ev_w")) {
         // No charger on this site, so there is nothing to split off: total load IS rest-of-house,
         // and that is a calculation, not an inference.
+        if (shouldWrite("load_w", ms, "calculated"))
+          push("load_w", ms, totalW, "calculated");
+      } else if (totalW >= 0 && totalW <= EV_SPLIT_CEILING_W) {
+        // The EV cannot be drawing: the whole house drew less than any charge rate, and the EV is
+        // part of that total. So there is nothing to split off — the same situation as a site with
+        // no charger, and equally a calculation rather than an inference. See EV_SPLIT_CEILING_W
+        // for why this is not span-capped.
+        if (shouldWrite("ev_w", ms, "calculated"))
+          push("ev_w", ms, 0, "calculated");
         if (shouldWrite("load_w", ms, "calculated"))
           push("load_w", ms, totalW, "calculated");
       } else {

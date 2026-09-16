@@ -14,6 +14,7 @@ import {
   trustedCounters,
   COUNTER_ULP_WH,
   MAX_INTERP_INTERVALS,
+  EV_SPLIT_CEILING_W,
   type IntervalEnergyWh,
   type MeasuredSample,
   type VendorPowerSample,
@@ -184,6 +185,80 @@ describe("computeDerivedPowerReadings — the EV / rest-of-house split", () => {
         energyByIntervalEnd: new Map([[t(1), energy({ load: 1000 })]]),
         presentByTail: noneP(),
         measuredEv: [{ intervalEndMs: t(0), value: 7000 }],
+        measuredSoc: [],
+      }),
+    );
+    expect(out.has("ev_w")).toBe(false);
+    expect(out.has("load_w")).toBe(false);
+  });
+
+  /**
+   * The 2026-09-15 01:55-02:30Z regression: a 35-minute Sigenergy outage left 8 intervals whose
+   * solar, grid and battery were all filled from the vendor's itemList while ev/rest-of-house were
+   * emptied — the exact total was discarded purely because the EV split could not be interpolated
+   * across a hole that wide. It never needed to be: the house drew ~300 W.
+   */
+  it("needs no anchors at all when the total rules the EV out, however wide the hole", () => {
+    const wide = (MAX_INTERP_INTERVALS + 6) * FIVE_MIN; // far beyond the interpolation cap
+    const out = byTail(
+      computeDerivedPowerReadings({
+        energyByIntervalEnd: new Map([[t(1), energy({ load: 25 })]]), // 300 W total
+        presentByTail: noneP(),
+        // Anchors exist but are uselessly far apart, exactly as in the incident.
+        measuredEv: [
+          { intervalEndMs: t(1) - wide, value: 0 },
+          { intervalEndMs: t(1) + wide, value: 0 },
+        ],
+        measuredSoc: [],
+      }),
+    );
+    expect(out.get("ev_w")![0]).toEqual({ ms: t(1), v: 0, q: "calculated" });
+    expect(out.get("load_w")![0]).toEqual({
+      ms: t(1),
+      v: 300,
+      q: "calculated",
+    });
+  });
+
+  it("takes the vendor's own total when it has one, and still needs no split", () => {
+    const out = byTail(
+      computeDerivedPowerReadings({
+        energyByIntervalEnd: new Map([[t(1), energy({ load: null })]]),
+        presentByTail: noneP(),
+        measuredEv: [],
+        measuredSoc: [],
+        vendorPower: new Map([
+          [
+            t(1),
+            {
+              solarW: 318,
+              loadW: 318,
+              gridW: 0,
+              batteryW: 0,
+              socPct: null,
+            } satisfies VendorPowerSample,
+          ],
+        ]),
+      }),
+    );
+    expect(out.get("ev_w")![0]).toEqual({ ms: t(1), v: 0, q: "calculated" });
+    expect(out.get("load_w")![0]).toEqual({
+      ms: t(1),
+      v: 318,
+      q: "calculated",
+    });
+  });
+
+  it("still refuses the split once the total could hide a charging EV", () => {
+    // One watt over the ceiling and the EV is no longer ruled out, so the old rules apply: no
+    // usable anchors, nothing written. The cap is a claim about certainty, not about hole width.
+    const out = byTail(
+      computeDerivedPowerReadings({
+        energyByIntervalEnd: new Map([
+          [t(1), energy({ load: (EV_SPLIT_CEILING_W + 12) / 12 })],
+        ]),
+        presentByTail: noneP(),
+        measuredEv: [{ intervalEndMs: t(0), value: 0 }],
         measuredSoc: [],
       }),
     );
