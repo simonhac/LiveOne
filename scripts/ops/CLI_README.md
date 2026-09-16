@@ -390,6 +390,19 @@ When to use:
   The first command to run on a new machine, and the fix for any exit-3 'not logged in'.
   Use --base-url to log in to dev/preview alongside prod.
 
+Three ways in, differing only in how the code gets back from the browser:
+  (default)    macOS — opens the browser, catches the code on a loopback listener
+  --no-browser prints the URL and PROMPTS for the code (needs a terminal)
+  --manual     prints the URL and exits; `--code=<code>` finishes it later
+
+--manual is the headless one: CI, a container, an agent session, SSH without a TTY. It
+keeps the PKCE verifier in ~/.config/liveone/cli-auth-pending.json (mode 600) between the
+two invocations and consumes it on success. The verifier is never printed and never
+travels as a flag — the code on screen is useless without it, which is the whole scheme.
+
+The pending record is good for an hour; the code itself expires 5 minutes after you
+approve. Both refuse with a re-run hint rather than a bare 400.
+
 Usage:
   liveone auth login [options]
 
@@ -400,6 +413,8 @@ Options:
   --label <text>             How this machine appears in `auth list` (default: hostname)
   --ttl <days>               Requested token lifetime (server currently mints 90d; accepted for forward-compat)  (1–365 days)
   --no-browser               Print the URL and paste the code by hand (SSH / non-mac)
+  --manual                   Print the URL and EXIT, for a machine with no browser and no terminal
+  --code <code>              Finish a --manual login with the code the approval page showed
 
 Common options:
   --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
@@ -421,6 +436,8 @@ Examples:
   liveone auth login
   liveone auth login --base-url=http://localhost:3001 --label=dev-laptop
   liveone auth login --no-browser
+  liveone auth login --manual --label=ci-runner
+  liveone auth login --code=eyJ1Ijoi….Ab3F
 
 Exit codes:
   0    success

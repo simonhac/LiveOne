@@ -31,11 +31,17 @@ import {
 } from "@/lib/cli-kit/handoff";
 import {
   listEntries,
+  normalizeOrigin,
   removeToken,
   setToken,
   tokenFor,
   type StoredToken,
 } from "@/lib/cli-kit/token-store";
+import {
+  clearPending,
+  readPending,
+  writePending,
+} from "@/lib/cli-kit/pending-login";
 import { apiFetch } from "@/lib/cli-kit/http";
 import { requireToken, resolveOrigin } from "@/lib/cli-kit/target";
 import { bool, num, str } from "@/lib/cli/cli";
@@ -61,9 +67,86 @@ async function promptForCode(): Promise<string> {
   return answer.trim();
 }
 
+/**
+ * Step one of the headless flow: print the URL, keep the verifier, exchange nothing.
+ *
+ * Returns without waiting for anything, which is the entire point — every other path ends in a
+ * blocking read (a loopback listener, a stdin prompt) that a machine with no browser and no
+ * terminal cannot satisfy.
+ */
+function startManualLogin(ctx: Ctx, origin: string, label: string): number {
+  const verifier = newVerifier();
+  const state = newState();
+  const url = loginUrl(origin, {
+    challenge: challengeFor(verifier),
+    state,
+    label,
+  });
+  writePending({
+    version: 1,
+    origin,
+    verifier,
+    state,
+    label,
+    createdAt: Date.now(),
+  });
+  ctx.emit({ origin, url, label }, (m: never) => {
+    const model = m as { origin: string; url: string };
+    return [
+      `Open this URL in a browser where you are signed in to ${model.origin}:`,
+      `  ${model.url}`,
+      "",
+      "Approve it, then finish the login with the code it shows you:",
+      "  liveone auth login --code=<code>",
+    ].join("\n");
+  });
+  return EXIT.OK;
+}
+
 async function runLogin(ctx: Ctx): Promise<number> {
-  const origin = resolveOrigin(ctx, { useStoredDefault: false });
   const label = str(ctx, "label") ?? os.hostname();
+  const manual = bool(ctx, "manual");
+  const suppliedCode = str(ctx, "code");
+  if (manual && suppliedCode)
+    throw failWith(
+      EXIT.USAGE,
+      "both --manual and --code",
+      "--manual starts the hand-off and --code finishes it; they are separate invocations",
+      "run `liveone auth login --manual` first, then `--code=<code>` with what it shows",
+    );
+
+  if (manual)
+    return startManualLogin(
+      ctx,
+      resolveOrigin(ctx, { useStoredDefault: false }),
+      label,
+    );
+
+  // Finishing a `--manual` hand-off: the verifier comes from the pending record, never the CLI.
+  if (suppliedCode) {
+    const pending = readPending();
+    if (!pending)
+      throw failWith(
+        EXIT.USAGE,
+        "--code with no login in progress",
+        "there is no pending hand-off on this machine to finish",
+        "run `liveone auth login --manual` first",
+      );
+    // 🛑 An explicit --base-url that disagrees is refused rather than reconciled. The code is bound
+    // to the origin that minted it, so the only outcomes are a confusing 400 or — against a
+    // deployment sharing prod's Clerk instance — a token stored under the wrong key.
+    const asked = str(ctx, "baseUrl");
+    if (asked && normalizeOrigin(asked) !== pending.origin)
+      throw failWith(
+        EXIT.USAGE,
+        `--base-url=${normalizeOrigin(asked)} but the pending login is for ${pending.origin}`,
+        "a code can only be exchanged at the origin that issued it",
+        `re-run with --base-url=${pending.origin}, or start again with --manual`,
+      );
+    return completeLogin(ctx, pending.origin, suppliedCode, pending.verifier);
+  }
+
+  const origin = resolveOrigin(ctx, { useStoredDefault: false });
   const verifier = newVerifier();
   const challenge = challengeFor(verifier);
   const state = newState();
@@ -106,6 +189,22 @@ async function runLogin(ctx: Ctx): Promise<number> {
       "re-run `liveone auth login`",
     );
 
+  return completeLogin(ctx, origin, code, verifier);
+}
+
+/**
+ * The half every login path shares: code + verifier → token, stored, described.
+ *
+ * Extracted when `--manual`/`--code` made a third caller of it. The verifier arrives as an argument
+ * rather than being read here because its provenance differs per path — in-memory for the browser
+ * and paste flows, off disk for the manual one — and this function should not have to know which.
+ */
+async function completeLogin(
+  ctx: Ctx,
+  origin: string,
+  code: string,
+  verifier: string,
+): Promise<number> {
   const ttl = num(ctx, "ttl");
   void ttl; // TTL is minted server-side today (90d); the flag is accepted for forward-compat and validated, but not yet sent.
 
@@ -156,6 +255,10 @@ async function runLogin(ctx: Ctx): Promise<number> {
     label: token.label,
     expiresAt: token.expiresAt,
   });
+
+  // The hand-off is over. Idempotent, so the browser and paste paths — which never wrote a record —
+  // pay nothing; for `--manual` it stops a spent verifier outliving the flow it belonged to.
+  clearPending();
 
   ctx.emit(
     {
@@ -352,11 +455,35 @@ export const authCommand = defineCommand({
           type: "boolean",
           help: "Print the URL and paste the code by hand (SSH / non-mac)",
         },
+        manual: {
+          type: "boolean",
+          help: "Print the URL and EXIT, for a machine with no browser and no terminal",
+        },
+        code: {
+          type: "string",
+          placeholder: "code",
+          help: "Finish a --manual login with the code the approval page showed",
+        },
       },
+      description:
+        "Three ways in, differing only in how the code gets back from the browser:\n" +
+        "  (default)    macOS — opens the browser, catches the code on a loopback listener\n" +
+        "  --no-browser prints the URL and PROMPTS for the code (needs a terminal)\n" +
+        "  --manual     prints the URL and exits; `--code=<code>` finishes it later\n" +
+        "\n" +
+        "--manual is the headless one: CI, a container, an agent session, SSH without a TTY. It\n" +
+        "keeps the PKCE verifier in ~/.config/liveone/cli-auth-pending.json (mode 600) between the\n" +
+        "two invocations and consumes it on success. The verifier is never printed and never\n" +
+        "travels as a flag — the code on screen is useless without it, which is the whole scheme.\n" +
+        "\n" +
+        "The pending record is good for an hour; the code itself expires 5 minutes after you\n" +
+        "approve. Both refuse with a re-run hint rather than a bare 400.",
       examples: [
         "liveone auth login",
         "liveone auth login --base-url=http://localhost:3001 --label=dev-laptop",
         "liveone auth login --no-browser",
+        "liveone auth login --manual --label=ci-runner",
+        "liveone auth login --code=eyJ1Ijoi….Ab3F",
       ],
     },
     whoami: {

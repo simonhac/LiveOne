@@ -1271,8 +1271,8 @@
       "summary": "Sign in via the browser and store a token for one origin.",
       "when": "The first command to run on a new machine, and the fix for any exit-3 'not logged in'.\nUse --base-url to log in to dev/preview alongside prod.",
       "parentWhen": "Run `auth login` once per machine per environment before using any domain over the API.\nEverything here manages the lo_cli_ credential; the dashboard domain USES it.",
-      "details": "",
-      "description": "npm run liveone -- auth login — Sign in via the browser and store a token for one origin.\n\nThe first command to run on a new machine, and the fix for any exit-3 'not logged in'.\nUse --base-url to log in to dev/preview alongside prod.\n\nAbout `auth` generally: Run `auth login` once per machine per environment before using any domain over the API.\nEverything here manages the lo_cli_ credential; the dashboard domain USES it.\n\nRead-only. This command changes nothing.\n\nCalls the deployed LiveOne API as the signed-in user. A missing, expired or revoked CLI token is exit 3.\n\nExit codes: 0, 1, 2, 3, 5, 130.\n\nExamples:\n  liveone auth login\n  liveone auth login --base-url=http://localhost:3001 --label=dev-laptop\n  liveone auth login --no-browser",
+      "details": "Three ways in, differing only in how the code gets back from the browser:\n  (default)    macOS — opens the browser, catches the code on a loopback listener\n  --no-browser prints the URL and PROMPTS for the code (needs a terminal)\n  --manual     prints the URL and exits; `--code=<code>` finishes it later\n\n--manual is the headless one: CI, a container, an agent session, SSH without a TTY. It\nkeeps the PKCE verifier in ~/.config/liveone/cli-auth-pending.json (mode 600) between the\ntwo invocations and consumes it on success. The verifier is never printed and never\ntravels as a flag — the code on screen is useless without it, which is the whole scheme.\n\nThe pending record is good for an hour; the code itself expires 5 minutes after you\napprove. Both refuse with a re-run hint rather than a bare 400.",
+      "description": "npm run liveone -- auth login — Sign in via the browser and store a token for one origin.\n\nThe first command to run on a new machine, and the fix for any exit-3 'not logged in'.\nUse --base-url to log in to dev/preview alongside prod.\n\nAbout `auth` generally: Run `auth login` once per machine per environment before using any domain over the API.\nEverything here manages the lo_cli_ credential; the dashboard domain USES it.\n\nThree ways in, differing only in how the code gets back from the browser:\n  (default)    macOS — opens the browser, catches the code on a loopback listener\n  --no-browser prints the URL and PROMPTS for the code (needs a terminal)\n  --manual     prints the URL and exits; `--code=<code>` finishes it later\n\n--manual is the headless one: CI, a container, an agent session, SSH without a TTY. It\nkeeps the PKCE verifier in ~/.config/liveone/cli-auth-pending.json (mode 600) between the\ntwo invocations and consumes it on success. The verifier is never printed and never\ntravels as a flag — the code on screen is useless without it, which is the whole scheme.\n\nThe pending record is good for an hour; the code itself expires 5 minutes after you\napprove. Both refuse with a re-run hint rather than a bare 400.\n\nRead-only. This command changes nothing.\n\nCalls the deployed LiveOne API as the signed-in user. A missing, expired or revoked CLI token is exit 3.\n\nExit codes: 0, 1, 2, 3, 5, 130.\n\nExamples:\n  liveone auth login\n  liveone auth login --base-url=http://localhost:3001 --label=dev-laptop\n  liveone auth login --no-browser\n  liveone auth login --manual --label=ci-runner\n  liveone auth login --code=eyJ1Ijoi….Ab3F",
       "input_schema": {
         "type": "object",
         "properties": {
@@ -1292,6 +1292,14 @@
             "type": "boolean",
             "description": "Print the URL and paste the code by hand (SSH / non-mac)"
           },
+          "manual": {
+            "type": "boolean",
+            "description": "Print the URL and EXIT, for a machine with no browser and no terminal"
+          },
+          "code": {
+            "type": "string",
+            "description": "Finish a --manual login with the code the approval page showed (code)"
+          },
           "format": {
             "type": "string",
             "enum": [
@@ -1302,7 +1310,7 @@
           }
         }
       },
-      "signature": "liveone auth login { --base-url?: string; --label?: string; --ttl?: number; --no-browser?: boolean }",
+      "signature": "liveone auth login { --base-url?: string; --label?: string; --ttl?: number; --no-browser?: boolean; --manual?: boolean; --code?: string }",
       "invocation": "npm run liveone -- auth login",
       "file": "scripts/ops/liveone.ts",
       "writes": false,

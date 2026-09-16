@@ -251,6 +251,12 @@ the generated reference is `docs/cli-reference.md`, the architecture doc is `doc
 - **First run:** `npm run liveone -- auth login` — a browser hand-off mints a `lo_cli_` token,
   stored per-origin in `~/.config/liveone/cli-auth.json` (0600). Prod, preview and localhost logins
   coexist; commands resolve their token strictly by the origin they call.
+  🛑 **On a headless box, that plain form cannot work** — the default opens a browser and catches
+  the code on a loopback listener (macOS only), and `--no-browser` PROMPTS for it, which needs a
+  TTY. In CI, a container or an agent session, use the two-step form instead: `auth login --manual`
+  prints the approval URL and exits, then `auth login --code=<code>` finishes it. The PKCE verifier
+  waits in `~/.config/liveone/cli-auth-pending.json` (0600) between the two and is consumed on
+  success; the record is good for an hour, the code for 5 minutes after you approve.
 - **Default transport is `--via=http`**: the deployed API, as you, through the same validation and
   readability checks the web app uses. The `target:` line (origin, user, Clerk instance, DB host)
   prints on stderr before any work — read it before `--apply`.
