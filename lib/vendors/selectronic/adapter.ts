@@ -14,6 +14,16 @@ import {
 import { SELECTRONIC_POINTS } from "./point-metadata";
 
 /**
+ * How long a cached select.live session may be reused.
+ *
+ * The portal's session lasts ~30 minutes; 20 leaves margin, in the same spirit as Sigenergy
+ * refreshing its token 5 minutes before expiry. The TTL matters even though a Vercel process only
+ * lives ~33 minutes on average — that is the SAME ORDER as the session, so without it a
+ * longer-lived process would eventually present an expired cookie.
+ */
+export const SELECTRONIC_SESSION_TTL_MS = 20 * 60 * 1000;
+
+/**
  * Vendor adapter for Selectronic/Select.Live devices
  */
 export class SelectronicAdapter extends BaseVendorAdapter {
@@ -44,11 +54,18 @@ export class SelectronicAdapter extends BaseVendorAdapter {
     },
   ];
 
-  // Cache for auth cookies
-  private static authCache = new Map<
-    string,
-    { cookie: string; expires: number }
-  >();
+  /**
+   * Reuse a client per credential set so its SESSION COOKIE survives across polls.
+   *
+   * The cookies live in a private Map INSIDE `SelectronicFetchClient`, so caching the client is
+   * what preserves them — the same shape as `SigenergyAdapter.clientCache`, which caches the object
+   * that holds the credential rather than a note saying one was obtained. The cache this replaced
+   * stored the literal string `"authenticated"` and was never read back into a client, so every
+   * poll built a cookieless client and `fetchData`'s own `cookies.size === 0` guard logged in
+   * again. Measured on prod: 57 fetches produced 57 logins, 49 of them on polls where the cache
+   * had "hit" — 1440 logins/day against select.live where ~44 suffice (one per process lifetime).
+   */
+  private static clientCache = new Map<string, SelectronicFetchClient>();
 
   /**
    * Fetch data from Selectronic API
@@ -59,19 +76,18 @@ export class SelectronicAdapter extends BaseVendorAdapter {
     credentials: any,
     context: FetchContext,
   ): Promise<FetchResult> {
+    const cacheKey = `${credentials.email}:${device.vendorSiteId}`;
     try {
-      const client = new SelectronicFetchClient({
-        email: credentials.email,
-        password: credentials.password,
-        systemNumber: device.vendorSiteId,
-      });
+      let client = SelectronicAdapter.clientCache.get(cacheKey);
+      const age = client?.sessionAgeMs() ?? null;
 
-      // Try to use cached auth if available
-      const cacheKey = `${credentials.email}:${device.vendorSiteId}`;
-      const cached = SelectronicAdapter.authCache.get(cacheKey);
-
-      // If no valid cache, authenticate
-      if (!cached || cached.expires < Date.now() + 300000) {
+      // `!client` is implied by `age === null`, but stating it lets TS narrow away the assertion.
+      if (!client || age === null || age >= SELECTRONIC_SESSION_TTL_MS) {
+        client = new SelectronicFetchClient({
+          email: credentials.email,
+          password: credentials.password,
+          systemNumber: device.vendorSiteId,
+        });
         console.log(
           `[Selectronic] Authenticating for system ${device.vendorSiteId}...`,
         );
@@ -85,15 +101,16 @@ export class SelectronicAdapter extends BaseVendorAdapter {
           };
         }
 
-        // Cache for 25 minutes (auth lasts 30 minutes)
-        SelectronicAdapter.authCache.set(cacheKey, {
-          cookie: "authenticated",
-          expires: Date.now() + 25 * 60 * 1000,
-        });
+        SelectronicAdapter.clientCache.set(cacheKey, client);
       }
 
       const response = await client.fetchData();
       if (!response.success || !response.data) {
+        // A session the portal has rejected must not be handed to the next poll. Only `auth`
+        // evicts: a 504 or a reset says nothing about whether the cookie is still good, and
+        // throwing the session away would put us straight back to logging in every poll.
+        if (response.errorKind === "auth")
+          SelectronicAdapter.clientCache.delete(cacheKey);
         return {
           success: false,
           error: response.error || "Failed to fetch data",
