@@ -581,6 +581,15 @@ vercel ls
 
 # View build logs
 npx tsx tools/read-vercel-build-log.ts
+
+# RUNTIME logs are a different thing — docs/reading-prod-logs.md has the recipes (what is broken
+# right now; is this cron running; why did X not happen; trace one request) and the subsystem
+# `[Prefix]` inventory that makes searching tractable. Read it first: both tools return EMPTY OUTPUT
+# RATHER THAN AN ERROR when you ask wrong. `vercel logs` prints its table TTY-only (pipe without
+# --json and grep matches nothing), `--query` searches the message body not the path, and --branch
+# defaults to your current branch. Both run only ~10s behind, so a missing line usually means the
+# function has not RETURNED yet — pivot to its requestId.
+vercel logs --no-branch --environment production --since 10m --no-follow -x
 ```
 
 ### Troubleshooting
