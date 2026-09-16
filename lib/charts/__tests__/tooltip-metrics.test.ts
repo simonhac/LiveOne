@@ -10,7 +10,11 @@
  * the run's duration.
  */
 import { describe, it, expect } from "@jest/globals";
-import { provenancePanels, runProvenancePanels } from "../tooltip-metrics";
+import {
+  earningsPanel,
+  provenancePanels,
+  runProvenancePanels,
+} from "../tooltip-metrics";
 
 /** A run with full provenance — the Kinkora shape, where an energy counter exists. */
 const METERED = {
@@ -95,5 +99,48 @@ describe("runProvenancePanels", () => {
     expect(p.cost.primary.value).not.toBe("—");
     expect(p.cost.secondary?.value).toBe("—");
     expect(p.emissions.secondary?.value).toBe("—");
+  });
+});
+
+/**
+ * The grid-export node's EARNINGS row. It reuses the two rules that already govern every money
+ * figure — the 99.5% coverage gate on the total, and the FILTERED denominator on the rate — so
+ * these cases pin the pairing that a hand-rolled version gets wrong: a partly-priced window keeps
+ * its honest tariff while withholding the misleadingly-low total.
+ */
+describe("earningsPanel", () => {
+  it("shows the total and the sell rate when everything exported was priced", () => {
+    const m = earningsPanel({
+      revenueC: 310,
+      revenueKnownKwh: 40,
+      energyKwh: 40,
+    });
+    expect(m.primary.value).toBe("$3.10");
+    expect(m.primary.unit).toBeUndefined(); // "$" is baked in, like cost
+    expect(m.secondary?.value).toBe("7.8"); // 310c / 40 kWh
+    expect(m.secondary?.unit).toBe("c/kWh");
+  });
+
+  it("withholds the total below the coverage floor but keeps the rate", () => {
+    // One priced day inside a 30-day window: a total here would read "$0.08 earned on 54.8 kWh".
+    const m = earningsPanel({
+      revenueC: 8,
+      revenueKnownKwh: 1,
+      energyKwh: 54.8,
+    });
+    expect(m.primary.value).toBe("—");
+    // The rate divides by the KNOWN kWh, so it is the real tariff — not 8c / 54.8 kWh.
+    expect(m.secondary?.value).toBe("8.0");
+  });
+
+  it("reads unknown, not $0.00, when nothing was sold", () => {
+    // No export tariff configured: earning nothing and not knowing are different facts.
+    const m = earningsPanel({
+      revenueC: null,
+      revenueKnownKwh: 0,
+      energyKwh: 40,
+    });
+    expect(m.primary.value).toBe("—");
+    expect(m.secondary?.value).toBe("—");
   });
 });

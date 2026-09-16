@@ -16,6 +16,7 @@
 import {
   formatCentsPerKwh,
   formatDollars,
+  pricedTotal,
   formatGramsPerKwh,
   formatKgCo2,
   formatKwh,
@@ -114,6 +115,37 @@ export function provenancePanels(
     },
     // "%" is baked into the value — no unit beneath.
     renewable: { primary: { value: formatRenewablePct(pctRenewable) } },
+  };
+}
+
+/**
+ * The EARNINGS row for a grid-export node — feed-in revenue, priced by the SINK.
+ *
+ * A separate row rather than a negative cost because they are different facts about the same kWh
+ * and the matrix stores them as separate legs (`cost_c` prices energy by its SOURCE, `revenue_c` by
+ * its SINK — see the `revenue_c` comment in lib/db/planetscale/schema.ts). Folding one into the
+ * other would make an export read "-$3.10 cost", which claims the energy cost nothing *and* earned
+ * nothing at once; the cost of exported energy is genuinely $0 (it cost nothing to produce) and the
+ * earnings are genuinely positive.
+ *
+ * The coverage rule and the filtered rate denominator are the same as everywhere else: the total is
+ * shown only when essentially all the exported energy carried a known sell price (`pricedTotal`),
+ * and the c/kWh rate divides by `revenueKnownKwh` — never by `energyKwh` — so a partially-priced
+ * window cannot restate the tariff as a lower one.
+ */
+export function earningsPanel(input: {
+  revenueC: number | null;
+  revenueKnownKwh: number;
+  energyKwh: number;
+}): SankeyMetric {
+  const { revenueC, revenueKnownKwh, energyKwh } = input;
+  const total = pricedTotal(revenueC, revenueKnownKwh, energyKwh);
+  const rate =
+    revenueC != null && revenueKnownKwh > 0 ? revenueC / revenueKnownKwh : null;
+  return {
+    // "$" is baked into the value — no unit beneath, exactly like cost.
+    primary: { value: total == null ? "—" : formatDollars(total) },
+    secondary: { value: formatCentsPerKwh(rate), unit: "c/kWh" },
   };
 }
 

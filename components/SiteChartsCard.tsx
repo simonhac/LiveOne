@@ -59,7 +59,11 @@ import {
   formatRenewablePct,
 } from "@/lib/provenance-format";
 import { formatFlowMagnitude } from "@/lib/energy-formatting";
-import { avgPowerMetric, provenancePanels } from "@/lib/charts/tooltip-metrics";
+import {
+  avgPowerMetric,
+  earningsPanel,
+  provenancePanels,
+} from "@/lib/charts/tooltip-metrics";
 import { useTemporalRange } from "@/lib/charts/useTemporalRange";
 import { useSettledWindow } from "@/lib/charts/useSettledWindow";
 import { useNeighbourPrefetch } from "@/lib/charts/useNeighbourPrefetch";
@@ -1188,6 +1192,8 @@ export default function SiteChartsCard({
                 const toFull = (summary: {
                   energyKwh: number;
                   costC: number;
+                  revenueC: number | null;
+                  revenueKnownKwh: number;
                   avgCentsPerKwh: number | null;
                   pctRenewable: number | null;
                   avgGramsPerKwh: number | null;
@@ -1241,7 +1247,14 @@ export default function SiteChartsCard({
                     : reduceSourceProvenance(daySlice, node.id, {
                         combineSolar: sankeyOptions.combineSolar,
                       });
-                return summary ? toFull(summary) : null;
+                if (!summary) return null;
+                // EARNINGS is the grid-export node's row alone. `revenueC` is non-null on other
+                // nodes too (a source's transposed share of the same feed-in), but COST is only
+                // structurally uninformative — $0.00 for energy that cost nothing to produce — on
+                // the sink that sold it, so that is the only node that needs a second money row.
+                return node.id === "load.grid"
+                  ? { ...toFull(summary), earnings: earningsPanel(summary) }
+                  : toFull(summary);
               };
 
               // Per-link (spline) tooltip — mirrors buildNodeTooltip's degradation ladder so link and
