@@ -29,7 +29,14 @@ import { FoldState, ResetTrigger } from "./fold";
 // v5: exact-energy overlays (`FlowSeries.energyKwh`) — battery flows consume accumulator registers
 // directly in extractBatteryFlows (correct slot alignment + linked-source exclusion) instead of the
 // old post-hoc rescale in compute.ts.
-export const BATPROV_MODEL_VERSION = 6;
+// v7: those same overlays are now gated on the register's DECLARED interval (`coverageGate`), so a
+// half-hourly Amber reading is no longer booked as a five-minute interval's energy. It reaches the
+// fold through `extractBatteryFlows`, which reads a source's `energyKwh` as absolute throughput and
+// weights charge attribution by the source pool — measured on a synthetic hour with solar and grid
+// each at 1.2 kW, an ungated pair of coarse import readings split the charge 1.057/1.343 where the
+// truth is 1.2/1.2. A checkpoint written under the old semantics carries that skew in its fold
+// state, and re-folding from its anchor cannot undo it, so old seeds must be refused.
+export const BATPROV_MODEL_VERSION = 7;
 
 export interface FoldCheckpointEnvelope {
   /** == BATPROV_MODEL_VERSION at write time. */

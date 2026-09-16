@@ -22,6 +22,8 @@ import {
   EnergySeriesInput,
 } from "@/lib/aggregation/flow-series";
 import type { FlowSeries } from "@/lib/aggregation/flow-matrix-core";
+import { agg5mIntervalMs } from "@/lib/vendors/native-intervals";
+import { DeviceConfigRegistry } from "@/lib/registry/device-config";
 import type { PointId } from "@/lib/ids";
 
 type PgDb = NonNullable<typeof planetscaleDb>;
@@ -156,6 +158,22 @@ export async function loadFlowSeriesFromAgg5m(
 
   // Exact-energy overlays, slot-aligned to the shared timeline (slot i = the delta stamped at
   // timeline[i]); buildFlowSeries' attach step owns the slot→interval shift.
+  //
+  // 🛑 Each register carries how long ONE of its readings covers, because `agg_5m` does not say.
+  // Amber's usage registers are natively half-hourly and land one row per 30 minutes in this
+  // five-minute table; without the declared duration the attach step books that half hour as a
+  // five-minute slot's energy and integrates power over the other five (see `coverageGate`). Keyed
+  // on the point's OWN device — a multi-device area mixes vendors, so it cannot be one value for the
+  // whole bundle. The Map is what bounds the cost to one lookup per DISTINCT device per call:
+  // `deviceByHandle` is React-`cache()`d, which dedupes within a request but runs unmemoized in Jest,
+  // scripts and background jobs — several of which call this loader.
+  const intervalMsByDevice = new Map<number, number>();
+  for (const p of energyPoints ?? []) {
+    if (intervalMsByDevice.has(p.ref.systemId)) continue;
+    const device = await DeviceConfigRegistry.deviceByHandle(p.ref.systemId);
+    intervalMsByDevice.set(p.ref.systemId, agg5mIntervalMs(device?.vendorType));
+  }
+
   const energySeries: EnergySeriesInput[] = [];
   for (const p of energyPoints ?? []) {
     const series = rowsByPoint.get(`${p.ref.systemId}.${p.ref.pointId}`);
@@ -171,7 +189,11 @@ export async function loadFlowSeriesFromAgg5m(
           p.transform,
         );
     }
-    energySeries.push({ stem: p.stem, energyKwhBySlot });
+    energySeries.push({
+      stem: p.stem,
+      energyKwhBySlot,
+      intervalMs: intervalMsByDevice.get(p.ref.systemId) ?? null,
+    });
   }
 
   const { sources, loads } = buildFlowSeries(

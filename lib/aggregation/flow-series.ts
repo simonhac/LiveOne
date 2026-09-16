@@ -210,6 +210,13 @@ export interface EnergySeriesInput {
   /** The energy point's logical-path stem, e.g. "bidi.battery.charge", "load", "bidi.grid". */
   stem: string;
   energyKwhBySlot: (number | null)[];
+  /**
+   * How long ONE of this register's readings covers, in ms — `agg5mIntervalMs` for the point's
+   * vendor. Checked against each destination interval by {@link coverageGate}, which is what stops a
+   * half-hourly Amber register being booked as a five-minute slot's energy. Optional only for the
+   * pure unit-test path; the PG loader always supplies it.
+   */
+  intervalMs?: number | null;
 }
 
 /**
@@ -378,6 +385,48 @@ export function buildFlowSeries(
  * delta stamped at `timeline[i]` covers `(timeline[i-1], timeline[i]]`), while `energyKwh[i]`
  * means interval `(timeline[i], timeline[i+1]]` — so interval i reads slot i+1.
  */
+/**
+ * 🛑 Does this register's reading actually COVER the interval it would be attached to?
+ *
+ * An overlay value is attached at the slot it is stamped on, as that interval's whole energy. That is
+ * only true when the register's own interval IS that interval. Amber's usage registers are natively
+ * HALF-HOURLY yet land in `point_readings_agg_5m` (see `agg5mIntervalMs`), so on a 5-minute timeline
+ * the half hour's energy went onto one slot while the other five fell back to power integration and
+ * the node totalled BOTH: Kinkora Rd 2026-09-08 read 15.77 kWh of grid export against 8.61 metered
+ * and 8.51 integrated, with `revenue_c` priced to match (+45.04c against Amber's booked +27.73c).
+ *
+ * The comparison is per-INTERVAL and against the DECLARED duration, and both halves of that matter:
+ *
+ *  - Declared, because cadence inferred from row spacing is defeatable. One adjacent pair of rows
+ *    anywhere in the window makes a half-hourly register look five-minutely, and a window holding a
+ *    single row shows no spacing at all — which is the ordinary case for a Sankey tooltip over a
+ *    short span, and exactly where the whole half hour would land on one slot.
+ *  - Per-interval, because the timeline is a sorted UNION of observed stamps, not a guaranteed
+ *    regular grid. A five-minute register is genuinely unusable across a 30-minute hole in that
+ *    union, and this rejects it there and nowhere else.
+ *
+ * Returning `null` rather than skipping the contributor is the load-bearing part: `addContribution`
+ * poisons on null, so an unusable reading makes the TARGET unknown for that interval and the node
+ * falls back to power integration. Dropping the contributor instead would let a second register on
+ * the same node (Amber `.import` + `.controlled`, a master `load` and its children) define the node
+ * by itself and silently under-report it.
+ *
+ * `intervalMs` unset (or no timeline) ⇒ no claim is being made, so nothing is gated. The PG loader
+ * always supplies it; this is the pure unit-test path.
+ */
+function coverageGate(
+  intervalMs: number | null | undefined,
+  timeline: number[] | undefined,
+): (slot: number) => boolean {
+  if (intervalMs == null || timeline === undefined) return () => true;
+  // Slot `slot` carries the energy of `(timeline[slot - 1], timeline[slot]]` — the interval the
+  // caller's slot→interval shift will read it for.
+  return (slot) =>
+    slot >= 1 &&
+    slot < timeline.length &&
+    timeline[slot] - timeline[slot - 1] === intervalMs;
+}
+
 function attachEnergyOverlays(
   sources: FlowSeries[],
   loads: FlowSeries[],
@@ -412,6 +461,7 @@ function attachEnergyOverlays(
     const cls = classifyEnergyStem(e.stem);
     if (cls === null) continue;
     const slots = e.energyKwhBySlot;
+    const covers = coverageGate(e.intervalMs, timeline);
     if (cls.kind === "pair" || cls.kind === "uni") {
       // A counter re-base shows up as a negative delta (the counter dropping to its new base) plus
       // a catch-up delta carrying everything it had accumulated. Raw sums self-cancel; nulling only
@@ -430,6 +480,7 @@ function attachEnergyOverlays(
       // stricter costs nothing.
       const trusted = trustedByDeficit(slots);
       addContribution(cls.targetPath, (slot) => {
+        if (!covers(slot)) return null;
         const v = slots[slot];
         if (v === null || v === undefined) return null;
         return trusted[slot] ? v : null;
@@ -447,11 +498,13 @@ function attachEnergyOverlays(
       const negativePath =
         cls.channelStem === "bidi.battery" ? "load.battery" : "load.grid";
       addContribution(positivePath, (slot) => {
+        if (!covers(slot)) return null;
         const v = slots[slot];
         if (v === null || v === undefined) return null;
         return v > 0 ? v : 0;
       });
       addContribution(negativePath, (slot) => {
+        if (!covers(slot)) return null;
         const v = slots[slot];
         if (v === null || v === undefined) return null;
         return v < 0 ? -v : 0;

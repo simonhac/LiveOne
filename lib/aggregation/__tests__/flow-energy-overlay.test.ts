@@ -410,3 +410,283 @@ describe("energy overlay: a master-load register sizes the complement", () => {
     expect(load.energyKwh![0]).toBeCloseTo(siteTotal, 9);
   });
 });
+
+/**
+ * A register whose reading does not COVER the interval it is attached to — the Amber grid-export
+ * defect, and the three ways an earlier data-sniffing version of this guard was defeated.
+ *
+ * An overlay is attached at the slot it is stamped on, as that interval's whole energy. Amber's usage
+ * registers are natively HALF-HOURLY and land one row per 30 minutes in `point_readings_agg_5m`, so
+ * on a five-minute timeline the half hour went onto one slot while the other five fell back to power
+ * integration and the node totalled BOTH. Measured on prod (Kinkora Rd, 2026-09-08): 15.77 kWh of
+ * grid export against 8.61 metered by Amber and 8.51 integrated from the power signal, with
+ * `revenue_c` priced to match — +45.04c against Amber's own booked +27.73c.
+ *
+ * The fixture reproduces that ratio: twelve five-minute intervals exporting a steady 1.2 kW is
+ * 1.2 kWh, which the half-hourly register also reports as 0.6 + 0.6. Attached naively it reads
+ * 2.2 kWh — 1.83x, the inflation seen on prod.
+ */
+describe("energy overlay: a reading that does not cover its interval", () => {
+  const FIVE = 300_000;
+  const THIRTY = 1_800_000;
+  /** 13 stamps → 12 five-minute intervals. */
+  const fiveMinTimeline = Array.from({ length: 13 }, (_, i) => (i + 1) * FIVE);
+  /** A steady 1.2 kW of solar going straight out to the grid: 0.1 kWh per five-minute interval. */
+  const steadyPoints: ClassifiedPoint[] = [
+    { stem: "source.solar", power: new Array(13).fill(1.2) },
+    { stem: "bidi.grid", power: new Array(13).fill(-1.2) }, // negative = export
+  ];
+  const TRUE_TOTAL = 1.2;
+  /** Amber's shape: stamped only on slots 6 and 12, each carrying its whole half hour. */
+  const halfHourlySlots = fiveMinTimeline.map((_, slot) =>
+    slot === 6 || slot === 12 ? 0.6 : null,
+  );
+
+  const exportTotal = (
+    energy: EnergySeriesInput[],
+    timeline = fiveMinTimeline,
+    points = steadyPoints,
+  ) => {
+    const { sources, loads } = buildFlowSeries(points, energy, timeline);
+    const m = computeFlowMatrix({ timestamps: timeline, sources, loads });
+    return at(m, "source.solar", "load.grid");
+  };
+
+  it("refuses a half-hourly reading on a five-minute timeline", () => {
+    expect(
+      exportTotal([
+        {
+          stem: "bidi.grid.export",
+          energyKwhBySlot: halfHourlySlots,
+          intervalMs: THIRTY,
+        },
+      ]),
+    ).toBeCloseTo(TRUE_TOTAL, 9);
+  });
+
+  it("would have read 1.83x that, undeclared", () => {
+    // The defect itself, pinned: with no declared duration nothing is gated and the overlay attaches
+    // as it used to — 0.6 on each of two intervals plus 0.1 integrated on the other ten.
+    expect(
+      exportTotal([
+        { stem: "bidi.grid.export", energyKwhBySlot: halfHourlySlots },
+      ]),
+    ).toBeCloseTo(2.2, 9);
+  });
+
+  it("keeps a reading whose duration MATCHES its interval", () => {
+    // The same half-hourly register on a half-hourly timeline: now its delta really is that
+    // interval's energy, so the overlay is the right answer and must survive. It beats the power
+    // integration (0.6 + 0.6), proving it was not refused.
+    const timeline = Array.from({ length: 3 }, (_, i) => (i + 1) * THIRTY);
+    const points: ClassifiedPoint[] = [
+      { stem: "source.solar", power: new Array(3).fill(1.2) },
+      { stem: "bidi.grid", power: new Array(3).fill(-1.2) },
+    ];
+    expect(
+      exportTotal(
+        [
+          {
+            stem: "bidi.grid.export",
+            energyKwhBySlot: [null, 0.9, 0.9],
+            intervalMs: THIRTY,
+          },
+        ],
+        timeline,
+        points,
+      ),
+    ).toBeCloseTo(1.8, 9);
+  });
+
+  // ── The three ways a data-sniffing version of this guard was defeated ────────────────────────
+
+  it("is not defeated by one adjacent pair of readings", () => {
+    // 🛑 Inferring cadence from row spacing fails here: two adjacent five-minute stamps make the
+    // smallest observed gap five minutes, which admitted every half-hourly delta in the window and
+    // restored the full 2.2 kWh. A DECLARED duration does not care what the rows look like.
+    expect(
+      exportTotal([
+        {
+          stem: "bidi.grid.export",
+          energyKwhBySlot: fiveMinTimeline.map((_, slot) =>
+            slot === 6 || slot === 12
+              ? 0.6
+              : slot === 1 || slot === 2
+                ? 0.1
+                : null,
+          ),
+          intervalMs: THIRTY,
+        },
+      ]),
+    ).toBeCloseTo(TRUE_TOTAL, 9);
+  });
+
+  it("is not defeated by a window holding a single reading", () => {
+    // 🛑 The Sankey tooltip builds a matrix over an arbitrary short window. One stamp shows NO
+    // spacing, so a sniffing guard went inert and booked the whole half hour onto one slot: 1.1 kWh
+    // against a true 0.6. This is the ordinary case, not an edge one.
+    const timeline = Array.from({ length: 7 }, (_, i) => (i + 1) * FIVE);
+    const points: ClassifiedPoint[] = [
+      { stem: "source.solar", power: new Array(7).fill(1.2) },
+      { stem: "bidi.grid", power: new Array(7).fill(-1.2) },
+    ];
+    expect(
+      exportTotal(
+        [
+          {
+            stem: "bidi.grid.export",
+            energyKwhBySlot: timeline.map((_, slot) =>
+              slot === 6 ? 0.6 : null,
+            ),
+            intervalMs: THIRTY,
+          },
+        ],
+        timeline,
+        points,
+      ),
+    ).toBeCloseTo(0.6, 9); // 30 min at 1.2 kW, integrated
+  });
+
+  it("poisons the target rather than dropping the contributor", () => {
+    // 🛑 A second register on the same node must not be left to define it alone. Skipping the
+    // unusable contributor (instead of nulling the interval) let the fine-grained one stand as the
+    // node's whole energy — 0.36 kWh against a true 1.2. Null-poisoning sends the node to power.
+    expect(
+      exportTotal([
+        {
+          stem: "bidi.grid.export",
+          energyKwhBySlot: halfHourlySlots,
+          intervalMs: THIRTY,
+        },
+        {
+          stem: "bidi.grid.export",
+          energyKwhBySlot: fiveMinTimeline.map((_, slot) =>
+            slot >= 1 ? 0.03 : null,
+          ),
+          intervalMs: FIVE,
+        },
+      ]),
+    ).toBeCloseTo(TRUE_TOTAL, 9);
+  });
+
+  it("rejects a five-minute reading only across an irregular hole in the timeline", () => {
+    // 🛑 The timeline is a sorted UNION of observed stamps, not a regular grid. A five-minute reading
+    // stamped after a 30-minute hole does not cover that interval; every other interval is fine, so
+    // the gate must be per-interval and not per-series.
+    const timeline = [FIVE, 2 * FIVE, 2 * FIVE + THIRTY, 3 * FIVE + THIRTY];
+    const points: ClassifiedPoint[] = [
+      { stem: "source.solar", power: new Array(4).fill(1.2) },
+      { stem: "bidi.grid", power: new Array(4).fill(-1.2) },
+    ];
+    const energy: EnergySeriesInput[] = [
+      {
+        stem: "bidi.grid.export",
+        energyKwhBySlot: [null, 0.2, 0.2, 0.2],
+        intervalMs: FIVE,
+      },
+    ];
+    // Intervals 0 and 2 are five minutes → overlay 0.2 each. Interval 1 is the 30-minute hole →
+    // poisoned, so it falls back to the trapezoid: 1.2 kW × 0.5 h = 0.6.
+    expect(exportTotal(energy, timeline, points)).toBeCloseTo(
+      0.2 + 0.6 + 0.2,
+      9,
+    );
+  });
+
+  it("applies to the SOURCE side — the LOAD's attribution is what changes", () => {
+    // Import inflates only second-order inside the matrix (a source overlay sets a weight in a
+    // normalised split, not a magnitude) — but `extractBatteryFlows` reads a source's energy as an
+    // absolute throughput, and the misallocation re-prices the load's cost and provenance. Asserted
+    // on the ALLOCATION, not on the overlay array, so a future implementation that redistributes the
+    // coarse reading across its half hour instead of refusing it still passes.
+    const timeline = fiveMinTimeline;
+    const points: ClassifiedPoint[] = [
+      { stem: "source.solar", power: new Array(13).fill(1.2) },
+      { stem: "bidi.grid", power: new Array(13).fill(1.2) }, // positive = import
+      { stem: "load", power: new Array(13).fill(2.4) },
+    ];
+    const split = (intervalMs: number | null) => {
+      const { sources, loads } = buildFlowSeries(
+        points,
+        [
+          {
+            stem: "bidi.grid.import",
+            energyKwhBySlot: timeline.map((_, slot) =>
+              slot === 6 || slot === 12 ? 0.6 : null,
+            ),
+            intervalMs,
+          },
+        ],
+        timeline,
+      );
+      const m = computeFlowMatrix({ timestamps: timeline, sources, loads });
+      return {
+        solar: at(m, "source.solar", "load"),
+        grid: at(m, "source.grid", "load"),
+      };
+    };
+
+    // Equal 1.2 kW sources feeding a 2.4 kW load split the hour's 2.4 kWh evenly.
+    const gated = split(THIRTY);
+    expect(gated.solar).toBeCloseTo(1.2, 9);
+    expect(gated.grid).toBeCloseTo(1.2, 9);
+
+    // Ungated, the half hour lands on one interval and skews that interval's split toward the grid.
+    const ungated = split(null);
+    expect(ungated.grid).toBeGreaterThan(ungated.solar);
+    expect(ungated.solar + ungated.grid).toBeCloseTo(2.4, 9); // the load is unchanged either way
+  });
+
+  it("poisons regardless of contributor ORDER", () => {
+    // Null is absorbing in `addContribution` whether the unusable contributor is seen first or last;
+    // the earlier skip-based version was order-dependent in effect.
+    const coarse = {
+      stem: "bidi.grid.export",
+      energyKwhBySlot: halfHourlySlots,
+      intervalMs: THIRTY,
+    };
+    const fine = {
+      stem: "bidi.grid.export",
+      energyKwhBySlot: fiveMinTimeline.map((_, slot) =>
+        slot >= 1 ? 0.03 : null,
+      ),
+      intervalMs: FIVE,
+    };
+    expect(exportTotal([coarse, fine])).toBeCloseTo(TRUE_TOTAL, 9);
+    expect(exportTotal([fine, coarse])).toBeCloseTo(TRUE_TOTAL, 9);
+  });
+
+  it("poisons BOTH halves of a signed-net register", () => {
+    // A `net` stem contributes to two target paths; a coarse one must send both to power, not just
+    // the half that happens to be nonzero in the sampled interval.
+    const timeline = fiveMinTimeline;
+    const points: ClassifiedPoint[] = [
+      { stem: "source.solar", power: new Array(13).fill(1.2) },
+      { stem: "bidi.grid", power: new Array(13).fill(-1.2) },
+    ];
+    const { sources, loads } = buildFlowSeries(
+      points,
+      [
+        {
+          stem: "bidi.grid",
+          energyKwhBySlot: timeline.map((_, slot) =>
+            slot === 6 || slot === 12 ? -0.6 : null,
+          ),
+          intervalMs: THIRTY,
+        },
+      ],
+      timeline,
+    );
+    for (const path of ["source.grid", "load.grid"]) {
+      const node = [...sources, ...loads].find((n) => n.path === path);
+      expect(node).toBeDefined();
+      // Every interval unknown ⇒ the node integrates power, on both halves of the channel. Asserted
+      // as an explicit all-null array: `every()` on an absent or empty overlay is vacuously true.
+      expect(node!.energyKwh).toEqual(
+        new Array(timeline.length - 1).fill(null),
+      );
+    }
+    const m = computeFlowMatrix({ timestamps: timeline, sources, loads });
+    expect(at(m, "source.solar", "load.grid")).toBeCloseTo(TRUE_TOTAL, 9);
+  });
+});
