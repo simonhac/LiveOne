@@ -914,21 +914,41 @@ async function staleAgg1dLocalDays(
   // the freshest 5m row against the freshest 1d row across ALL points, so one point with a
   // recently-rebuilt daily row masks another that has 5-minute data and no daily row at all — which
   // is precisely the per-point partial shape the publish race produces (export 100 %, solar 0 %).
-  const fiveMin = await db
-    .select({
-      rid: pointReadingsAgg5m.pointRid,
-      day: localDayExpr(opts.offsetMin),
-      m: max(pointReadingsAgg5m.updatedAt),
-    })
-    .from(pointReadingsAgg5m)
-    .where(
-      and(
-        inArray(pointReadingsAgg5m.pointRid, rids),
-        gt(pointReadingsAgg5m.intervalEnd, from),
-        lte(pointReadingsAgg5m.intervalEnd, to),
-      ),
-    )
-    .groupBy(pointReadingsAgg5m.pointRid, localDayExpr(opts.offsetMin));
+  // 🛑 Raw SQL with a POSITIONAL `GROUP BY`, like the two siblings below — the query builder cannot
+  // express this one. `.groupBy(localDayExpr(...))` re-serialises the expression and binds `offsetMin`
+  // as a SECOND placeholder ($1 in the SELECT, $5 in the GROUP BY); Postgres matches GROUP BY terms to
+  // SELECT terms structurally, two distinct Param nodes are not equal, and it rejects the whole query:
+  //
+  //   column "point_readings_agg_5m.interval_end" must appear in the GROUP BY clause   (42803)
+  //
+  // Hoisting the fragment into a const does NOT help — the builder emits two placeholders from one
+  // fragment just the same. `GROUP BY 1, 2` sidesteps the matching entirely.
+  //
+  // This is the ONLY detector of a daily aggregate that was never built, and `healStaleAgg1dForDevice`
+  // swallows its throw BY DESIGN (a backstop must not break the backfill it runs ahead of), so the
+  // failure read exactly like "nothing is stale". It ran broken on every device on both callers every
+  // night from #462 and healed nothing, while `Amber Kinkora` accumulated 16 missing days. Hence the
+  // integration test that EXECUTES it: the unit test mocks this DAO, which is what hid it — and which
+  // also let a one-line "fix" that still emitted two placeholders look correct.
+  const localDay = localDayExpr(opts.offsetMin);
+  const res = await db.execute(sql`
+    SELECT ${localDay} AS local_day,
+           ${pointReadingsAgg5m.pointRid} AS point_rid,
+           max(${pointReadingsAgg5m.updatedAt}) AS m
+    FROM ${pointReadingsAgg5m}
+    WHERE ${pointReadingsAgg5m.pointRid} IN (${sql.join(
+      rids.map((r) => sql`${r}`),
+      sql`, `,
+    )})
+      AND ${pointReadingsAgg5m.intervalEnd} >  ${from}
+      AND ${pointReadingsAgg5m.intervalEnd} <= ${to}
+    GROUP BY 1, 2
+  `);
+  const fiveMin = (res.rows ?? []).map((row) => ({
+    rid: Number((row as { point_rid: unknown }).point_rid),
+    day: String((row as { local_day: unknown }).local_day),
+    m: (row as { m: unknown }).m,
+  }));
   if (fiveMin.length === 0) return [];
 
   const days = [...new Set(fiveMin.map((r) => r.day))];

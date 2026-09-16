@@ -408,6 +408,10 @@ async function handleBackfill(request: NextRequest) {
   // here, and running it first means a fetch that spends the budget cannot starve it. Best-effort —
   // it never throws, and never blocks the backfill.
   const healed: Record<number, string[]> = {};
+  // Sweep failures are reported, not just logged: `healStaleAgg1dForDevice` swallows its throw by
+  // design, which made a permanently-broken detector indistinguishable from a healthy fleet for five
+  // days (see `HealResult.failed`). The response carries them so a manual run shows it too.
+  const staleSweepFailures: { systemId: number; error: string }[] = [];
   if (!dryRun && planetscaleDb) {
     for (const device of targets) {
       const r = await healStaleAgg1dForDevice(planetscaleDb, device, {
@@ -415,7 +419,14 @@ async function handleBackfill(request: NextRequest) {
         label: "SigenBackfill",
       });
       if (r.healed.length > 0) healed[device.id] = r.healed;
+      if (r.failed)
+        staleSweepFailures.push({ systemId: device.id, error: r.failed });
     }
+    if (staleSweepFailures.length > 0)
+      console.error(
+        `[SigenBackfill] stale-agg_1d sweep FAILED on ${staleSweepFailures.length} device(s) — ` +
+          "daily aggregates that were never built are not being detected",
+      );
   }
 
   const outcomes: DeviceOutcome[] = [];
@@ -526,6 +537,8 @@ async function handleBackfill(request: NextRequest) {
       // Empty on a healthy fleet. A device appearing here repeatedly means its landing keeps timing
       // out — the sweep is papering over something, and the log lines above name it.
       healedStaleDays: Object.keys(healed).length > 0 ? healed : undefined,
+      staleSweepFailures:
+        staleSweepFailures.length > 0 ? staleSweepFailures : undefined,
       devices: outcomes,
     },
     // Every target failed ⇒ 500 so a scheduled run surfaces as a failure. A partial failure stays

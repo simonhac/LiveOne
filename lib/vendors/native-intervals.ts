@@ -42,3 +42,43 @@ export function isFiveMinuteNativeVendor(
   if (!vendorType) return false;
   return FIVE_MIN_NATIVE_VENDOR_TYPES.has(vendorType.toLowerCase());
 }
+
+/**
+ * How long ONE `point_readings_agg_5m` row actually covers, per vendor — the authority the flow
+ * pipeline needs before it can treat an energy register's `delta` as a timeline slot's energy.
+ *
+ * 🛑 The table's name is a contract that one vendor breaks. For every RAW vendor the 5-minute bucket
+ * is five minutes by construction (PG differences that vendor's raw readings into it), and the
+ * 5m-native vendors above publish pre-aggregated five-minute rows — except **Amber**, whose usage and
+ * price registers are natively HALF-HOURLY and land one row per 30 minutes in a table whose every
+ * other row is five. Nothing about the row says so, which is how a half hour's energy came to be
+ * attached to one five-minute slot as if it were that slot's own (`attachEnergyOverlays`): Kinkora Rd
+ * 2026-09-08 read 15.77 kWh of grid export against 8.61 metered and 8.51 integrated, and the
+ * `revenue_c` leg priced to match.
+ *
+ * 🛑 DECLARED, never inferred from the data. Detecting cadence by looking at row spacing is
+ * defeatable — one adjacent pair of rows anywhere in a window makes a half-hourly register look
+ * five-minutely, and a window holding a single row shows no spacing at all (which is the common case
+ * for a Sankey tooltip over a short span). The duration is a property of the vendor's API, so it is
+ * recorded here.
+ *
+ * Mirrors `cadenceMinutes` in the coverage-repair provider registry (Amber 30, OE/Sigenergy 5); kept
+ * here rather than read from there so this module stays dependency-free — the flow-series loader
+ * cannot pull the vendor adapters in. Adding a vendor with a coarser interval means adding it here;
+ * the default is the table's own nominal five minutes.
+ */
+const AGG5M_INTERVAL_MS_BY_VENDOR: ReadonlyMap<string, number> = new Map([
+  ["amber", 30 * 60_000],
+]);
+
+/** The nominal `point_readings_agg_5m` interval — what a row covers unless its vendor says otherwise. */
+const AGG5M_NOMINAL_INTERVAL_MS = 5 * 60_000;
+
+/** The interval one `agg_5m` row covers for this vendor. Case-insensitive; unknown → the nominal 5m. */
+export function agg5mIntervalMs(vendorType: string | null | undefined): number {
+  if (!vendorType) return AGG5M_NOMINAL_INTERVAL_MS;
+  return (
+    AGG5M_INTERVAL_MS_BY_VENDOR.get(vendorType.toLowerCase()) ??
+    AGG5M_NOMINAL_INTERVAL_MS
+  );
+}

@@ -269,9 +269,15 @@ export async function aggregateRange(
   // never roll back the already-committed contiguous pass above. Bounded per run.
   try {
     const r = await rehealStaleAttrDays(Date.now());
-    if (r.days > 0)
+    if (r.selected > 0)
       console.log(
-        `[Daily Points] flow_attr reheal: ${r.days} stale day(s) across ${r.handles} handle(s)`,
+        `[Daily Points] flow_attr reheal: ${r.days}/${r.selected} stale day(s) across ` +
+          `${r.handles} handle(s) in ${r.elapsedMs}ms` +
+          // How far it got, not just that it ran — a budget-bounded sweep that silently stops short
+          // is indistinguishable from a finished one otherwise.
+          (r.timedOut
+            ? ` — BUDGET SPENT, ${r.remaining} day(s) roll to the next run`
+            : ""),
       );
   } catch (error) {
     console.error("[Daily Points] flow_attr scattered reheal failed:", error);

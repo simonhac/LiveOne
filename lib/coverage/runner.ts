@@ -129,8 +129,33 @@ export interface CoverageRepairResult {
    * healthy fleet; a device recurring here means its landings keep timing out.
    */
   healedStaleDays?: Record<number, string[]>;
+  /** Devices whose stale-agg_1d sweep threw. Non-empty ⇒ `status: "alert"`: the backstop is dead and
+   *  a clean gap report says nothing about the aggregates it was supposed to be watching. */
+  staleSweepFailures?: { systemId: number; error: string }[];
   reports: DeviceReport[];
   reportText: string;
+}
+
+/**
+ * The run's headline status — extracted so the rule is assertable without standing up a whole run.
+ *
+ * 🛑 A dead stale sweep is an ALERT, not a footnote, and that is the non-obvious clause. Every other
+ * input here describes gaps the sweep is not responsible for, so while the sweep is broken the fleet
+ * looks healthy BY CONSTRUCTION: it is the only detector of a daily aggregate that was never built,
+ * and it swallows its own failures so its caller can finish. #462 shipped it throwing 42803 on every
+ * device, and the nightly report stayed green for five days while nothing healed.
+ */
+export function coverageRunStatus(x: {
+  errors: number;
+  staleSweepFailures: number;
+  unsettled: number;
+  deferredForCap: number;
+  recomputePending: number;
+}): "ok" | "warn" | "alert" {
+  if (x.errors > 0 || x.staleSweepFailures > 0) return "alert";
+  if (x.unsettled > 0 || x.deferredForCap > 0 || x.recomputePending > 0)
+    return "warn";
+  return "ok";
 }
 
 export async function runCoverageRepair(
@@ -204,6 +229,9 @@ export async function runCoverageRepair(
   // Race-free: it reads only committed state, long after any delivery, and before this run
   // publishes anything of its own. Re-healing a day this run then repairs again is harmless.
   const healedStaleDays: Record<number, string[]> = {};
+  // Devices whose stale sweep THREW. Distinct from "nothing was stale", which is the healthy case
+  // and looks identical in the return value — see `HealResult.failed`.
+  const staleSweepFailures: { systemId: number; error: string }[] = [];
   // 🛑 The deep window PLUS a margin. Coverage repair reaches back exactly `lookbackDays`, so a day
   // repaired at that boundary whose recompute is skipped has aged out by the following night and can
   // never be healed — its coverage is complete, so nothing re-detects it either. The margin buys
@@ -250,6 +278,8 @@ export async function runCoverageRepair(
         deadlineMs: healDeadline,
       });
       if (r.healed.length > 0) healedStaleDays[device.id] = r.healed;
+      if (r.failed)
+        staleSweepFailures.push({ systemId: device.id, error: r.failed });
     }
   }
 
@@ -579,12 +609,13 @@ export async function runCoverageRepair(
   const wouldRepair = allRepairs.filter(
     (x) => x.status === "would-repair",
   ).length;
-  const status: "ok" | "warn" | "alert" =
-    errors > 0
-      ? "alert"
-      : unsettled > 0 || deferredForCap > 0 || recompute.pending > 0
-        ? "warn"
-        : "ok";
+  const status = coverageRunStatus({
+    errors,
+    staleSweepFailures: staleSweepFailures.length,
+    unsettled,
+    deferredForCap,
+    recomputePending: recompute.pending,
+  });
 
   const icon = status === "alert" ? "🔴" : status === "warn" ? "🟡" : "🟢";
   const vendorCounts = providers
@@ -596,6 +627,14 @@ export async function runCoverageRepair(
   const lines: string[] = [
     `${icon} LiveOne ${deep ? "deep" : "nightly"} coverage repair${dryRun ? " [DRY-RUN]" : ""} — window ${windowFirst}..${windowLast}; ${vendorCounts}`,
   ];
+  if (staleSweepFailures.length > 0) {
+    lines.push(
+      `🔴 STALE-AGG_1D SWEEP FAILED on ${staleSweepFailures.length} device(s) — ` +
+        `daily aggregates that were never built are NOT being detected:`,
+    );
+    for (const f of staleSweepFailures)
+      lines.push(`    – system ${f.systemId}: ${f.error}`);
+  }
   const devicesToReport = reports.filter(
     (r) => r.gaps.length > 0 || r.repairs.some((x) => x.status === "error"),
   );
@@ -645,6 +684,8 @@ export async function runCoverageRepair(
     // timing out and the sweep is papering over it — the [RepairCoverage] error lines name which.
     healedStaleDays:
       Object.keys(healedStaleDays).length > 0 ? healedStaleDays : undefined,
+    staleSweepFailures:
+      staleSweepFailures.length > 0 ? staleSweepFailures : undefined,
     reports,
     reportText: lines.join("\n"),
   };

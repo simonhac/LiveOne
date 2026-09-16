@@ -126,6 +126,29 @@ describe("healStaleAgg1dForDevice", () => {
     expect(r).toMatchObject({ found: [], healed: [], agg1dDays: 0 });
   });
 
+  it("NAMES the failure, so it is not mistaken for a healthy fleet", async () => {
+    // 🛑 The regression this pair guards. Swallowing is right; swallowing SILENTLY is what let a
+    // detector that threw 42803 on every device every night look exactly like "nothing was stale"
+    // for five days. The caller escalates on this field, so it must survive.
+    mockStale.mockRejectedValue(new Error("connection reset"));
+    const r = await healStaleAgg1dForDevice(db, DEVICE, {
+      lookbackDays: 7,
+      nowMs: NOW,
+    });
+    expect(r.failed).toBe("connection reset");
+  });
+
+  it("leaves `failed` unset when the sweep genuinely found nothing", async () => {
+    // The other half: a healthy run must not look like a broken one either.
+    mockStale.mockResolvedValue([]);
+    const r = await healStaleAgg1dForDevice(db, DEVICE, {
+      lookbackDays: 7,
+      nowMs: NOW,
+    });
+    expect(r.healed).toEqual([]);
+    expect(r.failed).toBeUndefined();
+  });
+
   it("stops between batches when the deadline passes, and reports only what it rebuilt", async () => {
     // 🛑 A caller-level check BEFORE this function does not bound it: one device can rebuild 14 days
     // plus Area provenance for each, so a device entered a second before the budget expires could

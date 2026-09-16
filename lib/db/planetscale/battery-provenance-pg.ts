@@ -123,7 +123,15 @@ export function blendValue(step: FoldStep, metricType: string): number | null {
 // several intervals had its catch-up — carrying everything it skipped — booked as one interval's
 // energy. Re-materialised days lose that phantom energy: nothing for a day with no dropout (26 of 31
 // in Aug 2026 for Kutis), but 2026-08-19 read 113.49 kWh of solar against a metered 10.59.
-export const FLOW_ATTR_VERSION = 8;
+// v9: an energy register is only booked as an interval's energy when its DECLARED duration matches
+// that interval (`coverageGate`). Amber's usage registers are natively half-hourly in a five-minute
+// table, so v<=8 attached a whole half hour to one five-minute slot and integrated power over the
+// other five, totalling both: Kinkora Rd 2026-09-08 read 15.77 kWh of grid export against 8.61
+// metered and 8.51 integrated, and `revenue_c` priced to match (+45.04c against Amber's own booked
+// +27.73c). Re-materialised days lose that phantom export — nothing for a day whose Amber usage had
+// not yet settled when it was first rolled up (those were already power-only and correct), ~1.8x on
+// the days it had. Affects the two Amber-metered areas, Kinkora Rd and High Street.
+export const FLOW_ATTR_VERSION = 9;
 /** ~72h estimated→final settlement window (matches the schema comment on
  *  point_readings_flow_attr_1d.finalized_at). A day younger than this is still re-materialised by the
  *  heal so late Amber/OE revisions and backfills flow in; once past it, the day is stamped final. */
