@@ -1,5 +1,13 @@
-import { describe, it, expect } from "@jest/globals";
-import { pickNumberPreferNonZero, parseEnergyFlow } from "../sigenergy-client";
+import { describe, it, expect, jest, afterEach } from "@jest/globals";
+import {
+  pickNumberPreferNonZero,
+  parseEnergyFlow,
+  SigenergyClient,
+  LIVE_POLL_TIMEOUT_MS,
+  AUTH_TIMEOUT_MS,
+  BACKFILL_TIMEOUT_MS,
+} from "../sigenergy-client";
+import { SigenergyAdapter } from "../adapter";
 
 describe("pickNumberPreferNonZero", () => {
   // The live failure: an AC-charger site reports `evPower: 0` (the DC field) alongside the real
@@ -96,5 +104,75 @@ describe("pickNumber (via parseEnergyFlow) — coercion hazards", () => {
     expect(
       parseEnergyFlow({ data: { pvPower: false, solarPower: 3.5 } }).pvKw,
     ).toBe(3.5);
+  });
+});
+
+/**
+ * The request budget. These are not taste: the ORDER of the two numbers is the whole design, and
+ * the vendor's ~49-55 s give-up is what makes a socket timeout worth having at all.
+ */
+describe("request budget invariants", () => {
+  it("dies before the worker deadline, so a hang can never outlive its tick", () => {
+    // `withDeadline` frees the worker, not the socket. If the deadline fires first the request
+    // keeps running unsupervised — prod has a session recorded at 237 s. Both request budgets on
+    // the poll path must therefore land strictly inside it.
+    const deadline = new SigenergyAdapter().pollDeadlineMs;
+    expect(LIVE_POLL_TIMEOUT_MS).toBeLessThan(deadline);
+    expect(AUTH_TIMEOUT_MS).toBeLessThan(deadline);
+  });
+
+  it("cuts the live poll below the vendor's own give-up, and the backfill above it", () => {
+    // Measured on prod: failures cluster at ~54.8 s and late successes at ~49.2 s, i.e. Sigenergy
+    // answers a bad gateway at ~49-55 s. Below that band we stop waiting; above it we let a
+    // request that WILL be answered finish. The live poll has a minutely retry behind it and the
+    // nightly backfill has nothing, which is why they sit on opposite sides.
+    expect(LIVE_POLL_TIMEOUT_MS).toBeLessThan(49_000);
+    expect(BACKFILL_TIMEOUT_MS).toBeGreaterThan(55_000);
+  });
+});
+
+describe("apiGet — per-call-site retry budget", () => {
+  const TOKEN = JSON.stringify({
+    code: 0,
+    data: { access_token: "t", expires_in: 3600 },
+  });
+  const res = (status: number, body: string) =>
+    ({ ok: status < 400, status, text: async () => body }) as Response;
+  const client = () =>
+    new SigenergyClient({ username: "u", password: "p", region: "aus" });
+
+  const realFetch = global.fetch;
+  afterEach(() => {
+    global.fetch = realFetch;
+  });
+
+  /** Login answers once, then every data request behaves as `then` says. */
+  const mock = (then: () => Promise<Response>) => {
+    const urls: string[] = [];
+    global.fetch = jest.fn(async (url: unknown) => {
+      urls.push(String(url));
+      return urls.length === 1 ? res(200, TOKEN) : then();
+    }) as unknown as typeof fetch;
+    return urls;
+  };
+
+  it("does not retry the live poll — the minutely cron is the retry", async () => {
+    const urls = mock(() => {
+      const e = new Error("timed out");
+      e.name = "TimeoutError";
+      return Promise.reject(e);
+    });
+    await expect(client().getEnergyFlow("station-1")).rejects.toMatchObject({
+      kind: "timeout",
+    });
+    // Login + exactly ONE data attempt. Three would triple one bad poll into three vendor
+    // timeouts, for a window the next tick re-attempts 60 s later anyway.
+    expect(urls).toHaveLength(2);
+  });
+
+  it("keeps the ladder off the live path, where nothing else would retry", async () => {
+    const urls = mock(async () => res(500, "{}"));
+    await expect(client().getStation()).rejects.toMatchObject({ kind: "http" });
+    expect(urls).toHaveLength(4); // login + 3 attempts
   });
 });

@@ -6,7 +6,6 @@ import {
   type DeviceConfigView,
 } from "@/lib/registry/device-config";
 import { sessionManager } from "@/lib/session-manager";
-import { PointManager } from "@/lib/point/point-manager";
 import { createPollCollector } from "@/lib/observations/poll-collector";
 import { getDeviceCredentials } from "@/lib/secure-credentials";
 import { planetscaleDb } from "@/lib/db/planetscale";
@@ -18,7 +17,6 @@ import {
   landingScopeFor,
   type LandingScope,
 } from "@/lib/observations/landing";
-import { Point } from "@/lib/ids";
 import { SigenergyClient } from "@/lib/vendors/sigenergy/sigenergy-client";
 import { backfillEnergyRange } from "@/lib/vendors/sigenergy/statistics";
 import type { SigenergyCredentials } from "@/lib/vendors/sigenergy/types";
@@ -165,12 +163,6 @@ function eachIsoDay(startYmd: string, endYmd: string): string[] {
  */
 const LANDING_WAIT_MS = 120_000;
 const LANDING_POLL_MS = 3_000;
-
-/** A device's points, as reading-DAO ids. Empty when the device has none yet. */
-async function pointIdsFor(systemId: number) {
-  const map = await PointManager.getInstance().loadPointInfoMap(systemId);
-  return Object.values(map).map((p) => Point.encode(p.pointUid));
-}
 
 /** Backfill one system. Never throws — a failure is reported as `{ ok: false, error }`. */
 async function backfillOneDevice(
