@@ -276,6 +276,23 @@ export const pointReadings = pgTable(
       table.measurementTime,
     ),
     createdAtIdx: index("pr_created_at_idx").on(table.createdAt),
+    // 🛑 THIS INDEX EXISTS TO MAKE `sessions` DELETABLE. It is not for a query.
+    //
+    // `session_id` carries a NO ACTION FK to `sessions`, and Postgres enforces that on the PARENT
+    // side: deleting one session row means proving no reading references it. With no index on this
+    // column that proof is a scan of the largest table in the database — per session row. Measured on
+    // `liveone-dev` 2026-09-15: `DELETE FROM sessions WHERE device_rid = $1` for one device ran
+    // **5 hours 25 minutes** before it was cancelled, blocking the 2-hourly prod→dev sync behind it.
+    //
+    // So it unblocks two things that both looked like application bugs: `hardDeleteDevice`
+    // (`lib/devices/delete.ts`), which cannot retire a device with history without it, and the
+    // session-retention sweep in `docs/deferred/session-response-retention.md`, whose own note says
+    // deleting old sessions "is blocked by `point_readings.session_id`'s ON DELETE NO ACTION FK".
+    //
+    // Deliberately NOT partial (`WHERE session_id IS NOT NULL`), though 22% of rows are NULL and the
+    // RI probe never matches them: ~110 MB saved on ~500 MB is not worth a predicate the planner has
+    // to prove its way past, on an index whose whole job is to be used by a check we do not write.
+    sessionIdIdx: index("pr_session_id_idx").on(table.sessionId),
   }),
 );
 

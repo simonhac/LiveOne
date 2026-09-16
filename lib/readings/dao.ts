@@ -1690,13 +1690,27 @@ async function rawSpanMsForPoints(
   const db = exec ?? requirePlanetscaleDb();
   const [r] = await db
     .select({
-      min: sql<Date | null>`min(${pointReadings.measurementTime})`,
-      max: sql<Date | null>`max(${pointReadings.measurementTime})`,
+      minT: sql<string | null>`min(${pointReadings.measurementTime})`,
+      maxT: sql<string | null>`max(${pointReadings.measurementTime})`,
     })
     .from(pointReadings)
     .where(inArray(pointReadings.pointRid, pointRids));
-  if (!r?.min || !r?.max) return null;
-  return { minMs: r.min.getTime(), maxMs: r.max.getTime() };
+  if (!r?.minT || !r.maxT) return null;
+  // 🛑 `string`, and parsed by hand — NOT `sql<Date>` + `.getTime()`.
+  //
+  // `sql<T>` is a COMPILE-TIME annotation on a raw fragment; drizzle attaches no runtime decoder to
+  // it, so an aggregated timestamp arrives as whatever node-postgres produced. Annotating it `Date`
+  // typechecks and then throws `r.min.getTime is not a function` the first time it is called with
+  // any data — which is exactly what it did, in a 500 from the dependents endpoint, after the unit
+  // tests passed (they mock this function) and the typecheck was clean. `relied-upon.test.ts` opens
+  // with the same lesson about `derivationDependents`; this is the second instance.
+  //
+  // The column is a naive UTC timestamp, so `Z` makes the parse explicit rather than local-time —
+  // the same handling as {@link agg5mSpanMsForPoints} next door.
+  return {
+    minMs: Date.parse(`${r.minT.replace(" ", "T")}Z`),
+    maxMs: Date.parse(`${r.maxT.replace(" ", "T")}Z`),
+  };
 }
 
 /**

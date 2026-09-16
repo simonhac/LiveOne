@@ -302,6 +302,10 @@
             "type": "string",
             "description": "Target origin (default: your stored default, else https://www.liveone.energy) (origin)"
           },
+          "include-archived": {
+            "type": "boolean",
+            "description": "Also consider archived areas (they are hidden from every listing by default)"
+          },
           "format": {
             "type": "string",
             "enum": [
@@ -324,7 +328,7 @@
           "device"
         ]
       },
-      "signature": "liveone area devices add <area> <device...> { --base-url?: string }",
+      "signature": "liveone area devices add <area> <device...> { --base-url?: string; --include-archived?: boolean }",
       "invocation": "npm run liveone -- area devices add",
       "file": "scripts/ops/liveone.ts",
       "writes": true,
@@ -355,6 +359,10 @@
             "type": "string",
             "description": "Target origin (default: your stored default, else https://www.liveone.energy) (origin)"
           },
+          "include-archived": {
+            "type": "boolean",
+            "description": "Also consider archived areas (they are hidden from every listing by default)"
+          },
           "format": {
             "type": "string",
             "enum": [
@@ -368,7 +376,7 @@
           "area"
         ]
       },
-      "signature": "liveone area devices list <area> { --base-url?: string }",
+      "signature": "liveone area devices list <area> { --base-url?: string; --include-archived?: boolean }",
       "invocation": "npm run liveone -- area devices list",
       "file": "scripts/ops/liveone.ts",
       "writes": false,
@@ -406,6 +414,10 @@
             "type": "string",
             "description": "Target origin (default: your stored default, else https://www.liveone.energy) (origin)"
           },
+          "include-archived": {
+            "type": "boolean",
+            "description": "Also consider archived areas (they are hidden from every listing by default)"
+          },
           "format": {
             "type": "string",
             "enum": [
@@ -428,7 +440,7 @@
           "device"
         ]
       },
-      "signature": "liveone area devices remove <area> <device...> { --base-url?: string }",
+      "signature": "liveone area devices remove <area> <device...> { --base-url?: string; --include-archived?: boolean }",
       "invocation": "npm run liveone -- area devices remove",
       "file": "scripts/ops/liveone.ts",
       "writes": true,
@@ -466,6 +478,10 @@
             "type": "string",
             "description": "Target origin (default: your stored default, else https://www.liveone.energy) (origin)"
           },
+          "include-archived": {
+            "type": "boolean",
+            "description": "Also consider archived areas (they are hidden from every listing by default)"
+          },
           "format": {
             "type": "string",
             "enum": [
@@ -488,7 +504,7 @@
           "device"
         ]
       },
-      "signature": "liveone area devices set <area> <device...> { --base-url?: string }",
+      "signature": "liveone area devices set <area> <device...> { --base-url?: string; --include-archived?: boolean }",
       "invocation": "npm run liveone -- area devices set",
       "file": "scripts/ops/liveone.ts",
       "writes": true,
@@ -996,6 +1012,10 @@
             "type": "string",
             "description": "Target origin (default: your stored default, else https://www.liveone.energy) (origin)"
           },
+          "include-archived": {
+            "type": "boolean",
+            "description": "Also consider archived areas (they are hidden from every listing by default)"
+          },
           "format": {
             "type": "string",
             "enum": [
@@ -1018,7 +1038,7 @@
           "role"
         ]
       },
-      "signature": "liveone area role clear <area> <role> [metric] { --base-url?: string }",
+      "signature": "liveone area role clear <area> <role> [metric] { --base-url?: string; --include-archived?: boolean }",
       "invocation": "npm run liveone -- area role clear",
       "file": "scripts/ops/liveone.ts",
       "writes": true,
@@ -1049,6 +1069,10 @@
             "type": "string",
             "description": "Target origin (default: your stored default, else https://www.liveone.energy) (origin)"
           },
+          "include-archived": {
+            "type": "boolean",
+            "description": "Also consider archived areas (they are hidden from every listing by default)"
+          },
           "points": {
             "type": "boolean",
             "description": "Also list every bindable point on the area's devices, marking which are unbound"
@@ -1066,7 +1090,7 @@
           "area"
         ]
       },
-      "signature": "liveone area role list <area> { --base-url?: string; --points?: boolean }",
+      "signature": "liveone area role list <area> { --base-url?: string; --include-archived?: boolean; --points?: boolean }",
       "invocation": "npm run liveone -- area role list",
       "file": "scripts/ops/liveone.ts",
       "writes": false,
@@ -1112,6 +1136,10 @@
             "type": "string",
             "description": "Target origin (default: your stored default, else https://www.liveone.energy) (origin)"
           },
+          "include-archived": {
+            "type": "boolean",
+            "description": "Also consider archived areas (they are hidden from every listing by default)"
+          },
           "format": {
             "type": "string",
             "enum": [
@@ -1136,7 +1164,7 @@
           "point"
         ]
       },
-      "signature": "liveone area role set <area> <role> <metric> <point...> { --base-url?: string }",
+      "signature": "liveone area role set <area> <role> <metric> <point...> { --base-url?: string; --include-archived?: boolean }",
       "invocation": "npm run liveone -- area role set",
       "file": "scripts/ops/liveone.ts",
       "writes": true,

@@ -207,18 +207,28 @@ async function deviceDependents(
     .limit(1);
   if (row?.areaId) {
     const [a] = await db
-      .select({ name: areas.name })
+      .select({ name: areas.name, status: areas.status })
       .from(areas)
       .where(eq(areas.id, row.areaId))
       .limit(1);
-    out.push({
-      kind: "area",
-      id: Area.encode(row.areaId),
-      name: a?.name ?? null,
-      via: "devices.area_id",
-      effect: destructive ? "cascade-deleted" : "silently-dropped",
-      fix: "take it out of the area first: liveone area devices remove <area> <device> --apply",
-    });
+
+    // 🛑 An ARCHIVED area is not an obstacle, and this is what makes the retirement order work.
+    //
+    // The warning this leg carries is "the area that holds this device would go quiet". An archived
+    // area is already quiet — it serves nothing and appears in no listing — so there is nothing left
+    // to lose. Without this carve-out the two lifecycles deadlocked: an area could not be archived
+    // while it held its helper, and the helper could not be archived or deleted while it was in an
+    // area. The supported order is now archive the AREA, then archive and delete its helper, then
+    // delete the area.
+    if (a?.status !== "archived")
+      out.push({
+        kind: "area",
+        id: Area.encode(row.areaId),
+        name: a?.name ?? null,
+        via: "devices.area_id",
+        effect: destructive ? "cascade-deleted" : "silently-dropped",
+        fix: "take it out of the area first: liveone area devices remove <area> <device> --apply",
+      });
   }
 
   if (!destructive) return out;
@@ -428,11 +438,46 @@ async function areaDependents(
   // column alone and simply stops serving the area, so the devices go quiet where they stand; the
   // delete's `ON DELETE SET NULL` actually empties the column and they go ambient.
   const memberIds = new Set<string>();
+  const ownHelperSiteIds = new Set([
+    helperSiteId(uuid),
+    `${LEGACY_HELPER_PREFIX}${uuid}`,
+  ]);
   for (const d of await db
-    .select({ id: devices.id, name: devices.name })
+    .select({
+      id: devices.id,
+      name: devices.name,
+      vendor: devices.vendor,
+      vendorSiteId: devices.vendorSiteId,
+    })
     .from(devices)
     .where(eq(devices.areaId, uuid))) {
     memberIds.add(d.id);
+
+    // 🛑 THE AREA'S OWN HELPER IS NOT A DEPENDENT OF IT.
+    //
+    // A helper device exists FOR one area — `vendor_site_id` is literally `helper:area:<this area>`
+    // — and it is server-managed: `ensureHelperDevice` re-homes it back the moment anything takes
+    // it out, so "re-home it first" is advice that cannot be followed. Reporting it as an obstacle
+    // to ARCHIVING therefore made archiving impossible for every area that has ever had battery
+    // provenance, which is every area worth retiring. Archiving destroys nothing and the helper
+    // simply goes quiet with the area it belongs to, so there is nothing to warn about.
+    //
+    // A DELETE is different: `devices.area_id` is ON DELETE SET NULL, so the helper would survive as
+    // an ambient device whose site id names an area that no longer exists — the `dangles` case. It
+    // is named then, and the fix is now a real verb rather than a wish.
+    if (d.vendor === "helper" && ownHelperSiteIds.has(d.vendorSiteId)) {
+      if (destructive)
+        out.push({
+          kind: "helper-device",
+          id: Device.encode(d.id),
+          name: d.name,
+          via: "devices.area_id + devices.vendor_site_id → helper:area:ar_…",
+          effect: "dangles",
+          fix: `delete it first: liveone device archive ${Device.encode(d.id)} --apply, then liveone device delete ${Device.encode(d.id)} --apply`,
+        });
+      continue;
+    }
+
     out.push({
       kind: "device",
       id: Device.encode(d.id),
