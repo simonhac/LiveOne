@@ -131,6 +131,24 @@ export async function checkReferences(
       return unprocessable(
         `the load point must be a power point (this one is '${load.point.metricType ?? "?"}')`,
       );
+    if (trigger.require) {
+      const soc = await loadPointByUuid(trigger.require.socPointId);
+      if (!soc) return unprocessable("trigger.require point not found");
+      const socAccess = await requireDeviceAccess(request, soc.deviceRid);
+      if (socAccess instanceof NextResponse) return socAccess;
+      // The unit trap once more, and here it fails OPEN in the worst way: a gate compared against a
+      // FRACTION (0..1) rather than a percentage is never met, so it would never block and the
+      // readiness check would silently do nothing at all.
+      if (soc.point.unit !== "%")
+        return unprocessable(
+          `the readiness point must be in % (this one is in '${soc.point.unit ?? "?"}')`,
+        );
+      if (soc.point.metricType !== "soc")
+        return unprocessable(
+          `the readiness point must be a state-of-charge point (this one is '${soc.point.metricType ?? "?"}')`,
+        );
+    }
+
     // NOTE: deliberately NOT refusing `action.value >= unless.minMinutes`, which looks
     // self-defeating (a 30-minute exercise clearing its own 30-minute bar) and was specified as a
     // guard here. It is the SHIPPED DEFAULT — `EXERCISE_DEFAULTS.minMinutes` is 30 and 30 is the

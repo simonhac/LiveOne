@@ -111,6 +111,10 @@ export function isSelfCommandedRun(
   commands: CommandedRun[],
 ): boolean {
   return commands.some((c) => {
+    // A zero-minute command is a STOP — on the run-request point it releases the hub's latch. It
+    // cannot have started anything, so letting it claim a run would discount somebody else's work
+    // for the crime of starting just after we stopped ours.
+    if (c.minutes === 0) return false;
     const from = c.requestedAtMs - ATTRIBUTION_LEAD_MS;
     const to =
       c.requestedAtMs + (c.minutes ?? 0) * 60_000 + ATTRIBUTION_TAIL_MS;
@@ -206,6 +210,39 @@ export function longestLoadedStretch(
   return best;
 }
 
+/**
+ * Has a run WE started stopped being loaded?
+ *
+ * 🛑 Evaluated on EVERY tick from `settleMinutes` to the end of the run, not once at the settle
+ * mark. `runMinutes` is passed in rather than inferred so the caller owns the clock, per this
+ * module's no-`Date.now()` rule — but the continuous part is the point. On 2026-09-17 the engine
+ * read 1.58 kW at minute 10, cleared a 1.5 kW floor, and then ran 16 more minutes between 0.18 and
+ * 0.61 kW; a one-shot check at the settle mark passes exactly the run worth aborting.
+ *
+ * Conservative in the opposite direction from `longestLoadedStretch`, and deliberately so: that one
+ * shortens a stretch when unsure, this one declines to abort when unsure. A window with NO samples
+ * is not an abort — missing telemetry is not an observation of low load, and stopping an engine on
+ * an absence would make a WireGuard hiccup look like a policy decision.
+ */
+export function shouldAbortRun(
+  samples: LoadedSample[],
+  runMinutes: number,
+  opts: { minLoadKw: number; settleMinutes: number; sustainMinutes: number },
+): boolean {
+  if (runMinutes < opts.settleMinutes) return false;
+
+  const valued = samples.filter((s) => s.value !== null);
+  if (valued.length === 0) return false;
+
+  // The window must actually SPAN the sustain period. A single sample, or a burst inside one
+  // minute, says nothing about the last `sustainMinutes` — and would abort on one stray reading.
+  const first = Math.min(...valued.map((s) => s.tMs));
+  const last = Math.max(...valued.map((s) => s.tMs));
+  if ((last - first) / 60_000 < opts.sustainMinutes - 1) return false;
+
+  return valued.every((s) => importKw(s.value as number) < opts.minLoadKw);
+}
+
 export interface ExerciseInputs {
   slot: Slot;
   graceMinutes: number;
@@ -218,6 +255,11 @@ export interface ExerciseInputs {
   runsConsidered?: number;
   /** Runs in the lookback discounted as started by this rule — see `isSelfCommandedRun`. */
   runsExcluded?: number;
+  /**
+   * The readiness gate, when one is configured: the state of charge read at the slot and the
+   * ceiling it must be under. `socPercent: null` means the gate is configured but unreadable.
+   */
+  readiness?: { socPercent: number | null; maxSocPercent: number };
 }
 
 export type ExerciseDecision =
@@ -236,6 +278,8 @@ export function exerciseContext(
     final?: boolean;
     runsConsidered?: number;
     runsExcluded?: number;
+    socPercent?: number | null;
+    abortedAt?: number;
   },
 ): ExerciseArmedContext {
   const ctx: ExerciseArmedContext = {
@@ -251,6 +295,9 @@ export function exerciseContext(
   if (extra?.runsConsidered !== undefined)
     ctx.runsConsidered = extra.runsConsidered;
   if (extra?.runsExcluded !== undefined) ctx.runsExcluded = extra.runsExcluded;
+  if (extra?.socPercent !== undefined && extra.socPercent !== null)
+    ctx.socPercent = extra.socPercent;
+  if (extra?.abortedAt !== undefined) ctx.abortedAt = extra.abortedAt;
   if (extra?.evidence)
     ctx.evidence = {
       minutes: extra.evidence.minutes,
@@ -300,6 +347,29 @@ export function decideExercise(
         nowMs,
         { evidence, ...counts },
       ),
+    };
+
+  // 🛑 CONSUMES the slot rather than waiting. Inside the grace window the state of charge only goes
+  // UP — the gate exists because solar refills the battery through the morning — so retrying until
+  // grace expires could not succeed and would only turn a clean "skipped, too full" into a "missed".
+  // An unreadable SoC does NOT block: it degrades to starting, because failing to exercise the
+  // engine is the worse outcome and a silent sensor should not quietly retire the feature.
+  const readiness = input.readiness;
+  if (
+    readiness &&
+    readiness.socPercent !== null &&
+    readiness.socPercent >= readiness.maxSocPercent
+  )
+    return {
+      kind: "consume",
+      context: exerciseContext(slot, "skipped-full", nowMs, {
+        evidence,
+        ...counts,
+        socPercent: readiness.socPercent,
+        reason:
+          `battery at ${readiness.socPercent.toFixed(1)}% (gate ${readiness.maxSocPercent}%) — ` +
+          `nothing to load the engine with`,
+      }),
     };
 
   if (input.openRun)

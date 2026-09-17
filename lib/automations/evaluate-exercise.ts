@@ -30,6 +30,7 @@ import {
   isDue,
   isSelfCommandedRun,
   longestLoadedStretch,
+  shouldAbortRun,
   type LoadedSample,
   type LoadedStretch,
 } from "./exercise";
@@ -108,6 +109,11 @@ export async function evaluateExercise(
     return;
   }
 
+  // 🛑 BEFORE the due check. The slot that started this run was consumed as `fired` the moment we
+  // dispatched, so by the time supervision matters `isDue` says "dealt-with" and returns early.
+  // Supervising a run has nothing to do with whether a slot is outstanding.
+  await superviseOpenRun(row, trigger, action, det, nowMs, summary);
+
   const slot = previousOccurrence(trigger.schedule, det.displayTimezone, nowMs);
   if (!slot) return;
   const due = isDue({
@@ -154,6 +160,12 @@ export async function evaluateExercise(
   );
   const evidence = lookback.best;
   const openRun = (await getOpenRun(det.id)) !== null;
+  const readiness = trigger.require
+    ? {
+        socPercent: await latestValue(trigger.require.socPointId, nowMs),
+        maxSocPercent: trigger.require.maxSocPercent,
+      }
+    : undefined;
 
   const decision = decideExercise(
     {
@@ -164,6 +176,7 @@ export async function evaluateExercise(
       openRun,
       runsConsidered: lookback.runsConsidered,
       runsExcluded: lookback.runsExcluded,
+      readiness,
     },
     nowMs,
   );
@@ -233,6 +246,163 @@ function countOutcome(summary: SummarySink, outcome: string): void {
  * it is meaningless (the engine is off), and concatenating would invite the gap-bridging rule to
  * join two short runs into one long fictitious stretch.
  */
+/** How far back to look for a current reading of a level point (state of charge). */
+const LATEST_LOOKBACK_MS = 15 * 60_000;
+
+/**
+ * The most recent non-null value of a point, or null if it has gone quiet.
+ *
+ * Null is a real answer and callers must handle it: `decideExercise` treats an unreadable state of
+ * charge as "no opinion" and starts anyway, because a dead sensor silently retiring the exercise is
+ * worse than an occasional pointless run.
+ */
+async function latestValue(
+  pointUuid: string,
+  nowMs: number,
+): Promise<number | null> {
+  const pointId = Point.encode(pointUuid);
+  const series = await ReadingsDao.readRaw([pointId], {
+    fromMs: nowMs - LATEST_LOOKBACK_MS,
+    toMs: nowMs,
+  });
+  const samples = series.get(pointId) ?? [];
+  for (let i = samples.length - 1; i >= 0; i--)
+    if (samples[i].value !== null) return samples[i].value;
+  return null;
+}
+
+/**
+ * Stop a run WE started once it is clear it is not being loaded.
+ *
+ * Runs on EVERY tick from `settleMinutes` to the end of the run — see `shouldAbortRun` for why a
+ * one-shot check at the settle mark passes exactly the runs worth aborting.
+ *
+ * Three things it deliberately will not do:
+ *  - stop a run it cannot prove it started (`isSelfCommandedRun`), because the owner or another
+ *    rule may be running the engine for a reason this rule knows nothing about;
+ *  - stop a run twice — a second `set_value = 0` while the engine spins down is a command per
+ *    minute for as long as the detector's `delayOffMs` keeps the interval open;
+ *  - stop a run on missing telemetry, which `shouldAbortRun` handles.
+ */
+async function superviseOpenRun(
+  row: AutomationRow,
+  trigger: ExerciseTrigger,
+  action: AutomationAction & { action: "set_value" },
+  det: { id: string },
+  nowMs: number,
+  summary: SummarySink,
+): Promise<void> {
+  const supervise = trigger.supervise;
+  if (!supervise) return;
+
+  const open = await getOpenRun(det.id);
+  if (!open) return;
+  const startMs = open.startTime.getTime();
+  const runMinutes = (nowMs - startMs) / 60_000;
+  if (runMinutes < supervise.settleMinutes) return;
+
+  const commands = await store.ownCommandsInWindow(
+    row.id,
+    action.pointId,
+    startMs,
+    nowMs,
+  );
+  if (!isSelfCommandedRun(startMs, commands)) return;
+  // Our own stop for THIS run, if we have already sent one. `ownCommandsInWindow` returns the
+  // commanded value, and on the run-request point zero IS the stop — so the audit trail answers
+  // "have we already aborted" without a second state field to keep in step.
+  if (commands.some((c) => c.minutes === 0 && c.requestedAtMs >= startMs))
+    return;
+
+  const windowMs = supervise.sustainMinutes * 60_000;
+  const pointId = Point.encode(trigger.unless.loadPointId);
+  const series = await ReadingsDao.readRaw([pointId], {
+    fromMs: nowMs - windowMs,
+    toMs: nowMs,
+  });
+  const samples: LoadedSample[] = (series.get(pointId) ?? []).map((s) => ({
+    tMs: s.measurementTimeMs,
+    value: s.value,
+  }));
+  if (
+    !shouldAbortRun(samples, runMinutes, {
+      minLoadKw: trigger.unless.minLoadKw,
+      settleMinutes: supervise.settleMinutes,
+      sustainMinutes: supervise.sustainMinutes,
+    })
+  )
+    return;
+
+  // Did it do its job before the load fell away? The same measure the skip condition uses, over
+  // this run only — so "ran 24 good minutes then the battery filled" is not recorded as a failure.
+  const achieved = longestLoadedStretch(
+    (
+      (
+        await ReadingsDao.readRaw([pointId], { fromMs: startMs, toMs: nowMs })
+      ).get(pointId) ?? []
+    ).map((s) => ({
+      tMs: s.measurementTimeMs,
+      value: s.value,
+    })),
+    trigger.unless,
+  );
+  const complete =
+    achieved !== null && achieved.minutes >= trigger.unless.minMinutes;
+
+  const loaded = await loadPointByUuid(action.pointId);
+  const device = loaded
+    ? await DeviceConfigRegistry.deviceByHandle(loaded.deviceRid)
+    : null;
+  if (!loaded || !device) {
+    summary.errors++;
+    console.error(
+      `[automations] ${row.id} cannot resolve the action point to abort an unloaded run`,
+    );
+    return;
+  }
+
+  // 🛑 Zero RELEASES the hub's latch — this is the stop, through the same single dispatch funnel.
+  const outcome = await dispatchPointAction({
+    point: loaded.point,
+    device,
+    action: "set_value",
+    value: 0,
+    requestedBy: `automation:${Automation.encode(row.id)}`,
+  });
+  if (outcome.kind !== "completed" || !outcome.ok) {
+    // Left un-stamped on purpose: no `point_commands` success means the next tick tries again,
+    // which is what a transient hub failure needs.
+    summary.errors++;
+    console.warn(
+      `[automations] ${row.id} abort of an unloaded run did not land (${outcome.kind}) — retrying next tick`,
+    );
+    return;
+  }
+
+  console.warn(
+    `[automations] ${row.id} stopped an unloaded run after ${runMinutes.toFixed(0)} min ` +
+      `(${complete ? "had already cleared minMinutes" : "never loaded"})`,
+  );
+  // Best-effort record against the slot this run belongs to. The slot is already consumed, so this
+  // moves no watermark and takes no CAS — it is the operator's account of what happened, and a
+  // lost race on it must never leave the engine running.
+  await store.recordExerciseOutcome(row.id, {
+    context: exerciseContext(
+      { atMs: row.lastTriggeredRunStart?.getTime() ?? startMs },
+      complete ? "aborted-complete" : "aborted-unloaded",
+      nowMs,
+      {
+        evidence: achieved,
+        abortedAt: nowMs,
+        reason: `load stayed under ${trigger.unless.minLoadKw} kW for ${supervise.sustainMinutes} min`,
+      },
+    ),
+    nowMs,
+    expectRevision: row.revision,
+  });
+  scheduleRepoll(device);
+}
+
 async function loadedStretchSince(
   automationUuid: string,
   actionPointUuid: string,

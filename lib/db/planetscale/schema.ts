@@ -1598,12 +1598,47 @@ export interface ExerciseUnless {
   withinDays: number; // how far back to look for such a stretch
 }
 
+/**
+ * The readiness condition: don't START unless the site can actually load the engine.
+ *
+ * At an off-grid site the generator's only load is house draw plus battery charging, and the
+ * charge path CLIPS — measured at Daylesford, 101 samples with the top dozen inside 40 W of
+ * 3.87 kW, which is the SP-PRO's 80 A charger at 48 V, not the generator. So once the battery is
+ * near full there is nothing to load the engine with, and the exercise burns fuel at ~10% load,
+ * which is the wet-stacking condition it exists to prevent. 30 minutes at the clipped rate needs
+ * roughly 1.9 kWh of headroom — about 3% of a 63.6 kWh pack.
+ *
+ * Absent = no readiness gate (every rule that predates this).
+ */
+export interface ExerciseRequire {
+  socPointId: string; // raw points.id uuid; unit must be % (checked in references.ts)
+  maxSocPercent: number; // don't start at or above this state of charge
+}
+
+/**
+ * Supervision of a run WE started: stop it once it is clear it is not being loaded.
+ *
+ * 🛑 CONTINUOUS from `settleMinutes` to the end of the run, re-evaluated every tick — NOT a
+ * one-shot check at the settle mark. The difference decides real runs: on 2026-09-17 the engine
+ * read 1.58 kW at minute 10 (above the 1.5 kW floor, so a one-shot check would have passed it) and
+ * then spent its last 16 minutes between 0.18 and 0.61 kW. Under-loading does not become harmless
+ * for starting late.
+ *
+ * Absent = no supervision; a run holds the hub's latch for its full commanded duration.
+ */
+export interface ExerciseSupervise {
+  settleMinutes: number; // supervision BEGINS after this; before it, low load is just warm-up
+  sustainMinutes: number; // every non-null sample must be under the floor for this long to abort
+}
+
 /** Scheduled "start it unless it has already run under load". */
 export interface ExerciseTrigger {
   kind: "exercise";
   source: AutomationTriggerSource; // must be a derivation (the run detector), enforced when parsing
   schedule: ExerciseSchedule;
   unless: ExerciseUnless;
+  require?: ExerciseRequire;
+  supervise?: ExerciseSupervise;
 }
 
 export type AutomationTrigger = ChargeSessionTrigger | ExerciseTrigger;
@@ -1648,6 +1683,12 @@ export const EXERCISE_OUTCOMES = [
   "waiting", // still due: a run is in progress, or the dispatch did not land — retry next tick
   "missed", // grace expired without firing
   "missed-running", // grace expired while a run was in progress the whole time
+  "skipped-full", // not started: the battery could not have absorbed the charge (see ExerciseRequire)
+  // Supervision stopped a run WE started. The two are deliberately distinct: one is a run that did
+  // its job and then ran out of load, the other never loaded at all, and an operator reading the
+  // record must be able to tell "the exercise worked" from "the exercise achieved nothing".
+  "aborted-complete", // had already cleared minMinutes of loaded time when the load fell away
+  "aborted-unloaded", // never loaded — the run was pure wet-stacking exposure
 ] as const;
 export type ExerciseOutcome = (typeof EXERCISE_OUTCOMES)[number];
 
@@ -1679,6 +1720,15 @@ export interface ExerciseArmedContext {
    */
   runsConsidered?: number;
   runsExcluded?: number;
+  /** State of charge read at the slot, when a readiness gate is configured. */
+  socPercent?: number;
+  /**
+   * Epoch-ms of the supervision abort dispatched for THIS slot's run.
+   *
+   * Present means "already told the hub to stop". Supervision must not re-dispatch every tick while
+   * the engine spins down and the detector's `delayOffMs` still reports the run open.
+   */
+  abortedAt?: number;
   /**
    * This slot was the schedule's LAST, so the rule was disabled as it was consumed.
    *

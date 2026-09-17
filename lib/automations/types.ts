@@ -21,7 +21,9 @@ import type {
   ChargeSessionTrigger,
   ExerciseArmedContext,
   ExerciseOutcome,
+  ExerciseRequire,
   ExerciseSchedule,
+  ExerciseSupervise,
   ExerciseTrigger,
   ExerciseUnless,
 } from "@/lib/db/planetscale/schema";
@@ -40,6 +42,9 @@ const OUTCOMES = [
   "waiting",
   "missed",
   "missed-running",
+  "skipped-full",
+  "aborted-complete",
+  "aborted-unloaded",
 ] as const satisfies readonly ExerciseOutcome[];
 
 type _OutcomesAreComplete =
@@ -145,6 +150,15 @@ const EXERCISE_DEFAULTS = {
   minLoadKw: 1.5,
   dipToleranceSeconds: 180,
   withinDays: 7,
+  /** Supervision: warm-up allowance, then how long load must stay under the floor to abort. */
+  settleMinutes: 10,
+  sustainMinutes: 3,
+  /**
+   * Readiness: measured at Daylesford, 95 leaves ~3 kWh of headroom (enough for 30 min at the
+   * charger's clipped 3.87 kW) while still admitting every Thursday in a 15-day sample. 90 blocked
+   * 3 Thursdays out of 3 — a gate that never opens is a feature that never runs.
+   */
+  maxSocPercent: 95,
 } as const;
 
 /** A required positive number that falls back to a default when absent. */
@@ -296,6 +310,60 @@ function parseUnless(raw: unknown): ParseOutcome<ExerciseUnless> {
   };
 }
 
+/**
+ * The readiness gate. Optional as a whole — absent means "start regardless of state of charge",
+ * which is what every rule written before the gate existed means.
+ */
+function parseRequire(raw: unknown): ParseOutcome<ExerciseRequire | undefined> {
+  if (raw === undefined || raw === null) return { ok: true, value: undefined };
+  if (!isObject(raw)) return fail("trigger.require must be an object");
+  if (typeof raw.socPointId !== "string" || !isCanonicalUuid(raw.socPointId))
+    return fail("trigger.require.socPointId must be a point id");
+  const maxSocPercent = parseKnob(
+    raw.maxSocPercent,
+    "trigger.require.maxSocPercent",
+    EXERCISE_DEFAULTS.maxSocPercent,
+  );
+  if (!maxSocPercent.ok) return fail(maxSocPercent.error);
+  // A gate above 100 can never block and a gate at 0 can never open; both are configuration that
+  // reads as working and is not, which is the failure mode this whole feature keeps hitting.
+  if (maxSocPercent.value > 100)
+    return fail("trigger.require.maxSocPercent must be <= 100");
+
+  return {
+    ok: true,
+    value: { socPointId: raw.socPointId, maxSocPercent: maxSocPercent.value },
+  };
+}
+
+/** Supervision of a run we started. Optional — absent means the latch runs its full duration. */
+function parseSupervise(
+  raw: unknown,
+): ParseOutcome<ExerciseSupervise | undefined> {
+  if (raw === undefined || raw === null) return { ok: true, value: undefined };
+  if (!isObject(raw)) return fail("trigger.supervise must be an object");
+  const settleMinutes = parseKnob(
+    raw.settleMinutes,
+    "trigger.supervise.settleMinutes",
+    EXERCISE_DEFAULTS.settleMinutes,
+  );
+  if (!settleMinutes.ok) return fail(settleMinutes.error);
+  const sustainMinutes = parseKnob(
+    raw.sustainMinutes,
+    "trigger.supervise.sustainMinutes",
+    EXERCISE_DEFAULTS.sustainMinutes,
+  );
+  if (!sustainMinutes.ok) return fail(sustainMinutes.error);
+
+  return {
+    ok: true,
+    value: {
+      settleMinutes: settleMinutes.value,
+      sustainMinutes: sustainMinutes.value,
+    },
+  };
+}
+
 function parseExerciseTrigger(
   raw: Record<string, unknown>,
 ): ParseOutcome<ExerciseTrigger> {
@@ -311,16 +379,20 @@ function parseExerciseTrigger(
   if (!schedule.ok) return fail(schedule.error);
   const unless = parseUnless(raw.unless);
   if (!unless.ok) return fail(unless.error);
+  const require = parseRequire(raw.require);
+  if (!require.ok) return fail(require.error);
+  const supervise = parseSupervise(raw.supervise);
+  if (!supervise.ok) return fail(supervise.error);
 
-  return {
-    ok: true,
-    value: {
-      kind: "exercise",
-      source: source.value,
-      schedule: schedule.value,
-      unless: unless.value,
-    },
+  const value: ExerciseTrigger = {
+    kind: "exercise",
+    source: source.value,
+    schedule: schedule.value,
+    unless: unless.value,
   };
+  if (require.value) value.require = require.value;
+  if (supervise.value) value.supervise = supervise.value;
+  return { ok: true, value };
 }
 
 /**
@@ -420,6 +492,12 @@ function parseExerciseArmedContext(
   const excluded = finite(raw.runsExcluded);
   if (considered !== null) out.runsConsidered = considered;
   if (excluded !== null) out.runsExcluded = excluded;
+  const soc = finite(raw.socPercent);
+  const aborted = finite(raw.abortedAt);
+  if (soc !== null) out.socPercent = soc;
+  // Load-bearing, not cosmetic: its presence is what stops supervision re-dispatching a stop every
+  // tick while the engine spins down. Dropping it on read would mean a stop command per minute.
+  if (aborted !== null) out.abortedAt = aborted;
 
   if (isObject(raw.evidence)) {
     const minutes = finite(raw.evidence.minutes);
