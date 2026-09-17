@@ -62,6 +62,8 @@ interface WirePoint {
   subsystem: string | null;
   active: boolean;
   control: unknown;
+  /** Optional: an origin older than the field simply omits it. */
+  transform?: string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -427,10 +429,17 @@ async function runPoints(ctx: Ctx): Promise<number> {
             (p) =>
               `${p.id}  ${p.active ? " " : "✗"} ${p.metricType.padEnd(12)} ` +
               `${(p.unit ?? "").padEnd(6)} ${p.logicalPath ?? p.physicalPath}` +
-              (p.control ? "  [controllable]" : ""),
+              (p.control ? "  [controllable]" : "") +
+              (p.transform ? `  [transform:${p.transform}]` : ""),
           ),
           "",
-          `${points.length} point(s). (✗ = inactive)`,
+          `${points.length} point(s). (✗ = inactive)` +
+            // Only worth explaining when one is actually present — most devices have none.
+            (points.some((p) => p.transform)
+              ? "\n[transform:i] = stored INVERTED; HISTORY reads flip the sign " +
+                "(raw reads, e.g. the automations evaluator, do not). " +
+                "[transform:d] = a counter served as deltas."
+              : ""),
         ].join("\n"),
     );
     return points.length ? EXIT.OK : EXIT.FINDINGS;

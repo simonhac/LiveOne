@@ -28,11 +28,25 @@ import {
   decideExercise,
   exerciseContext,
   isDue,
+  isSelfCommandedRun,
   longestLoadedStretch,
   type LoadedSample,
   type LoadedStretch,
 } from "./exercise";
 import { isExhausted, previousOccurrence, type Slot } from "./recurrence";
+
+/**
+ * What the lookback found, and how much of it was discounted as our own doing.
+ *
+ * The counts are not decoration: a `best: null` alongside "1 run considered, 1 excluded" is the
+ * difference between "the engine has been idle all week" and "the only run this week was the
+ * exercise we ourselves commanded", and those call for opposite reactions from an operator.
+ */
+interface LoadedStretchResult {
+  best: LoadedStretch | null;
+  runsConsidered: number;
+  runsExcluded: number;
+}
 
 export interface ExerciseSummary {
   /** Slots that were this rule's to act on this tick. */
@@ -129,13 +143,16 @@ export async function evaluateExercise(
 
   summary.exercise.due++;
 
-  const evidence = await loadedStretchSince(
+  const lookback = await loadedStretchSince(
+    row.id,
+    action.pointId,
     det.id,
     trigger.unless.loadPointId,
     nowMs - trigger.unless.withinDays * DAY_MS,
     nowMs,
     trigger.unless,
   );
+  const evidence = lookback.best;
   const openRun = (await getOpenRun(det.id)) !== null;
 
   const decision = decideExercise(
@@ -145,6 +162,8 @@ export async function evaluateExercise(
       minMinutes: trigger.unless.minMinutes,
       evidence,
       openRun,
+      runsConsidered: lookback.runsConsidered,
+      runsExcluded: lookback.runsExcluded,
     },
     nowMs,
   );
@@ -161,7 +180,7 @@ export async function evaluateExercise(
       action.pointId,
       action.value,
       slot,
-      evidence,
+      lookback,
       nowMs,
       summary,
       retire,
@@ -215,23 +234,41 @@ function countOutcome(summary: SummarySink, outcome: string): void {
  * join two short runs into one long fictitious stretch.
  */
 async function loadedStretchSince(
+  automationUuid: string,
+  actionPointUuid: string,
   derivationId: string,
   loadPointUuid: string,
   fromMs: number,
   toMs: number,
   opts: { minLoadKw: number; dipToleranceSeconds: number },
-): Promise<LoadedStretch | null> {
+): Promise<LoadedStretchResult> {
   const intervals = await store.intervalsOverlapping(
     derivationId,
     fromMs,
     toMs,
   );
-  if (intervals.length === 0) return null;
+  if (intervals.length === 0)
+    return { best: null, runsConsidered: 0, runsExcluded: 0 };
+
+  // Our own exercises are not evidence that an exercise is unnecessary — see `isSelfCommandedRun`.
+  const ownCommands = await store.ownCommandsInWindow(
+    automationUuid,
+    actionPointUuid,
+    fromMs,
+    toMs,
+  );
 
   const pointId = Point.encode(loadPointUuid);
   let best: LoadedStretch | null = null;
+  let runsConsidered = 0;
+  let runsExcluded = 0;
 
   for (const interval of intervals) {
+    if (isSelfCommandedRun(interval.startTime.getTime(), ownCommands)) {
+      runsExcluded++;
+      continue;
+    }
+    runsConsidered++;
     // Clamp to the window: a run that started before the lookback only counts from its start.
     const startMs = Math.max(interval.startTime.getTime(), fromMs);
     const endMs = Math.min(interval.endTime?.getTime() ?? toMs, toMs);
@@ -249,7 +286,7 @@ async function loadedStretchSince(
     if (stretch && (best === null || stretch.minutes > best.minutes))
       best = stretch;
   }
-  return best;
+  return { best, runsConsidered, runsExcluded };
 }
 
 async function fireExercise(
@@ -257,7 +294,7 @@ async function fireExercise(
   actionPointUuid: string,
   minutes: number,
   slot: Slot,
-  evidence: LoadedStretch | null,
+  lookback: LoadedStretchResult,
   nowMs: number,
   summary: SummarySink,
   retire: (consume: boolean) => boolean,
@@ -323,8 +360,12 @@ async function fireExercise(
     const applied = await store.recordExerciseOutcome(row.id, {
       context: exerciseContext(slot, outcomeName, nowMs, {
         reason,
-        evidence,
+        evidence: lookback.best,
         final,
+        // Carried onto the DISPATCH path too: "0 runs weighed, 1 discounted as ours" is precisely
+        // the explanation for why an exercise fired into what looks like a busy week.
+        runsConsidered: lookback.runsConsidered,
+        runsExcluded: lookback.runsExcluded,
       }),
       // The claim already consumed the slot. Keeping it consumed is a no-op restatement; RELEASING it
       // means restoring the watermark this row carried BEFORE the claim, never null — null would wipe

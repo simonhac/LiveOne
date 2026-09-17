@@ -414,6 +414,12 @@ function parseExerciseArmedContext(
   if (typeof raw.reason === "string" && raw.reason !== "")
     out.reason = raw.reason;
   if (raw.final === true) out.final = true;
+  // 🛑 This parser is an ALLOW-LIST — it rebuilds the object field by field, so a field added to
+  // `ExerciseArmedContext` and to the writer is silently dropped on read unless it is named here.
+  const considered = finite(raw.runsConsidered);
+  const excluded = finite(raw.runsExcluded);
+  if (considered !== null) out.runsConsidered = considered;
+  if (excluded !== null) out.runsExcluded = excluded;
 
   if (isObject(raw.evidence)) {
     const minutes = finite(raw.evidence.minutes);

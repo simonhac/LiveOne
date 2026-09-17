@@ -223,6 +223,45 @@ describe("parseArmedContext", () => {
     });
   });
 
+  it("🛑 carries the exercise run counts — the parser is an ALLOW-LIST", () => {
+    // It rebuilds the object field by field, so a field added to `ExerciseArmedContext` and to the
+    // writer is silently DROPPED on read unless it is named in the parser too. These two are what
+    // separate "the engine was idle all week" from "the only run was the one we commanded".
+    expect(
+      parseArmedContext({
+        kind: "exercise",
+        slotAt: 1000,
+        at: 2000,
+        outcome: "fired",
+        runsConsidered: 0,
+        runsExcluded: 1,
+      }),
+    ).toEqual({
+      kind: "exercise",
+      slotAt: 1000,
+      at: 2000,
+      outcome: "fired",
+      runsConsidered: 0,
+      runsExcluded: 1,
+    });
+  });
+
+  it("omits the run counts when an older row does not carry them", () => {
+    expect(
+      parseArmedContext({
+        kind: "exercise",
+        slotAt: 1000,
+        at: 2000,
+        outcome: "satisfied",
+      }),
+    ).toEqual({
+      kind: "exercise",
+      slotAt: 1000,
+      at: 2000,
+      outcome: "satisfied",
+    });
+  });
+
   it("degrades a malformed value to null rather than throwing", () => {
     // This is state WE wrote, so a bad value is our bug; "no baseline" (kWh leg inert) is the
     // right failure, never a crash of the whole minutely pass.

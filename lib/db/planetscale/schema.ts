@@ -1671,6 +1671,15 @@ export interface ExerciseArmedContext {
     endedAt: number;
   };
   /**
+   * How the lookback's runs were counted: weighed, and discounted as this rule's own dispatches.
+   *
+   * Without them an absent `evidence` is ambiguous — "the engine was idle all week" and "the only
+   * run was the exercise we commanded" read identically, and they are opposite situations.
+   * See `isSelfCommandedRun` in `lib/automations/exercise.ts`.
+   */
+  runsConsidered?: number;
+  runsExcluded?: number;
+  /**
    * This slot was the schedule's LAST, so the rule was disabled as it was consumed.
    *
    * Without it a spent one-off is just a disabled row, and "did it run, or did someone turn it
