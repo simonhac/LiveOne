@@ -45,6 +45,11 @@ type WireTrigger =
         dipToleranceSeconds: number;
         withinDays: number;
       };
+      require?: {
+        socPointId: string; // pt_…
+        maxSocPercent: number;
+      };
+      supervise?: { settleMinutes: number; sustainMinutes: number };
     };
 
 type WireAction = {
@@ -91,15 +96,26 @@ function triggerWire(raw: unknown): AutomationWire["trigger"] {
         }
       : { kind: "point", pointId: Point.encode(t.source.pointId) };
 
-  if (t.kind === "exercise")
-    return {
+  if (t.kind === "exercise") {
+    // 🛑 THREE uuids live in this trigger, not one, and only the first is under `source`:
+    // `unless.loadPointId` and `require.socPointId` are both easy to miss. Missing the second
+    // shipped a raw uuid; missing the third made the whole `require` block un-settable through the
+    // API — the decoder left `pt_…` in place and the parser, which is entitled to assume raw
+    // uuids, rejected it with a 422 that named nothing.
+    const out: WireTrigger = {
       kind: "exercise",
       source,
       schedule: t.schedule,
-      // 🛑 `loadPointId` is the second uuid in this trigger and it is easy to miss: it lives under
-      // `unless`, not `source`, so a sweep that only looked at `source` would ship a raw uuid.
       unless: { ...t.unless, loadPointId: Point.encode(t.unless.loadPointId) },
     };
+    if (t.require)
+      out.require = {
+        ...t.require,
+        socPointId: Point.encode(t.require.socPointId),
+      };
+    if (t.supervise) out.supervise = t.supervise;
+    return out;
+  }
 
   const out: WireTrigger = { kind: "charge-session", source };
   if (t.afterMinutes !== undefined) out.afterMinutes = t.afterMinutes;
@@ -205,10 +221,32 @@ export function triggerFromWire(raw: unknown): ParseOutcome<AutomationTrigger> {
     }
   }
 
+  let decodedRequire: unknown = t.require;
+  if (
+    typeof t.require === "object" &&
+    t.require !== null &&
+    !Array.isArray(t.require)
+  ) {
+    const r = t.require as Record<string, unknown>;
+    if (r.socPointId !== undefined) {
+      const uuid =
+        typeof r.socPointId === "string"
+          ? Point.toUuidOrNull(r.socPointId)
+          : null;
+      if (!uuid)
+        return {
+          ok: false,
+          error: "trigger.require.socPointId must be a pt_ point id",
+        };
+      decodedRequire = { ...r, socPointId: uuid };
+    }
+  }
+
   return parseAutomationTrigger({
     ...t,
     source: decodedSource,
     unless: decodedUnless,
+    ...(decodedRequire !== undefined ? { require: decodedRequire } : {}),
   });
 }
 
