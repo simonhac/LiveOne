@@ -161,6 +161,28 @@ export const deviceCommand = defineCommand({
         "liveone device show 4 --include-inactive",
       ],
     },
+    preflight: {
+      name: "preflight",
+      summary:
+        "Would a generator start succeed RIGHT NOW? Asks the hardware, changes nothing.",
+      when:
+        "The hardware half of 'is this configured to run'. `liveone automation check` answers the\n" +
+        "scheduling half from the database; this one answers whether the panel would actually\n" +
+        "accept a start — Auto vs local lockout, an engine already running, the hub reachable.",
+      description:
+        "🛑 THIS REACHES THE SITE. It writes nothing and takes no `point_commands` row, but it\n" +
+        "causes a live Modbus read over WireGuard to a controller on the site LAN, holding that\n" +
+        "device's mutex for the round trip. It probes ONCE — there is deliberately no --watch — and\n" +
+        "it is not wired into `automation check`, so looping the cheap read cannot loop this one.\n" +
+        "\n" +
+        "Its verdict comes from the same `gateStart()` a real run consults, which is what makes it\n" +
+        "worth the round trip rather than a guess. 501 for a vendor with no preflight capability.",
+      args: [DEVICE_ARG],
+      flags: { ...BASE_URL_FLAG },
+      exitCodes: { 1: "a start would NOT proceed right now" },
+      examples: ["liveone device preflight 'Daylesford Generator'"],
+    },
+
     points: {
       name: "points",
       summary: "A device's point inventory: pt_… id, path, metric, unit.",
@@ -410,6 +432,64 @@ async function runShow(ctx: Ctx): Promise<number> {
     // Object-heavy payload: the pretty JSON IS the human rendering (a table would hide the shape).
     ctx.emit(body, () => JSON.stringify(body, null, 2));
     return EXIT.OK;
+  });
+}
+
+interface WirePreflight {
+  ok?: boolean;
+  wouldProceed?: boolean;
+  verdict?: string;
+  verdictMessage?: string;
+  checks?: { name?: string; ok?: boolean; detail?: string }[];
+  /**
+   * Everything the probe read, flat — `RunSupervisor.state()`, including the hub's own runtime cap.
+   *
+   * 🛑 `maxRuntimeSec` lives HERE, not at the top level. Reading it from the root silently rendered
+   * nothing at all, which is the quiet failure mode of an optional field: the line just never
+   * appeared, and no test noticed because the fixture was written from the same wrong assumption.
+   */
+  detail?: { maxRuntimeSec?: number; modeName?: string };
+}
+
+async function runPreflight(ctx: Ctx): Promise<number> {
+  return withApiSession(ctx, async (s) => {
+    const body = await fetchAggregate(s, ctx.args[0], inactiveOpts(ctx));
+    const control = (body.points ?? []).find((p) => p.control);
+    if (!control)
+      throw usage(
+        `${body.name} has no controllable point`,
+        "preflight asks a control point whether a command would be accepted, and this device has none",
+        "run `liveone device points <device>` — a controllable point is marked [controllable]",
+      );
+
+    // Named on stderr BEFORE the round trip, beside the `target:` line: this verb touches a
+    // customer's hardware, and which one must never be a surprise.
+    process.stderr.write(
+      `probing: ${body.name} via ${control.id} — one live read over the site link\n`,
+    );
+    const { body: pf } = await apiFetch<WirePreflight>(
+      s.origin,
+      `/api/v4/points/${encodeURIComponent(control.id)}/preflight`,
+      { method: "POST", headers: s.headers, body: JSON.stringify({}) },
+    );
+
+    ctx.emit({ device: { id: body.id, name: body.name }, preflight: pf }, () =>
+      [
+        `${body.name} — ${pf.wouldProceed ? "a start WOULD proceed" : "a start would NOT proceed"}`,
+        `  verdict:   ${pf.verdict ?? "?"}${pf.verdictMessage ? ` — ${pf.verdictMessage}` : ""}`,
+        ...(pf.detail?.maxRuntimeSec !== undefined
+          ? [
+              `  max run:   ${Math.round(pf.detail.maxRuntimeSec / 60)} min (the hub's own cap)`,
+            ]
+          : []),
+        ...(pf.detail?.modeName ? [`  panel:     ${pf.detail.modeName}`] : []),
+        ...(pf.checks ?? []).map(
+          (c) =>
+            `  ${c.ok ? "✓" : "✗"} ${c.name ?? "?"}${c.detail ? ` — ${c.detail}` : ""}`,
+        ),
+      ].join("\n"),
+    );
+    return pf.wouldProceed ? EXIT.OK : EXIT.FINDINGS;
   });
 }
 
@@ -909,6 +989,7 @@ const HANDLERS: Record<string, (ctx: Ctx) => Promise<number>> = {
   area: runDeviceArea,
   show: runShow,
   points: runPoints,
+  preflight: runPreflight,
   latest: runLatest,
   history: runHistory,
   coverage: runCoverage,

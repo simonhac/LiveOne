@@ -21,9 +21,11 @@ import { Automation, Point } from "@/lib/ids";
 import type {
   AutomationAction,
   AutomationRow,
+  ExerciseArmedContext,
   ExerciseTrigger,
 } from "@/lib/db/planetscale/schema";
 import * as store from "./store";
+import { parseArmedContext } from "./types";
 import {
   decideExercise,
   exerciseContext,
@@ -31,8 +33,10 @@ import {
   isSelfCommandedRun,
   longestLoadedStretch,
   shouldAbortRun,
+  type ExerciseDecision,
   type LoadedSample,
   type LoadedStretch,
+  type NotDueReason,
 } from "./exercise";
 import { isExhausted, previousOccurrence, type Slot } from "./recurrence";
 
@@ -49,6 +53,179 @@ interface LoadedStretchResult {
   runsExcluded: number;
 }
 
+/** The run detector a rule is aimed at, as much of it as this module uses. */
+type Detector = Awaited<ReturnType<typeof listEnabledRunDetectors>>[number];
+
+/** The readiness reading, when a rule configures one. Reachable through `ExercisePlan`. */
+interface ReadinessReading {
+  socPercent: number | null;
+  maxSocPercent: number;
+}
+
+/**
+ * Everything a tick KNOWS before it changes anything — the read half of `evaluateExercise`.
+ *
+ * 🛑 Extracted so the dry-evaluation route (`GET …/{id}/evaluation`, behind `liveone automation
+ * check`) answers with the SAME code the evaluator acts on, rather than a second implementation
+ * that drifts. The dispatch half — `fireExercise`, `claimExerciseSlot`, `recordExerciseOutcome`,
+ * `superviseOpenRun` — is deliberately NOT reachable from here, so a route calling this cannot
+ * start an engine however it is wired up.
+ *
+ * Takes no summary: counting is the shell's job, because a route has no summary to count into.
+ */
+/** The cheap half: who, when, and is it ours to act on. No readings, no evidence. */
+type SlotPlan =
+  | { kind: "bad-action"; got: string }
+  | { kind: "no-detector" }
+  | { kind: "no-slot"; det: Detector }
+  | {
+      kind: "not-due";
+      det: Detector;
+      slot: Slot;
+      reason: NotDueReason;
+      exhausted: boolean;
+    }
+  | { kind: "due"; det: Detector; slot: Slot; exhausted: boolean };
+
+/**
+ * Resolve the rule's subject and its slot. Two DB reads at most, and neither depends on history.
+ *
+ * 🛑 SPLIT from the evidence phase on purpose, and the split is load-bearing twice over:
+ *  - supervision must run after the detector resolves and BEFORE the lookback, because a lookback
+ *    that throws must not leave an unloaded engine running. That was the original ordering; folding
+ *    everything into one planner silently changed it.
+ *  - `due` must be counted before the evidence reads, or a failing lookback yields `due: 0` and
+ *    `reportUndecidedSlots` goes quiet for the whole grace window — losing exactly the alarm that
+ *    exists to catch an evaluator falling out of the path.
+ */
+async function planSlot(
+  row: AutomationRow,
+  trigger: ExerciseTrigger,
+  action: AutomationAction,
+  nowMs: number,
+): Promise<SlotPlan> {
+  if (action.action !== "set_value")
+    return { kind: "bad-action", got: action.action };
+
+  const [det] = await listEnabledRunDetectors({
+    derivationId:
+      trigger.source.kind === "derivation" ? trigger.source.derivationId : "",
+  });
+  if (!det) return { kind: "no-detector" };
+
+  const slot = previousOccurrence(trigger.schedule, det.displayTimezone, nowMs);
+  if (!slot) return { kind: "no-slot", det };
+
+  const exhausted = isExhausted(
+    trigger.schedule,
+    det.displayTimezone,
+    slot.atMs,
+  );
+  const due = isDue({
+    slot,
+    lastTriggeredRunStartMs: row.lastTriggeredRunStart?.getTime() ?? null,
+    createdAtMs: row.createdAt.getTime(),
+  });
+  return due.due
+    ? { kind: "due", det, slot, exhausted }
+    : { kind: "not-due", det, slot, reason: due.reason, exhausted };
+}
+
+interface DecidedPlan {
+  kind: "decided";
+  det: Detector;
+  slot: Slot;
+  lookback: LoadedStretchResult;
+  openRun: boolean;
+  readiness?: ReadinessReading;
+  decision: ExerciseDecision;
+  exhausted: boolean;
+}
+
+/** The expensive half: the 7-day lookback, the open run, the readiness reading, and the decision. */
+async function planDecision(
+  row: AutomationRow,
+  trigger: ExerciseTrigger,
+  action: AutomationAction & { action: "set_value" },
+  nowMs: number,
+  slotPlan: { det: Detector; slot: Slot; exhausted: boolean },
+): Promise<DecidedPlan> {
+  const { det, slot, exhausted } = slotPlan;
+  const lookback = await loadedStretchSince(
+    row.id,
+    action.pointId,
+    det.id,
+    trigger.unless.loadPointId,
+    nowMs - trigger.unless.withinDays * DAY_MS,
+    nowMs,
+    trigger.unless,
+  );
+  const openRun = (await getOpenRun(det.id)) !== null;
+  const readiness = trigger.require
+    ? {
+        socPercent: await latestValue(trigger.require.socPointId, nowMs),
+        maxSocPercent: trigger.require.maxSocPercent,
+      }
+    : undefined;
+
+  const decision = decideExercise(
+    {
+      slot,
+      graceMinutes: trigger.schedule.graceMinutes,
+      minMinutes: trigger.unless.minMinutes,
+      evidence: lookback.best,
+      openRun,
+      runsConsidered: lookback.runsConsidered,
+      runsExcluded: lookback.runsExcluded,
+      readiness,
+      prior: priorContext(row),
+    },
+    nowMs,
+  );
+
+  return {
+    kind: "decided",
+    det,
+    slot,
+    lookback,
+    openRun,
+    readiness,
+    decision,
+    exhausted,
+  };
+}
+
+/** The decision already on the row, for the per-slot tick counters. */
+function priorContext(row: AutomationRow): ExerciseArmedContext | null {
+  const ctx = parseArmedContext(row.armedContext);
+  return ctx !== null && "kind" in ctx && ctx.kind === "exercise" ? ctx : null;
+}
+
+export type ExercisePlan = Exclude<SlotPlan, { kind: "due" }> | DecidedPlan;
+
+/**
+ * Both halves, for the dry-evaluation route — which wants the whole answer and changes nothing.
+ *
+ * The live evaluator deliberately calls the two halves SEPARATELY so it can supervise and count
+ * between them; this composition exists so the route cannot drift from either.
+ */
+export async function planExercise(
+  row: AutomationRow,
+  trigger: ExerciseTrigger,
+  action: AutomationAction,
+  nowMs: number,
+): Promise<ExercisePlan> {
+  const sp = await planSlot(row, trigger, action, nowMs);
+  if (sp.kind !== "due") return sp;
+  return planDecision(
+    row,
+    trigger,
+    action as AutomationAction & { action: "set_value" },
+    nowMs,
+    sp,
+  );
+}
+
 export interface ExerciseSummary {
   /** Slots that were this rule's to act on this tick. */
   due: number;
@@ -56,6 +233,19 @@ export interface ExerciseSummary {
   satisfied: number;
   waiting: number;
   missed: number;
+  /**
+   * Slots not started because the readiness gate said the site could not load the engine.
+   *
+   * Its own bucket rather than folded into `missed`, because it must still count as DECIDED for
+   * `reportUndecidedSlots` (a skip is a decision) while reading as the deliberate act it is.
+   */
+  skipped: number;
+  /**
+   * Runs supervision stopped. NOT part of the due/decided reconciliation — an abort acts on a slot
+   * that was consumed when the run started, so counting it there would inflate one tick's decisions
+   * against another tick's due.
+   */
+  aborted: number;
   /**
    * Slots this tick counted as due and then left to another tick, having lost a compare-and-set —
    * either the dispatch claim or the outcome write.
@@ -85,21 +275,18 @@ export async function evaluateExercise(
   nowMs: number,
   summary: SummarySink,
 ): Promise<void> {
-  // Belt and braces: `references.ts` refuses this combination at create time. If a hand-edited row
-  // gets here anyway, a `turn_off` aimed at a run-request point would be a scheduled SHUTDOWN.
-  if (action.action !== "set_value") {
+  const sp = await planSlot(row, trigger, action, nowMs);
+
+  if (sp.kind === "bad-action") {
+    // Belt and braces: `references.ts` refuses this combination at create time. If a hand-edited
+    // row gets here anyway, a `turn_off` aimed at a run-request point would be a scheduled SHUTDOWN.
     summary.errors++;
     console.error(
-      `[automations] ${row.id} is an exercise rule with a '${action.action}' action — refusing to dispatch`,
+      `[automations] ${row.id} is an exercise rule with a '${sp.got}' action — refusing to dispatch`,
     );
     return;
   }
-
-  const [det] = await listEnabledRunDetectors({
-    derivationId:
-      trigger.source.kind === "derivation" ? trigger.source.derivationId : "",
-  });
-  if (!det) {
+  if (sp.kind === "no-detector") {
     // Deleted or disabled. Without the detector we can read neither "is it running now" nor "has
     // it run recently", and starting an engine blind is precisely the wrong failure mode.
     summary.errors++;
@@ -109,37 +296,32 @@ export async function evaluateExercise(
     return;
   }
 
-  // 🛑 BEFORE the due check. The slot that started this run was consumed as `fired` the moment we
-  // dispatched, so by the time supervision matters `isDue` says "dealt-with" and returns early.
-  // Supervising a run has nothing to do with whether a slot is outstanding.
-  await superviseOpenRun(row, trigger, action, det, nowMs, summary);
+  // 🛑 BEFORE any evidence read, and independent of whether a slot is outstanding.
+  //
+  // Two separate reasons, both learned the hard way. A run we started outlives its slot's decision,
+  // so by the time supervision matters the slot says "dealt-with" — putting this after that check
+  // would leave the engine running. And it must not sit behind the 7-day lookback either: a
+  // transient failure reading HISTORY would then stop us acting on the PRESENT, which is the one
+  // thing supervision exists to do.
+  if (action.action === "set_value")
+    await superviseOpenRun(row, trigger, action, sp.det, nowMs, summary);
 
-  const slot = previousOccurrence(trigger.schedule, det.displayTimezone, nowMs);
-  if (!slot) return;
-  const due = isDue({
-    slot,
-    lastTriggeredRunStartMs: row.lastTriggeredRunStart?.getTime() ?? null,
-    createdAtMs: row.createdAt.getTime(),
-  });
-  if (!due.due) {
+  if (sp.kind === "no-slot") return;
+
+  if (sp.kind === "not-due") {
     // 🛑 Exhaustion has to be asked HERE TOO, not only where a slot is consumed.
     //
-    // `retire` below only runs on a tick that has a due slot, so a rule could be left enabled with
-    // nothing to fire and no way to say why: consume its second-to-last slot, then `skip` the last
-    // one, and `previousOccurrence` returns the already-dealt-with slot forever — this early return,
-    // every minute, with the exhaustion check never reached. That is the exact outcome the
-    // same-write retirement was built to prevent, arrived at from the other side.
+    // The retirement below only runs on a tick that has a due slot, so a rule could be left enabled
+    // with nothing to fire and no way to say why: consume its second-to-last slot, then `skip` the
+    // last one, and `previousOccurrence` returns the already-dealt-with slot forever — this early
+    // return, every minute, with the exhaustion check never reached.
     //
     // Only for `dealt-with`. A slot that PREDATES the rule means the schedule has not started yet,
     // and disabling a rule for having been written before its own first occurrence would be a new
-    // bug rather than a fix. `isExhausted` is pure, and the write it guards is terminal — the row
-    // leaves `listEnabled` — so this costs one comparison per tick and at most one write per rule.
-    if (
-      due.reason === "dealt-with" &&
-      isExhausted(trigger.schedule, det.displayTimezone, slot.atMs)
-    ) {
+    // bug rather than a fix.
+    if (sp.reason === "dealt-with" && sp.exhausted) {
       console.warn(
-        `[automations] ${row.id} has no occurrences left after ${new Date(slot.atMs).toISOString()} — disabling`,
+        `[automations] ${row.id} has no occurrences left after ${new Date(sp.slot.atMs).toISOString()} — disabling`,
       );
       await store.disableAutomation(row.id);
       summary.exercise.exhausted++;
@@ -147,45 +329,17 @@ export async function evaluateExercise(
     return;
   }
 
+  // 🛑 Counted BEFORE the evidence reads, which is where it was before the planner was extracted.
+  // `reportUndecidedSlots` alarms on `due` exceeding the decisions — so if a throwing lookback left
+  // `due` at zero, a rule failing every tick of its grace window would raise nothing at all.
   summary.exercise.due++;
-
-  const lookback = await loadedStretchSince(
-    row.id,
-    action.pointId,
-    det.id,
-    trigger.unless.loadPointId,
-    nowMs - trigger.unless.withinDays * DAY_MS,
-    nowMs,
-    trigger.unless,
-  );
-  const evidence = lookback.best;
-  const openRun = (await getOpenRun(det.id)) !== null;
-  const readiness = trigger.require
-    ? {
-        socPercent: await latestValue(trigger.require.socPointId, nowMs),
-        maxSocPercent: trigger.require.maxSocPercent,
-      }
-    : undefined;
-
-  const decision = decideExercise(
-    {
-      slot,
-      graceMinutes: trigger.schedule.graceMinutes,
-      minMinutes: trigger.unless.minMinutes,
-      evidence,
-      openRun,
-      runsConsidered: lookback.runsConsidered,
-      runsExcluded: lookback.runsExcluded,
-      readiness,
-    },
-    nowMs,
-  );
+  if (action.action !== "set_value") return; // unreachable: `planSlot` refused it above
+  const plan = await planDecision(row, trigger, action, nowMs, sp);
+  const { slot, lookback, decision } = plan;
 
   // A rule whose last slot this is gets retired as it is consumed, so a spent schedule goes
-  // visibly dark instead of sitting enabled forever with nothing left to fire. Asked from the
-  // SLOT instant, not from `nowMs`: "is there anything after the one we just dealt with".
-  const retire = (consume: boolean): boolean =>
-    consume && isExhausted(trigger.schedule, det.displayTimezone, slot.atMs);
+  // visibly dark instead of sitting enabled forever with nothing left to fire.
+  const retire = (consume: boolean): boolean => consume && plan.exhausted;
 
   if (decision.kind === "dispatch") {
     await fireExercise(
@@ -197,14 +351,14 @@ export async function evaluateExercise(
       nowMs,
       summary,
       retire,
+      priorContext(row),
     );
     return;
   }
 
   // No dispatch on this path, so nothing has been claimed and the watermark is this write's to move:
   // advance it for a terminal decision, and OMIT it for `waiting` so the slot stays due for the next
-  // tick inside the grace window. `expectRevision` is the row as listed, which is the revision every
-  // input to `decideExercise` was read against.
+  // tick inside the grace window.
   const consume = decision.kind === "consume";
   const final = retire(consume);
   const applied = await store.recordExerciseOutcome(row.id, {
@@ -216,16 +370,11 @@ export async function evaluateExercise(
   });
   if (!applied) {
     // An owner edit landed between listing the row and deciding about it. The decision was computed
-    // from a schedule that no longer applies, so dropping it is correct — but a dropped decision that
-    // said `final` would otherwise have disabled a rule on stale grounds, which is the whole reason
-    // this write is a CAS.
-    console.warn(
-      `[automations] ${row.id} outcome '${decision.context.outcome}' not recorded — the row changed ` +
-        `during evaluation (expected revision ${row.revision}); it will be reconsidered next tick`,
-    );
-    // Counted for the same reason a lost dispatch claim is: the slot is untouched and the next tick
-    // will decide again, so this is correct behaviour and must not raise the undecided-slot alarm.
+    // against inputs that may no longer hold, so it is DROPPED rather than forced.
     summary.exercise.lostClaim++;
+    console.warn(
+      `[automations] ${row.id} outcome '${decision.context.outcome}' not recorded — the row changed under it`,
+    );
     return;
   }
   countOutcome(summary, decision.context.outcome);
@@ -236,16 +385,10 @@ function countOutcome(summary: SummarySink, outcome: string): void {
   if (outcome === "satisfied") summary.exercise.satisfied++;
   else if (outcome === "waiting") summary.exercise.waiting++;
   else if (outcome === "fired") summary.exercise.fired++;
+  else if (outcome === "skipped-full") summary.exercise.skipped++;
   else summary.exercise.missed++; // missed | missed-running
 }
 
-/**
- * The best continuous loaded stretch inside the lookback window.
- *
- * Evaluated PER RUN rather than over one concatenated series. Load between runs is not just low,
- * it is meaningless (the engine is off), and concatenating would invite the gap-bridging rule to
- * join two short runs into one long fictitious stretch.
- */
 /** How far back to look for a current reading of a level point (state of charge). */
 const LATEST_LOOKBACK_MS = 15 * 60_000;
 
@@ -379,6 +522,7 @@ async function superviseOpenRun(
     return;
   }
 
+  summary.exercise.aborted++;
   console.warn(
     `[automations] ${row.id} stopped an unloaded run after ${runMinutes.toFixed(0)} min ` +
       `(${complete ? "had already cleared minMinutes" : "never loaded"})`,
@@ -394,6 +538,8 @@ async function superviseOpenRun(
       {
         evidence: achieved,
         abortedAt: nowMs,
+        prior: priorContext(row),
+        tickMode: "carry",
         reason: `load stayed under ${trigger.unless.minLoadKw} kW for ${supervise.sustainMinutes} min`,
       },
     ),
@@ -468,6 +614,7 @@ async function fireExercise(
   nowMs: number,
   summary: SummarySink,
   retire: (consume: boolean) => boolean,
+  prior: ExerciseArmedContext | null,
 ): Promise<void> {
   // 🛑 EVERY read happens BEFORE the claim, so the only thing between claiming a slot and dispatching
   // it is the dispatch. These two lookups are pure reads that can fail for configuration reasons, and
@@ -532,6 +679,11 @@ async function fireExercise(
         reason,
         evidence: lookback.best,
         final,
+        // 🛑 Carried here too. A dispatch that the hub declines writes `waiting` every minute of the
+        // grace window; without the prior each of those restarted the count at 1, so the record of
+        // ~180 attempts read as "2 ticks" — which is precisely the thing these counters exist to
+        // make visible.
+        prior,
         // Carried onto the DISPATCH path too: "0 runs weighed, 1 discounted as ours" is precisely
         // the explanation for why an exercise fired into what looks like a busy week.
         runsConsidered: lookback.runsConsidered,

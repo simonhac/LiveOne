@@ -494,6 +494,10 @@ function parseExerciseArmedContext(
   if (excluded !== null) out.runsExcluded = excluded;
   const soc = finite(raw.socPercent);
   const aborted = finite(raw.abortedAt);
+  const ticks = finite(raw.ticks);
+  const firstSeenAt = finite(raw.firstSeenAt);
+  if (ticks !== null) out.ticks = ticks;
+  if (firstSeenAt !== null) out.firstSeenAt = firstSeenAt;
   if (soc !== null) out.socPercent = soc;
   // Load-bearing, not cosmetic: its presence is what stops supervision re-dispatching a stop every
   // tick while the engine spins down. Dropping it on read would mean a stop command per minute.

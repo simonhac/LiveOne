@@ -16,13 +16,23 @@ import {
   automationLine,
   buildRRule,
   decisionLines,
+  commandLine,
+  evaluationHasFindings,
+  pendingIsStale,
+  evaluatorState,
+  renderEvaluation,
+  renderHealth,
   parseDate,
   parseStart,
   resolveAutomation,
   resolvePointFlag,
   scheduleLines,
+  sourceWords,
   triggerWords,
   type WireAutomation,
+  type WireCommand,
+  type WireEvaluation,
+  type WireEvaluator,
   type WireTrigger,
 } from "./model";
 import { occurrencesBetween } from "@/lib/automations/recurrence";
@@ -114,18 +124,40 @@ async function runShow(ctx: Ctx): Promise<number> {
           `  mode:         ${row.mode}`,
           `  trigger:      ${triggerWords(t)}`,
         ];
+        const src = sourceWords(t);
+        if (src) out.push(`  triggered by: ${src}`);
+        if (row.createdAt) out.push(`  created:      ${row.createdAt}`);
         if (t?.kind === "exercise" && t.schedule)
           out.push(...scheduleLines(t.schedule, timezone, row.nextAt));
         if (t?.kind === "exercise" && t.unless)
           out.push(
             `  unless:       it ran ≥ ${t.unless.minMinutes} min above ${t.unless.minLoadKw} kW in the last ${t.unless.withinDays} days`,
             `  load point:   ${t.unless.loadPointId}`,
+            `  dip bridged:  up to ${t.unless.dipToleranceSeconds} s`,
             `  grace:        ${t.schedule?.graceMinutes} min`,
           );
+        if (t?.kind === "exercise" && t.require)
+          out.push(
+            `  require:      battery below ${t.require.maxSocPercent}% (${t.require.socPointId})`,
+          );
+        if (t?.kind === "exercise" && t.supervise)
+          out.push(
+            `  supervise:    stop if under the floor for ${t.supervise.sustainMinutes} min, from minute ${t.supervise.settleMinutes}`,
+          );
         out.push(`  action:       ${actionWords(row.action)}`);
+        if (row.armedAt) out.push(`  armed:        ${row.armedAt}`);
         if (row.lastTriggeredAt)
           out.push(`  last fired:   ${row.lastTriggeredAt}`);
+        // 🛑 Labelled as the WATERMARK it is, not as a fire time. It means "every slot up to and
+        // including this instant is dealt with" — reading it as "when it last ran" is how the `<=`
+        // semantics get misread, and it is frequently NOT equal to `last fired`.
+        if (row.lastTriggeredRunStart)
+          out.push(`  slots done to:${row.lastTriggeredRunStart}`);
         out.push(...decisionLines(row.armedContext).map((l) => `  ${l}`));
+        out.push(
+          "",
+          `run \`liveone automation check ${area.displayName} '${row.name}'\` for the current verdict`,
+        );
         return out.join("\n");
       },
     );
@@ -620,9 +652,99 @@ async function runDelete(ctx: Ctx): Promise<number> {
   );
 }
 
+async function runCheck(ctx: Ctx): Promise<number> {
+  return withApiSession(ctx, async (s) => {
+    const { area, row, timezone } = await resolveTarget(s, ctx);
+    const evaluation = await s.get<WireEvaluation>(
+      `/api/v4/automations/${encodeURIComponent(row.id)}/evaluation`,
+    );
+    ctx.emit(
+      { area: { id: area.id, name: area.displayName }, timezone, evaluation },
+      () =>
+        [
+          `${row.name} (${row.id})  on ${area.displayName}`,
+          "",
+          renderEvaluation(evaluation),
+        ].join("\n"),
+    );
+    // A finding, not an error: the command did its job. Composes into `… check || alert`.
+    return evaluationHasFindings(evaluation) ? EXIT.FINDINGS : EXIT.OK;
+  });
+}
+
+async function runHealth(ctx: Ctx): Promise<number> {
+  return withApiSession(ctx, async (s) => {
+    const body = await s.get<WireEvaluator>("/api/v4/automations/evaluator");
+    ctx.emit(body, () => renderHealth(body));
+    // The verdict is computed over the WHOLE payload before anything is narrowed — `queue status`'s
+    // rule, and the reason a "could not read" never collapses into "is quiet".
+    return evaluatorState(body) === "ok" ? EXIT.OK : EXIT.FINDINGS;
+  });
+}
+
+async function runCommands(ctx: Ctx): Promise<number> {
+  return withApiSession(ctx, async (s) => {
+    const { area, row } = await resolveTarget(s, ctx);
+    const pointId = row.action?.pointId;
+    if (!pointId)
+      throw usage(
+        "this automation has no readable action point",
+        "its stored action could not be parsed, so there is no point to ask about",
+        "run `liveone automation show` to see the row as stored",
+      );
+
+    const limit = num(ctx, "limit") ?? 20;
+    const body = await s.get<{ commands?: WireCommand[] }>(
+      `/api/v4/points/${encodeURIComponent(pointId)}/commands?limit=${limit}`,
+    );
+    const all = body.commands ?? [];
+    // 🛑 The response is DEVICE-scoped. Narrowing is the caller's choice, but the VERDICT below is
+    // computed over everything fetched — a failure somebody else caused on this device is still a
+    // thing an operator wants to hear about.
+    const mine = bool(ctx, "mine")
+      ? all.filter(
+          (c) =>
+            c.requestedBy?.kind === "automation" &&
+            c.requestedBy.automationId === row.id,
+        )
+      : all;
+
+    ctx.emit(
+      {
+        area: { id: area.id, name: area.displayName },
+        pointId,
+        commands: mine,
+      },
+      () =>
+        [
+          `${row.name} (${row.id}) → ${pointId}`,
+          bool(ctx, "mine")
+            ? `  (this rule's commands only; the device had ${all.length} in the window)`
+            : "  (every command on this DEVICE, not only this rule's)",
+          "",
+          ...(mine.length
+            ? mine.map((c) => commandLine(c))
+            : ["no commands in the window."]),
+        ].join("\n"),
+    );
+    const nowMs = Date.now();
+    return all.some(
+      (c) =>
+        c.status === "rejected" ||
+        c.status === "failed" ||
+        pendingIsStale(c, nowMs),
+    )
+      ? EXIT.FINDINGS
+      : EXIT.OK;
+  });
+}
+
 export const HANDLERS: Record<string, (ctx: Ctx) => Promise<number>> = {
+  health: runHealth,
+  commands: runCommands,
   list: runList,
   show: runShow,
+  check: runCheck,
   "create-exercise": runCreateExercise,
   upcoming: runUpcoming,
   skip: runSkip,

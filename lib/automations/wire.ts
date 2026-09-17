@@ -68,6 +68,14 @@ export interface AutomationWire {
   armedAt: Date | null;
   lastTriggeredAt: Date | null;
   lastTriggeredRunStart: Date | null;
+  /**
+   * When the rule was written.
+   *
+   * On the wire because `isDue` already reads it: a slot EARLIER than this is "predates-rule", not
+   * a miss, and without the column an operator looking at a `missed` decision cannot tell whether
+   * the rule was simply blamed for a week it did not exist for.
+   */
+  createdAt: Date;
   /** Read-only on the wire; PR-G's "12.4 kWh so far" needs `baselineKwh`. */
   armedContext: AutomationArmedContext | null;
   /**
@@ -157,6 +165,7 @@ export function automationWire(
     armedAt: row.armedAt,
     lastTriggeredAt: row.lastTriggeredAt,
     lastTriggeredRunStart: row.lastTriggeredRunStart,
+    createdAt: row.createdAt,
     armedContext: parseArmedContext(row.armedContext),
     nextAt:
       at !== undefined && trigger?.kind === "exercise"

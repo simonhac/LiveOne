@@ -37,6 +37,92 @@ export const AUTOMATION_SUBCOMMANDS = {
     examples: ["liveone automation show daylesford 'Generator exercise'"],
   },
 
+  commands: {
+    name: "commands",
+    summary:
+      "What this rule has actually dispatched — the per-attempt audit trail.",
+    when:
+      "Reach for this when a decision says `fired` and the engine did not run. The decision log\n" +
+      "says what we DECIDED; this says what the hub was TOLD and what it answered.",
+    description:
+      "Resolves the action point from the rule, so no pt_ id is needed. 🛑 The response is\n" +
+      "DEVICE-scoped, not point-scoped: it is every command on the device the action point belongs\n" +
+      "to, including ones a human sent from the browser. `--mine` narrows it to this rule.\n" +
+      "\n" +
+      "Rendered through the same sentences the generator dialog shows, so the CLI and the UI\n" +
+      "cannot disagree about what happened.",
+    args: TARGET_ARGS,
+    flags: {
+      ...BASE_URL_FLAG,
+      mine: {
+        type: "boolean",
+        help: "Only commands this automation issued",
+      },
+      limit: {
+        type: "number",
+        help: "How many entries to fetch (default 20)",
+        placeholder: "20",
+      },
+    },
+    exitCodes: {
+      1: "a command was rejected or failed, or a pending one has gone stale",
+    },
+    examples: [
+      "liveone automation commands daylesford 'Generator exercise' --mine",
+    ],
+  },
+
+  health: {
+    name: "health",
+    summary:
+      "Is the evaluator sweeping at all? Fleet-wide, one screen, the kill switch included.",
+    when:
+      "`check` answers 'will THIS rule fire'; this answers 'is anything being evaluated'. Reach\n" +
+      "for it when a rule that should have fired did not, and `check` looks fine.",
+    description:
+      "Reads the record the minutely pass leaves in KV, which expires after an hour — so a MISSING\n" +
+      "record is the alarming answer, not a missing feature.\n" +
+      "\n" +
+      "Read the STATE word, most alarming first:\n" +
+      "  DISABLED   CRONS_ENABLED is not 'true' — switched off, not broken. A different fix.\n" +
+      "  SILENT     no sweep inside 5 minutes: the cron is not completing.\n" +
+      "  ERRORS     the last sweep counted errors — see the [automations] logs.\n" +
+      "  UNDECIDED  slots were due and produced no decision. The shape of the CAS bug that\n" +
+      "             stopped two live generator rules firing, and logged nothing for two days.\n" +
+      "\n" +
+      "Admin-only: a sweep spans every owner's rules.",
+    args: [],
+    flags: { ...BASE_URL_FLAG },
+    exitCodes: { 1: "anything but `ok`" },
+    examples: ["liveone automation health"],
+  },
+
+  check: {
+    name: "check",
+    summary:
+      "Evaluate a rule NOW and report what it would decide, without dispatching anything.",
+    when:
+      "The answer to 'is this configured to run, and will it?'. `show` prints the rule; `check`\n" +
+      "prints the rule's current VERDICT — the skip condition's answer, the evidence behind it, the\n" +
+      "readiness reading, and what would be dispatched.",
+    description:
+      "Answers from the evaluator's own read half (`planExercise`), so it cannot drift from what\n" +
+      "the cron actually does, and it has no path to a dispatch — checking never starts an engine.\n" +
+      "\n" +
+      "🛑 The load evidence is read RAW, i.e. the stored column, so `points.transform` is NOT\n" +
+      "applied. A point whose values are stored inverted will read here with the opposite sign to\n" +
+      "`/api/history`. The output says so per call rather than leaving it to be inferred.\n" +
+      "\n" +
+      "Costs a 7-day reading scan per call, which is why the verdict is not folded into `show` or\n" +
+      "`list` — those are the cheap reads that `skip` and `move` share.",
+    args: TARGET_ARGS,
+    flags: { ...BASE_URL_FLAG },
+    exitCodes: {
+      1: "the rule is disabled, its references do not resolve, or the verdict is one to look at",
+    },
+    examples: ["liveone automation check daylesford 'Generator exercise'"],
+  },
+
   "create-exercise": {
     name: "create-exercise",
     summary:
