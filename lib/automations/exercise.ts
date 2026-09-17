@@ -260,6 +260,8 @@ export interface ExerciseInputs {
    * ceiling it must be under. `socPercent: null` means the gate is configured but unreadable.
    */
   readiness?: { socPercent: number | null; maxSocPercent: number };
+  /** The decision already on the row, so the per-slot tick counters can advance. */
+  prior?: ExerciseArmedContext | null;
 }
 
 export type ExerciseDecision =
@@ -280,6 +282,22 @@ export function exerciseContext(
     runsExcluded?: number;
     socPercent?: number | null;
     abortedAt?: number;
+    /**
+     * The context this row already carried, so the tick counters can advance.
+     *
+     * Carried forward only while the SLOT is the same; a new slot starts a new count, which is what
+     * makes "seen due N times" a statement about one occurrence rather than about the rule's life.
+     */
+    prior?: ExerciseArmedContext | null;
+    /**
+     * `count` — this tick SAW the slot due, so advance the counter. The default, and what every
+     * decision branch wants.
+     *
+     * `carry` — preserve the slot's counters untouched. Supervision uses this: stopping a run is
+     * not another tick that found the slot due, and incrementing there would inflate the one number
+     * whose whole job is to say how many ticks looked at an outstanding slot.
+     */
+    tickMode?: "count" | "carry";
   },
 ): ExerciseArmedContext {
   const ctx: ExerciseArmedContext = {
@@ -298,6 +316,18 @@ export function exerciseContext(
   if (extra?.socPercent !== undefined && extra.socPercent !== null)
     ctx.socPercent = extra.socPercent;
   if (extra?.abortedAt !== undefined) ctx.abortedAt = extra.abortedAt;
+
+  const prior = extra?.prior;
+  const sameSlot = prior != null && prior.slotAt === slot.atMs;
+  if (extra?.tickMode === "carry") {
+    // Carry only what exists; inventing a count here would claim a sighting that never happened.
+    if (sameSlot && prior.firstSeenAt !== undefined)
+      ctx.firstSeenAt = prior.firstSeenAt;
+    if (sameSlot && prior.ticks !== undefined) ctx.ticks = prior.ticks;
+  } else {
+    ctx.firstSeenAt = sameSlot ? (prior.firstSeenAt ?? prior.at) : nowMs;
+    ctx.ticks = sameSlot ? (prior.ticks ?? 1) + 1 : 1;
+  }
   if (extra?.evidence)
     ctx.evidence = {
       minutes: extra.evidence.minutes,
@@ -327,6 +357,7 @@ export function decideExercise(
   const counts = {
     runsConsidered: input.runsConsidered,
     runsExcluded: input.runsExcluded,
+    prior: input.prior,
   };
 
   if (evidence !== null && evidence.minutes >= input.minMinutes)
@@ -338,16 +369,27 @@ export function decideExercise(
       }),
     };
 
-  if (nowMs > slot.atMs + input.graceMinutes * 60_000)
+  if (nowMs > slot.atMs + input.graceMinutes * 60_000) {
+    const lateBy = Math.round((nowMs - slot.atMs) / 60_000);
     return {
       kind: "consume",
       context: exerciseContext(
         slot,
         input.openRun ? "missed-running" : "missed",
         nowMs,
-        { evidence, ...counts },
+        {
+          evidence,
+          ...counts,
+          // 🛑 A `missed` used to carry no reason at all, which is what made the 2026-09-12 slot
+          // opaque for days. Say how long the grace window was, how far past it we are, and — with
+          // `ticks` — whether anything ever looked at the slot while it was still actionable.
+          reason:
+            `grace of ${input.graceMinutes} min expired; ${lateBy} min past the slot` +
+            (input.openRun ? ", and a run was in progress" : ""),
+        },
       ),
     };
+  }
 
   // 🛑 CONSUMES the slot rather than waiting. Inside the grace window the state of charge only goes
   // UP — the gate exists because solar refills the battery through the morning — so retrying until

@@ -464,6 +464,15 @@ describe("POST /api/v4/automations", () => {
   // about sails through them and 422s only against the real route. `require.socPointId` was exactly
   // that: added to the parser (which demands raw uuids) and not to the decoder, making the whole
   // readiness block un-settable through the API.
+  // 🛑 `/api/v4/automations/evaluator` is a LITERAL segment sitting beside `[id]`. Next resolves
+  // static segments first, so the health route wins — but the safety net is that "evaluator" is not
+  // a decodable automation id either, so even if precedence ever changed it could only 400, never
+  // act on a real rule. Before the static route existed this address 405'd against `[id]`, which is
+  // exactly the confusing symptom this pins away.
+  it("🛑 'evaluator' is not a decodable automation id", () => {
+    expect(Automation.toUuidOrNull("evaluator")).toBeNull();
+  });
+
   it("🛑 accepts a require block addressed by pt_ id, and hands it back as pt_", async () => {
     const res = await post({
       areaId: AREA,

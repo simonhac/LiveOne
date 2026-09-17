@@ -1601,12 +1601,17 @@ export interface ExerciseUnless {
 /**
  * The readiness condition: don't START unless the site can actually load the engine.
  *
- * At an off-grid site the generator's only load is house draw plus battery charging, and the
- * charge path CLIPS — measured at Daylesford, 101 samples with the top dozen inside 40 W of
- * 3.87 kW, which is the SP-PRO's 80 A charger at 48 V, not the generator. So once the battery is
- * near full there is nothing to load the engine with, and the exercise burns fuel at ~10% load,
- * which is the wet-stacking condition it exists to prevent. 30 minutes at the clipped rate needs
- * roughly 1.9 kWh of headroom — about 3% of a 63.6 kWh pack.
+ * At an off-grid site the generator's load is house draw PLUS battery charging. The CHARGING half
+ * clips at ~3.87 kW — the SP-PRO's 80 A charger at 48 V (measured: 101 samples over two months,
+ * top dozen within 40 W of each other). The TOTAL is not capped there and regularly exceeds it when
+ * the house is drawing: an SP-PRO-initiated run on 2026-09-17 at 20:00 put 4.5–5.5 kW straight into
+ * a 4.9 kW house load with the battery idle. So the engine is perfectly capable of a real load.
+ *
+ * The catch is that an exercise runs at a SCHEDULED time, and the times with battery headroom are
+ * the quiet ones — at 07:00 the house draws ~300 W, so charging is effectively the whole load. Once
+ * the battery is near full there is nothing left to load the engine with and the exercise burns fuel
+ * at ~10% load, which is the wet-stacking condition it exists to prevent. 30 minutes of charging
+ * needs roughly 1.9 kWh of headroom — about 3% of a 63.6 kWh pack.
  *
  * Absent = no readiness gate (every rule that predates this).
  */
@@ -1722,6 +1727,18 @@ export interface ExerciseArmedContext {
   runsExcluded?: number;
   /** State of charge read at the slot, when a readiness gate is configured. */
   socPercent?: number;
+  /**
+   * How many ticks have written a decision for THIS slot, and when the first of them saw it.
+   *
+   * 🛑 Monotone counters rather than a ring of decisions, because the forensic case and the
+   * write-amplification case are the same case: a `waiting` slot writes once a minute across a
+   * three-hour grace window, so a bounded ring is simultaneously the most amplifying option and
+   * still loses the beginning of the story — which is exactly where the 2026-09-12 answer was.
+   * Two integers on a row that is being written anyway cost nothing and answer the question that
+   * mattered: "the slot was seen due 180 times and dispatch was never attempted."
+   */
+  firstSeenAt?: number;
+  ticks?: number;
   /**
    * Epoch-ms of the supervision abort dispatched for THIS slot's run.
    *

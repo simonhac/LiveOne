@@ -293,6 +293,35 @@ const cliTokenRoutes = [
   // it exactly as it does to create — a move cannot land a rule the caller could not have authored
   // there. Needed by `liveone automation move`, which is the prerequisite for `area delete`.
   "/api/v4/automations/:id/move",
+  // Dry evaluation — `liveone automation check`. Judged on its own, per the rule above, and it is
+  // the mildest entry here: a GET, authorized by the same `loadOwnedAutomation` as the item route,
+  // answering from `planExercise` — the READ half of the evaluator, which has no path to a dispatch.
+  // It is the one verb that can say "why would this rule not fire on Thursday" without an operator
+  // reasoning from source, which is how the last two defects in this subsystem were actually found.
+  "/api/v4/automations/:id/evaluation",
+  // Evaluator health — `liveone automation health`. A LITERAL segment, so it must be listed on its
+  // own rather than inherited from `:id`. `requireAdmin` in-handler (a sweep spans every owner), so
+  // a non-admin token gets past the edge and 403s there.
+  "/api/v4/automations/evaluator",
+  // ── The control plane's READ surface. `docs/cli.md` deferred `/api/v4/points/*` wholesale as a
+  // security decision; these two were then judged individually, which is what that deferral asked
+  // for. `action` and `refresh` REMAIN deferred and must not be added by analogy.
+  //
+  // 🛑 Named segments, never `/api/v4/points/(.*)`. That wildcard would be the single most
+  // dangerous entry in this file, because `…/action` actuates hardware.
+  //
+  // The dispatch audit trail. A GET, and the strictest handler gate in this list:
+  // `requireDeviceAccess(..., {requireOwner: true})` refuses even a non-owning ADMIN, so it is
+  // narrower than every other entry here. Exposes nothing a browser session for the same user does
+  // not already have.
+  "/api/v4/points/:id/commands",
+  // The live preflight. It WRITES nothing and takes no `point_commands` row — but it is not free:
+  // it causes a Modbus round trip over WireGuard to a controller on a customer's site LAN, holding
+  // a per-device mutex. Admitted deliberately, because the hardware half of "is this configured to
+  // run" (panel in Auto? locked out? hub reachable?) is otherwise unanswerable from the CLI. The
+  // verb probes ONCE and is not wired into `automation check` by default, so an agent looping the
+  // cheap read cannot loop a Modbus read.
+  "/api/v4/points/:id/preflight",
   // Ownership transfer — `liveone owner transfer`. `requireAdmin` in-handler, so a non-admin token
   // gets past the edge and 403s there.
   //

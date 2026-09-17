@@ -85,6 +85,7 @@ import type {
   ExerciseTrigger,
 } from "@/lib/db/planetscale/schema";
 import { evaluateAutomations } from "@/lib/automations/evaluate";
+import { planExercise } from "@/lib/automations/evaluate-exercise";
 
 const mockStore = jest.mocked(store);
 const mockOpenRun = jest.mocked(getOpenRun);
@@ -803,6 +804,8 @@ describe("evaluateAutomations — the batch", () => {
         satisfied: 0,
         waiting: 0,
         missed: 0,
+        skipped: 0,
+        aborted: 0,
         lostClaim: 0,
         exhausted: 0,
       },
@@ -960,6 +963,8 @@ describe("evaluateExercise", () => {
       waiting: 0,
       exhausted: 0,
       missed: 0,
+      skipped: 0,
+      aborted: 0,
       lostClaim: 0,
     });
     expect(mockStore.recordExerciseOutcome).toHaveBeenCalledWith(
@@ -1149,6 +1154,67 @@ describe("evaluateExercise", () => {
     expect(mockDispatch).toHaveBeenCalled();
   });
 
+  // 🛑 THE ANTI-DRIFT GUARANTEE. `planExercise` is the read half that `GET …/{id}/evaluation` (and
+  // so `liveone automation check`) answers from; `evaluateExercise` is the shell that acts on it.
+  // They are one implementation with two call sites, and this is what pins that: for a fixed
+  // fixture, what the plan DECIDED is what the evaluator RECORDED. A second decide path added
+  // anywhere — a route that "just re-checks" — breaks this.
+  describe("planExercise agrees with what evaluateExercise records", () => {
+    const cases: [string, () => void][] = [
+      [
+        "satisfied",
+        () => {
+          const iv = runInterval(2 * 24 * 60, 45);
+          mockStore.intervalsOverlapping.mockResolvedValue([iv] as never);
+          mockReadRaw.mockResolvedValue(
+            loadSeries(iv.startTime.getTime(), iv.endTime.getTime(), 3.2),
+          );
+        },
+      ],
+      [
+        "missed (grace expired)",
+        () => {
+          mockStore.intervalsOverlapping.mockResolvedValue([]);
+        },
+      ],
+    ];
+
+    it.each(cases)("%s", async (name, arrange) => {
+      arrange();
+      const row = exerciseRow();
+      mockStore.listEnabled.mockResolvedValue([row]);
+      const now = name.startsWith("missed") ? EX_SLOT + 200 * MIN : EX_NOW;
+
+      const plan = await planExercise(
+        row,
+        row.trigger as ExerciseTrigger,
+        row.action as never,
+        now,
+      );
+      expect(plan.kind).toBe("decided");
+      const planned =
+        plan.kind === "decided" && plan.decision.kind !== "dispatch"
+          ? plan.decision.context.outcome
+          : "dispatch";
+
+      jest.clearAllMocks();
+      arrange();
+      mockStore.listEnabled.mockResolvedValue([row]);
+      mockStore.recordExerciseOutcome.mockResolvedValue(true);
+      mockStore.ownCommandsInWindow.mockResolvedValue([]);
+      mockDetectors.mockResolvedValue([
+        detector({ displayTimezone: "Australia/Melbourne" }),
+      ] as never);
+      mockOpenRun.mockResolvedValue(null as never);
+      await evaluateAutomations(now);
+
+      const recorded = mockStore.recordExerciseOutcome.mock.calls[0]?.[1] as
+        | { context: { outcome: string } }
+        | undefined;
+      expect(recorded?.context.outcome).toBe(planned);
+    });
+  });
+
   describe("supervision of a run we started", () => {
     /** A supervised rule, with the slot already consumed — i.e. the run is ours and under way. */
     const supervisedRow = (overTrigger: Record<string, unknown> = {}) => {
@@ -1285,6 +1351,35 @@ describe("evaluateExercise", () => {
       );
     });
 
+    // 🛑 THE ORDERING REGRESSION. Supervision used to run as soon as the detector resolved; folding
+    // everything into one planner put it behind the 7-day lookback, so a transient failure reading
+    // HISTORY stopped us acting on the PRESENT — leaving an unloaded engine running.
+    it("🛑 still stops an unloaded run when the evidence lookback FAILS", async () => {
+      openOurs(20);
+      mockStore.intervalsOverlapping.mockRejectedValue(
+        new Error("connection terminated unexpectedly") as never,
+      );
+      mockReadRaw.mockResolvedValue(loadSeries(EX_NOW - 3 * MIN, EX_NOW, 0.4));
+      // No watermark, so the slot IS due and the failing lookback is actually reached — which is
+      // the case that used to skip supervision entirely.
+      const base = exerciseRow().trigger as ExerciseTrigger;
+      mockStore.listEnabled.mockResolvedValue([
+        exerciseRow({
+          trigger: {
+            ...base,
+            supervise: { settleMinutes: 10, sustainMinutes: 3 },
+          } as ExerciseTrigger,
+        }),
+      ]);
+
+      const summary = await evaluateAutomations(EX_NOW);
+
+      expect(mockDispatch).toHaveBeenCalledWith(
+        expect.objectContaining({ action: "set_value", value: 0 }),
+      );
+      expect(summary.errors).toBeGreaterThan(0);
+    });
+
     it("does nothing at all for a rule with no supervise block", async () => {
       openOurs(20);
       mockReadRaw.mockResolvedValue(loadSeries(EX_NOW - 3 * MIN, EX_NOW, 0.2));
@@ -1295,6 +1390,57 @@ describe("evaluateExercise", () => {
       await evaluateAutomations(EX_NOW);
       expect(mockDispatch).not.toHaveBeenCalled();
     });
+  });
+
+  // 🛑 A DECLINED dispatch writes `waiting` every minute of the grace window. Without the prior
+  // carried into `fireExercise`'s own context each of those restarted the count at 1, so a record
+  // of ~180 attempts read as "2 ticks" — the exact opposite of what the counter is for.
+  it("🛑 a declined dispatch ADVANCES the tick count rather than resetting it", async () => {
+    mockStore.intervalsOverlapping.mockResolvedValue([]);
+    mockDispatch.mockResolvedValue({
+      kind: "completed",
+      ok: false,
+      reason: "busy",
+      commandId: "cmd_1",
+    } as PointActionOutcome);
+    mockStore.listEnabled.mockResolvedValue([
+      exerciseRow({
+        armedContext: {
+          kind: "exercise",
+          slotAt: EX_SLOT,
+          at: EX_SLOT,
+          outcome: "waiting",
+          ticks: 42,
+          firstSeenAt: EX_SLOT,
+        },
+      } as never),
+    ]);
+
+    await evaluateAutomations(EX_NOW);
+
+    expect(mockStore.recordExerciseOutcome).toHaveBeenCalledWith(
+      AU_UUID,
+      expect.objectContaining({
+        context: expect.objectContaining({ ticks: 43, firstSeenAt: EX_SLOT }),
+      }),
+    );
+  });
+
+  // 🛑 `due` is counted BEFORE the evidence reads. With it counted after, a rule whose lookback
+  // threw every minute produced `due: 0` — so `reportUndecidedSlots` saw no shortfall and stayed
+  // silent for the whole grace window, losing exactly the alarm that catches an evaluator falling
+  // out of the path.
+  it("🛑 counts the slot as DUE even when the evidence read fails", async () => {
+    mockStore.intervalsOverlapping.mockRejectedValue(
+      new Error("read failed") as never,
+    );
+    mockStore.listEnabled.mockResolvedValue([exerciseRow()]);
+
+    const summary = await evaluateAutomations(EX_NOW);
+
+    expect(summary.exercise.due).toBe(1);
+    expect(summary.errors).toBe(1);
+    expect(mockDispatch).not.toHaveBeenCalled();
   });
 
   it("🛑 a failed command lookup costs the TICK, not the slot — the next tick retries", async () => {

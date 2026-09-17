@@ -57,6 +57,13 @@ export interface WireTrigger {
     dipToleranceSeconds: number;
     withinDays: number;
   };
+  /**
+   * Both optional, CHILDREN INCLUDED: an origin older than these blocks omits the block, and a
+   * newer one could add a field this build does not know. Rendering falls back rather than printing
+   * `undefined` into an operator's terminal.
+   */
+  require?: { socPointId?: string; maxSocPercent?: number };
+  supervise?: { settleMinutes?: number; sustainMinutes?: number };
 }
 
 export interface WireAction {
@@ -74,6 +81,12 @@ export interface WireArmedContext {
   reason?: string;
   evidence?: { minutes: number; peakKw: number; endedAt: number };
   final?: boolean;
+  runsConsidered?: number;
+  runsExcluded?: number;
+  socPercent?: number;
+  abortedAt?: number;
+  ticks?: number;
+  firstSeenAt?: number;
   baselineKwh?: number;
   baselineAt?: number;
 }
@@ -84,6 +97,8 @@ export interface WireAutomation {
   name: string;
   enabled: boolean;
   mode: string;
+  /** Optional: an origin older than the field simply omits it. */
+  createdAt?: string;
   /** Null when the stored row could not be parsed — it stays listable so it can be deleted. */
   trigger: WireTrigger | null;
   action: WireAction | null;
@@ -257,8 +272,40 @@ export function scheduleLines(
  * An exercise rule's `armedContext` is a decision LOG, not arming state, and it is the only place
  * the answer to "why didn't it run last Thursday" is written down — so `show` renders it in full.
  */
-export function decisionLines(ctx: WireArmedContext | null): string[] {
-  if (!ctx || ctx.kind !== "exercise") return [];
+/**
+ * The rule's SOURCE in words — the detector or point it is triggered BY.
+ *
+ * Deliberately not folded into `triggerWords`, which is a width-constrained `list` column. `show`
+ * prints it on its own line: an exercise rule names three ids (source, load point, action point)
+ * and until now printed only two, so "which detector is this rule actually watching" had no answer
+ * short of reading the JSON.
+ */
+export function sourceWords(t: WireTrigger | null): string | null {
+  const src = (
+    t as {
+      source?: { kind?: string; derivationId?: string; pointId?: string };
+    } | null
+  )?.source;
+  if (!src) return null;
+  if (src.kind === "derivation" && src.derivationId)
+    return `derivation ${src.derivationId}`;
+  if (src.kind === "point" && src.pointId) return `point ${src.pointId}`;
+  return null;
+}
+
+/** The charge-session arming state — the baseline a kWh limit measures its delta from. */
+function chargeContextLines(ctx: WireArmedContext): string[] {
+  const c = ctx as { baselineKwh?: number; baselineAt?: number };
+  if (c.baselineKwh === undefined && c.baselineAt === undefined) return [];
+  const out = ["armed context:"];
+  if (c.baselineKwh !== undefined)
+    out.push(`  baseline:     ${c.baselineKwh.toFixed(2)} kWh`);
+  if (c.baselineAt !== undefined)
+    out.push(`  snapshotted:  ${new Date(c.baselineAt).toISOString()}`);
+  return out;
+}
+
+function exerciseDecisionLines(ctx: WireArmedContext): string[] {
   const out = [
     `last decision:  ${ctx.outcome ?? "?"}` +
       (ctx.slotAt ? ` for the ${new Date(ctx.slotAt).toISOString()} slot` : ""),
@@ -274,7 +321,35 @@ export function decisionLines(ctx: WireArmedContext | null): string[] {
       `  evidence:     ${ctx.evidence.minutes.toFixed(1)} min under load, peak ` +
         `${ctx.evidence.peakKw.toFixed(2)} kW, ending ${new Date(ctx.evidence.endedAt).toISOString()}`,
     );
+  if (ctx.runsConsidered !== undefined || ctx.runsExcluded !== undefined)
+    out.push(
+      `  runs weighed: ${ctx.runsConsidered ?? "?"} (${ctx.runsExcluded ?? 0} discounted as our own)`,
+    );
+  if (ctx.socPercent !== undefined)
+    out.push(`  battery:      ${ctx.socPercent.toFixed(1)}%`);
+  // 🛑 The line that answers "was it even LOOKED at?". A slot seen due 180 times with no dispatch
+  // is a very different failure from one nobody evaluated, and until these counters existed the
+  // two were indistinguishable on the record — which is what made the 2026-09-12 miss opaque.
+  if (ctx.ticks !== undefined)
+    out.push(
+      `  seen due:     ${ctx.ticks} tick(s)` +
+        (ctx.firstSeenAt
+          ? ` since ${new Date(ctx.firstSeenAt).toISOString()}`
+          : ""),
+    );
+  if (ctx.abortedAt)
+    out.push(
+      `  stopped at:   ${new Date(ctx.abortedAt).toISOString()} (supervision)`,
+    );
   return out;
+}
+
+/** Dispatches on the context kind — the two rule families keep different state. */
+export function decisionLines(ctx: WireArmedContext | null): string[] {
+  if (!ctx) return [];
+  return ctx.kind === "exercise"
+    ? exerciseDecisionLines(ctx)
+    : chargeContextLines(ctx);
 }
 
 // ---------------------------------------------------------------------------
@@ -331,4 +406,291 @@ export async function resolvePointFlag(
     listCmd: "liveone device list",
   });
   return pointOnDevice(s, device, path, flag);
+}
+
+// ── `automation check` ───────────────────────────────────────────────────────────────────────────
+
+/**
+ * The dry-evaluation payload.
+ *
+ * EVERY field optional, per the `queue status` rule: this CLI talks to a DEPLOYED origin that may
+ * predate any of them, and an operator reaching for this verb is usually mid-incident. It degrades
+ * to a stated sentence, never a TypeError.
+ */
+export interface WireEvaluation {
+  automationId?: string;
+  timezone?: string;
+  evaluatedAt?: string;
+  enabled?: boolean;
+  kind?: string;
+  supported?: boolean;
+  detail?: string;
+  source?: { derivationId?: string | null; resolved?: boolean };
+  slot?: { at?: string };
+  next?: { at?: string } | null;
+  due?: { due?: boolean; reason?: string };
+  openRun?: boolean;
+  exhausted?: boolean;
+  unless?: {
+    minMinutes?: number;
+    minLoadKw?: number;
+    withinDays?: number;
+    loadPoint?: { id?: string; transformApplied?: boolean };
+    best?: { minutes?: number; peakKw?: number; endedAt?: string } | null;
+    satisfied?: boolean;
+    runsConsidered?: number;
+    runsExcluded?: number;
+  };
+  require?: {
+    socPercent?: number | null;
+    maxSocPercent?: number;
+    ready?: boolean;
+  } | null;
+  supervise?: { settleMinutes?: number; sustainMinutes?: number } | null;
+  decision?: { kind?: string; outcome?: string | null; reason?: string | null };
+  wouldDispatch?: { pointId?: string; value?: number | null } | null;
+  blockers?: { code?: string; detail?: string }[];
+}
+
+const num = (v: number | null | undefined, dp = 1) =>
+  typeof v === "number" ? v.toFixed(dp) : "?";
+
+/**
+ * Is this a verdict an operator should look at? Drives the exit code, so it composes into a check.
+ *
+ * `satisfied`, `waiting` and a dealt-with slot are the design working; `missed` and an unresolved
+ * reference are not.
+ */
+export function evaluationHasFindings(e: WireEvaluation): boolean {
+  if (e.enabled === false) return true;
+  if (e.blockers && e.blockers.length > 0) return true;
+  if (e.source && e.source.resolved === false) return true;
+  const outcome = e.decision?.outcome;
+  if (outcome === "missed" || outcome === "missed-running") return true;
+  // 🛑 An UNREADABLE answer is a finding, not a pass. `{}` — an origin that predates the route, a
+  // truncated body — would otherwise render "enabled: yes / would dispatch: nothing" and exit 0,
+  // turning missing information into affirmative information. A rule the server declined to
+  // evaluate (`supported: false`) is the one exception: that is a known, stated limitation.
+  if (e.supported === false) return false;
+  return e.decision === undefined && e.due === undefined;
+}
+
+/** Pure renderer, so it is asserted against fixtures rather than against a network. */
+export function renderEvaluation(e: WireEvaluation): string {
+  const out: string[] = [];
+  if (e.supported === false)
+    return `${e.kind ?? "this"} rule: ${e.detail ?? "dry evaluation is not implemented for it"}`;
+
+  out.push(`evaluated:      ${e.evaluatedAt ?? "?"}`);
+  out.push(
+    `enabled:        ${e.enabled === undefined ? "?" : e.enabled ? "yes" : "NO"}`,
+  );
+  if (e.decision === undefined && e.due === undefined)
+    out.push(
+      "🛑 this origin returned no verdict — it may predate the evaluation route; treat as UNKNOWN, not healthy",
+    );
+  if (e.source?.derivationId)
+    out.push(
+      `detector:       ${e.source.derivationId}${e.source.resolved === false ? "  🛑 does not resolve to an enabled run detector" : ""}`,
+    );
+  if (e.slot?.at)
+    out.push(
+      `this slot:      ${e.slot.at}${
+        e.due?.due === false ? ` — not due (${e.due.reason ?? "?"})` : ""
+      }`,
+    );
+  if (e.next?.at) out.push(`next slot:      ${e.next.at}`);
+
+  const u = e.unless;
+  if (u) {
+    out.push(
+      `unless:         it ran ≥ ${num(u.minMinutes, 0)} min above ${num(u.minLoadKw)} kW in the last ${num(u.withinDays, 0)} days`,
+    );
+    out.push(
+      u.best
+        ? `  answer now:   ${u.satisfied ? "YES" : "NO"} — best stretch ${num(u.best.minutes)} min, peak ${num(u.best.peakKw)} kW, ended ${u.best.endedAt ?? "?"}`
+        : `  answer now:   NO — no loaded stretch found`,
+    );
+    out.push(
+      `  runs weighed: ${u.runsConsidered ?? "?"} (${u.runsExcluded ?? 0} discounted as our own)`,
+    );
+    if (u.loadPoint?.transformApplied === false)
+      out.push(
+        `  read from:    ${u.loadPoint.id ?? "?"} RAW — no transform applied on this path`,
+      );
+  }
+
+  if (e.require)
+    out.push(
+      `readiness:      battery ${num(e.require.socPercent)}% vs gate ${num(e.require.maxSocPercent, 0)}% — ${e.require.ready ? "ready" : "TOO FULL to load the engine"}`,
+    );
+  if (e.supervise)
+    out.push(
+      `supervision:    stop if under the floor for ${num(e.supervise.sustainMinutes, 0)} min, from minute ${num(e.supervise.settleMinutes, 0)}`,
+    );
+  if (e.openRun) out.push(`open run:       yes — a run is in progress now`);
+
+  const d = e.decision;
+  if (d)
+    out.push(
+      `decision:       ${d.outcome ?? d.kind ?? "?"}${d.reason ? ` — ${d.reason}` : ""}`,
+    );
+  out.push(
+    `would dispatch: ${
+      e.wouldDispatch
+        ? `set ${e.wouldDispatch.pointId ?? "?"} = ${e.wouldDispatch.value ?? "?"}`
+        : "nothing"
+    }`,
+  );
+  for (const b of e.blockers ?? [])
+    out.push(`🛑 ${b.code ?? "blocked"}: ${b.detail ?? ""}`);
+  return out.join("\n");
+}
+
+// ── `automation health` ──────────────────────────────────────────────────────────────────────────
+
+/** Duplicated on purpose — this CLI judges a DEPLOYED origin and must not inherit a local constant. */
+const STALE_SWEEP_SEC = 300;
+
+export interface WireEvaluator {
+  cronsEnabled?: boolean;
+  schedule?: string;
+  lastSweep?: {
+    at?: string;
+    ageSeconds?: number;
+    durationMs?: number;
+    summary?: {
+      evaluated?: number;
+      errors?: number;
+      exercise?: {
+        due?: number;
+        fired?: number;
+        satisfied?: number;
+        waiting?: number;
+        missed?: number;
+        skipped?: number;
+        aborted?: number;
+        lostClaim?: number;
+      };
+    };
+  } | null;
+  undecidedAlertSuppressedUntil?: string | null;
+  counts?: { enabled?: number; exercise?: number; chargeSession?: number };
+}
+
+export type EvaluatorState =
+  | "DISABLED"
+  | "SILENT"
+  | "ERRORS"
+  | "UNDECIDED"
+  | "UNKNOWN"
+  | "ok";
+
+/**
+ * One word, most alarming first — the `laneState` pattern from `queue status`.
+ *
+ * 🛑 `DISABLED` outranks `SILENT` for the same reason `error` outranks `idle` there: "the kill
+ * switch is off" and "the cron is broken" send an operator to completely different places, and
+ * collapsing them sends them to the wrong one.
+ */
+export function evaluatorState(e: WireEvaluator): EvaluatorState {
+  if (e.cronsEnabled === false) return "DISABLED";
+  const age = e.lastSweep?.ageSeconds;
+  if (!e.lastSweep || age === undefined || age > STALE_SWEEP_SEC)
+    return "SILENT";
+  const s = e.lastSweep.summary;
+  // A fresh sweep with no summary proves the cron RAN and nothing else. Calling that `ok` would
+  // claim error-free evaluation from a payload that cannot establish it.
+  if (!s) return "UNKNOWN";
+  if ((s.errors ?? 0) > 0) return "ERRORS";
+  const x = s.exercise;
+  if (x) {
+    const decided =
+      (x.fired ?? 0) +
+      (x.satisfied ?? 0) +
+      (x.waiting ?? 0) +
+      (x.missed ?? 0) +
+      (x.skipped ?? 0) +
+      (x.lostClaim ?? 0);
+    if ((x.due ?? 0) > decided) return "UNDECIDED";
+  }
+  return "ok";
+}
+
+export function renderHealth(e: WireEvaluator): string {
+  const state = evaluatorState(e);
+  const out = [`evaluator:      ${state}`];
+  out.push(
+    `crons enabled:  ${e.cronsEnabled === undefined ? "?" : e.cronsEnabled ? "yes" : "NO — the kill switch is off"}`,
+  );
+  out.push(`schedule:       ${e.schedule ?? "?"}`);
+  if (e.lastSweep)
+    out.push(
+      `last sweep:     ${e.lastSweep.at ?? "?"} (${e.lastSweep.ageSeconds ?? "?"}s ago, took ${e.lastSweep.durationMs ?? "?"}ms)`,
+    );
+  else
+    // The one honest ambiguity, stated rather than guessed at.
+    out.push(
+      "last sweep:     none recorded — either the evaluator has not run since this deploy, or it is not running",
+    );
+
+  const x = e.lastSweep?.summary?.exercise;
+  if (x)
+    out.push(
+      `exercise slots: due ${x.due ?? 0} · fired ${x.fired ?? 0} · satisfied ${x.satisfied ?? 0} · ` +
+        `waiting ${x.waiting ?? 0} · missed ${x.missed ?? 0} · skipped ${x.skipped ?? 0} · ` +
+        `aborted ${x.aborted ?? 0} · lost ${x.lostClaim ?? 0}`,
+    );
+  if (e.lastSweep?.summary?.errors)
+    out.push(`errors:         ${e.lastSweep.summary.errors} last sweep`);
+  if (e.counts)
+    out.push(
+      `enabled rules:  ${e.counts.enabled ?? "?"} (${e.counts.exercise ?? "?"} exercise, ${e.counts.chargeSession ?? "?"} charge-session)`,
+    );
+  if (e.undecidedAlertSuppressedUntil)
+    out.push(
+      `🔕 the undecided-slot alert is suppressed until ${e.undecidedAlertSuppressedUntil} — Slack being quiet does not mean healthy`,
+    );
+  return out.join("\n");
+}
+
+// ── `automation commands` ────────────────────────────────────────────────────────────────────────
+
+/** A pending command we cannot time is treated as STALE — an unreadable age is not a young age. */
+export function pendingIsStale(
+  c: { status?: string; requestedAt?: string },
+  nowMs: number,
+): boolean {
+  if (c.status !== "pending") return false;
+  const at = Date.parse(c.requestedAt ?? "");
+  return Number.isNaN(at) || nowMs - at > 120_000;
+}
+
+export interface WireCommand {
+  action?: string;
+  value?: number | null;
+  status?: string;
+  reason?: string | null;
+  error?: string | null;
+  requestedAt?: string;
+  completedAt?: string | null;
+  requestedBy?:
+    | { kind: "user" }
+    | { kind: "automation"; automationId?: string; name?: string | null };
+}
+
+/** One audit row as a line. Deliberately plain — the sentence-building lives server-side. */
+export function commandLine(c: WireCommand): string {
+  const who =
+    c.requestedBy?.kind === "automation"
+      ? (c.requestedBy.name ?? c.requestedBy.automationId ?? "an automation")
+      : "a person";
+  const what =
+    c.action === "set_value"
+      ? c.value === 0
+        ? "stop (set 0)"
+        : `run ${c.value ?? "?"} min`
+      : (c.action ?? "?");
+  const tail = c.error ? ` — ${c.error}` : c.reason ? ` — ${c.reason}` : "";
+  return `${c.requestedAt ?? "?"}  ${(c.status ?? "?").padEnd(9)} ${what.padEnd(14)} by ${who}${tail}`;
 }

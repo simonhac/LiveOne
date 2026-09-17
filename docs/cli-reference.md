@@ -85,6 +85,7 @@ still reach stderr.
     - [liveone device vendor-identity](../scripts/ops/CLI_README.md#liveone-device-vendor-identity) — Verify an Amber device's distributor and NMI at its stored vendor site.
     - [liveone device list](../scripts/ops/CLI_README.md#liveone-device-list) — List the devices you can read: id, handle, vendor, status, name.
     - [liveone device show](../scripts/ops/CLI_README.md#liveone-device-show) — A device's full aggregate: metadata, config, adapter state, capabilities, points.
+    - [liveone device preflight](../scripts/ops/CLI_README.md#liveone-device-preflight) — Would a generator start succeed RIGHT NOW? Asks the hardware, changes nothing.
     - [liveone device points](../scripts/ops/CLI_README.md#liveone-device-points) — A device's point inventory: pt_… id, path, metric, unit.
     - [liveone device latest](../scripts/ops/CLI_README.md#liveone-device-latest) — The device's current values, from the serving cache.
     - [liveone device coverage](../scripts/ops/CLI_README.md#liveone-device-coverage) — How many 5-minute readings each of a device's points holds, per local day.
@@ -133,6 +134,9 @@ still reach stderr.
   - [liveone automation](../scripts/ops/CLI_README.md#liveone-automation) — Scheduled and reactive rules — including the generator exercise run.
     - [liveone automation list](../scripts/ops/CLI_README.md#liveone-automation-list) — Every automation on an area, and what each one does.
     - [liveone automation show](../scripts/ops/CLI_README.md#liveone-automation-show) — One automation in full, including the last decision the evaluator made.
+    - [liveone automation commands](../scripts/ops/CLI_README.md#liveone-automation-commands) — What this rule has actually dispatched — the per-attempt audit trail.
+    - [liveone automation health](../scripts/ops/CLI_README.md#liveone-automation-health) — Is the evaluator sweeping at all? Fleet-wide, one screen, the kill switch included.
+    - [liveone automation check](../scripts/ops/CLI_README.md#liveone-automation-check) — Evaluate a rule NOW and report what it would decide, without dispatching anything.
     - [liveone automation create-exercise](../scripts/ops/CLI_README.md#liveone-automation-create-exercise) — Schedule a generator exercise run — unless it has already run under load recently.  _(writes)_
     - [liveone automation upcoming](../scripts/ops/CLI_README.md#liveone-automation-upcoming) — Every scheduled occurrence on an area, dated, for the next N days.
     - [liveone automation skip](../scripts/ops/CLI_README.md#liveone-automation-skip) — Skip one occurrence of a repeating rule, leaving the rule itself alone.  _(writes)_
