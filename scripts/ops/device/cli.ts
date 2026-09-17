@@ -440,7 +440,12 @@ interface WirePreflight {
   wouldProceed?: boolean;
   verdict?: string;
   verdictMessage?: string;
-  checks?: { name?: string; ok?: boolean; detail?: string }[];
+  /**
+   * 🛑 `{label, value, ok}` — taken from an actual response, not guessed. It was declared as
+   * `{name, detail}` and every check rendered as a bare "✓ ?", because an optional field that does
+   * not exist is indistinguishable from one the server omitted.
+   */
+  checks?: { label?: string; value?: string; ok?: boolean }[];
   /**
    * Everything the probe read, flat — `RunSupervisor.state()`, including the hub's own runtime cap.
    *
@@ -470,7 +475,17 @@ async function runPreflight(ctx: Ctx): Promise<number> {
     const { body: pf } = await apiFetch<WirePreflight>(
       s.origin,
       `/api/v4/points/${encodeURIComponent(control.id)}/preflight`,
-      { method: "POST", headers: s.headers, body: JSON.stringify({}) },
+      // 🛑 `token`, not just `headers`. `s.headers` carries the admin flag and nothing else —
+      // `apiFetch` builds the `authorization` header from `init.token`. Passing headers alone sent
+      // this unauthenticated, and the Clerk middleware rewrote it to a 404 (protect-rewrite), which
+      // is indistinguishable from "route not deployed" — and that is exactly what it was mistaken
+      // for when this verb shipped, because the route genuinely had not deployed yet.
+      {
+        method: "POST",
+        token: s.token,
+        headers: s.headers,
+        body: JSON.stringify({}),
+      },
     );
 
     ctx.emit({ device: { id: body.id, name: body.name }, preflight: pf }, () =>
@@ -485,7 +500,7 @@ async function runPreflight(ctx: Ctx): Promise<number> {
         ...(pf.detail?.modeName ? [`  panel:     ${pf.detail.modeName}`] : []),
         ...(pf.checks ?? []).map(
           (c) =>
-            `  ${c.ok ? "✓" : "✗"} ${c.name ?? "?"}${c.detail ? ` — ${c.detail}` : ""}`,
+            `  ${c.ok ? "✓" : "✗"} ${c.label ?? "?"}${c.value ? `: ${c.value}` : ""}`,
         ),
       ].join("\n"),
     );
