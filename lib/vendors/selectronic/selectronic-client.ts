@@ -522,6 +522,9 @@ export function transformSelectronicData(
     const n = numOrNull(v);
     return n === null ? null : Math.round(n);
   };
+  /** Vendor sign → canonical. `+ 0` so a flipped zero is 0, never -0. */
+  const negateOrNull = (v: number | null): number | null =>
+    v === null ? null : -v + 0;
 
   const solarInverterW = numOrNull(data.items?.solarinverter_w);
   const shuntW = numOrNull(data.items?.shunt_w);
@@ -536,7 +539,18 @@ export function transformSelectronicData(
     loadW: roundOrNull(data.items?.load_w),
     batterySOC: numOrNull(data.items?.battery_soc),
     batteryW: roundOrNull(data.items?.battery_w),
-    gridW: roundOrNull(data.items?.grid_w),
+    // 🛑 SIGN NORMALISED HERE — the lowest layer, and it has to be here rather than in the
+    // adapter's `transformData`. `SelectronicAdapter.fetchData` builds the stored `point_readings`
+    // from `vendorData[field]`, i.e. from THIS object, and uses `transformData` only for the
+    // KV/latest value. Flipping in `transformData` would therefore have changed what the dashboard
+    // shows live and left the stored column untouched — the two disagreeing again, by a new route.
+    //
+    // The SP-PRO signs its AC-input port NEGATIVE while the house draws from it; LiveOne's
+    // canonical `bidi.*` convention is positive = inflow/import
+    // (`docs/architecture/energy-flow-matrix.md`). Until 2026-09-17 this was reconciled at READ
+    // time by `points.transform = 'i'`, which four consumers applied and the KV path did not.
+    // Same seam, same reason, as Sigenergy's `toWInverted`. `+ 0` normalises -0; null survives.
+    gridW: negateOrNull(roundOrNull(data.items?.grid_w)),
     faultCode: numOrNull(data.items?.fault_code),
     faultTimestamp: numOrNull(data.items?.fault_ts),
     generatorStatus: numOrNull(data.items?.gen_status),

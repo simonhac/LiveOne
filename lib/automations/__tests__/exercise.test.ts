@@ -7,6 +7,11 @@
  */
 import { describe, expect, it } from "@jest/globals";
 import {
+  GRID_EXPORT_W,
+  GRID_IMPORT_W,
+  importSeriesW,
+} from "@/lib/aggregation/__fixtures__/sign-convention";
+import {
   decideExercise,
   importKw,
   isDue,
@@ -104,30 +109,34 @@ describe("isDue", () => {
 });
 
 /**
- * 🛑 VERIFIED AGAINST PRODUCTION, 2026-09-16 — do not "correct" these signs from first principles.
+ * 🛑 The sign convention lives in `lib/aggregation/__fixtures__/sign-convention.ts`, not here.
  *
- * The stored `point_readings.value` for Daylesford's `bidi.grid/power`
- * (`pt_5v404b4m93bf8aytkrzvhvs3z1`) is NEGATIVE while the generator supplies the house. The point
- * carries `points.transform = 'i'`, and `/api/history` flips it on read — which is why that API
- * shows +3813 W for the 2026-09-12 run while the column holds −3813. This module reads
- * `ReadingsDao.readRaw`, i.e. the column, so the negation below is correct.
+ * These used to be bare literals — `importKw(-2300) === 2.3` — and the flow tests carried their own
+ * separate numbers. Either suite could be "corrected" alone and stay green while contradicting the
+ * other, which is how the question stayed open long enough to produce two wrong answers in one
+ * afternoon. Now both import the same constants, so flipping one breaks the other.
  *
- * The tell, if you ever need to re-establish it without DB access: an `'i'` point's `min` and `max`
- * come back from `/api/history` the wrong way round, because negation reverses order. Daylesford's
- * grid series violates `min ≤ avg ≤ max` in exactly the buckets of a generator run; its battery and
- * load series never do.
+ * The assertions below are PROPERTIES, not arithmetic: there is no single number to nudge.
  */
-describe("importKw — the sign convention", () => {
-  it("reads NEGATIVE watts as import", () => {
-    expect(importKw(-2300)).toBe(2.3);
+describe("importKw — the canonical convention", () => {
+  it("reads POSITIVE watts as import", () => {
+    expect(importKw(GRID_IMPORT_W)).toBeCloseTo(GRID_IMPORT_W / 1000, 6);
   });
 
   it("clamps export to zero rather than reporting negative load", () => {
-    expect(importKw(4100)).toBe(0);
+    expect(importKw(GRID_EXPORT_W)).toBe(0);
   });
 
   it("is zero at zero", () => {
     expect(importKw(0)).toBe(0);
+  });
+
+  // The property, over a table: import is the positive half, export contributes nothing, and the
+  // two halves together account for the whole magnitude.
+  it.each([-5000, -1, 0, 1, 5000])("holds the property at %d W", (w) => {
+    expect(importKw(w) > 0).toBe(w > 0);
+    const exportKw = Math.max(0, -w) / 1000;
+    expect(importKw(w) + exportKw).toBeCloseTo(Math.abs(w) / 1000, 6);
   });
 });
 
@@ -172,11 +181,11 @@ describe("isSelfCommandedRun", () => {
 describe("shouldAbortRun", () => {
   const OPTS = { minLoadKw: 1.5, settleMinutes: 10, sustainMinutes: 3 };
   const T = at("2026-09-17T07:00:00+10:00");
-  /** Minutely samples of `kw` of import, ending now — stored as negative watts. */
+  /** Minutely samples of `kw` of import, ending now, in the canonical stored sign. */
   const window = (kw: (number | null)[]): LoadedSample[] =>
     kw.map((v, i) => ({
       tMs: T + i * MIN,
-      value: v === null ? null : -v * 1000,
+      value: v === null ? null : importSeriesW(v),
     }));
 
   it("does not abort before the settle mark, however unloaded", () => {
@@ -224,9 +233,9 @@ describe("longestLoadedStretch", () => {
   const T = at("2026-09-10T09:00:00+10:00");
 
   /**
-   * MINUTELY samples, the cadence `point_readings` actually holds, expressed as kW of import and
-   * stored as the negative watts the Selectronic reports. Sparser fixtures would trip the
-   * 5-minute gap break for reasons that have nothing to do with the case under test.
+   * MINUTELY samples, the cadence `point_readings` actually holds, expressed as kW of import in
+   * the CANONICAL stored sign. Sparser fixtures would trip the 5-minute gap break for reasons that
+   * have nothing to do with the case under test.
    */
   const ramp = (
     fromMin: number,
@@ -235,7 +244,10 @@ describe("longestLoadedStretch", () => {
   ): LoadedSample[] => {
     const out: LoadedSample[] = [];
     for (let m = fromMin; m <= toMin; m++)
-      out.push({ tMs: T + m * MIN, value: kw === null ? null : -kw * 1000 });
+      out.push({
+        tMs: T + m * MIN,
+        value: kw === null ? null : importSeriesW(kw),
+      });
     return out;
   };
 

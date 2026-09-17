@@ -46,7 +46,12 @@ func TestCloudNormalization(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	if s.Values["solarW"] != float64(3) || s.Values["gridW"] != float64(-1) || s.Values["solarKwhTotal"] != float64(1235) || !s.At.Equal(time.Unix(1000, 0)) {
+	// 🛑 grid_w -1.5 → gridW +1, not -1. Canonical `bidi.*` is positive = inflow/import and the
+	// SP-PRO signs its AC-input port the other way, so the decoder negates — and it ROUNDS FIRST:
+	// round(-1.5) = -1, negated = 1. Negating first would give 1.5, which rounds to 2. This value
+	// is the parity check against the TypeScript `transformSelectronicData`; if the two disagree,
+	// the Selectronic trial comparison reports a difference that is purely our own.
+	if s.Values["solarW"] != float64(3) || s.Values["gridW"] != float64(1) || s.Values["solarKwhTotal"] != float64(1235) || !s.At.Equal(time.Unix(1000, 0)) {
 		t.Fatal(s)
 	}
 	for _, r := range Readings("selectronic", s.Values) {

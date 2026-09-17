@@ -137,7 +137,7 @@ export const AUTOMATION_SUBCOMMANDS = {
       "\n" +
       "Three points are involved and they are not interchangeable:\n" +
       "  --derivation    the run detector, which answers 'is it running' and 'did it run'\n" +
-      "  --load-point    a power point in WATTS (negative = import) that says how HARD it ran;\n" +
+      "  --load-point    a power point in WATTS (positive = import) that says how HARD it ran;\n" +
       "                  the DeepSea controller has no CTs, so load is read from the inverter\n" +
       "  --action-point  the writable run-request point the run is commanded through\n" +
       "\n" +

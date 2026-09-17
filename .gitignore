@@ -112,3 +112,8 @@ scripts/collector/fly/collector.cjs
 /.playwright/
 /playwright-report/
 /test-results/
+
+# Resume watermark for the one-off Selectronic sign repair (scripts/utils/normalise-selectronic-grid-sign.ts).
+# 🛑 Operator state, never committed — but do NOT delete it mid-repair: a re-run without it
+# negates the already-repaired rows a second time.
+/.selectronic-sign-watermark.json

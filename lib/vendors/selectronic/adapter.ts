@@ -322,6 +322,7 @@ export class SelectronicAdapter extends BaseVendorAdapter {
       solarRemoteW: vendorData.solarInverterW, // Map old field name
       loadW: vendorData.loadW,
       batteryW: vendorData.batteryW,
+      // Canonical already — `selectronic-client.ts` normalises the sign as it parses.
       gridW: vendorData.gridW,
       batterySOC: vendorData.batterySOC,
       faultCode:

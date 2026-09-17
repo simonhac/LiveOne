@@ -580,8 +580,8 @@ Around them:
 
 An off-grid site has no grid but a **generator**, whose electrical output the inverter (the micro-grid
 master) measures on its AC-input port — carried as `bidi.grid`, so it flows as `source.grid` through
-the allocation (the point's `i` transform flips the inverter's raw sign so generator supply reads as
-positive import). Its intensity is **config, not telemetry** — most off-grid sites have no queryable
+the allocation (the inverter's sign is normalised to canonical positive-import at INGEST, in
+`selectronic-client.ts`; it used to be flipped at read time by the point's `i` transform). Its intensity is **config, not telemetry** — most off-grid sites have no queryable
 engine controller, and the generator's _power_ isn't separately metered. So the battery system carries
 `config.batteryProvenance.generatorSource = { emissionsIntensity, pricePerKwh, renewableFraction }`,
 and the loader, whenever this config is present, feeds those constants into the grid intensity series —

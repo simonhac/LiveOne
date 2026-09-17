@@ -62,14 +62,17 @@ export function isDue(args: {
 }
 
 /**
- * Raw watts on the grid-facing point → kW of IMPORT.
+ * Watts on the grid-facing point → kW of IMPORT.
  *
- * At off-grid Daylesford the generator is wired where the grid would be, and the Selectronic
- * signs that point negative when the house is drawing from it. Export (positive) is not generator
- * load, so it clamps to zero rather than going negative.
+ * 🛑 Now a plain projection of the CANONICAL convention (`bidi.*` positive = inflow/import), not a
+ * private guess about one vendor's wiring. It used to negate, because the SP-PRO's raw sign was
+ * stored verbatim and reconciled at read time — and this module reads RAW, so it had to reproduce
+ * the flip itself. That flip now happens once, in the Selectronic adapter, at ingest.
+ *
+ * Export (negative) is not generator load, so it clamps to zero rather than going negative.
  */
-export function importKw(rawW: number): number {
-  return Math.max(0, -rawW) / 1000;
+export function importKw(w: number): number {
+  return Math.max(0, w) / 1000;
 }
 
 /** One dispatch this rule made: when we asked, and for how long. */

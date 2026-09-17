@@ -84,6 +84,7 @@ import type {
   AutomationRow,
   ExerciseTrigger,
 } from "@/lib/db/planetscale/schema";
+import { importSeriesW } from "@/lib/aggregation/__fixtures__/sign-convention";
 import { evaluateAutomations } from "@/lib/automations/evaluate";
 import { planExercise } from "@/lib/automations/evaluate-exercise";
 
@@ -870,11 +871,11 @@ function runInterval(
   };
 }
 
-/** Minutely load samples covering a whole interval, at a constant kW of import. */
+/** Minutely load samples covering a whole interval, at a constant kW of import (canonical sign). */
 function loadSeries(from: number, to: number, kw: number) {
   const out: { measurementTimeMs: number; value: number }[] = [];
   for (let t = from; t <= to; t += MIN)
-    out.push({ measurementTimeMs: t, value: -kw * 1000 });
+    out.push({ measurementTimeMs: t, value: importSeriesW(kw) });
   return new Map([[Point.encode(LOAD_PT_UUID), out]]) as never;
 }
 

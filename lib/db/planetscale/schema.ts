@@ -1587,8 +1587,11 @@ export interface ExerciseSchedule {
  * The skip condition: don't exercise if the engine has ALREADY done real work recently.
  *
  * Load is not measurable on the DeepSea controller (no CTs), so it is read from a separate power
- * point — at off-grid Daylesford the Selectronic `bidi.grid/power`, where NEGATIVE means the house
- * is importing from the generator. `lib/automations/exercise.ts` owns that sign convention.
+ * point — at off-grid Daylesford the Selectronic `bidi.grid/power`, where POSITIVE means the house
+ * is importing from the generator, per the canonical `bidi.*` convention in
+ * `docs/architecture/energy-flow-matrix.md`. The STORE owns that convention now, established at
+ * ingest by each vendor adapter; no reader flips anything, and `lib/automations/exercise.ts` reads
+ * it as it is stored.
  */
 export interface ExerciseUnless {
   loadPointId: string; // raw points.id uuid; unit must be W (checked in references.ts)

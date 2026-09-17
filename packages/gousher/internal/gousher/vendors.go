@@ -121,6 +121,20 @@ func Normalize(source string, raw map[string]any, at time.Time) (Sample, error) 
 			}
 			v[field] = scale(selectNumber(m[key]), f, strings.HasSuffix(field, "W") || f == 1000)
 		}
+		// 🛑 SIGN: canonical `bidi.*` is positive = inflow/import, and the SP-PRO signs its
+		// AC-input port the other way. The TypeScript decoder (`transformSelectronicData`)
+		// normalises this at ingest; this independent implementation exists to CHECK that one, so
+		// it has to agree or the trial comparison reports a difference that is purely our own.
+		//
+		// 🛑 ROUND THEN NEGATE, which is why this is not `f = -1` in the mapping above. `scale`
+		// multiplies before rounding, and the two orders disagree at half-integers: grid_w -1.5
+		// rounds to -1 and negates to 1, whereas negating first gives 1.5, which rounds to 2.
+		// `round` here is Floor(v+0.5), the same rule as JS `Math.round`, so round-then-negate
+		// matches the TypeScript exactly.
+		if n, ok := number(v["gridW"]); ok {
+			v["gridW"] = -n + 0
+		}
+
 		a, ok := number(selectNumber(m["solarinverter_w"]))
 		b, ok2 := number(selectNumber(m["shunt_w"]))
 		if ok && ok2 {

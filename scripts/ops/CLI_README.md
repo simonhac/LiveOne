@@ -5775,7 +5775,7 @@ default; read the printed rule before `--apply`.
 
 Three points are involved and they are not interchangeable:
   --derivation    the run detector, which answers 'is it running' and 'did it run'
-  --load-point    a power point in WATTS (negative = import) that says how HARD it ran;
+  --load-point    a power point in WATTS (positive = import) that says how HARD it ran;
                   the DeepSea controller has no CTs, so load is read from the inverter
   --action-point  the writable run-request point the run is commanded through
 
