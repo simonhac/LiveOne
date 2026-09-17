@@ -14,25 +14,29 @@
  * The decoder now normalises at ingest (`transformSelectronicData`), so NEW readings land canonical.
  * This repairs the history so both halves agree, and clears the transform.
  *
- * ── 🛑 THIS REQUIRES A QUIESCED INGEST LANE, AND REFUSES WITHOUT ONE ─────────────────────────────
+ * ── WHICH ROWS ARE LEGACY: THE SESSION, NOT THE CLOCK ───────────────────────────────────────────
  *
- * It asserts at start-up that the `live` lane is paused and drained. That is not caution; it is
- * what makes the operation tractable, because it turns two hard problems into two trivial ones:
+ * A row is repaired iff `session_id IS NULL` OR its session was created before `--cutover`.
  *
- *  1. WHICH ROWS ARE LEGACY. With writes stopped, every row present is old-decoder by construction,
- *     so `max(measurement_time)` IS the boundary. Run this against a live table and it negates rows
- *     the new decoder already wrote canonically — and no deploy-timestamp heuristic fixes that,
- *     because an in-flight poll can land an OLDER measurement time after the cutover.
- *  2. HOW TO RESUME. Nothing below the watermark can change while we work, so "repaired up to T" is
- *     enough to restart from. Against a live table it would not be, and this would need a durable
- *     per-row original→target manifest instead.
+ * 🛑 The session records when WE POLLED, not when the inverter sampled — and that is the whole
+ * point. Every clock-based boundary fails the same way: a poll that fires after the cutover can
+ * carry a vendor timestamp from before it, so `measurement_time` cannot tell an old-decoder row
+ * from a new-decoder one. The session can, exactly, and however late the message lands.
+ *
+ * That makes the repair safe against LIVE INGEST. Earlier drafts paused the `live` lane and drained
+ * it; that was abandoned because pausing stops DISPATCH, not POLLING — the collectors keep
+ * publishing, so messages produced before the cutover sit in the outbox and land after the repair
+ * has finished validating. Racing the pause against a fleet-wide lane is not winnable, and stopping
+ * the poller instead would leave a PERMANENT hole: Selectronic is a live-poll vendor with no
+ * history endpoint (`lib/vendors/sync-legs.ts` covers amber, sigenergy and openelectricity only),
+ * so `liveone sync` refuses it rather than backfilling.
+ *
+ * NULL sessions are legacy by construction: on the live data they stop in June 2026, months before
+ * any cutover, while session-bearing rows start 2025-11-04.
  *
  * 🛑 The writes are chunked and non-transactional, so a crash DOES leave the table half-flipped.
  * The watermark file is what makes that recoverable: a re-run resumes from it rather than negating
  * everything again. Delete the watermark and re-run, and you corrupt the rows already done.
- *
- * `queue pause` only stops DISPATCH — publishing is unaffected and the outbox keeps accepting — so
- * nothing is lost while this runs. Resume afterwards and the queued readings land canonical.
  *
  * WHY NEGATE RATHER THAN REPLAY
  * The opposite call from `rebuild-sigenergy-readings.ts`, deliberately. That repair fixed three
@@ -41,17 +45,20 @@
  * of one point: negation is exactly the correction, and replaying 13 months through today's parser
  * would silently adopt every unrelated mapping change made since.
  *
- * USAGE — the full runbook is `docs/runbooks/selectronic-sign-cutover.md`. Do not run this on its
- * own; the steps either side of it are what make it safe.
+ * USAGE — the runbook is `docs/runbooks/selectronic-sign-cutover.md`.
  *
- *   npx tsx --env-file=.env.local scripts/utils/normalise-selectronic-grid-sign.ts            # dry run
- *   npx tsx --env-file=.env.local scripts/utils/normalise-selectronic-grid-sign.ts --apply
- *   … [--device=1] [--force-unpaused]   ← --force-unpaused is for a DEV database only
+ *   … normalise-selectronic-grid-sign.ts --cutover=2026-09-18T00:00:00Z            # dry run
+ *   … normalise-selectronic-grid-sign.ts --cutover=2026-09-18T00:00:00Z --apply
+ *   … [--device=1]
+ *
+ * `--cutover` is the instant the new decoder went live. Take it from the deployment, and err
+ * EARLY rather than late: a cutover before the deploy leaves a few new-sign rows unrepaired, which
+ * is visible and fixable; one after it negates canonical rows, which is not.
  */
-import { and, eq } from "drizzle-orm";
+import { and, eq, lt } from "drizzle-orm";
 import { existsSync, readFileSync, writeFileSync, unlinkSync } from "node:fs";
 import { planetscaleDb } from "@/lib/db/planetscale";
-import { points, devices } from "@/lib/db/planetscale/schema";
+import { points, devices, sessions } from "@/lib/db/planetscale/schema";
 import { ReadingsDao } from "@/lib/readings/dao";
 import { Point } from "@/lib/ids";
 import type { PointId } from "@/lib/ids/types";
@@ -92,62 +99,59 @@ function readWatermark(pointId: string): Watermark | null {
 interface Args {
   apply: boolean;
   deviceRid: number;
-  forceUnpaused: boolean;
+  cutoverMs: number;
 }
 
 function parseArgs(): Args {
   const argv = process.argv.slice(2);
   const get = (k: string) =>
     argv.find((a) => a.startsWith(`--${k}=`))?.split("=")[1];
+  const cutover = get("cutover");
+  if (!cutover)
+    fail(
+      "--cutover=<ISO> is required: the instant the new decoder went live.\n" +
+        "  Rows from polls BEFORE it are repaired; rows from polls after it are already canonical.\n" +
+        "  Err EARLY — too early leaves a few visible rows unrepaired, too late destroys good ones.",
+    );
+  const cutoverMs = Date.parse(cutover);
+  if (Number.isNaN(cutoverMs))
+    fail(`--cutover=${cutover} is not a parseable instant`);
   return {
     apply: argv.includes("--apply"),
     deviceRid: Number(get("device") ?? 1),
-    forceUnpaused: argv.includes("--force-unpaused"),
+    cutoverMs,
   };
 }
 
 /**
- * Refuse unless the live lane is paused AND drained.
+ * The set of sessions that predate the cutover — i.e. the polls the OLD decoder produced.
  *
- * Drained matters as much as paused: `pause` stops new dispatch but says nothing about messages
- * already in flight, and one of those landing mid-repair would write an old-sign row below the
- * watermark — invisible to this run and to its validation.
+ * Loaded once, up front, as a Set. `sessions` is a config-ish table for this device (~one row per
+ * poll), so this is bounded by the device's own history rather than by the readings count, and it
+ * turns the per-row test into a hash lookup instead of 534k joins.
+ *
+ * 🛑 Scoped to the DEVICE. A session id is globally unique, so an unscoped load would pull every
+ * vendor's polls and answer the same question far more expensively.
  */
-async function assertQuiesced(
-  force: boolean,
-  reportOnly: boolean,
-): Promise<void> {
-  // 🛑 `reportOnly` is how the DRY RUN exercises this. Without it the guard would be dead code
-  // until the one run that matters, and the only way to find out whether it worked would be to
-  // launch the real repair and hope it refused — which is exactly backwards for a check whose job
-  // is to stop that repair. The dry run now answers "am I quiesced?" for free, on cutover day.
-  const say = (msg: string) =>
-    reportOnly ? console.warn(`⚠ ${msg}`) : fail(msg);
-
-  if (force) {
-    console.warn(
-      "⚠ --force-unpaused: skipping the quiescence check. DEV ONLY — on prod this corrupts rows.",
+async function legacySessionIds(
+  db: NonNullable<typeof planetscaleDb>,
+  deviceRid: number,
+  cutoverMs: number,
+): Promise<Set<string>> {
+  const rows = await db
+    .select({ id: sessions.id })
+    .from(sessions)
+    .where(
+      and(
+        eq(sessions.deviceRid, deviceRid),
+        lt(sessions.createdAt, new Date(cutoverMs)),
+      ),
     );
-    return;
-  }
-  const state = await readIngestState();
-  const live = state.lanes.find((l) => l.lane === "live");
-  if (!live?.paused)
-    return say(
-      "the `live` ingest lane is NOT paused.\n" +
-        "  Run: npm run liveone -- queue pause --lane live --apply --yes\n" +
-        "  then wait for in-flight to reach 0 (npm run liveone -- queue status).\n" +
-        "  Without this, rows the new decoder wrote canonically get negated back.",
-    );
-  if (live.inFlight > 0)
-    return say(
-      `the \`live\` lane is paused but ${live.inFlight} message(s) are still in flight — wait for them to land`,
-    );
-  console.log("quiesced:  live lane paused, nothing in flight ✓");
+  return new Set(rows.map((r) => r.id));
 }
 
 async function main() {
-  const { apply, deviceRid, forceUnpaused } = parseArgs();
+  const { apply, deviceRid, cutoverMs } = parseArgs();
   const db = planetscaleDb;
   if (!db) fail("no database — run with `tsx --env-file=.env.local`");
 
@@ -178,6 +182,10 @@ async function main() {
   console.log(`point:     ${pointId}  bidi.grid/power`);
   console.log(`transform: ${point.transform ?? "null"}`);
 
+  console.log(`cutover:   ${new Date(cutoverMs).toISOString()}`);
+  const legacy = await legacySessionIds(db, deviceRid, cutoverMs);
+  console.log(`legacy:    ${legacy.size} session(s) predate the cutover`);
+
   const resume = readWatermark(pointId);
   if (resume)
     console.log(
@@ -193,9 +201,6 @@ async function main() {
         `or this point never stored the inverted sign. Refusing: negating again would undo it.`,
     );
 
-  // Reported on a dry run, ENFORCED on an apply.
-  await assertQuiesced(forceUnpaused, !apply);
-
   // Takes point RIDs, not `pt_` ids.
   const span = await ReadingsDao.rawSpanMsForPoints([point.rid]);
   if (!span) fail("no readings for this point — nothing to do");
@@ -208,6 +213,7 @@ async function main() {
   let intended = 0;
   let updated = 0;
   let positives = 0;
+  let skippedCanonical = 0;
   const touched = new Set<number>();
   let cursor = fromMs;
   const startedAt = resume?.startedAt ?? new Date().toISOString();
@@ -228,6 +234,14 @@ async function main() {
     for (const r of rows) {
       scanned++;
       if (r.value === null) continue;
+      // 🛑 THE BOUNDARY. A NULL session is legacy by construction (they stop months before any
+      // cutover); a session we loaded is one that polled BEFORE the cutover, so its row carries the
+      // old decoder's sign however late the message landed. Anything else was written by the new
+      // decoder and is already canonical — negating it would be the one unrecoverable mistake here.
+      if (r.sessionId !== null && !legacy.has(r.sessionId)) {
+        skippedCanonical++;
+        continue;
+      }
       if (r.value > 0) positives++;
       updates.push({
         point: pointId,
@@ -265,7 +279,8 @@ async function main() {
 
   console.log(`scanned:   ${scanned} readings`);
   console.log(
-    `to negate: ${intended} (${scanned - intended} null, left alone)`,
+    `to negate: ${intended}  (skipped ${skippedCanonical} already-canonical, ` +
+      `${scanned - intended - skippedCanonical} null-valued)`,
   );
   // Informational, not a refusal. An off-grid site exports essentially nothing, so a large positive
   // count would mean the premise is wrong — a handful is ordinary sensor noise around zero. They

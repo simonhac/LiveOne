@@ -8,7 +8,7 @@ at read time.
 
 ## Why this is a cutover and not a deploy
 
-The adapter's sign and the stored data's sign have to change together, and there is **no ordering
+The decoder's sign and the stored data's sign have to change together, and there is **no ordering
 without a window where something reads backwards**:
 
 | order | what breaks |
@@ -17,14 +17,28 @@ without a window where something reads backwards**:
 | flip the decoder first | new readings are canonical but `transform:'i'` still flips them |
 | delete the read-time flips first | all 13 months invert at once |
 
-Pausing ingest is what collapses the problem. With writes stopped, every row present is old-decoder
-**by construction**, so `max(measurement_time)` is the legacy boundary — no deploy-timestamp
-heuristic, and no reasoning about in-flight polls landing older measurement times after the cutover.
-It also reduces resumability from a per-row original→target manifest to a single watermark, because
-nothing below the watermark can change while the repair runs.
+So the deploy and the repair belong in one sitting. What the repair needs is a way to tell an
+old-decoder row from a new-decoder one — and **that is the session, not the clock.**
 
-`queue pause` stops **dispatch** only — publishing is unaffected and the outbox keeps accepting — so
-nothing is lost. The queued readings land canonical after the resume.
+A row is repaired iff `session_id IS NULL` or its session was created before `--cutover`. The
+session records when *we polled*, so a message produced before the cutover is repaired however late
+it lands and whatever vendor timestamp it carries. `measurement_time` cannot do this: a poll firing
+after the cutover can carry an inverter timestamp from before it.
+
+### What this replaces, and why
+
+An earlier draft paused the `live` ingest lane and drained it. That was abandoned:
+
+- **Pausing stops dispatch, not polling.** The collectors keep publishing, so messages produced
+  before the cutover sit in the outbox and land *after* the repair has finished validating.
+- **The race is not winnable.** The lane is fleet-wide, so messages arrive continuously from every
+  vendor; draining to zero and pausing still caught 2 in flight, twice.
+- **Stopping the poller instead would leave a permanent hole.** Selectronic is a live-poll vendor
+  with no history endpoint — `lib/vendors/sync-legs.ts` covers amber, sigenergy and openelectricity
+  only, and `liveone sync` refuses the rest rather than backfilling. A gap could never be filled.
+
+With the session boundary, **none of that is needed**: the repair is safe against live ingest, no
+polls are stopped, and nothing is lost.
 
 ## Scope
 
@@ -39,40 +53,44 @@ nothing is lost. The queued readings land canonical after the resume.
 ## Before you begin
 
 - Do it in daylight, and **not** on a Thursday morning — the generator exercise slot is Thu 07:00
-  and its `unless` clause reads this point.
+  and its `unless` clause reads this point. (Step 1 disarms it anyway; this is belt and braces.)
 - Confirm a recent PITR window and take a base backup: `pscale backup create liveone sydney`.
 - Have `docs/architecture/energy-flow-matrix.md` open if you need to re-derive which way is canonical.
 
 ## The steps
 
+Ingest keeps running throughout. Nothing is paused, nothing is stopped, no poll is lost.
+
 ```bash
-# 1. Stop dispatch, and disarm the automation so nothing acts on mixed-sign data.
-npm run liveone -- queue pause --lane live --apply --yes
+# 1. Disarm the automation — it reads this point, and during the window its 7-day lookback spans
+#    both conventions. Nothing else is touched.
 npm run liveone -- automation disable ar_01kx8km3a3fh5v2csryvhskzep 'Generator exercise' --apply --yes
 
-# 2. Drain. Wait for in-flight to reach 0 — the repair refuses otherwise, and a message landing
-#    mid-repair would write an old-sign row below the watermark, invisible to the validation.
-npm run liveone -- queue status
-
-# 3. Deploy the decoder flip (this PR). Nothing is landing, so nothing is written either way.
+# 2. Note the cutover instant, then deploy. Take T from the deploy, and err EARLY: a T before the
+#    deploy leaves a few new-sign rows unrepaired (visible, fixable); a T after it negates
+#    canonical rows (not fixable without knowing which).
+date -u +%Y-%m-%dT%H:%M:%SZ        # ← this is T; record it
+gh pr merge 530 --squash
 ./scripts/utils/wait-for-deploy.sh
 
-# 4. Repair. Dry run first — it prints the span, the row count, and how many values are positive
-#    (expect a handful out of ~534k; an off-grid AC input essentially only ever imports).
-npx tsx --env-file=.env.local scripts/utils/normalise-selectronic-grid-sign.ts
-npx tsx --env-file=.env.local scripts/utils/normalise-selectronic-grid-sign.ts --apply
+# 3. Repair. Dry run first: it prints how many sessions predate T, how many rows qualify, and how
+#    many are skipped as already-canonical. That skip count should be roughly the polls since T.
+npx tsx --env-file=.env.local scripts/utils/normalise-selectronic-grid-sign.ts --cutover=<T>
+npx tsx --env-file=.env.local scripts/utils/normalise-selectronic-grid-sign.ts --cutover=<T> --apply
 
-# 5. Resume. Everything downstream is an idempotent recompute and is safe against a live table.
-npm run liveone -- queue resume --lane live --apply --yes
-
-# 6. Rebuild what the raw repair invalidated but did not touch.
+# 4. Rebuild what the raw repair invalidated but did not touch.
 npm run liveone -- device recompute 1 --start 2025-08-30 --end <today> --apply
 #    …then the battery fold + Sankey, looping on nextCursor:
 #    POST /api/v4/areas/ar_01kx8km3a3fh5v2csryvhskzep/recompute-provenance
 
-# 7. Re-enable the automation.
+# 5. Re-enable the automation.
 npm run liveone -- automation enable ar_01kx8km3a3fh5v2csryvhskzep 'Generator exercise' --apply --yes
 ```
+
+🛑 **`--env-file=.env.local` points at `liveone-dev`, not prod.** To repair production, mint a
+short-TTL write role (`pscale role create liveone sydney <name> --ttl 30m`), pass its URL as
+`PLANETSCALE_DATABASE_URL`, and set `ALLOW_PROD_DB_IN_DEV=true` — `assertDbEnvironmentMatches` is
+fail-closed and will otherwise refuse the prod connection from a laptop. Delete the role afterwards.
 
 🛑 **Never `liveone area purge flows`.** It deletes days that `rehealStaleAttrDays` will never look
 for again — it finds work by selecting *from* that table, so a deleted day is absent rather than
@@ -105,6 +123,8 @@ The writes are chunked and non-transactional, so a crash leaves the table **half
   tell you, because the row counts still reconcile.
 - The `transform = 'i'` guard is cleared only on complete success, so a finished run refuses to run
   again. It says nothing about a run that died.
+- Re-running with a DIFFERENT `--cutover` than the first attempt would repair a different set of
+  rows. Use the T you recorded, not a fresh one.
 
 ## Afterwards
 
