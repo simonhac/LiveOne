@@ -33,6 +33,7 @@ import {
   refreshServingForMintedPoints,
   updateLatestPointValue,
 } from "../kv-cache-manager";
+import { canonicalValue } from "./canonical-value";
 import { getAreaBindingRefs } from "@/lib/areas/bindings";
 import { getAreaMemberDeviceIds } from "@/lib/areas/members";
 import { DeviceRegistry } from "@/lib/registry";
@@ -1122,7 +1123,15 @@ export class PointManager {
         const point = points.find((p: PointInfo) => p.index === val.pointId);
         const logicalPath = point?.getLogicalPath();
         // Combine numeric and string values for cache (KV accepts both)
-        const cacheValue = val.value ?? val.valueStr ?? null;
+        const storedValue = val.value ?? val.valueStr ?? null;
+        // 🛑 `points.transform` applied HERE, so the cache presents what every other reader
+        // presents. Without it the KV latest map was the ONE consumer serving the vendor's raw
+        // sign while `/api/history`, the flow matrix, the battery fold, the trial comparison and
+        // the admin readings route all flipped it — so `liveone device latest` and
+        // `liveone device history` disagreed in sign on the same point at the same instant.
+        // See `lib/point/canonical-value.ts` for why this is a read-time helper rather than a
+        // migration of the stored column.
+        const cacheValue = canonicalValue(storedValue, point?.transform);
         // Only cache active points with a proper logicalPath and a value
         if (point && cacheValue !== null && logicalPath && point.active) {
           // Collect for system summary (only numeric values)
