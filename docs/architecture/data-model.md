@@ -213,6 +213,13 @@ per-interval change — a meter reading 1000 Wh then 1250 Wh contributes 250 Wh 
 wrong on an energy point and the aggregates report the odometer instead of the trip. None of this is
 recoverable from `schema.ts`, which only knows `metric_type text`.
 
+🛑 The same column also carries `'i'`, which is an entirely unrelated mechanism: the stored value is
+in the VENDOR's sign and every reader owes it a flip. Apply it through `canonicalValue()`
+(`lib/point/canonical-value.ts`) — never a local `transform === "i"` check, which is how six
+consumers once ended up presenting five conventions. Full treatment, including why the stored column
+was not migrated to one convention instead, is in
+[point-transforms.md](point-transforms.md).
+
 ### Units & precision
 
 - Power: Watts (float in point tables).
