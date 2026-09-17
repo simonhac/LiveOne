@@ -1149,6 +1149,154 @@ describe("evaluateExercise", () => {
     expect(mockDispatch).toHaveBeenCalled();
   });
 
+  describe("supervision of a run we started", () => {
+    /** A supervised rule, with the slot already consumed — i.e. the run is ours and under way. */
+    const supervisedRow = (overTrigger: Record<string, unknown> = {}) => {
+      const base = exerciseRow().trigger as ExerciseTrigger;
+      return exerciseRow({
+        lastTriggeredRunStart: new Date(EX_SLOT),
+        trigger: {
+          ...base,
+          supervise: { settleMinutes: 10, sustainMinutes: 3 },
+          ...overTrigger,
+        } as ExerciseTrigger,
+      });
+    };
+    /** An open run that started `ageMin` ago, commanded by us at its start. */
+    const openOurs = (ageMin: number) => {
+      const startMs = EX_NOW - ageMin * MIN;
+      mockOpenRun.mockResolvedValue({
+        startTime: new Date(startMs),
+        endTime: null,
+      } as never);
+      mockStore.ownCommandsInWindow.mockResolvedValue([
+        { requestedAtMs: startMs - 20_000, minutes: 30 },
+      ] as never);
+      return startMs;
+    };
+
+    beforeEach(() => {
+      mockLoadPoint.mockResolvedValue({
+        point: { id: ACT_PT_UUID },
+        deviceRid: DEVICE_RID,
+      } as never);
+      mockDevice.mockResolvedValue({ id: DEVICE_RID } as never);
+      mockDispatch.mockResolvedValue({
+        kind: "completed",
+        ok: true,
+      } as PointActionOutcome);
+    });
+
+    it("🛑 stops a run that has stopped being loaded, with set_value 0", async () => {
+      const startMs = openOurs(20);
+      mockReadRaw.mockResolvedValue(loadSeries(EX_NOW - 3 * MIN, EX_NOW, 0.4));
+      mockStore.listEnabled.mockResolvedValue([supervisedRow()]);
+
+      await evaluateAutomations(EX_NOW);
+
+      expect(mockDispatch).toHaveBeenCalledWith(
+        expect.objectContaining({ action: "set_value", value: 0 }),
+      );
+      expect(mockStore.recordExerciseOutcome).toHaveBeenCalledWith(
+        AU_UUID,
+        expect.objectContaining({
+          context: expect.objectContaining({
+            outcome: "aborted-unloaded",
+            abortedAt: EX_NOW,
+          }),
+        }),
+      );
+      expect(startMs).toBeLessThan(EX_NOW);
+    });
+
+    it("does NOT stop a run that is still pulling load", async () => {
+      openOurs(20);
+      mockReadRaw.mockResolvedValue(loadSeries(EX_NOW - 3 * MIN, EX_NOW, 3.2));
+      mockStore.listEnabled.mockResolvedValue([supervisedRow()]);
+
+      await evaluateAutomations(EX_NOW);
+      expect(mockDispatch).not.toHaveBeenCalled();
+    });
+
+    it("does NOT stop a run still inside its warm-up", async () => {
+      openOurs(6);
+      mockReadRaw.mockResolvedValue(loadSeries(EX_NOW - 3 * MIN, EX_NOW, 0.2));
+      mockStore.listEnabled.mockResolvedValue([supervisedRow()]);
+
+      await evaluateAutomations(EX_NOW);
+      expect(mockDispatch).not.toHaveBeenCalled();
+    });
+
+    it("🛑 does NOT stop a run somebody else started", async () => {
+      const startMs = EX_NOW - 20 * MIN;
+      mockOpenRun.mockResolvedValue({
+        startTime: new Date(startMs),
+        endTime: null,
+      } as never);
+      mockStore.ownCommandsInWindow.mockResolvedValue([] as never);
+      mockReadRaw.mockResolvedValue(loadSeries(EX_NOW - 3 * MIN, EX_NOW, 0.2));
+      mockStore.listEnabled.mockResolvedValue([supervisedRow()]);
+
+      await evaluateAutomations(EX_NOW);
+      expect(mockDispatch).not.toHaveBeenCalled();
+    });
+
+    it("🛑 does NOT stop the same run twice", async () => {
+      const startMs = EX_NOW - 20 * MIN;
+      mockOpenRun.mockResolvedValue({
+        startTime: new Date(startMs),
+        endTime: null,
+      } as never);
+      // Our start, and our stop — the audit trail is what records that we have already aborted.
+      mockStore.ownCommandsInWindow.mockResolvedValue([
+        { requestedAtMs: startMs - 20_000, minutes: 30 },
+        { requestedAtMs: startMs + 13 * MIN, minutes: 0 },
+      ] as never);
+      mockReadRaw.mockResolvedValue(loadSeries(EX_NOW - 3 * MIN, EX_NOW, 0.2));
+      mockStore.listEnabled.mockResolvedValue([supervisedRow()]);
+
+      await evaluateAutomations(EX_NOW);
+      expect(mockDispatch).not.toHaveBeenCalled();
+    });
+
+    it("records a run that had already done its job as aborted-complete", async () => {
+      const startMs = openOurs(40);
+      // Loaded for the first 35 minutes, flat since: the battery filled and there is nothing left
+      // to charge. Stopping is right, but this is a successful exercise, not a failed one.
+      mockReadRaw.mockImplementation((async (
+        _ids: unknown,
+        range: { fromMs: number; toMs: number },
+      ) =>
+        range.fromMs <= startMs + MIN
+          ? loadSeries(startMs, startMs + 35 * MIN, 3.2)
+          : loadSeries(EX_NOW - 3 * MIN, EX_NOW, 0.3)) as never);
+      mockStore.listEnabled.mockResolvedValue([supervisedRow()]);
+
+      await evaluateAutomations(EX_NOW);
+
+      expect(mockDispatch).toHaveBeenCalledWith(
+        expect.objectContaining({ value: 0 }),
+      );
+      expect(mockStore.recordExerciseOutcome).toHaveBeenCalledWith(
+        AU_UUID,
+        expect.objectContaining({
+          context: expect.objectContaining({ outcome: "aborted-complete" }),
+        }),
+      );
+    });
+
+    it("does nothing at all for a rule with no supervise block", async () => {
+      openOurs(20);
+      mockReadRaw.mockResolvedValue(loadSeries(EX_NOW - 3 * MIN, EX_NOW, 0.2));
+      mockStore.listEnabled.mockResolvedValue([
+        exerciseRow({ lastTriggeredRunStart: new Date(EX_SLOT) }),
+      ]);
+
+      await evaluateAutomations(EX_NOW);
+      expect(mockDispatch).not.toHaveBeenCalled();
+    });
+  });
+
   it("🛑 a failed command lookup costs the TICK, not the slot — the next tick retries", async () => {
     // The deploy-into-a-live-grace-window question. If the new `point_commands` read rejects, the
     // per-row catch counts it and steps over; nothing may claim, consume or move the watermark, or

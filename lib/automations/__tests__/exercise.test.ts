@@ -12,6 +12,7 @@ import {
   isDue,
   isSelfCommandedRun,
   longestLoadedStretch,
+  shouldAbortRun,
   type LoadedSample,
   type LoadedStretch,
 } from "../exercise";
@@ -167,6 +168,56 @@ describe("isSelfCommandedRun", () => {
   });
 });
 
+describe("shouldAbortRun", () => {
+  const OPTS = { minLoadKw: 1.5, settleMinutes: 10, sustainMinutes: 3 };
+  const T = at("2026-09-17T07:00:00+10:00");
+  /** Minutely samples of `kw` of import, ending now — stored as negative watts. */
+  const window = (kw: (number | null)[]): LoadedSample[] =>
+    kw.map((v, i) => ({
+      tMs: T + i * MIN,
+      value: v === null ? null : -v * 1000,
+    }));
+
+  it("does not abort before the settle mark, however unloaded", () => {
+    expect(shouldAbortRun(window([0.2, 0.2, 0.2, 0.2]), 9, OPTS)).toBe(false);
+  });
+
+  it("aborts once load has been under the floor for the sustain window", () => {
+    expect(shouldAbortRun(window([0.4, 0.4, 0.4, 0.4]), 13, OPTS)).toBe(true);
+  });
+
+  it("does NOT abort while any sample in the window is loaded", () => {
+    expect(shouldAbortRun(window([0.4, 2.1, 0.4, 0.4]), 13, OPTS)).toBe(false);
+  });
+
+  // 🛑 The case the whole design turns on. A one-shot check at the settle mark passes this run;
+  // continuous supervision catches it when the load actually falls away.
+  it("🛑 aborts a run that loaded fine and then dropped at minute 20", () => {
+    expect(shouldAbortRun(window([3.1, 3.0, 2.9, 2.8]), 15, OPTS)).toBe(false);
+    expect(shouldAbortRun(window([0.4, 0.4, 0.4, 0.4]), 23, OPTS)).toBe(true);
+  });
+
+  it("🛑 does NOT abort on missing telemetry — an absence is not low load", () => {
+    expect(shouldAbortRun(window([null, null, null, null]), 20, OPTS)).toBe(
+      false,
+    );
+    expect(shouldAbortRun([], 20, OPTS)).toBe(false);
+  });
+
+  it("🛑 does NOT abort on a window too short to mean anything", () => {
+    // One stray reading, or a burst inside a single minute, says nothing about the last 3 minutes.
+    expect(shouldAbortRun(window([0.2]), 20, OPTS)).toBe(false);
+  });
+
+  it("ignores nulls among real samples rather than treating them as loaded", () => {
+    expect(shouldAbortRun(window([0.4, null, 0.4, 0.4]), 20, OPTS)).toBe(true);
+  });
+
+  it("treats exactly the floor as loaded, matching the skip condition", () => {
+    expect(shouldAbortRun(window([1.5, 1.5, 1.5, 1.5]), 20, OPTS)).toBe(false);
+  });
+});
+
 describe("longestLoadedStretch", () => {
   const OPTS = { minLoadKw: 1.5, dipToleranceSeconds: 180 };
   const T = at("2026-09-10T09:00:00+10:00");
@@ -311,6 +362,77 @@ describe("decideExercise", () => {
         slot.atMs + MIN,
       ),
     ).toEqual({ kind: "dispatch" });
+  });
+
+  describe("the readiness gate", () => {
+    const gate = (socPercent: number | null) => ({
+      readiness: { socPercent, maxSocPercent: 95 },
+    });
+
+    it("skips when the battery is too full to load the engine", () => {
+      const d = decideExercise(
+        { ...base, evidence: null, openRun: false, ...gate(98.8) },
+        slot.atMs + MIN,
+      );
+      expect(d.kind).toBe("consume");
+      expect(d.kind !== "dispatch" && d.context.outcome).toBe("skipped-full");
+      expect(d.kind !== "dispatch" && d.context.socPercent).toBe(98.8);
+    });
+
+    it("starts when there is headroom", () => {
+      expect(
+        decideExercise(
+          { ...base, evidence: null, openRun: false, ...gate(93.2) },
+          slot.atMs + MIN,
+        ),
+      ).toEqual({ kind: "dispatch" });
+    });
+
+    it("treats the gate value itself as too full", () => {
+      const d = decideExercise(
+        { ...base, evidence: null, openRun: false, ...gate(95) },
+        slot.atMs + MIN,
+      );
+      expect(d.kind !== "dispatch" && d.context.outcome).toBe("skipped-full");
+    });
+
+    // 🛑 A dead SoC sensor must not quietly retire the exercise. Failing to run the engine is the
+    // worse outcome, so an unreadable gate starts rather than skips.
+    it("🛑 starts when the state of charge cannot be read", () => {
+      expect(
+        decideExercise(
+          { ...base, evidence: null, openRun: false, ...gate(null) },
+          slot.atMs + MIN,
+        ),
+      ).toEqual({ kind: "dispatch" });
+    });
+
+    // Inside the grace window solar only pushes SoC UP, so retrying could not succeed — it would
+    // only convert a clean "skipped, too full" into a "missed".
+    it("🛑 CONSUMES the slot rather than leaving it due to retry", () => {
+      const d = decideExercise(
+        { ...base, evidence: null, openRun: false, ...gate(99) },
+        slot.atMs + MIN,
+      );
+      expect(d.kind).toBe("consume");
+    });
+
+    it("an already-satisfied rule reports satisfied, not skipped-full", () => {
+      // Order matters: "it already ran" is the more informative answer, and the cheaper one.
+      const d = decideExercise(
+        { ...base, evidence: loaded(45), openRun: false, ...gate(99) },
+        slot.atMs + MIN,
+      );
+      expect(d.kind !== "dispatch" && d.context.outcome).toBe("satisfied");
+    });
+
+    it("grace expiry still wins over the gate", () => {
+      const d = decideExercise(
+        { ...base, evidence: null, openRun: false, ...gate(99) },
+        slot.atMs + 181 * MIN,
+      );
+      expect(d.kind !== "dispatch" && d.context.outcome).toBe("missed");
+    });
   });
 
   it("consumes as satisfied when a long enough loaded run already happened", () => {
