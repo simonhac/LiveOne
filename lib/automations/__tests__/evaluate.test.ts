@@ -1133,6 +1133,53 @@ describe("evaluateExercise", () => {
     );
   });
 
+  /**
+   * An UNCONDITIONAL rule — `trigger.unless` absent, which is what a one-off "run it for 10
+   * minutes" means. Before `unless` was optional the only way through the parser was a threshold
+   * picked to be unreachable, and the area's calendar feed published that number to subscribers.
+   */
+  function unconditionalRow(): AutomationRow {
+    const t = exerciseRow().trigger as ExerciseTrigger;
+    const { unless: _dropped, ...rest } = t;
+    return exerciseRow({ trigger: rest as ExerciseTrigger });
+  }
+
+  it("a rule with no skip condition fires, and never touches the lookback", async () => {
+    // 🛑 The assertion that matters is the second one. The lookback is the EXPENSIVE half of a tick
+    // — a 7-day raw-reading scan plus an interval query, per rule — and an unconditional rule has
+    // no question for it to answer. Running it and discarding the result would work, and would
+    // quietly put that cost on every one-off.
+    mockStore.intervalsOverlapping.mockResolvedValue([
+      runInterval(2 * 24 * 60, 600),
+    ] as never);
+    mockStore.listEnabled.mockResolvedValue([unconditionalRow()]);
+
+    const summary = await evaluateAutomations(EX_NOW);
+
+    expect(summary.exercise.fired).toBe(1);
+    expect(summary.exercise.satisfied).toBe(0);
+    expect(mockDispatch).toHaveBeenCalled();
+    expect(mockReadRaw).not.toHaveBeenCalled();
+    expect(mockStore.intervalsOverlapping).not.toHaveBeenCalled();
+  });
+
+  it("records zero runs weighed for an unconditional rule, not a guess", async () => {
+    mockStore.listEnabled.mockResolvedValue([unconditionalRow()]);
+
+    await evaluateAutomations(EX_NOW);
+
+    expect(mockStore.recordExerciseOutcome).toHaveBeenCalledWith(
+      AU_UUID,
+      expect.objectContaining({
+        context: expect.objectContaining({
+          outcome: "fired",
+          runsConsidered: 0,
+          runsExcluded: 0,
+        }),
+      }),
+    );
+  });
+
   it("🛑 OUR OWN exercise does not satisfy the next one — otherwise the rule alternates weeks", async () => {
     // Deliberately WELL above the bar, so attribution is the only variable between this test and
     // the control below. (In the field it is worse than this: ramp is negligible, so a commanded

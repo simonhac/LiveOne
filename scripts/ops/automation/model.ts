@@ -19,6 +19,7 @@ import {
   type WireArea,
 } from "../shared";
 import type { ApiSession } from "@/lib/cli-kit/api-session";
+import { kebab } from "@/lib/cli/cli";
 import { Point } from "@/lib/ids";
 import {
   describe as describeSchedule,
@@ -201,6 +202,61 @@ export function buildRRule(opts: {
       'for example --rrule="FREQ=WEEKLY;BYDAY=TH" or --rrule="FREQ=MONTHLY;BYDAY=1SA"',
     );
   return parsed.value;
+}
+
+/**
+ * The `unless` block for `create-exercise`, or undefined when the rule is unconditional.
+ *
+ * 🛑 `unless` used to be REQUIRED by the API, so a one-off "run it for 10 minutes on Thursday" had
+ * no way to say "and skip it for nothing" — the only way through was a threshold chosen to be
+ * unreachable (`--min-minutes=600`). That number is not inert: the area's calendar feed renders it
+ * verbatim, so subscribers were told the run would be "Skipped if it has already run for 600
+ * minutes or more above 1.5 kW in the previous 7 days", describing a condition nothing could meet.
+ *
+ * Omitting `--load-point` now says it properly. What that costs is a STANDING rule with no load
+ * point exercising the engine on every occurrence regardless — so the caller prints the absence in
+ * as many words rather than leaving it as a missing line.
+ *
+ * Pure, and validated before anything is resolved over the network: a stray flag costs nothing.
+ */
+export function buildUnless(
+  loadPointRef: string | undefined,
+  knobs: {
+    minMinutes?: number;
+    minLoadKw?: number;
+    dipSeconds?: number;
+    withinDays?: number;
+  },
+): Record<string, unknown> | undefined {
+  const named = (
+    ["minMinutes", "minLoadKw", "dipSeconds", "withinDays"] as const
+  ).filter((k) => knobs[k] !== undefined);
+
+  if (loadPointRef === undefined) {
+    // Refused, not silently dropped. A `--min-minutes=30` that vanished would leave the operator
+    // believing they had configured a bar the rule does not have — and it is the shape they would
+    // most plausibly reach for while trying to write the old unreachable-threshold trick.
+    if (named.length)
+      throw usage(
+        named.map((k) => `--${kebab(k)}`).join(", "),
+        "these tune the skip condition, and without --load-point there is no skip condition",
+        "pass --load-point to give the rule something to measure, or drop these flags to make it unconditional",
+      );
+    return undefined;
+  }
+
+  // Sparse by contract: an omitted knob inherits the server's default and keeps inheriting it as
+  // those defaults evolve. Pinning a value you did not choose is worse than omitting it.
+  // `loadPointId` carries the REF here — whatever the operator typed. The caller overwrites it with
+  // the resolved `pt_` id once the area is known; building it now is what lets the refusal above
+  // happen before any network work, the same reason `parseStart` and `buildRRule` are called early.
+  const unless: Record<string, unknown> = { loadPointId: loadPointRef };
+  if (knobs.minMinutes !== undefined) unless.minMinutes = knobs.minMinutes;
+  if (knobs.minLoadKw !== undefined) unless.minLoadKw = knobs.minLoadKw;
+  if (knobs.dipSeconds !== undefined)
+    unless.dipToleranceSeconds = knobs.dipSeconds;
+  if (knobs.withinDays !== undefined) unless.withinDays = knobs.withinDays;
+  return unless;
 }
 
 // ---------------------------------------------------------------------------
@@ -431,6 +487,10 @@ export interface WireEvaluation {
   due?: { due?: boolean; reason?: string };
   openRun?: boolean;
   exhausted?: boolean;
+  /**
+   * `null` = the rule has no skip condition and runs whenever it is due. `undefined` = the origin
+   * did not say, which is a different thing and is rendered as such.
+   */
   unless?: {
     minMinutes?: number;
     minLoadKw?: number;
@@ -440,7 +500,7 @@ export interface WireEvaluation {
     satisfied?: boolean;
     runsConsidered?: number;
     runsExcluded?: number;
-  };
+  } | null;
   require?: {
     socPercent?: number | null;
     maxSocPercent?: number;
@@ -502,7 +562,14 @@ export function renderEvaluation(e: WireEvaluation): string {
   if (e.next?.at) out.push(`next slot:      ${e.next.at}`);
 
   const u = e.unless;
-  if (u) {
+  // 🛑 Three states, not two: a block, an explicit `null` (unconditional), and absent (the origin
+  // said nothing). Only the middle one is a statement about the rule, and it is the one an operator
+  // most needs spelled out — a missing "unless:" line reads as an omission, not as a policy.
+  if (u === null)
+    out.push(
+      "unless:         none — this rule runs on EVERY occurrence, whatever the engine has done",
+    );
+  else if (u) {
     out.push(
       `unless:         it ran ≥ ${num(u.minMinutes, 0)} min above ${num(u.minLoadKw)} kW in the last ${num(u.withinDays, 0)} days`,
     );

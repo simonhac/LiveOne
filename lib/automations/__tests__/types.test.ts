@@ -102,6 +102,89 @@ describe("parseAutomationTrigger — exercise schedule", () => {
   });
 });
 
+/**
+ * 🛑 `unless` used to be REQUIRED, which meant a one-off "run it for 10 minutes on Thursday" had no
+ * way to say "and skip it for nothing" — the only way through the parser was a threshold chosen to
+ * be unreachable (`minMinutes: 600`). That number is not inert: `describeRule` in the area calendar
+ * feed renders it verbatim, so every subscriber was told the run would be "Skipped if it has
+ * already run for 600 minutes or more above 1.5 kW in the previous 7 days", which is true of
+ * nothing. These pin that the absence is expressible and stays absent.
+ */
+describe("parseAutomationTrigger — an exercise with no skip condition", () => {
+  const unconditional = {
+    kind: "exercise",
+    source: { kind: "derivation", derivationId: DX_UUID },
+    schedule: { start: "2026-09-18T09:45" },
+  };
+
+  it("parses, and stores no `unless` key at all", () => {
+    const parsed = parseAutomationTrigger(unconditional);
+    expect(parsed).toEqual({
+      ok: true,
+      value: {
+        kind: "exercise",
+        source: { kind: "derivation", derivationId: DX_UUID },
+        schedule: { start: "2026-09-18T09:45", graceMinutes: 180 },
+      },
+    });
+    // Not `unless: undefined` — the stored jsonb must not carry a key that says nothing.
+    expect(parsed.ok && "unless" in parsed.value).toBe(false);
+  });
+
+  it("treats an explicit null the same as absent", () => {
+    const parsed = parseAutomationTrigger({ ...unconditional, unless: null });
+    expect(parsed.ok && "unless" in parsed.value).toBe(false);
+  });
+
+  it("still fills the defaults when an `unless` IS given", () => {
+    const parsed = parseAutomationTrigger({
+      ...unconditional,
+      unless: { loadPointId: PT_UUID },
+    });
+    expect(
+      parsed.ok && parsed.value.kind === "exercise" && parsed.value.unless,
+    ).toEqual({
+      loadPointId: PT_UUID,
+      minMinutes: 30,
+      minLoadKw: 1.5,
+      dipToleranceSeconds: 180,
+      withinDays: 7,
+    });
+  });
+
+  it("🛑 refuses `supervise` without it — there is nothing to supervise against", () => {
+    // Supervision reads `unless.loadPointId` against `unless.minLoadKw`. Accepting the pair would
+    // store a supervise block that silently never supervises, which is the configuration-that-
+    // reads-as-working failure this trigger keeps producing.
+    const parsed = parseAutomationTrigger({
+      ...unconditional,
+      supervise: { settleMinutes: 10, sustainMinutes: 3 },
+    });
+    expect(parsed).toEqual({
+      ok: false,
+      error:
+        "trigger.supervise needs trigger.unless — it stops a run by watching unless.loadPointId against unless.minLoadKw",
+    });
+  });
+
+  it("accepts a readiness gate without one — `require` reads its own point", () => {
+    const parsed = parseAutomationTrigger({
+      ...unconditional,
+      require: { socPointId: PT_UUID },
+    });
+    expect(
+      parsed.ok && parsed.value.kind === "exercise" && parsed.value.require,
+    ).toEqual({ socPointId: PT_UUID, maxSocPercent: 95 });
+  });
+
+  it("still refuses a malformed `unless` when one is offered", () => {
+    expect(parseAutomationTrigger({ ...unconditional, unless: 7 })).toEqual({
+      ok: false,
+      error: "trigger.unless must be an object",
+    });
+  });
+});
+
 describe("parseAutomationTrigger", () => {
   const good = {
     kind: "charge-session",

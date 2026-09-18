@@ -225,10 +225,15 @@ function describeRule(
   minutes: number,
 ): string {
   const lines = [`Run for ${minutes} minutes.`];
-  lines.push(
-    `Skipped if it has already run for ${trigger.unless.minMinutes} minutes or more above ` +
-      `${trigger.unless.minLoadKw} kW in the previous ${trigger.unless.withinDays} days.`,
-  );
+  // 🛑 Only stated when there IS a skip condition. A one-off used to be forced to carry an
+  // unreachable threshold (`minMinutes: 600`), and this line published it verbatim — "Skipped if
+  // it has already run for 600 minutes or more above 1.5 kW in the previous 7 days" went out to
+  // every subscriber of the feed, describing a rule that could not be skipped by anything.
+  if (trigger.unless)
+    lines.push(
+      `Skipped if it has already run for ${trigger.unless.minMinutes} minutes or more above ` +
+        `${trigger.unless.minLoadKw} kW in the previous ${trigger.unless.withinDays} days.`,
+    );
   if (!row.enabled) lines.push("This rule is currently DISABLED.");
   lines.push(
     `A missed start stays due for ${trigger.schedule.graceMinutes} minutes.`,

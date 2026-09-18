@@ -297,6 +297,30 @@ describe("GET …/calendar.ics", () => {
     expect(body).not.toContain(ACT_PT_UUID);
   });
 
+  it("states the skip condition when the rule has one", async () => {
+    const body = unfold(await (await feed(AREA, `?token=${TOKEN}`)).text());
+    expect(body).toContain(
+      "Skipped if it has already run for 30 minutes or more above 1.5 kW in the previous 7 days.",
+    );
+  });
+
+  it("🛑 says NOTHING about skipping when the rule has no skip condition", async () => {
+    // This is what the feed used to publish for a one-off, because `unless` was required and the
+    // only way to neutralise it was an unreachable threshold: "Skipped if it has already run for
+    // 600 minutes or more above 1.5 kW in the previous 7 days." That sentence went to every
+    // subscriber and described a rule that nothing could skip.
+    const { unless: _dropped, ...trigger } = exerciseRow()
+      .trigger as ExerciseTrigger;
+    mockStore.listForArea.mockResolvedValue([
+      exerciseRow({ trigger: trigger as ExerciseTrigger }),
+    ]);
+    const body = unfold(await (await feed(AREA, `?token=${TOKEN}`)).text());
+    expect(body).toContain("Run for 30 minutes.");
+    expect(body).not.toContain("Skipped if");
+    // The grace line is not part of the skip condition and must survive without it.
+    expect(body).toContain("A missed start stays due for 180 minutes.");
+  });
+
   it("🛑 marks a disabled rule in the SUMMARY and leaves it CONFIRMED, never CANCELLED", async () => {
     // Apple Calendar and Google treat STATUS:CANCELLED as withdrawn and render NOTHING. Emitting
     // it for a disabled rule made a week whose only event was one look empty and broken — the

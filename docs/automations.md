@@ -63,6 +63,38 @@ firing, and the exercise path never arms, so nothing has ever read it there.
 Internally the evaluator expands a one-off as `FREQ=DAILY;COUNT=1`, so the engine has one code
 path. That synthetic rule is **not** in the calendar feed, where a repeating VEVENT would be a lie.
 
+## The skip condition is optional
+
+`unless` — "don't exercise if the engine has already done real work recently" — may be **absent**,
+and absent means the rule runs whenever it is due. That is what a one-off *"run it for 10 minutes
+on Thursday morning"* means: there is nothing it should be skipped for.
+
+🛑 It used to be a required field, and the cost of that was not theoretical. The only way through
+the parser was a threshold chosen to be unreachable (`minMinutes: 600`), and the calendar feed
+renders those terms in words — so every subscriber was told the run would be *"Skipped if it has
+already run for 600 minutes or more above 1.5 kW in the previous 7 days"*, describing a condition
+nothing could meet. A required field that has to be lied to is a required field in the wrong place.
+
+Three consequences worth knowing:
+
+- On a **standing** rule, no `unless` means it exercises the engine on every single occurrence
+  regardless of what the engine has already done — the waste this trigger exists to prevent. That
+  is a legitimate thing to ask for (a site with no bidirectional power point cannot answer "did it
+  run under load" at all), so it is allowed, but every rendering of a rule — `automation show`,
+  `automation check`, the `create-exercise` dry run — states it in as many words rather than
+  leaving it as a missing line.
+- The **lookback is not run at all** for such a rule, rather than run and discarded. It is the
+  expensive half of a tick (a 7-day raw-reading scan plus an interval query, per rule), and a rule
+  with no question for it should not pay for it.
+- **`supervise` requires it** (422 otherwise). Supervision stops an unloaded run by watching
+  `unless.loadPointId` against `unless.minLoadKw` — there is deliberately one load point and one
+  floor per rule, so "loaded" means the same thing to both. A `supervise` block with nothing to
+  measure would be a feature that silently never fires, which is the failure mode this trigger
+  keeps producing.
+
+The readiness gate (`require`) is independent: it reads its own SoC point and works with or without
+a skip condition.
+
 ## The zone is the area's, and is never stored
 
 `start`, `exdates` and `rdates` are all local wall clock in the area's `display_timezone`;

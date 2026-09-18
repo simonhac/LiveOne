@@ -16,6 +16,7 @@ import {
   sourceWords,
   evaluationHasFindings,
   evaluatorState,
+  buildUnless,
   renderEvaluation,
   renderHealth,
   buildRRule,
@@ -90,17 +91,23 @@ describe("create-exercise", () => {
     expect(success(CREATE).args[0]).toBe("daylesford");
   });
 
-  // Each of the three points answers a DIFFERENT question and none can stand in for another, so
-  // all three are required rather than defaulted.
-  it.each([
-    "--derivation",
-    "--load-point",
-    "--action-point",
-    "--start",
-    "--minutes",
-  ])("requires %s", (flag) => {
-    const argv = CREATE.filter((a) => !a.startsWith(`${flag}=`));
-    expect(failure(argv)).toContain(flag.replace(/^--/, ""));
+  // Each of the points answers a DIFFERENT question and none can stand in for another. `--load-point`
+  // is the exception and is NOT on this list: it is the skip condition's input, and a rule is
+  // entitled not to have a skip condition.
+  it.each(["--derivation", "--action-point", "--start", "--minutes"])(
+    "requires %s",
+    (flag) => {
+      const argv = CREATE.filter((a) => !a.startsWith(`${flag}=`));
+      expect(failure(argv)).toContain(flag.replace(/^--/, ""));
+    },
+  );
+
+  // 🛑 The whole point of this change. `unless` used to be required, so a one-off "run it for 10
+  // minutes" had to carry a threshold picked to be unreachable (`--min-minutes=600`), and the
+  // area's calendar feed published that number to subscribers as a real condition.
+  it("does NOT require --load-point — a rule may simply be unconditional", () => {
+    const argv = CREATE.filter((a) => !a.startsWith("--load-point="));
+    expect(success(argv).flags.loadPoint).toBeUndefined();
   });
 
   it("rejects an unknown flag rather than ignoring it", () => {
@@ -170,6 +177,55 @@ describe("parseStart", () => {
     "refuses %s — the daylight-saving gap hour",
     (t) => expect(refusal(() => parseStart(t))).toContain("daylight-saving"),
   );
+});
+
+describe("buildUnless", () => {
+  it("is undefined with no load point — an unconditional rule is the base case", () => {
+    expect(buildUnless(undefined, {})).toBeUndefined();
+  });
+
+  it("is sparse: an omitted knob inherits the server's default", () => {
+    expect(buildUnless("pt_load", {})).toEqual({ loadPointId: "pt_load" });
+  });
+
+  it("carries the knobs it is given, renaming dipSeconds to the wire's field", () => {
+    expect(
+      buildUnless("pt_load", {
+        minMinutes: 20,
+        minLoadKw: 2,
+        dipSeconds: 90,
+        withinDays: 14,
+      }),
+    ).toEqual({
+      loadPointId: "pt_load",
+      minMinutes: 20,
+      minLoadKw: 2,
+      dipToleranceSeconds: 90,
+      withinDays: 14,
+    });
+  });
+
+  // 🛑 Refused, not silently dropped. `--min-minutes=600` with no load point is exactly the shape
+  // someone reaches for while trying to write the old unreachable-threshold trick, and dropping it
+  // would leave them believing they had configured a bar the rule does not have.
+  it.each([
+    ["minMinutes", 600],
+    ["minLoadKw", 1.5],
+    ["dipSeconds", 90],
+    ["withinDays", 7],
+  ])("refuses --%s without a load point", (knob, value) => {
+    const out = refusal(() => buildUnless(undefined, { [knob]: value }));
+    expect(out).toContain("no skip condition");
+    expect(out).toContain("--load-point");
+  });
+
+  it("names every stray knob, not just the first", () => {
+    const out = refusal(() =>
+      buildUnless(undefined, { minMinutes: 600, withinDays: 7 }),
+    );
+    expect(out).toContain("--min-minutes");
+    expect(out).toContain("--within-days");
+  });
 });
 
 describe("buildRRule", () => {
@@ -504,6 +560,31 @@ describe("automation check", () => {
       expect(out).toContain("answer now:   NO");
       expect(out).toContain("RAW — no transform applied");
       expect(out).toContain("4 (0 discounted as our own)");
+    });
+
+    // 🛑 THREE states, not two. `null` is the route saying "this rule has no skip condition";
+    // absent is an origin that said nothing. Rendering them the same would turn "it runs every
+    // time, whatever the engine has done" into a missing line nobody notices.
+    it("says plainly when a rule has NO skip condition", () => {
+      const out = renderEvaluation({
+        evaluatedAt: "2026-09-24T07:00:00.000Z",
+        enabled: true,
+        unless: null,
+        decision: { kind: "dispatch", outcome: null },
+      });
+      expect(out).toContain(
+        "unless:         none — this rule runs on EVERY occurrence",
+      );
+      expect(out).not.toContain("answer now:");
+    });
+
+    it("stays silent about `unless` when the origin said nothing at all", () => {
+      const out = renderEvaluation({
+        evaluatedAt: "2026-09-24T07:00:00.000Z",
+        enabled: true,
+        decision: { kind: "dispatch", outcome: null },
+      });
+      expect(out).not.toContain("unless:");
     });
 
     it("reports the readiness gate as ready or too full", () => {

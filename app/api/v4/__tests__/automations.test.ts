@@ -428,6 +428,41 @@ describe("POST /api/v4/automations", () => {
     });
   });
 
+  it("creates an exercise rule with NO skip condition, storing no `unless`", async () => {
+    // A one-off "run it for 30 minutes" has nothing to be skipped for. Until `unless` was optional
+    // the only way to say that was an unreachable threshold, which the area calendar feed then
+    // published to subscribers as though it were a real condition.
+    const { unless: _dropped, ...unconditional } = exerciseTrigger;
+    const res = await post({
+      areaId: AREA,
+      mode: "standing",
+      trigger: unconditional,
+      action: setValueAction,
+    });
+
+    expect(res.status).toBe(201);
+    const stored = mockStore.create.mock.calls[0][0];
+    expect("unless" in stored.trigger).toBe(false);
+    // 🛑 The load point is never looked up, so its guards cannot refuse a rule that names no point.
+    expect(mockLoadPoint).not.toHaveBeenCalledWith(LOAD_PT_UUID);
+  });
+
+  it("🛑 422s `supervise` without `unless` — it has nothing to measure", async () => {
+    const { unless: _dropped, ...unconditional } = exerciseTrigger;
+    const res = await post({
+      areaId: AREA,
+      mode: "standing",
+      trigger: {
+        ...unconditional,
+        supervise: { settleMinutes: 10, sustainMinutes: 3 },
+      },
+      action: setValueAction,
+    });
+    expect(res.status).toBe(422);
+    expect((await res.json()).error).toContain("trigger.supervise needs");
+    expect(mockStore.create).not.toHaveBeenCalled();
+  });
+
   it("🛑 422s a set_value of 0 — that is a STOP, not a run", async () => {
     const res = await post({
       areaId: AREA,
