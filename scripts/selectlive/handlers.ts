@@ -32,6 +32,18 @@ import {
   supportedFormat,
   validateDownloadOptions,
 } from "@/lib/selectlive/history";
+import {
+  EVENT_LOG_NAMES,
+  eventLogMetadata,
+  supportedEventFormat,
+  toEventRecord,
+  type EventLog,
+} from "@/lib/selectlive/events";
+import {
+  downloadEvents,
+  validateEventDownloadOptions,
+  type EventDownloadOptions,
+} from "@/lib/selectlive/event-download";
 import { SelectLiveError } from "@/lib/selectlive/errors";
 
 export interface Dependencies {
@@ -89,6 +101,22 @@ export async function executeSelectlive(
   };
   if (command === "history" && ctx.subcommandPath[1] === "download")
     validateDownloadOptions(downloadOptions);
+  const requestedLog = str(ctx, "kind") ?? "both";
+  const eventDownloadOptions: EventDownloadOptions = {
+    out: str(ctx, "out") ?? "",
+    logs:
+      requestedLog === "both" ? EVENT_LOG_NAMES : [requestedLog as EventLog],
+    timezone: str(ctx, "timezone"),
+    start: str(ctx, "start"),
+    end: str(ctx, "end"),
+    resume: str(ctx, "resume"),
+    signal,
+    progress: (log, done, total) =>
+      ctx.note(`${log}: ${done}/${total} records.`),
+  };
+  // Validate before opening a socket: a mistyped timezone must not cost an inverter session.
+  if (command === "events" && ctx.subcommandPath[1] === "download")
+    validateEventDownloadOptions(eventDownloadOptions);
   if (command === "read")
     request("Q", Number(str(ctx, "address")), num(ctx, "words")!);
   const stored = readCredentials(deps.storePath);
@@ -208,6 +236,96 @@ export async function executeSelectlive(
         "protocol",
         "Connected inverter identity differs from the requested serial.",
       );
+    if (command === "events") {
+      if (ctx.subcommandPath[1] === "download") {
+        const manifest = await downloadEvents(
+          inverter,
+          info,
+          eventDownloadOptions,
+        );
+        // 🛑 `lost` only. `unverified` means the walk stopped before reaching the anchor — a
+        // deadline or an abort — which says nothing about whether those records still exist.
+        // Reporting it as loss would announce permanent data loss on no evidence.
+        const lostOverlap = Object.values(manifest.logs).some(
+          (l) => l.overlapVerdict === "lost",
+        );
+        ctx.emit(manifest, () => {
+          const overlap = (verdict: string | undefined) =>
+            verdict === "confirmed"
+              ? ", overlap confirmed"
+              : verdict === "lost"
+                ? ", overlap LOST — those records were overwritten between captures and are gone"
+                : verdict === "unverified"
+                  ? ", overlap NOT VERIFIED — the walk stopped before reaching the anchor; retry"
+                  : "";
+          const lines = Object.entries(manifest.logs).map(([log, l]) =>
+            l.attempted
+              ? `${log}: ${l.acquiredRecords} records (${l.stoppedBecause})` +
+                overlap(l.overlapVerdict)
+              : // Never reached — the run stopped before this log. Its inherited anchor is still in
+                // the manifest, so the next --resume picks up where the last good one left off.
+                `${log}: not read${l.anchor ? " (previous anchor carried forward)" : ""}`,
+          );
+          return [
+            `Saved to ${manifest.directory}`,
+            ...lines,
+            `Acquisition: ${manifest.complete ? "complete" : "incomplete"}; CSV: ${manifest.decoding}`,
+            manifest.clock?.offsetSeconds != null
+              ? `Device clock is ${manifest.clock.offsetSeconds.toFixed(1)}s behind ours (recorded, not applied).`
+              : "",
+            manifest.error ?? "",
+          ]
+            .filter(Boolean)
+            .join("\n");
+        });
+        if (signal?.aborted) return EXIT.INTERRUPTED;
+        return manifest.complete &&
+          manifest.decoding === "decoded" &&
+          !lostOverlap
+          ? EXIT.OK
+          : EXIT.FINDINGS;
+      }
+      // events info: descriptors plus the oldest/newest record actually present, which the record
+      // COUNT alone does not give you — a log can advertise 52 records spanning a year.
+      const logs: Record<string, unknown> = {};
+      let stable = true;
+      for (const log of EVENT_LOG_NAMES) {
+        const before = await eventLogMetadata(inverter, log);
+        const supported = supportedEventFormat(
+          info.versions.events,
+          before.entryWords,
+        );
+        let oldest: string | null = null;
+        let newest: string | null = null;
+        if (before.recordCount && supported) {
+          const batches = [...readBatches(before)];
+          const at = async (address: number) =>
+            toEventRecord(
+              log,
+              address,
+              (await inverter.query(address, before.entryWords)).toString(
+                "hex",
+              ),
+            ).deviceTime;
+          newest = await at(before.currentAddress);
+          oldest = await at(batches[batches.length - 1].address);
+          stable &&=
+            JSON.stringify(before) ===
+            JSON.stringify(await eventLogMetadata(inverter, log));
+        }
+        logs[log] = {
+          metadata: before,
+          supportedDecoding: supported,
+          oldestDeviceTime: oldest,
+          newestDeviceTime: newest,
+        };
+      }
+      ctx.emit(
+        { device: info, eventLogs: logs, snapshotStable: stable },
+        (value) => JSON.stringify(value, null, 2),
+      );
+      return stable ? EXIT.OK : EXIT.FINDINGS;
+    }
     if (command === "history" && ctx.subcommandPath[1] === "download") {
       const acquisition = await downloadHistory(
         inverter,

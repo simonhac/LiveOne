@@ -123,7 +123,8 @@ describe("device dependents", () => {
   /**
    * The destructive query order, so a test can queue results positionally:
    *   dashboards · own points · the device row · [area name] ·
-   *   derivation sources · derivation outputs · area bindings · pollers · commands · automations
+   *   derivation sources · derivation outputs · area bindings · pollers · commands ·
+   *   device events · diagnostic captures · diagnostic jobs · automations
    */
   const destructiveResults = (
     over: Partial<Record<string, unknown[]>> = {},
@@ -136,8 +137,40 @@ describe("device dependents", () => {
     over.bindings ?? [],
     over.pollers ?? [{ n: 0 }],
     over.commands ?? [{ n: 0 }],
+    over.events ?? [{ n: 0 }],
+    over.captures ?? [{ n: 0 }],
+    over.jobs ?? [{ n: 0 }],
     over.automations ?? [],
   ];
+
+  it("names the retained fault record, which no recompute rebuilds", async () => {
+    // `device_events` / `diagnostic_captures` are EVIDENCE: the inverter's event ring is a few
+    // hundred records deep and overwrites itself, so a capture is frequently the only surviving
+    // account of an outage. A device delete has to say so rather than take them quietly.
+    mockDb.mockReturnValue(
+      stubDeviceDb(
+        destructiveResults({
+          events: [{ n: 412 }],
+          captures: [{ n: 9 }],
+          jobs: [{ n: 2 }],
+        }),
+      ) as never,
+    );
+    const deps = await findDependents("device", DEV, { destructive: true });
+    const kinds = deps.map((d) => d.kind);
+    expect(kinds).toContain("device-event");
+    expect(kinds).toContain("diagnostic-capture");
+    expect(kinds).toContain("diagnostic-job");
+    expect(deps.find((d) => d.kind === "device-event")!.id).toBe(
+      "412 record(s)",
+    );
+  });
+
+  it("says nothing about the fault record when the device has none", async () => {
+    mockDb.mockReturnValue(stubDeviceDb(destructiveResults()) as never);
+    const deps = await findDependents("device", DEV, { destructive: true });
+    expect(deps.map((d) => d.kind)).not.toContain("device-event");
+  });
 
   it("🛑 refuses over an automation that names one of the device's points", async () => {
     // The regression this leg exists for. `ledger.ts` classified `automations.action.pointId` as

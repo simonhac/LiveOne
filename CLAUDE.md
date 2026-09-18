@@ -234,9 +234,11 @@ terminal additionally requires `--yes`.
 and the HWS model: list, create, set, enable/disable, delete, recompute, intervals — addressed by
 `dx_`/name/role, never by an area; `create` names the DEVICE the detector is about), `sync` (re-fetch
 a window from a device's vendor), and `device` / `area` / `user` (list, show, latest values, history;
-`device coverage` reports per-day reading DENSITY and gap runs; `area lint` censuses wiring;
+`device coverage` reports per-day reading DENSITY and gap runs; `device events` and
+`device diagnostics` are the retained FAULT record, see below; `area lint` censuses wiring;
 `area flows` downloads the rolled-up Sankey matrix for a period — read-only except
-`device recompute`, `device config clean`, `area purge` and `area archive`/`area delete`). Run
+`device recompute`, `device config clean`, `device diagnostics run`, `area purge` and
+`area archive`/`area delete`). Run
 `-- <domain> --help` for verbs;
 the generated reference is `docs/cli-reference.md`, the architecture doc is `docs/cli.md`.
 
@@ -281,6 +283,18 @@ the generated reference is `docs/cli-reference.md`, the architecture doc is `doc
   so `liveone device recompute <device> --start --end` rebuilds `agg_1d` + the per-Area flow matrix,
   and `liveone derivation recompute <dx_> --date` rebuilds the run detectors. Each names its window;
   none has an unscoped form. The runbook is `docs/outage-catchup.md`.
+- 🛑 **`fault_code: 0` is not evidence that nothing happened.** It is a sample of an instant, and
+  across the three Daylesford interruptions of 17–18 September 2026 all 126 successful samples read
+  zero while the inverter had itself logged codes 50 and 127. The retained record is elsewhere, and
+  there are TWO sources, deliberately never merged because their clocks disagree:
+  `liveone device events <device>` shows both — `--source portal` is the Select.live Events page
+  (Created/Cleared), `--source inverter` its own `alert`/`operational` logs, each record carrying an
+  electrical snapshot. `liveone device diagnostics list|show|export|run` is the capture behind the
+  inverter half. 🛑 `run` ENQUEUES a job for the minutely `/api/cron/diagnostics` worker rather than
+  dialling the inverter itself: the inverter permits one SP LINK session, so a manual request has to
+  coalesce with an automatic trigger rather than race it. Both legs are per-device and OFF by
+  default (`config.diagnostics.portalEvents`, `config.diagnostics.autoAcquire`). Outside LiveOne
+  entirely, `./selectlive events info|download` reads the same logs to local files.
 - **`device config` sweeps the stored `DeviceConfig` jsonb.** `parseDeviceConfig` is a WHITELIST
   rebuild and the PATCH REPLACES the column, so a config key deleted from the code becomes
   unreachable rot in every stored copy until something rewrites it — #481 deleted `exportTariff`

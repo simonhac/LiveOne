@@ -154,5 +154,76 @@ export const selectliveCommand = defineCommand({
         }),
       },
     }),
+    events: defineCommand({
+      name: "events",
+      summary:
+        "Inspect or preserve the inverter's own alert and operational event logs.",
+      when: "A fault, an outage, or a generator start you cannot explain from the portal — these logs record the event and an electrical snapshot taken with it.",
+      description:
+        "A DIFFERENT dataset from `history`, which is periodic measurement history (15-minute averages).\nThere are two logs: `alert` (faults) and `operational` (state changes). Both are read; --kind narrows.\nDuring the September 2026 Daylesford interruptions the portal's fault_code read zero throughout while these logs held the codes that explained them.",
+      subcommands: {
+        info: leaf({
+          name: "info",
+          summary:
+            "Read both event logs' metadata and their oldest/newest record timestamps.",
+          flags: device,
+          examples: ["selectlive events info --device 123456"],
+        }),
+        download: leaf({
+          name: "download",
+          summary:
+            "Preserve the retained event records and optionally decode them as CSV.",
+          localEffects:
+            "Creates a new acquisition directory containing raw records, a manifest, and optional CSV.",
+          description:
+            "Raw records and manifest are preserved before decoding. CSV requires --timezone.\n--start/--end filter only the exported CSV; the acquisition itself is bounded by --resume, not by dates.\n--resume names a previous manifest.json and reads only what is new. The previous capture's newest\nrecord is read again on purpose: seeing it proves nothing was missed in between. If it is GONE the\nmanifest says so — the inverter overwrote it, and those records are not recoverable.\nTimestamps are the device's own clock (epoch 2001-01-01), stored verbatim; the manifest also records\nthe clock's measured offset from ours, which is evidence, not a correction applied to the data.\nEach invocation creates a fresh directory; existing downloads are never overwritten.",
+          // 🛑 NOT `--log`. `find` scores a leaf on its own words, and "--log" next to the required
+          // "--out" made this the top hit for the query "log out", above `liveone auth logout` —
+          // the same ranking accident commands.ts's `when:` note was written about. `--kind` names
+          // the same choice and collides with nothing.
+          flags: {
+            ...device,
+            out: {
+              type: "string",
+              required: true,
+              help: "Parent directory for the new acquisition",
+              schema: z.string().min(1),
+            },
+            kind: {
+              type: "string",
+              help: "Which of the two event logs to read (default: both)",
+              values: ["alert", "operational", "both"],
+              default: "both",
+            },
+            timezone: {
+              type: "string",
+              help: "Device clock's IANA timezone; required to produce CSV",
+            },
+            start: {
+              type: "string",
+              help: "Inclusive local start date (YYYY-MM-DD); filters the CSV",
+              schema: V.date,
+            },
+            end: {
+              type: "string",
+              help: "Exclusive local end date (YYYY-MM-DD); filters the CSV",
+              schema: V.date,
+            },
+            resume: {
+              type: "string",
+              help: "A previous acquisition's manifest.json, to read only what is new",
+            },
+          },
+          exitCodes: {
+            1: "raw records preserved, but incomplete, unsupported, not decoded, or the resume overlap was lost",
+          },
+          examples: [
+            "selectlive events info --device 123456",
+            "selectlive events download --device 123456 --out ./downloads --timezone Australia/Melbourne",
+            "selectlive events download --device 123456 --out ./downloads --timezone Australia/Melbourne --resume ./downloads/selectlive-events-123456-ab12cd/manifest.json",
+          ],
+        }),
+      },
+    }),
   },
 });

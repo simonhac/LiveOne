@@ -41,6 +41,9 @@ still reach stderr.
   - [selectlive history](../scripts/CLI_README.md#selectlive-history) — Inspect or preserve the inverter's retained detailed log.
     - [selectlive history info](../scripts/CLI_README.md#selectlive-history-info) — Read detailed log metadata and the oldest/newest record timestamps.
     - [selectlive history download](../scripts/CLI_README.md#selectlive-history-download) — Preserve the full detailed buffer and optionally decode it as CSV.
+  - [selectlive events](../scripts/CLI_README.md#selectlive-events) — Inspect or preserve the inverter's own alert and operational event logs.
+    - [selectlive events info](../scripts/CLI_README.md#selectlive-events-info) — Read both event logs' metadata and their oldest/newest record timestamps.
+    - [selectlive events download](../scripts/CLI_README.md#selectlive-events-download) — Preserve the retained event records and optionally decode them as CSV.
 
 ## `scripts/ops`
 
@@ -94,6 +97,12 @@ still reach stderr.
       - [liveone device config show](../scripts/ops/CLI_README.md#liveone-device-config-show) — The device's stored config blob, verbatim.
       - [liveone device config lint](../scripts/ops/CLI_README.md#liveone-device-config-lint) — What the current parser would DROP from the stored config.
       - [liveone device config clean](../scripts/ops/CLI_README.md#liveone-device-config-clean) — Re-parse the stored config and write back the normalised form.  _(writes)_
+    - [liveone device diagnostics](../scripts/ops/CLI_README.md#liveone-device-diagnostics) — Captures of the inverter's internal event logs — list them, read one, export one, ask for another.
+      - [liveone device diagnostics list](../scripts/ops/CLI_README.md#liveone-device-diagnostics-list) — Captures for a device, newest first, and any pending acquisition.
+      - [liveone device diagnostics show](../scripts/ops/CLI_README.md#liveone-device-diagnostics-show) — One capture in full, including its raw record stream.
+      - [liveone device diagnostics export](../scripts/ops/CLI_README.md#liveone-device-diagnostics-export) — Write a capture to a fresh directory: manifest, decoded CSV, raw records, checksums.
+      - [liveone device diagnostics run](../scripts/ops/CLI_README.md#liveone-device-diagnostics-run) — Ask for a fresh acquisition of the inverter's event logs.  _(writes)_
+    - [liveone device events](../scripts/ops/CLI_README.md#liveone-device-events) — The device's retained fault history, from the portal and from the inverter itself.
     - [liveone device recompute](../scripts/ops/CLI_README.md#liveone-device-recompute) — Rebuild the rows derived FROM a device's readings, over a window of local days.  _(writes)_
     - [liveone device change-offset](../scripts/ops/CLI_README.md#liveone-device-change-offset) — Move a device's fixed day offset, and re-bucket every daily aggregate rolled up on the old one.  _(writes)_
     - [liveone device area](../scripts/ops/CLI_README.md#liveone-device-area) — Put a device in an area, or in none.  _(writes)_

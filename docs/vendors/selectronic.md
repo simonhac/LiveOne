@@ -176,6 +176,74 @@ def proxy_login():
 | `solar_v`         | Solar array voltage                       | Volts      | 0 - max MPPT voltage    |
 | `solar_a`         | Solar array current                       | Amps       | 0 - max MPPT current    |
 
+## Fault reporting: three sources, and why one is not enough
+
+🛑 **`fault_code: 0` from `/dashboard/hfdata` is not evidence that nothing happened.** Across the
+three Daylesford power interruptions of 17–18 September 2026, all 126 successful samples reported
+zero, while the inverter had logged code 50 (Instant Low DC Voltage Fault) and code 127 (Main DC
+Supply Cable Open Circuit Fault). The field is a sample of an instant; a fault that begins and ends
+between two polls leaves no trace in it, and the poll also fails during the interruptions that
+matter most.
+
+| Source | What it gives | Clock | Retained where |
+| --- | --- | --- | --- |
+| `GET /dashboard/hfdata/{id}` | `fault_code`, `fault_ts` — the fault active right now, if any | vendor Unix seconds | the `fault_code` / `fault_ts` points |
+| `GET /events/{id}` | the portal's retained list, with paired **Created** and **Cleared** | the portal account's timezone | `device_events`, `source = 'portal'` |
+| SP LINK tunnel, `select.live:7528` | every fault AND state change, each with an electrical snapshot, from two logs | the inverter's own clock | `device_events`, `source = 'inverter'` |
+
+The Events page renders its rows server-side; there is no separate JSON endpoint (its search box
+filters the rendered table client-side). Parsing lives in
+`lib/vendors/selectronic/portal-events.ts`, and an unrecognisable page — a login redirect, a missing
+table — is reported as **unavailable data**, never as an empty event history. An empty history would
+clear a fault that is still active.
+
+The inverter's own logs are `lib/selectlive/events.ts`; see
+[the Select.live CLI notes](./selectlive-cli.md#event-logs).
+
+🛑 **The two sources are never merged, however well their codes match.** On 18 September the portal
+displayed a low-DC clearance at 12:12:59 while the inverter recorded 12:02:12 on its own clock,
+which measured ~46 s slow. A portal occurrence is one row, updated in place when its Cleared value
+appears; an inverter fault and its clearance are two records and stay two rows.
+
+### What the two fault points now mean
+
+Resolved together by `resolveFaultPoints` (`lib/vendors/selectronic/diagnostics.ts`):
+
+- **`fault_code`** — a fresh nonzero code from the readings wins; otherwise the newest *active*
+  inverter event the Events page shows; otherwise **0**, written explicitly. Zero is what clears a
+  previous fault: a null would leave the last nonzero code standing as the latest value for ever.
+  That includes the **default** case — a device with `portalEvents` off still publishes the
+  vendor's own zero, exactly as it did before this feature existed.
+  Null is reserved for "we genuinely do not know this minute": the Events page was enabled but
+  unreadable, or only *partly* readable and showed no active fault (the row that failed to parse
+  might have been the active one). An active fault the page *did* show is trusted even from a
+  partial parse.
+- **`fault_ts`** — "Last Fault Time": the newest known fault OCCURRENCE, retained after clearance,
+  so a fault that came and went between two polls still leaves a trace. Portal occurrences use
+  **Created**, never Cleared. It is in epoch **milliseconds**, which is what the point declares; the
+  vendor field is Unix seconds and was previously fed through unconverted.
+
+Both are gated per device by `config.diagnostics.portalEvents`; the automatic acquisition of the
+inverter's internal logs is gated separately by `config.diagnostics.autoAcquire`, and performed by
+`/api/cron/diagnostics`. The whole fault leg is bounded by `FAULT_LEG_BUDGET_MS` (10 s) so it can
+never spend the poll's budget after the readings are already in hand, and retention + enqueue run
+in one transaction — storing the row *consumes* the transition, so a failure between the two would
+lose the acquisition request silently and for ever.
+
+### What triggers an acquisition
+
+A newly observed inverter fault on the Events page (including one first seen already cleared), the
+clearance of one we held as active, and a change in the polled `fault_code` to a nonzero value.
+🛑 That last one is an **in-process memo** and is deliberately lossy: the first sighting after a
+cold start *seeds* it without firing, because the alternative is re-firing an acquisition for the
+same persistent fault on every restart. The memo advances only once the transition has been acted
+on, so a failed poll re-detects it next minute rather than consuming it; and it fires even when the
+Events page is unreadable, because the minute an inverter faults is the minute the portal is most
+likely to be unreachable. An *absent* `fault_code` is unknown, never a zero. The durable path
+remains the Events page, whose transitions are computed against stored rows. Portal code 1001
+("no updates for more than 24 hours") describes our link to the portal, not the plant, and never
+triggers.
+
 ## Error Handling
 
 ### Common Error Codes
@@ -341,6 +409,8 @@ curl https://select.live/dashboard/hfdata/YOUR_SYSTEM_NUMBER \
 3. **CORS Issues**: The select.live API doesn't support CORS headers, so browser-based requests won't work directly. Use a backend/proxy service.
 
 4. **Data Availability**: Historical data access requires different endpoints not documented here.
+   The inverter's own retained history — 15-minute measurements, and the two event logs — is
+   reachable over the SP LINK tunnel instead; see [selectlive-cli.md](./selectlive-cli.md).
 
 5. **Multiple Systems**: If an account has multiple systems, each needs to be queried separately with its system number.
 

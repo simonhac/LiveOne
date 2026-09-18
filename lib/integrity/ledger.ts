@@ -46,7 +46,7 @@
  *
  * No census can see inside jsonb, so every jsonb column must additionally supply either `extract`
  * (pull the raw ids out of a stored value) or `holdsNoRefs` (a reason it holds none). Bounded and
- * enumerable — there are 19 of them.
+ * enumerable — there are 27 of them.
  */
 import { getTableName, is } from "drizzle-orm";
 import { PgTable, getTableConfig, type AnyPgColumn } from "drizzle-orm/pg-core";
@@ -66,8 +66,11 @@ import {
   derivationSources,
   derivedIntervalProvenance,
   derivedIntervals,
+  deviceEvents,
   deviceState,
   devices,
+  diagnosticCaptures,
+  diagnosticJobs,
   legacyHandles,
   managedPollers,
   observationsOutbox,
@@ -739,6 +742,126 @@ export const REFERENCE_LEDGER: LedgerEntry[] = [
     verdict: {
       protectedBy: "deliberately-unprotected",
       reason: "decision log.",
+    },
+  },
+  // The retained fault record (migration 0078). Every `device_rid` here is a REAL FK with NO ACTION,
+  // which is the same posture as `sessions` and deliberately NOT the outbox's: these rows are
+  // evidence of what the equipment reported, they are not reproducible by any recompute, and the
+  // inverter ring they came from overwrites itself. A device delete must be told twice —
+  // `deviceDependents` names each of them with a count.
+  {
+    column: deviceEvents.deviceRid,
+    verdict: {
+      protectedBy: "refuseIfReliedUpon",
+      subject: "device",
+      reason:
+        "NO ACTION, and named by `deviceDependents` (destructive scope) with a count so the refusal is a sentence rather than a 23503. the retained fault history — every event this device's portal page and internal logs have reported. Nothing recomputes it: the inverter's event ring is a few hundred records deep and overwrites itself, and the Select.live Events page retains a few dozen rows, so a capture is frequently the only surviving account of an outage.",
+    },
+  },
+  {
+    column: deviceEvents.captureId,
+    verdict: { protectedBy: "fk", onDelete: "no action" },
+  },
+  {
+    column: deviceEvents.snapshot,
+    holdsNoRefs:
+      "the decoded electrical/state snapshot the inverter attached to one event — volts, amps, kW, SOC, and coded states with their labels. Vendor measurements; it names nothing in this database.",
+    verdict: {
+      protectedBy: "deliberately-unprotected",
+      reason: "vendor measurements recorded at an instant.",
+    },
+  },
+  {
+    column: diagnosticJobs.deviceRid,
+    verdict: {
+      protectedBy: "refuseIfReliedUpon",
+      subject: "device",
+      reason:
+        "NO ACTION, and named by `deviceDependents` (destructive scope) with a count so the refusal is a sentence rather than a 23503. the record of why each acquisition was requested. Nothing recomputes it: the inverter's event ring is a few hundred records deep and overwrites itself, and the Select.live Events page retains a few dozen rows, so a capture is frequently the only surviving account of an outage.",
+    },
+  },
+  {
+    column: diagnosticJobs.requestedBy,
+    verdict: {
+      protectedBy: "deliberately-unprotected",
+      reason:
+        "not a person or a row — a closed vocabulary ('trigger' | 'cli' | 'baseline'), CHECK-constrained, saying which PATH asked for the acquisition. It matches the `_by` census rule by name only.",
+    },
+  },
+  {
+    column: diagnosticJobs.reasons,
+    holdsNoRefs:
+      "an append-only array of `{ kind, detail, observedAt }` — the trigger transitions that coalesced onto this job, as free text for a human. No ids.",
+    verdict: {
+      protectedBy: "deliberately-unprotected",
+      reason: "a reason log.",
+    },
+  },
+  {
+    column: diagnosticCaptures.deviceRid,
+    verdict: {
+      protectedBy: "refuseIfReliedUpon",
+      subject: "device",
+      reason:
+        "NO ACTION, and named by `deviceDependents` (destructive scope) with a count so the refusal is a sentence rather than a 23503. the original bytes read from the inverter, and the metadata that says how trustworthy they are. Nothing recomputes it: the inverter's event ring is a few hundred records deep and overwrites itself, and the Select.live Events page retains a few dozen rows, so a capture is frequently the only surviving account of an outage.",
+    },
+  },
+  {
+    column: diagnosticCaptures.jobId,
+    verdict: { protectedBy: "fk", onDelete: "no action" },
+  },
+  {
+    column: diagnosticCaptures.identity,
+    holdsNoRefs:
+      "what the INVERTER reported about itself: serial, firmware and log-format versions. Vendor identity, not ours.",
+    verdict: {
+      protectedBy: "deliberately-unprotected",
+      reason: "vendor self-report.",
+    },
+  },
+  {
+    column: diagnosticCaptures.metadata,
+    holdsNoRefs:
+      "per-log ring descriptors before and after the walk, plus anchor-stability flags. Memory addresses and counts inside the inverter; nothing in this database.",
+    verdict: {
+      protectedBy: "deliberately-unprotected",
+      reason: "acquisition bookkeeping.",
+    },
+  },
+  {
+    column: diagnosticCaptures.scales,
+    holdsNoRefs:
+      "the six measurement scaling factors read from the inverter. Integers.",
+    verdict: {
+      protectedBy: "deliberately-unprotected",
+      reason: "vendor scaling constants.",
+    },
+  },
+  {
+    column: diagnosticCaptures.clock,
+    holdsNoRefs:
+      "the inverter's clock reading and its measured offset from ours. Timestamps and a number.",
+    verdict: {
+      protectedBy: "deliberately-unprotected",
+      reason: "a clock observation.",
+    },
+  },
+  {
+    column: diagnosticCaptures.coverage,
+    holdsNoRefs:
+      "per-log counts, why the walk stopped, and whether the overlap with the previous capture was observed. Also echoes the job's reasons as free text. Counts and enum strings.",
+    verdict: {
+      protectedBy: "deliberately-unprotected",
+      reason: "acquisition bookkeeping.",
+    },
+  },
+  {
+    column: diagnosticCaptures.raw,
+    holdsNoRefs:
+      "the immutable record stream, `{ log, address, hex }[]` — bytes as read from the inverter's memory. The `address` is a word address INSIDE the inverter, not a row anywhere here.",
+    verdict: {
+      protectedBy: "deliberately-unprotected",
+      reason: "original bytes.",
     },
   },
 ];

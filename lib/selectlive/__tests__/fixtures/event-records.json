@@ -1,0 +1,48 @@
+{
+  "$note": "Real 36-word event records from the Daylesford SP PRO, 17 September 2026. Preserved here because these are the only records whose meaning is independently corroborated (owner observation, the Select.live Events page, and the DeepSea panel), which is what makes them a regression test rather than a round trip through our own decoder.",
+  "scales": {
+    "address": 41000,
+    "hex": "b41498081a04e02e1202b400"
+  },
+  "clock": {
+    "address": 1900544,
+    "hex": "67005300320015000500180009002600"
+  },
+  "records": [
+    {
+      "log": "alert",
+      "address": 951712,
+      "hex": "457c5c303200033f7c149f10f3ff0000103f0000f0c0ffff00001c39995488139f0bc60a9a0ac802b606d6040200000001000000000000001d000e1a410701009808df05e02e1202"
+    },
+    {
+      "log": "alert",
+      "address": 951856,
+      "hex": "4b8b5c307f00aa403a180500e2ff000000000000000000000000180000550000f1077f064306a80296072b0600000000000000000000000000000000410701009808df05e02e1202"
+    },
+    {
+      "log": "alert",
+      "address": 951892,
+      "hex": "ba8b5c308000ad40db140400f3ff000000000000000000000000140000550000da0774063706970289072e0600000000000000000000000000000000410701009808df05e02e1202"
+    },
+    {
+      "log": "operational",
+      "address": 897516,
+      "hex": "457c5c308d00033f7c149f10f3ff0000103f0000f0c0ffff00001c39995488139f0bc60a9a0ac802b606d6040200000001000000000000001d000e1a410701009808df05e02e1202"
+    },
+    {
+      "log": "operational",
+      "address": 897624,
+      "hex": "477c5c309500373239190600b9ff00000000000000000000000018009954830ea70bc30aa10ab702b406e204020000000100060005000f000000c919410701009808df05e02e1202"
+    },
+    {
+      "log": "operational",
+      "address": 897732,
+      "hex": "567c5c3094000240ae180600e0ff00003829000000000000d9fa4c379a545211af0b430a310ab602bb06ca04020000000200060005000f000000311a410701009808df05e02e1202"
+    },
+    {
+      "log": "operational",
+      "address": 897876,
+      "hex": "827c5c308e001c40a4180600e3ff00006032000000000000b4f93e389a548813a70bf208e908c502ad06d304020000000200010005000b000000f119410701009808df05e02e1202"
+    }
+  ]
+}

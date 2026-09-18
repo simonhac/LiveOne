@@ -19,9 +19,17 @@ for independent readings comparisons. Historical gates below do not authorize re
 - Selectronic `Number()` coercion treats empty strings and booleans as numeric readings. The Go
   decoder preserves that current behavior, with a regression fixture. Fixing it is a separately
   reviewed vendor behavior change.
-- Selectronic's fault-zero omission checks tails ending `/fault_code` and `/fault_ts`, while the
-  current metadata uses unprefixed `fault_code` and `fault_ts`. Zero faults therefore remain in both
-  replay implementations. Do not silently alter identities or omit them during this port.
+- Selectronic's fault-zero omission branch has been REMOVED from the TypeScript adapter (the event
+  work, September 2026). It checked tails ending `/fault_code` and `/fault_ts` while the metadata
+  uses the unprefixed `fault_code` and `fault_ts`, so it never matched and zero faults were written
+  all along — which turns out to be the correct behaviour, because the zero is what clears a
+  previous fault. Both implementations still emit the zero; only the dead branch is gone.
+- 🛑 **Selectronic `fault_ts` diverges between the two implementations.** The TypeScript adapter now
+  converts the vendor's Unix SECONDS to the epoch MILLISECONDS the point declares, and falls back to
+  the Select.live Events page's newest *Created* time when the polled field is zero (a sticky "last
+  fault time"). The Go leg still passes the raw seconds through and has no events leg at all, so a
+  value comparison on `fault_ts` will differ by a factor of 1000 and by presence. Port it before the
+  shared trial reaches that field; see `lib/vendors/selectronic/diagnostics.ts`.
 - Fronius suppresses its first energy report to establish a baseline and carries fractional Wh
   through subsequent rounded reports. Its fault timestamp is a formatted local-time string despite
   the declared `epochMs` unit. Preserve that discrepancy until explicitly reviewed.

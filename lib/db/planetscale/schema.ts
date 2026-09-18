@@ -2033,3 +2033,212 @@ export const managedPollers = pgTable(
     ),
   }),
 );
+
+// ============================================================================
+// Device diagnostics — the retained fault record, and the machinery that acquires it.
+//
+// 🛑 WHY THESE EXIST. Across the three Daylesford power interruptions of 17–18 September 2026,
+// every one of 126 successful minutely Selectronic samples carried `fault_code: 0`. The faults that
+// explained the outages (code 50 Instant Low DC Voltage; code 127 Main DC Supply Cable Open
+// Circuit) were only ever visible in two places we did not retain: the Select.live Events page, and
+// the inverter's own internal logs. `fault_code`/`fault_ts` remain the small monitoring summary —
+// a sample of an instant — and these tables are the HISTORY that a sample cannot be.
+//
+// Three tables, and the split is deliberate:
+//   device_events        one row per event OCCURRENCE, from either source, labelled with which
+//   diagnostic_jobs      why an acquisition was requested, and its lifecycle
+//   diagnostic_captures  the immutable bytes an acquisition returned, and how trustworthy they are
+//
+// The 15-minute measurement history (lib/selectlive/history.ts) is a DIFFERENT dataset and is
+// deliberately not rows in `device_events`.
+// ============================================================================
+
+/**
+ * One event occurrence, from the portal or from the inverter itself.
+ *
+ * 🛑 The two sources are NEVER merged, however well their codes match. They are different evidence
+ * recorded against different clocks: on 18 September the portal displayed a low-DC clearance at
+ * 12:12:59 while the inverter recorded 12:02:12 on its own clock, which was running ~46 s slow.
+ * A portal row is one occurrence, UPDATED in place when its Cleared value appears; the inverter's
+ * fault and its clearance are two separate records and stay two separate rows, exactly as recorded.
+ *
+ * `occurred_at` is the interpretation, `source_time_text` is the evidence. When a timestamp is
+ * ambiguous (a DST fold) or unparseable, `occurred_at` is NULL and the text survives — the row is
+ * still the best account of what happened.
+ */
+export const deviceEvents = pgTable(
+  "device_events",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    // The telemetry-plane handle, as `sessions` uses. A real FK, and deliberately RESTRICTing:
+    // these rows are evidence and are not reproducible from anything else, so a device delete must
+    // name them rather than quietly take them with it.
+    deviceRid: integer("device_rid")
+      .notNull()
+      .references(() => devices.rid),
+    source: text("source").notNull(), // 'portal' | 'inverter'
+    logType: text("log_type"), // 'alert' | 'operational'; NULL for portal
+    code: integer("code").notNull(),
+    description: text("description"),
+    /** Verbatim, as the source supplied it. Never rewritten, including by a clock correction. */
+    sourceTimeText: text("source_time_text").notNull(),
+    /** The IANA zone used to interpret it, when one could be established. */
+    sourceTimezone: text("source_timezone"),
+    occurredAt: tsMs("occurred_at"),
+    clearedTimeText: text("cleared_time_text"),
+    clearedAt: tsMs("cleared_at"),
+    /** When WE saw it — distinct from when it happened, and the only timestamp we can vouch for. */
+    observedAt: tsMs("observed_at").notNull(),
+    /** Decoded electrical/state snapshot; inverter events only (`DecodedEvent`). */
+    snapshot: jsonb("snapshot"),
+    /** The record's own bytes (inverter, hex) or the portal row's cells. */
+    raw: text("raw"),
+    /**
+     * Stable identity, scoped to (device, source).
+     * Portal:   `p:{code}:{createdText}` — an occurrence is its Created time.
+     * Inverter: `i:{log}:{deviceSeconds}:{sha256(hex)[0:16]}`.
+     * 🛑 NOT the ring address: an event log is a ring buffer and reuses addresses on every wrap.
+     */
+    dedupeKey: text("dedupe_key").notNull(),
+    /** The capture that first produced this row. NULL for portal events, which arrive on the poll. */
+    captureId: uuid("capture_id").references(() => diagnosticCaptures.id),
+    createdAt: tsMs("created_at").notNull().defaultNow(),
+    updatedAt: tsMs("updated_at").notNull().defaultNow(),
+  },
+  (t) => ({
+    identityUnique: uniqueIndex("device_events_identity_unique").on(
+      t.deviceRid,
+      t.source,
+      t.dedupeKey,
+    ),
+    // The only read that matters: this device's events, newest first, over a window.
+    timelineIdx: index("device_events_timeline_idx").on(
+      t.deviceRid,
+      t.occurredAt,
+    ),
+    sourceCheck: check(
+      "device_events_source_check",
+      sql`${t.source} IN ('portal','inverter')`,
+    ),
+    // An inverter event always names its log; a portal event never has one.
+    //
+    // 🛑 The `IS NOT NULL` is load-bearing and is NOT implied by the `IN` beside it. A CHECK passes
+    // on NULL, and `log_type IN ('alert','operational')` with a NULL `log_type` evaluates to NULL,
+    // not FALSE — so `(TRUE AND NULL) OR (FALSE AND …)` is NULL and an inverter event with no log
+    // would have been accepted by the constraint written to reject it.
+    logTypeCheck: check(
+      "device_events_log_type_check",
+      sql`(${t.source} = 'inverter' AND ${t.logType} IS NOT NULL AND ${t.logType} IN ('alert','operational'))
+          OR (${t.source} = 'portal' AND ${t.logType} IS NULL)`,
+    ),
+  }),
+);
+
+/**
+ * A request to open the SP LINK tunnel and read the inverter's logs, and what became of it.
+ *
+ * Durable because the trigger is a TRANSITION and the acquisition can fail: a fault seen once by a
+ * poll that then loses communications must not be forgotten when the process ends, and a zero fault
+ * code after recovery must not cancel the request. Repeated polls coalesce onto the one open job —
+ * `reasons` keeps every one of them, because "why did we go and look" is the part that is not
+ * reconstructible afterwards.
+ */
+export const diagnosticJobs = pgTable(
+  "diagnostic_jobs",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    deviceRid: integer("device_rid")
+      .notNull()
+      .references(() => devices.rid),
+    status: text("status").notNull().default("pending"),
+    /** `{ kind, detail, observedAt }[]` — every trigger that coalesced into this job. */
+    reasons: jsonb("reasons").notNull(),
+    requestedBy: text("requested_by").notNull(), // 'trigger' | 'cli' | 'baseline'
+    attempts: integer("attempts").notNull().default(0),
+    /** The retry ladder: 1, 5, 15, 60 minutes, then hourly for 24 hours. */
+    nextAttemptAt: tsMs("next_attempt_at"),
+    /** Held by the worker for the length of one attempt. An expired lease is reclaimable — a
+     * serverless function can vanish mid-acquisition, and a job that cannot be reclaimed is a job
+     * that silently never runs again. */
+    leaseExpiresAt: tsMs("lease_expires_at"),
+    /**
+     * The FENCING TOKEN for the current lease: minted on claim, required to finish.
+     *
+     * The expiry above makes a job reclaimable; on its own it does not stop the worker that was
+     * replaced from finishing anyway. A function that outran its lease — or that was merely slow
+     * between the acquisition and the write — would otherwise clear its successor's lease, or mark
+     * done a job whose second attempt is still running. Completion matches on this token, so a
+     * superseded worker's write affects zero rows instead of the wrong ones.
+     */
+    leaseToken: text("lease_token"),
+    lastError: text("last_error"),
+    createdAt: tsMs("created_at").notNull().defaultNow(),
+    updatedAt: tsMs("updated_at").notNull().defaultNow(),
+  },
+  (t) => ({
+    // One open job per device. The inverter permits one SP LINK session, and coalescing triggers is
+    // the whole design — this constraint is what enforces it across overlapping cron runs and
+    // restarts, rather than trusting each writer to check first.
+    openUnique: uniqueIndex("diagnostic_jobs_open_unique")
+      .on(t.deviceRid)
+      .where(sql`status IN ('pending','running')`),
+    dueIdx: index("diagnostic_jobs_due_idx").on(t.status, t.nextAttemptAt),
+    statusCheck: check(
+      "diagnostic_jobs_status_check",
+      sql`${t.status} IN ('pending','running','done','failed','abandoned')`,
+    ),
+    requestedByCheck: check(
+      "diagnostic_jobs_requested_by_check",
+      sql`${t.requestedBy} IN ('trigger','cli','baseline')`,
+    ),
+  }),
+);
+
+/**
+ * One acquisition: the original bytes, and everything needed to judge them.
+ *
+ * Immutable. `raw` is the record stream exactly as read, so a decoder change can be re-applied
+ * later and disagreements attributed to the decoder (`decoder_version`) rather than to the
+ * inverter. `metadata` carries the before/after ring descriptors and the anchor re-reads, which is
+ * how a moving buffer is REPORTED rather than silently accepted; `coverage` records whether the
+ * overlap with the previous capture was actually observed — when it was not, records were
+ * overwritten in between and they are gone from the inverter for good.
+ *
+ * Small: a full first capture of both logs is ~1000 records × 72 bytes of hex.
+ */
+export const diagnosticCaptures = pgTable(
+  "diagnostic_captures",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    deviceRid: integer("device_rid")
+      .notNull()
+      .references(() => devices.rid),
+    jobId: uuid("job_id").references(() => diagnosticJobs.id),
+    startedAt: tsMs("started_at").notNull(),
+    finishedAt: tsMs("finished_at"),
+    complete: boolean("complete").notNull().default(false),
+    /** Serial, firmware and interface format versions, as the inverter reported them. */
+    identity: jsonb("identity"),
+    /** Per log: before/after descriptors, anchor stability, why the walk stopped. */
+    metadata: jsonb("metadata"),
+    /** The installation's measurement scaling factors, READ from the device — never assumed. */
+    scales: jsonb("scales"),
+    /** The inverter's clock and its offset from ours. Evidence about the clock, not a correction. */
+    clock: jsonb("clock"),
+    decoderVersion: integer("decoder_version").notNull(),
+    recordCount: integer("record_count").notNull().default(0),
+    newRecordCount: integer("new_record_count").notNull().default(0),
+    coverage: jsonb("coverage"),
+    sha256: text("sha256"),
+    /** `{ log, address, hex }[]` — the immutable record stream. */
+    raw: jsonb("raw"),
+    error: text("error"),
+    createdAt: tsMs("created_at").notNull().defaultNow(),
+  },
+  (t) => ({
+    deviceIdx: index("diagnostic_captures_device_idx").on(
+      t.deviceRid,
+      t.startedAt,
+    ),
+  }),
+);

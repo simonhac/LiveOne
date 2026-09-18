@@ -113,6 +113,10 @@ interoperability facts were traced through `mSelectLive`, `mRawDataDownload`,
 | `0xa05d` | Model code followed by two little-endian serial words |
 | `0xa335` | Five-word detailed-log header: sector count, entry size, current address (2 words), record count |
 | `0xa33a` | Sector start/end pairs, each address two little-endian words; end inclusive |
+| `0xa266` | Five-word **alert**-log header, same layout as `0xa335`; sector table follows at `0xa26b` |
+| `0xa2a7` | Five-word **operational**-log header, same layout; sector table at `0xa2ac` |
+| `0xa028` | Six-word installation scaling block: AC voltage, AC current, DC voltage, DC current, temperature, and one unidentified word |
+| `0x1d0000` | Eight-word device clock, BCD: centiseconds, seconds, minutes, hours, day-of-week, day, month (bit 7 = century), year |
 | `0xc036` | Configured detailed logging interval in minutes (read only) |
 | `0xa374` / `0xa378` | Date-search request / response, deliberately unused |
 
@@ -142,6 +146,80 @@ second, simultaneous one-minute archive. SP LINK's `fnGetDetailedDataLogInterval
 `subLoadArrayToSettings_Common` reads common-configuration word 54 (`0xc036`). Changing
 the interval would affect future logging, not reconstruct finer detail in existing records.
 The CLI only reads this setting.
+
+## Event logs
+
+The SP PRO keeps two event rings, separate from the detailed log and from each other:
+
+| Log | Records | What a record is |
+| --- | --- | --- |
+| `alert` | faults and their clearances | the code, the inverter's own timestamp, and an electrical/state snapshot |
+| `operational` | state changes: relays, contactors, generator start/run reasons, sync detections | the same shape |
+
+Both advertise **36-word** entries at events format version 3 (`0xa007` offset 3), and both use the
+same descriptor layout as the detailed log — so `ringMetadata`, `validateMetadata` and `readBatches`
+in `lib/selectlive/history.ts` traverse all three. Observed retention on firmware 12.25 differs
+sharply between them: 52 alerts reaching back 15 months, against 910 operational records covering
+one week.
+
+Record layout (little-endian 16-bit words; words 16–21, 28–31 and 33 have no established meaning and
+are preserved raw):
+
+| Words | Meaning |
+| --- | --- |
+| 0–1 | timestamp, seconds since 2001-01-01 on the device's own clock |
+| 2 | event code |
+| 3–4 | DC voltage, DC mid-point voltage |
+| 5–7 | inverter DC current, shunt 1, shunt 2 |
+| 8–9, 10–11 | load AC power, inverter AC power (32-bit) |
+| 12–15 | AC input power, AC load voltage, SOC (`0xffff` = missing), AC load frequency (centi-Hz) |
+| 22–27 | inverter mode, charger status, contactor state, generator status, generator start reason, generator run reason |
+| 32, 34, 35 | AC current, DC current and temperature scales as used when the record was written |
+
+🛑 **Scaling factors are read, not assumed.** Words 32/34/35 supply three of them per record; AC
+voltage and DC voltage come from the `0xa028` block. The incident scripts this decoder was ported
+from carried `5300 / 1050 / 12000` as literals — correct for the Daylesford installation and for no
+other — so a capture stores the block it actually read.
+
+### Code labels
+
+`lib/selectlive/event-labels.json` maps codes to descriptions: 308 alert codes, 369 operational
+codes, and the five state enums above. They were resolved by offline IL inspection of the same
+SP LINK 16.11.9663 assembly (`mDataConvert.fnConvert*ValueToString`), and the file carries its own
+provenance block. An unknown code renders as `UNDECODED(n)`; a code the vendor table maps to an
+empty string stays empty, because "the vendor has no name for this" and "we could not find it" are
+different answers.
+
+### Acquiring
+
+`selectlive events info` reads both descriptors and the oldest/newest record present — which the
+record *count* does not tell you, since a log can advertise 52 records spanning fifteen months.
+
+`selectlive events download` walks newest-first and applies the same completeness discipline as the
+detailed download: descriptor and newest record captured before the walk, both re-read afterwards
+along with the oldest record actually read, each comparison reported separately.
+
+`--resume <manifest.json>` reads only what is new, stopping one record **past** the previous
+capture's anchor. Re-reading that anchor is deliberate: seeing it again proves nothing was missed in
+between.
+
+🛑 The three outcomes are distinct, and `overlapVerdict` in the manifest says which:
+
+| Verdict | Meaning |
+| --- | --- |
+| `confirmed` | the anchor was seen again — nothing was missed |
+| `lost` | the **whole retained ring** was walked and the anchor was not in it. Those records are gone from the inverter for good |
+| `unverified` | the walk stopped early (deadline, abort, error) before reaching the anchor. This says nothing about whether those records still exist — retry |
+
+Collapsing `unverified` into `lost` would announce permanent data loss on no evidence, and a
+bounded acquisition produces exactly that outcome when a site is in trouble.
+
+🛑 An anchor is only advanced by a **completed** walk. A partial acquisition keeps the previous
+anchor, so the next `--resume` re-attempts the same gap rather than stepping over it.
+
+Times are the inverter's own clock, stored verbatim. The manifest also records the clock's measured
+offset from ours (45.9 s slow, measured 18 September 2026) as an observation; it is never applied to
+a timestamp.
 
 ## Validation status
 

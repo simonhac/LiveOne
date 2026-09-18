@@ -29,6 +29,7 @@ import type {
   DeviceConfig,
   DeviceSpec,
   BatteryProvenanceConfig,
+  DiagnosticsConfig,
 } from "@/lib/capabilities/config";
 
 function isPlainObject(v: unknown): v is Record<string, unknown> {
@@ -162,6 +163,23 @@ export function parseDeviceConfig(
       bp.reserveFloorMaxPct = rf;
     }
     if (Object.keys(bp).length > 0) out.batteryProvenance = bp;
+  }
+
+  // Fault-event retention / automatic diagnostic acquisition. Both booleans, both default-off, and
+  // `false` is carried through rather than collapsed to absent: "explicitly disabled here" and
+  // "never configured" read the same to the code but not to the next person editing it.
+  if (body.diagnostics !== undefined && body.diagnostics !== null) {
+    if (!isPlainObject(body.diagnostics))
+      return { error: "`diagnostics` must be an object" };
+    const diagnostics: DiagnosticsConfig = {};
+    for (const field of ["portalEvents", "autoAcquire"] as const) {
+      const v = body.diagnostics[field];
+      if (v === undefined || v === null) continue;
+      if (typeof v !== "boolean")
+        return { error: `\`diagnostics.${field}\` must be a boolean` };
+      diagnostics[field] = v;
+    }
+    if (Object.keys(diagnostics).length > 0) out.diagnostics = diagnostics;
   }
 
   return { config: Object.keys(out).length > 0 ? out : null };

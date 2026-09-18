@@ -12,6 +12,13 @@ import {
   type SelectronicData,
 } from "./selectronic-client";
 import { SELECTRONIC_POINTS } from "./point-metadata";
+import {
+  faultLegOff,
+  FAULT_LEG_BUDGET_MS,
+  observePortalEvents,
+  resolveFaultPoints,
+  type FaultObservation,
+} from "./diagnostics";
 
 /**
  * How long a cached select.live session may be reused.
@@ -51,6 +58,18 @@ export class SelectronicAdapter extends BaseVendorAdapter {
       placeholder: "Enter your password",
       required: true,
       helpText: "Your Select.Live account password",
+    },
+    {
+      // Only used by the diagnostic acquisition (lib/diagnostics/acquire.ts), which authenticates
+      // to the INVERTER itself over the SP LINK tunnel — a challenge-response separate from the
+      // portal login. Optional: the factory default works on an unchanged installation.
+      name: "inverterPassword",
+      label: "Inverter password",
+      type: "password",
+      placeholder: "Leave blank for the factory default",
+      required: false,
+      helpText:
+        "Only needed for internal fault-log diagnostics. Blank uses the factory default.",
     },
   ];
 
@@ -105,6 +124,34 @@ export class SelectronicAdapter extends BaseVendorAdapter {
       }
 
       const response = await client.fetchData();
+
+      /**
+       * The Events page is fetched INDEPENDENTLY of the readings, and deliberately before the
+       * failure branch below.
+       *
+       * Across the three Daylesford interruptions of 17–18 September 2026 the readings request
+       * failed for minutes at a time while the portal went on retaining the faults that explained
+       * them. Returning early on a readings failure would have thrown that away in exactly the
+       * window it mattered. So the fault history is retained and a diagnostic acquisition may still
+       * be triggered even when this poll has no readings — what is NOT written in that case is the
+       * fault POINTS, because a point needs a measurement time and this poll has none it can vouch
+       * for. The durable record is `device_events`; the points are the monitoring summary.
+       */
+      //
+      // 🛑 BOUNDED. Two HTTP requests and a retention write sit between a successful readings fetch
+      // and this function returning, so without a ceiling a slow Events page or a slow database
+      // could spend the poll's whole budget AFTER the readings were already in hand. The budget
+      // covers the leg end to end; overrunning it yields an unavailable observation, which the
+      // fault-point rules already treat as "we do not know", never as a clearance.
+      const observation: FaultObservation = device.config?.diagnostics
+        ?.portalEvents
+        ? await SelectronicAdapter.withFaultLegBudget(
+            observePortalEvents(device, client, response.data?.faultCode),
+          )
+        : faultLegOff();
+      if (observation.state === "unavailable")
+        console.warn(`[Selectronic] ${observation.reason}`);
+
       if (!response.success || !response.data) {
         // A session the portal has rejected must not be handed to the next poll. Only `auth`
         // evicts: a 504 or a reset says nothing about whether the cookie is still good, and
@@ -123,22 +170,30 @@ export class SelectronicAdapter extends BaseVendorAdapter {
       const transformed = this.transformData(vendorData);
       const measurementTime = vendorData.timestamp.getTime();
 
+      // The two fault points are resolved from BOTH sources together, so they are computed once
+      // here rather than read straight off the vendor payload in the loop.
+      //
+      // 🪦 What used to be here: a branch skipping a zero `fault_code`/`fault_ts`. It tested
+      // `physicalPathTail.endsWith("/fault_code")` while the tail is the unprefixed `fault_code`,
+      // so it never matched once and zeros were written all along. It is gone rather than fixed:
+      // writing the zero is CORRECT, because it is what clears a previous fault. Skipping it would
+      // leave the last nonzero code standing as the latest value for ever.
+      const { faultCode, faultTsMs } = resolveFaultPoints(
+        vendorData.faultCode,
+        vendorData.faultTimestamp,
+        observation,
+      );
+
       // Build readings array from all configured points
       const readings = [];
       for (const pointConfig of SELECTRONIC_POINTS) {
         let rawValue = vendorData[pointConfig.field];
+        if (pointConfig.field === "faultCode") rawValue = faultCode;
+        // The point declares `epochMs`; the vendor field is Unix SECONDS.
+        if (pointConfig.field === "faultTimestamp") rawValue = faultTsMs;
 
         // Skip null/undefined values
         if (rawValue == null) {
-          continue;
-        }
-
-        // Replace 0 with null for fault_code and fault_ts (no fault = null)
-        if (
-          (pointConfig.metadata.physicalPathTail.endsWith("/fault_code") ||
-            pointConfig.metadata.physicalPathTail.endsWith("/fault_ts")) &&
-          rawValue === 0
-        ) {
           continue;
         }
 
@@ -191,6 +246,36 @@ export class SelectronicAdapter extends BaseVendorAdapter {
       };
     }
   }
+  /**
+   * Cap the fault leg, without letting a slow one become a failed poll.
+   *
+   * A timeout here abandons the WAIT, not the work: the retention transaction either commits or is
+   * rolled back by the database when the function ends. Nothing partial is left behind by giving up
+   * on it, and the next poll re-reads the same page.
+   */
+  private static async withFaultLegBudget(
+    work: Promise<FaultObservation>,
+  ): Promise<FaultObservation> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const expired = new Promise<FaultObservation>((resolve) => {
+      timer = setTimeout(
+        () =>
+          resolve({
+            ...faultLegOff(),
+            state: "unavailable",
+            parseComplete: false,
+            reason: `Event history took longer than ${FAULT_LEG_BUDGET_MS} ms; abandoned for this poll.`,
+          }),
+        FAULT_LEG_BUDGET_MS,
+      );
+    });
+    try {
+      return await Promise.race([work, expired]);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   async testConnection(
     device: DeviceConfigView,
     credentials: any,

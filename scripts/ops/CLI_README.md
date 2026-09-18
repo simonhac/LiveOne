@@ -80,6 +80,12 @@ still reach stderr.
       - [liveone device config show](#liveone-device-config-show)
       - [liveone device config lint](#liveone-device-config-lint)
       - [liveone device config clean](#liveone-device-config-clean)  _(writes)_
+    - [liveone device diagnostics](#liveone-device-diagnostics)
+      - [liveone device diagnostics list](#liveone-device-diagnostics-list)
+      - [liveone device diagnostics show](#liveone-device-diagnostics-show)
+      - [liveone device diagnostics export](#liveone-device-diagnostics-export)
+      - [liveone device diagnostics run](#liveone-device-diagnostics-run)  _(writes)_
+    - [liveone device events](#liveone-device-events)
     - [liveone device recompute](#liveone-device-recompute)  _(writes)_
     - [liveone device change-offset](#liveone-device-change-offset)  _(writes)_
     - [liveone device area](#liveone-device-area)  _(writes)_
@@ -2135,8 +2141,8 @@ Http-only: every verb calls the deployed API as you (`liveone auth login`), and 
 `target: <origin> as <you>` on stderr first — read it to know which environment answered.
 Ids are per-environment.
 
-Every verb here READS except `rename`, `recompute`, `change-offset`, `area`, `archive` and
-`delete`, which write and are dry-run by default.
+Every verb here READS except `rename`, `recompute`, `change-offset`, `area`, `archive`,
+`delete` and `diagnostics run`, which write and are dry-run by default.
 
 Retiring a device is TWO verbs and they are not synonyms: `archive` stops it being active and
 keeps every reading (reversible, `--undo`); `delete` destroys the row AND the history it owns,
@@ -2160,6 +2166,8 @@ Subcommands:
   coverage               How many 5-minute readings each of a device's points holds, per local day.
   history                Time series for a device, in the OpenNEM shape /api/history serves.
   config                 The stored DeviceConfig blob — read it, audit it for rot, normalise it.
+  diagnostics            Captures of the inverter's internal event logs — list them, read one, export one, ask for another.
+  events                 The device's retained fault history, from the portal and from the inverter itself.
   recompute              Rebuild the rows derived FROM a device's readings, over a window of local days.  (writes)
   change-offset          Move a device's fixed day offset, and re-bucket every daily aggregate rolled up on the old one.  (writes)
   area                   Put a device in an area, or in none.  (writes)
@@ -3074,6 +3082,341 @@ Examples:
 Exit codes:
   0    success
   1    a device was skipped because its stored config does not parse
+  2    usage error
+  3    authentication failure
+  5    upstream failure
+  130  interrupted
+```
+
+#### liveone device diagnostics
+
+Captures of the inverter's internal event logs — list them, read one, export one, ask for another.
+
+```
+Captures of the inverter's internal event logs — list them, read one, export one, ask for another.
+
+When to use:
+  Reach for this after an outage or an unexplained fault, when the ordinary readings say nothing.
+  `fault_code: 0` on every sample of an interruption is the normal case, not the reassuring one.
+
+A capture is the raw record stream read over the SP LINK connection, plus the metadata needed to
+judge it: before/after ring descriptors, anchor stability, the device clock and its offset from
+ours, and the scaling factors READ from the inverter. The decoded events land in
+`liveone device events`; the capture is the evidence behind them.
+
+Usage:
+  liveone device diagnostics <subcommand> [options]
+
+  Read-only. This command changes nothing.
+
+Subcommands:
+  list                   Captures for a device, newest first, and any pending acquisition.
+  show                   One capture in full, including its raw record stream.
+  export                 Write a capture to a fresh directory: manifest, decoded CSV, raw records, checksums.
+  run                    Ask for a fresh acquisition of the inverter's event logs.  (writes)
+
+Run `liveone device diagnostics <subcommand> --help` for a subcommand's own options.
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
+
+Exit codes:
+  0    success
+  1    completed, with findings or no results
+  2    usage error
+  3    authentication failure
+  5    upstream failure
+  130  interrupted
+```
+
+##### liveone device diagnostics list
+
+Captures for a device, newest first, and any pending acquisition.
+
+```
+Captures for a device, newest first, and any pending acquisition.
+
+`openJob` is reported alongside: 'nothing captured yet' and 'a capture has been pending for
+six hours because the inverter is unreachable' look identical otherwise.
+
+Usage:
+  liveone device diagnostics list <device> [options]
+
+  Read-only. This command changes nothing.
+
+Arguments:
+  <device>               A device: its dv_… id, integer handle, slug, or name
+
+Options:
+  --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
+  --limit <number>           Maximum captures to list (default 50)
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
+
+Examples:
+  liveone device diagnostics list daylesford
+  liveone device diagnostics list 1 --format json
+
+Exit codes:
+  0    success
+  1    completed, with findings or no results
+  2    usage error
+  3    authentication failure
+  5    upstream failure
+  130  interrupted
+```
+
+##### liveone device diagnostics show
+
+One capture in full, including its raw record stream.
+
+```
+One capture in full, including its raw record stream.
+
+Usage:
+  liveone device diagnostics show <device> <capture-id> [options]
+
+  Read-only. This command changes nothing.
+
+Arguments:
+  <device>               A device: its dv_… id, integer handle, slug, or name
+  <capture-id>           A capture uuid from `list`
+
+Options:
+  --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
+
+Examples:
+  liveone device diagnostics show daylesford 0192f0ab-…
+
+Exit codes:
+  0    success
+  1    completed, with findings or no results
+  2    usage error
+  3    authentication failure
+  5    upstream failure
+  130  interrupted
+```
+
+##### liveone device diagnostics export
+
+Write a capture to a fresh directory: manifest, decoded CSV, raw records, checksums.
+
+```
+Write a capture to a fresh directory: manifest, decoded CSV, raw records, checksums.
+
+The raw records go out beside the decoding, on purpose: an export carrying only our reading
+of the bytes would be unverifiable and could never be re-decoded.
+
+No destination is hardcoded. Incident bundles belong in the hac-admin knowledgebase, and
+this repository is public — naming a private path here would publish it.
+
+Usage:
+  liveone device diagnostics export <device> <capture-id> [options]
+
+  Creates a new directory under --out. Nothing existing is overwritten and nothing is sent anywhere.
+
+Arguments:
+  <device>               A device: its dv_… id, integer handle, slug, or name
+  <capture-id>           A capture uuid from `list`
+
+Options:
+  --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
+  --out <string>             Parent directory for the new export  (required)
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
+
+Examples:
+  liveone device diagnostics export daylesford 0192f0ab-… --out ./exports
+
+Exit codes:
+  0    success
+  1    completed, with findings or no results
+  2    usage error
+  3    authentication failure
+  5    upstream failure
+  130  interrupted
+```
+
+##### liveone device diagnostics run
+
+Ask for a fresh acquisition of the inverter's event logs.
+
+```
+Ask for a fresh acquisition of the inverter's event logs.
+
+When to use:
+  Use this when you want to look inside the inverter NOW — after an outage, or to verify the
+  acquisition path before enabling automatic triggers.
+
+🛑 Enqueues a job; it does NOT open the connection itself. The minutely diagnostics worker
+performs the acquisition within about a minute, and `list` shows the job until it does.
+That indirection is deliberate: the inverter permits one SP LINK session, so a manual
+request must coalesce with an automatic trigger rather than race it. If an acquisition is
+already open for this device, this joins it and says so.
+
+Read-only at the inverter: no setting is changed, no fault is reset, no generator command
+is issued.
+
+Usage:
+  liveone device diagnostics run <device> [options]
+
+  This command WRITES. It is dry by default: nothing changes without --apply.
+
+Arguments:
+  <device>               A device: its dv_… id, integer handle, slug, or name
+
+Options:
+  --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
+  --reason <string>          Why — recorded with the job
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
+  --apply                    Actually write. Without it nothing is changed.
+  --dry-run                  Report what would change and write nothing (the default)
+  --yes                      Skip the confirmation prompt. Required with --apply off a terminal.
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
+
+Examples:
+  liveone device diagnostics run daylesford
+  liveone device diagnostics run daylesford --reason "blackout 18 Sept" --apply
+
+Exit codes:
+  0    success
+  1    completed, with findings or no results
+  2    usage error
+  3    authentication failure
+  5    upstream failure
+  130  interrupted
+```
+
+#### liveone device events
+
+The device's retained fault history, from the portal and from the inverter itself.
+
+```
+The device's retained fault history, from the portal and from the inverter itself.
+
+When to use:
+  Reach for this to find out what the equipment recorded around a time of interest — especially
+  when the ordinary readings show nothing.
+
+Two sources, LABELLED and never merged: `portal` (the Select.live Events page — code,
+description, Created/Cleared) and `inverter` (its own alert and operational logs — code, the
+inverter's clock, and an electrical snapshot). Their codes overlap and their clocks do not
+agree, so a row's `source` is load-bearing, not decoration.
+
+Times are the ORIGINAL source text plus our UTC interpretation. A blank interpretation means
+the source timestamp was ambiguous (a DST fold) or unreadable; the text is still there.
+
+Usage:
+  liveone device events <device> [options]
+
+  Read-only. This command changes nothing.
+
+Arguments:
+  <device>               A device: its dv_… id, integer handle, slug, or name
+
+Options:
+  --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
+  --source <string>          Only one source (default: both)  (one of: portal, inverter)
+  --since <string>           ISO timestamp — only events at or after this
+  --until <string>           ISO timestamp — only events at or before this
+  --limit <number>           Maximum events (default 200)
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json, csv)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  --format csv     comma-separated rows on stdout — the columns are documented above
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
+
+Examples:
+  liveone device events daylesford
+  liveone device events daylesford --source inverter --since 2026-09-17T09:00:00Z
+  liveone device events daylesford --format csv > events.csv
+
+Exit codes:
+  0    success
+  1    completed, with findings or no results
   2    usage error
   3    authentication failure
   5    upstream failure

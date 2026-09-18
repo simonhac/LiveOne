@@ -349,7 +349,7 @@
       "key": "faultTimestamp",
       "physicalPathTail": "fault_ts",
       "logicalPathStem": null,
-      "defaultName": "Fault Time",
+      "defaultName": "Last Fault Time",
       "subsystem": "system",
       "metricType": "time",
       "metricUnit": "epochMs",

@@ -15,6 +15,11 @@
  *
  * The `config` sub-group (./config.ts) is the other writer: it normalises the stored `DeviceConfig`
  * jsonb, which is how a config key deleted from the code finally leaves the database.
+ *
+ * The `diagnostics` sub-group and the `events` verb (./diagnostics.ts) are the fault record: the
+ * Select.live Events page and the inverter's own internal logs, retained because `fault_code` is a
+ * sample of an instant and every sample of the September 2026 Daylesford outages read zero.
+ * `diagnostics run` writes — but only a job row; the acquisition itself is the minutely worker's.
  */
 import {
   defineCommand,
@@ -40,6 +45,11 @@ import {
 } from "../shared";
 import { configSpec, CONFIG_HANDLERS } from "./config";
 import { coverageSpec, runCoverage } from "./coverage";
+import {
+  diagnosticsSpec,
+  eventsSpec,
+  DIAGNOSTICS_HANDLERS,
+} from "./diagnostics";
 import {
   DEVICE_ARCHIVE_SPEC,
   DEVICE_DELETE_SPEC,
@@ -82,8 +92,8 @@ export const deviceCommand = defineCommand({
     "Http-only: every verb calls the deployed API as you (`liveone auth login`), and prints\n" +
     "`target: <origin> as <you>` on stderr first — read it to know which environment answered.\n" +
     "Ids are per-environment.\n\n" +
-    "Every verb here READS except `rename`, `recompute`, `change-offset`, `area`, `archive` and\n" +
-    "`delete`, which write and are dry-run by default.\n\n" +
+    "Every verb here READS except `rename`, `recompute`, `change-offset`, `area`, `archive`,\n" +
+    "`delete` and `diagnostics run`, which write and are dry-run by default.\n\n" +
     "Retiring a device is TWO verbs and they are not synonyms: `archive` stops it being active and\n" +
     "keeps every reading (reversible, `--undo`); `delete` destroys the row AND the history it owns,\n" +
     "refuses unless the device is already archived, and has no --force.",
@@ -238,6 +248,8 @@ export const deviceCommand = defineCommand({
       ],
     },
     config: configSpec,
+    diagnostics: diagnosticsSpec,
+    events: eventsSpec,
     recompute: {
       name: "recompute",
       summary:
@@ -1084,7 +1096,8 @@ async function runRename(ctx: Ctx): Promise<number> {
 export async function runDevice(ctx: Ctx): Promise<number> {
   const path = ctx.subcommandPath.slice(1); // drop "device"
   const key = path.join(".");
-  const handler = CONFIG_HANDLERS[key] ?? HANDLERS[key];
+  const handler =
+    CONFIG_HANDLERS[key] ?? DIAGNOSTICS_HANDLERS[key] ?? HANDLERS[key];
   if (!handler)
     throw usage(
       `unknown device command "${path.join(" ")}"`,
