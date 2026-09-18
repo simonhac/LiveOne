@@ -5768,7 +5768,8 @@ Schedule a generator exercise run — unless it has already run under load recen
 When to use:
   Reach for this for anti-wet-stacking: a diesel that idles for weeks glazes its bores. The
   rule fires on a wall-clock slot and SKIPS itself when the engine has already done real
-  work, so a generator in normal use is never exercised unnecessarily.
+  work, so a generator in normal use is never exercised unnecessarily. Omit --load-point and
+  it has no skip condition at all — the honest shape for a one-off 'run it now for N minutes'.
 
 🛑 This creates something that STARTS AN ENGINE, on a schedule, unattended. Dry-run is the
 default; read the printed rule before `--apply`.
@@ -5776,8 +5777,16 @@ default; read the printed rule before `--apply`.
 Three points are involved and they are not interchangeable:
   --derivation    the run detector, which answers 'is it running' and 'did it run'
   --load-point    a power point in WATTS (negative = import) that says how HARD it ran;
-                  the DeepSea controller has no CTs, so load is read from the inverter
+                  the DeepSea controller has no CTs, so load is read from the inverter.
+                  OPTIONAL: omit it and the rule has no skip condition — it simply runs
+                  every time it is due, which is what a one-off means
   --action-point  the writable run-request point the run is commanded through
+
+🛑 Omitting --load-point on a STANDING rule means it exercises the engine on every single
+occurrence regardless of what the engine has already done — the waste this trigger exists
+to avoid. On a one-off it is simply the truth, and the only way to state it: the skip
+condition used to be mandatory, so a one-off had to carry a threshold picked to be
+unreachable, which the area's calendar feed then published to subscribers as fact.
 
 A point is a pt_… id, a logical path on one of the AREA's devices, or the qualified form
 `<device>:<path>`. The qualified form is not a nicety: only the DERIVATION has to live in
@@ -5811,7 +5820,7 @@ Arguments:
 Options:
   --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
   --derivation <dx_|role>    The run detector: dx_… id, its name, or its role (e.g. generator)  (required)
-  --load-point <path|pt_>    Power point in W used to judge load (e.g. bidi.grid/power, or dev:bidi.grid/power)  (required)
+  --load-point <path|pt_>    Power point in W used to judge load (e.g. bidi.grid/power). Omit = no skip condition
   --action-point <path|pt_>  Writable run-request point, often on another device (e.g. generator:source.generator.control.request/duration)  (required)
   --start <2026-09-17 09:00> First occurrence, local date + 24-hour time (not 02:00–02:59). Alone = a one-off  (required)
   --rrule <FREQ=WEEKLY;BYDAY=TH> How it repeats, RFC 5545. Omit for a one-off
@@ -5820,10 +5829,10 @@ Options:
   --minutes <30>             How long to run for. Must be > 0 — 0 is a STOP, not a run  (required)
   --name <string>            Name (default: 'Generator exercise')
   --grace-minutes <number>   How long a missed slot stays due before it is written off (default 180)
-  --min-minutes <number>     Continuous loaded minutes that count as already exercised (default 30)
-  --min-load-kw <number>     Load floor in kW — an idle run does not clear wet stacking (default 1.5)
-  --dip-seconds <number>     Brief sub-threshold dips bridged rather than splitting a stretch (default 180)
-  --within-days <number>     How far back to look for such a run (default 7)
+  --min-minutes <number>     Continuous loaded minutes that count as already exercised (default 30) — needs --load-point
+  --min-load-kw <number>     Load floor in kW — an idle run does not clear wet stacking (default 1.5) — needs --load-point
+  --dip-seconds <number>     Brief sub-threshold dips bridged rather than splitting a stretch (default 180) — needs --load-point
+  --within-days <number>     How far back to look for such a run (default 7) — needs --load-point
 
 Common options:
   --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
@@ -5847,6 +5856,7 @@ External access:
 Examples:
   liveone automation create-exercise daylesford --derivation=generator --load-point=bidi.grid/power --action-point='Daylesford Generator':source.generator.control.request/duration --start='2026-09-17 09:00' --rrule='FREQ=WEEKLY;BYDAY=TH' --minutes=30
   liveone automation create-exercise daylesford --derivation=generator --load-point=bidi.grid/power --action-point=generator:source.generator.control.request/duration --start='2026-09-12 09:00' --minutes=30
+  liveone automation create-exercise daylesford --derivation=generator --action-point=generator:source.generator.control.request/duration --start='2026-09-18 09:45' --minutes=10
 
 Exit codes:
   0    success

@@ -25,11 +25,18 @@ omitted — an event with no time is not an event.
 | `SEQUENCE` | `updated_at` in epoch **seconds** | Monotonic per edit so clients pick up changes. Seconds, not ms: `SEQUENCE` is a 32-bit integer in practice. |
 | `SUMMARY` | rule name, `(disabled)` suffixed | See the `STATUS` trap below. |
 | `STATUS` | always `CONFIRMED` | See the `STATUS` trap below. |
-| `DESCRIPTION` | run length, the unless-terms in words, grace | Enough to answer "what is this and why might it not happen". |
+| `DESCRIPTION` | run length, the unless-terms in words (omitted entirely when the rule has none), grace | Enough to answer "what is this and why might it not happen". |
 
 **A one-off gets no `RRULE` at all.** Internally the evaluator expands one as `FREQ=DAILY;COUNT=1`
 so it has a single code path, but that synthetic rule is stripped from the feed: a calendar client
 shown `COUNT=1` renders a *repeating* event, which is a lie about a thing that happens once.
+
+🛑 **A rule with no `unless` says nothing about skipping**, rather than describing a condition it
+does not have. `unless` used to be a required field, so a one-off "run it for 10 minutes" had to
+carry a threshold picked to be unreachable — and this feed rendered that number verbatim, telling
+every subscriber the run would be *"Skipped if it has already run for 600 minutes or more above
+1.5 kW in the previous 7 days"*. The parser now accepts the absence, and `describeRule` omits the
+sentence with it.
 
 **What is NOT in it:** any reading, any point value, any outcome. A subscriber learns when the site
 *intends* to run something, and nothing else.

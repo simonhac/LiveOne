@@ -15,6 +15,7 @@ import {
   actionWords,
   automationLine,
   buildRRule,
+  buildUnless,
   decisionLines,
   commandLine,
   evaluationHasFindings,
@@ -134,8 +135,18 @@ async function runShow(ctx: Ctx): Promise<number> {
             `  unless:       it ran ≥ ${t.unless.minMinutes} min above ${t.unless.minLoadKw} kW in the last ${t.unless.withinDays} days`,
             `  load point:   ${t.unless.loadPointId}`,
             `  dip bridged:  up to ${t.unless.dipToleranceSeconds} s`,
-            `  grace:        ${t.schedule?.graceMinutes} min`,
           );
+        // 🛑 Stated, not left as a gap. A rule with no skip condition runs every time it is due,
+        // and the difference between "unconditional" and "I forgot to print that line" is exactly
+        // the kind of silence that made the 12 Sep slot opaque for days.
+        else if (t?.kind === "exercise")
+          out.push(
+            `  unless:       none — runs on EVERY occurrence, whatever the engine has done`,
+          );
+        // Was nested inside the `unless` block, where a rule without one lost it. It belongs to the
+        // SCHEDULE, which every exercise rule has.
+        if (t?.kind === "exercise" && t.schedule)
+          out.push(`  grace:        ${t.schedule.graceMinutes} min`);
         if (t?.kind === "exercise" && t.require)
           out.push(
             `  require:      battery below ${t.require.maxSocPercent}% (${t.require.socPointId})`,
@@ -178,6 +189,16 @@ async function runCreateExercise(ctx: Ctx): Promise<number> {
           untilFlag === undefined ? undefined : parseDate(untilFlag, "until"),
         count: num(ctx, "count"),
       });
+      // Same reason: the knobs that tune the skip condition are refused here, before four round
+      // trips, when there is no --load-point for them to tune. Holds the REF the operator typed;
+      // the resolved `pt_` id is swapped in below.
+      const loadPointFlag = str(ctx, "loadPoint");
+      const unless = buildUnless(loadPointFlag, {
+        minMinutes: num(ctx, "minMinutes"),
+        minLoadKw: num(ctx, "minLoadKw"),
+        dipSeconds: num(ctx, "dipSeconds"),
+        withinDays: num(ctx, "withinDays"),
+      });
       const minutes = num(ctx, "minutes")!;
       // 🛑 Not a range check. On a run-request point 0 RELEASES the latch — it is a stop — so a
       // "0-minute exercise" would be a scheduled shutdown wearing the name of a scheduled run.
@@ -197,12 +218,10 @@ async function runCreateExercise(ctx: Ctx): Promise<number> {
         str(ctx, "derivation")!,
         area.displayName,
       );
-      const loadPointId = await resolvePointFlag(
-        s,
-        area,
-        str(ctx, "loadPoint")!,
-        "load-point",
-      );
+      const loadPointId = loadPointFlag
+        ? await resolvePointFlag(s, area, loadPointFlag, "load-point")
+        : undefined;
+      if (unless) unless.loadPointId = loadPointId;
       const actionPointId = await resolvePointFlag(
         s,
         area,
@@ -217,17 +236,6 @@ async function runCreateExercise(ctx: Ctx): Promise<number> {
       const graceMinutes = num(ctx, "graceMinutes");
       if (graceMinutes !== undefined) schedule.graceMinutes = graceMinutes;
 
-      const unless: Record<string, unknown> = { loadPointId };
-      for (const [flag, key] of [
-        ["minMinutes", "minMinutes"],
-        ["minLoadKw", "minLoadKw"],
-        ["dipSeconds", "dipToleranceSeconds"],
-        ["withinDays", "withinDays"],
-      ] as const) {
-        const v = num(ctx, flag);
-        if (v !== undefined) unless[key] = v;
-      }
-
       const body = {
         areaId: area.id,
         // Always standing. A one-off is expressed in the SCHEDULE (a start with no rrule), which
@@ -239,7 +247,9 @@ async function runCreateExercise(ctx: Ctx): Promise<number> {
           kind: "exercise",
           source: { kind: "derivation", derivationId: detector.id },
           schedule,
-          unless,
+          // Omitted, not sent as null: the body then says nothing about a skip condition, which is
+          // what "there isn't one" looks like to the parser.
+          ...(unless ? { unless } : {}),
         },
         action: {
           kind: "point-action",
@@ -272,7 +282,9 @@ async function runCreateExercise(ctx: Ctx): Promise<number> {
             `  run:          ${minutes} min, from ${start} local`,
             `  repeats:      ${rrule ?? "no — this is a ONE-OFF, and disables itself once it has run"}`,
             `  detector:     ${detector.name} (${detector.id})`,
-            `  load point:   ${loadPointId}`,
+            loadPointId
+              ? `  load point:   ${loadPointId}`
+              : `  skip when:    never — no --load-point, so it runs EVERY occurrence`,
             `  action point: ${actionPointId}`,
             "  🛑 this STARTS THE ENGINE, unattended, on that schedule",
             created

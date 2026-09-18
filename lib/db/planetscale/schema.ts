@@ -1589,6 +1589,18 @@ export interface ExerciseSchedule {
  * Load is not measurable on the DeepSea controller (no CTs), so it is read from a separate power
  * point — at off-grid Daylesford the Selectronic `bidi.grid/power`, where NEGATIVE means the house
  * is importing from the generator. `lib/automations/exercise.ts` owns that sign convention.
+ *
+ * Absent = no skip condition: the rule runs whenever it is due, full stop. That is what a one-off
+ * "run the engine for 10 minutes on Thursday morning" means, and until this was optional there was
+ * no way to say it — `unless` was required, so a one-off had to carry a threshold chosen to be
+ * unreachable (`minMinutes: 600`). That number then went out to every calendar subscriber as
+ * "Skipped if it has already run for 600 minutes or more…", which is not true of anything.
+ *
+ * 🛑 On a STANDING rule, absent means it exercises the engine on EVERY occurrence regardless of
+ * what the engine has already done — which is the wet-stacking-adjacent waste this whole trigger
+ * exists to avoid. That is a legitimate thing to ask for (a site with no bidirectional power point
+ * cannot answer "did it run under load" at all), but it is not the default, and every rendering of
+ * a rule says so in as many words rather than leaving the reader to notice a missing line.
  */
 export interface ExerciseUnless {
   loadPointId: string; // raw points.id uuid; unit must be W (checked in references.ts)
@@ -1630,6 +1642,10 @@ export interface ExerciseRequire {
  * for starting late.
  *
  * Absent = no supervision; a run holds the hub's latch for its full commanded duration.
+ *
+ * 🛑 Reads `unless.loadPointId` and `unless.minLoadKw` — there is deliberately ONE load point and
+ * one floor per rule, so "loaded" means the same thing to the skip condition and to supervision.
+ * That makes `supervise` without `unless` unsatisfiable, and the parser refuses the pair.
  */
 export interface ExerciseSupervise {
   settleMinutes: number; // supervision BEGINS after this; before it, low load is just warm-up
@@ -1641,8 +1657,10 @@ export interface ExerciseTrigger {
   kind: "exercise";
   source: AutomationTriggerSource; // must be a derivation (the run detector), enforced when parsing
   schedule: ExerciseSchedule;
-  unless: ExerciseUnless;
+  /** Absent = unconditional: it runs whenever it is due. See `ExerciseUnless`. */
+  unless?: ExerciseUnless;
   require?: ExerciseRequire;
+  /** Requires `unless` — the load point and floor it supervises against live there. */
   supervise?: ExerciseSupervise;
 }
 

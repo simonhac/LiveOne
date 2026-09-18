@@ -246,8 +246,16 @@ export function shouldAbortRun(
 export interface ExerciseInputs {
   slot: Slot;
   graceMinutes: number;
-  minMinutes: number;
-  /** The best loaded stretch found inside the lookback, if any. */
+  /**
+   * The bar the evidence must clear to count as "already exercised".
+   *
+   * Undefined when the rule has NO skip condition (`trigger.unless` absent) — an unconditional
+   * rule runs whenever it is due. Deliberately absent rather than a number chosen to be
+   * unreachable: an unreachable threshold is a lie that gets rendered, and it was rendered, to
+   * every subscriber of the area's calendar feed.
+   */
+  minMinutes?: number;
+  /** The best loaded stretch found inside the lookback, if any. Always null without a skip condition. */
   evidence: LoadedStretch | null;
   /** True when the run detector currently has an open interval. */
   openRun: boolean;
@@ -341,7 +349,8 @@ export function exerciseContext(
  * What to do about a slot that `isDue` has already said is ours.
  *
  * Order matters and is not arbitrary:
- *  1. Already exercised → done, whatever else is true. Cheapest and most common outcome.
+ *  1. Already exercised → done, whatever else is true. Cheapest and most common outcome. A rule
+ *     with no skip condition never reaches this branch: it has no bar and no evidence.
  *  2. Grace expired → write it off. Checked BEFORE the open-run case so that a generator that runs
  *     for the entire grace window cannot leave the slot due forever.
  *  3. A run is in progress → wait, and do NOT consume the slot. A `set_value` while the hub holds
@@ -360,7 +369,13 @@ export function decideExercise(
     prior: input.prior,
   };
 
-  if (evidence !== null && evidence.minutes >= input.minMinutes)
+  // Both halves are required: without a skip condition there is no bar to clear, and the lookback
+  // that would produce `evidence` is never run.
+  if (
+    evidence !== null &&
+    input.minMinutes !== undefined &&
+    evidence.minutes >= input.minMinutes
+  )
     return {
       kind: "consume",
       context: exerciseContext(slot, "satisfied", nowMs, {

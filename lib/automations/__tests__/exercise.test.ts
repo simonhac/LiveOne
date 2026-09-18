@@ -546,6 +546,53 @@ describe("decideExercise", () => {
     ).toEqual({ kind: "dispatch" });
   });
 
+  /**
+   * 🛑 An UNCONDITIONAL rule (`trigger.unless` absent) has no bar to clear, so `minMinutes` is
+   * undefined rather than a number chosen to be unreachable. The evaluator never runs the lookback
+   * for such a rule, so `evidence` is always null — but the branch guards on BOTH, because a
+   * `>= undefined` comparison is `false` by coercion rather than by intent, and relying on that
+   * would make an invisible dependency out of a JS wart.
+   */
+  it("never satisfies without a bar, whatever the evidence says", () => {
+    const unconditional = { slot, graceMinutes: 180 };
+    expect(
+      decideExercise(
+        { ...unconditional, evidence: loaded(600), openRun: false },
+        slot.atMs + MIN,
+      ),
+    ).toEqual({ kind: "dispatch" });
+  });
+
+  it("still writes off an unconditional slot when grace expires", () => {
+    const d = decideExercise(
+      { slot, graceMinutes: 180, evidence: null, openRun: false },
+      slot.atMs + 181 * MIN,
+    );
+    expect(d.kind !== "dispatch" && d.context.outcome).toBe("missed");
+  });
+
+  it("an unconditional rule still waits for a run in progress", () => {
+    const d = decideExercise(
+      { slot, graceMinutes: 180, evidence: null, openRun: true },
+      slot.atMs + MIN,
+    );
+    expect(d.kind).toBe("wait");
+  });
+
+  it("an unconditional rule still honours the readiness gate", () => {
+    const d = decideExercise(
+      {
+        slot,
+        graceMinutes: 180,
+        evidence: null,
+        openRun: false,
+        readiness: { socPercent: 97.2, maxSocPercent: 95 },
+      },
+      slot.atMs + MIN,
+    );
+    expect(d.kind !== "dispatch" && d.context.outcome).toBe("skipped-full");
+  });
+
   it("🛑 satisfied beats a run in progress — the cheapest answer wins", () => {
     const d = decideExercise(
       { ...base, evidence: loaded(45), openRun: true },

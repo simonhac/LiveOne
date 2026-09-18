@@ -130,7 +130,8 @@ export const AUTOMATION_SUBCOMMANDS = {
     when:
       "Reach for this for anti-wet-stacking: a diesel that idles for weeks glazes its bores. The\n" +
       "rule fires on a wall-clock slot and SKIPS itself when the engine has already done real\n" +
-      "work, so a generator in normal use is never exercised unnecessarily.",
+      "work, so a generator in normal use is never exercised unnecessarily. Omit --load-point and\n" +
+      "it has no skip condition at all — the honest shape for a one-off 'run it now for N minutes'.",
     description:
       "🛑 This creates something that STARTS AN ENGINE, on a schedule, unattended. Dry-run is the\n" +
       "default; read the printed rule before `--apply`.\n" +
@@ -138,8 +139,16 @@ export const AUTOMATION_SUBCOMMANDS = {
       "Three points are involved and they are not interchangeable:\n" +
       "  --derivation    the run detector, which answers 'is it running' and 'did it run'\n" +
       "  --load-point    a power point in WATTS (negative = import) that says how HARD it ran;\n" +
-      "                  the DeepSea controller has no CTs, so load is read from the inverter\n" +
+      "                  the DeepSea controller has no CTs, so load is read from the inverter.\n" +
+      "                  OPTIONAL: omit it and the rule has no skip condition — it simply runs\n" +
+      "                  every time it is due, which is what a one-off means\n" +
       "  --action-point  the writable run-request point the run is commanded through\n" +
+      "\n" +
+      "🛑 Omitting --load-point on a STANDING rule means it exercises the engine on every single\n" +
+      "occurrence regardless of what the engine has already done — the waste this trigger exists\n" +
+      "to avoid. On a one-off it is simply the truth, and the only way to state it: the skip\n" +
+      "condition used to be mandatory, so a one-off had to carry a threshold picked to be\n" +
+      "unreachable, which the area's calendar feed then published to subscribers as fact.\n" +
       "\n" +
       "A point is a pt_… id, a logical path on one of the AREA's devices, or the qualified form\n" +
       "`<device>:<path>`. The qualified form is not a nicety: only the DERIVATION has to live in\n" +
@@ -173,9 +182,8 @@ export const AUTOMATION_SUBCOMMANDS = {
       },
       loadPoint: {
         type: "string",
-        required: true,
         placeholder: "path|pt_",
-        help: "Power point in W used to judge load (e.g. bidi.grid/power, or dev:bidi.grid/power)",
+        help: "Power point in W used to judge load (e.g. bidi.grid/power). Omit = no skip condition",
       },
       actionPoint: {
         type: "string",
@@ -217,22 +225,23 @@ export const AUTOMATION_SUBCOMMANDS = {
       },
       minMinutes: {
         type: "number",
-        help: "Continuous loaded minutes that count as already exercised (default 30)",
+        help: "Continuous loaded minutes that count as already exercised (default 30) — needs --load-point",
       },
       minLoadKw: {
         type: "number",
-        help: "Load floor in kW — an idle run does not clear wet stacking (default 1.5)",
+        help: "Load floor in kW — an idle run does not clear wet stacking (default 1.5) — needs --load-point",
       },
       dipSeconds: {
         type: "number",
-        help: "Brief sub-threshold dips bridged rather than splitting a stretch (default 180)",
+        help: "Brief sub-threshold dips bridged rather than splitting a stretch (default 180) — needs --load-point",
       },
       withinDays: {
         type: "number",
-        help: "How far back to look for such a run (default 7)",
+        help: "How far back to look for such a run (default 7) — needs --load-point",
       },
     },
     exitCodes: { 1: "the server refused the rule (422) — nothing was written" },
+    // The third example is the one-off with no skip condition: a start, a duration, nothing else.
     examples: [
       "liveone automation create-exercise daylesford --derivation=generator " +
         "--load-point=bidi.grid/power " +
@@ -241,6 +250,9 @@ export const AUTOMATION_SUBCOMMANDS = {
       "liveone automation create-exercise daylesford --derivation=generator " +
         "--load-point=bidi.grid/power --action-point=generator:source.generator.control.request/duration " +
         "--start='2026-09-12 09:00' --minutes=30",
+      "liveone automation create-exercise daylesford --derivation=generator " +
+        "--action-point=generator:source.generator.control.request/duration " +
+        "--start='2026-09-18 09:45' --minutes=10",
     ],
   },
 

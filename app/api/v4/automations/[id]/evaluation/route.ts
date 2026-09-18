@@ -149,36 +149,43 @@ export async function GET(
     slot,
     due: { due: true },
     openRun: plan.openRun,
-    unless: {
-      // 🛑 FLAT, matching the CLI's declared shape. This was nested under `window` and the renderer
-      // read it at the top level, so every real response printed "in the last ? days" — invisible
-      // to the renderer test, which had been written against the CLI's invented shape rather than
-      // against what the route actually sends.
-      withinDays: t.unless.withinDays,
-      minMinutes: t.unless.minMinutes,
-      minLoadKw: t.unless.minLoadKw,
-      dipToleranceSeconds: t.unless.dipToleranceSeconds,
-      loadPoint: {
-        id: Point.encode(t.unless.loadPointId),
-        // 🛑 Stated on the wire rather than left to be inferred. This path reads
-        // `ReadingsDao.readRaw`, i.e. the stored column, so `points.transform` is NOT applied and
-        // the sign convention is the store's. An operator comparing this against `/api/history`,
-        // which DOES apply the transform, will otherwise see two different numbers for one point
-        // and have no way to know which they are looking at.
-        transformApplied: false,
-      },
-      best: lookback.best
-        ? {
-            minutes: lookback.best.minutes,
-            peakKw: lookback.best.peakKw,
-            endedAt: new Date(lookback.best.endMs).toISOString(),
-          }
-        : null,
-      satisfied:
-        lookback.best !== null && lookback.best.minutes >= t.unless.minMinutes,
-      runsConsidered: lookback.runsConsidered,
-      runsExcluded: lookback.runsExcluded,
-    },
+    // 🛑 `null`, not omitted, when the rule has no skip condition. An absent key is what a body
+    // truncated by an older origin also looks like, and the CLI renderer is entitled to tell the
+    // two apart — `null` is the affirmative statement "this rule is unconditional", which is what
+    // an operator asking `automation check` most needs to see.
+    unless: t.unless
+      ? {
+          // 🛑 FLAT, matching the CLI's declared shape. This was nested under `window` and the
+          // renderer read it at the top level, so every real response printed "in the last ? days"
+          // — invisible to the renderer test, which had been written against the CLI's invented
+          // shape rather than against what the route actually sends.
+          withinDays: t.unless.withinDays,
+          minMinutes: t.unless.minMinutes,
+          minLoadKw: t.unless.minLoadKw,
+          dipToleranceSeconds: t.unless.dipToleranceSeconds,
+          loadPoint: {
+            id: Point.encode(t.unless.loadPointId),
+            // 🛑 Stated on the wire rather than left to be inferred. This path reads
+            // `ReadingsDao.readRaw`, i.e. the stored column, so `points.transform` is NOT applied
+            // and the sign convention is the store's. An operator comparing this against
+            // `/api/history`, which DOES apply the transform, will otherwise see two different
+            // numbers for one point and have no way to know which they are looking at.
+            transformApplied: false,
+          },
+          best: lookback.best
+            ? {
+                minutes: lookback.best.minutes,
+                peakKw: lookback.best.peakKw,
+                endedAt: new Date(lookback.best.endMs).toISOString(),
+              }
+            : null,
+          satisfied:
+            lookback.best !== null &&
+            lookback.best.minutes >= t.unless.minMinutes,
+          runsConsidered: lookback.runsConsidered,
+          runsExcluded: lookback.runsExcluded,
+        }
+      : null,
     require: readiness
       ? {
           socPointId: t.require ? Point.encode(t.require.socPointId) : null,

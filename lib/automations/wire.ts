@@ -38,7 +38,8 @@ type WireTrigger =
       kind: "exercise";
       source: WireSource;
       schedule: ExerciseSchedule;
-      unless: {
+      /** Absent = unconditional: the rule runs whenever it is due. */
+      unless?: {
         loadPointId: string; // pt_…
         minMinutes: number;
         minLoadKw: number;
@@ -105,17 +106,23 @@ function triggerWire(raw: unknown): AutomationWire["trigger"] {
       : { kind: "point", pointId: Point.encode(t.source.pointId) };
 
   if (t.kind === "exercise") {
-    // 🛑 THREE uuids live in this trigger, not one, and only the first is under `source`:
+    // 🛑 Up to THREE uuids live in this trigger, not one, and only the first is under `source`:
     // `unless.loadPointId` and `require.socPointId` are both easy to miss. Missing the second
     // shipped a raw uuid; missing the third made the whole `require` block un-settable through the
     // API — the decoder left `pt_…` in place and the parser, which is entitled to assume raw
-    // uuids, rejected it with a 422 that named nothing.
+    // uuids, rejected it with a 422 that named nothing. `unless` is optional, so its key is OMITTED
+    // rather than serialised as `undefined` — the wire says "no skip condition", not "one I could
+    // not encode".
     const out: WireTrigger = {
       kind: "exercise",
       source,
       schedule: t.schedule,
-      unless: { ...t.unless, loadPointId: Point.encode(t.unless.loadPointId) },
     };
+    if (t.unless)
+      out.unless = {
+        ...t.unless,
+        loadPointId: Point.encode(t.unless.loadPointId),
+      };
     if (t.require)
       out.require = {
         ...t.require,
@@ -254,7 +261,7 @@ export function triggerFromWire(raw: unknown): ParseOutcome<AutomationTrigger> {
   return parseAutomationTrigger({
     ...t,
     source: decodedSource,
-    unless: decodedUnless,
+    ...(decodedUnless !== undefined ? { unless: decodedUnless } : {}),
     ...(decodedRequire !== undefined ? { require: decodedRequire } : {}),
   });
 }

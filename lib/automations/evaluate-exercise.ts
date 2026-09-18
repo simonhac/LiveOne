@@ -151,15 +151,21 @@ async function planDecision(
   slotPlan: { det: Detector; slot: Slot; exhausted: boolean },
 ): Promise<DecidedPlan> {
   const { det, slot, exhausted } = slotPlan;
-  const lookback = await loadedStretchSince(
-    row.id,
-    action.pointId,
-    det.id,
-    trigger.unless.loadPointId,
-    nowMs - trigger.unless.withinDays * DAY_MS,
-    nowMs,
-    trigger.unless,
-  );
+  // 🛑 Without a skip condition the lookback is not run AT ALL, rather than run and ignored. It is
+  // the expensive half of a tick — a 7-day raw-reading scan plus an interval query, per rule — and
+  // an unconditional rule has no question for it to answer. `runsConsidered: 0` alongside
+  // `best: null` then reads correctly: nothing was weighed because nothing needed weighing.
+  const lookback: LoadedStretchResult = trigger.unless
+    ? await loadedStretchSince(
+        row.id,
+        action.pointId,
+        det.id,
+        trigger.unless.loadPointId,
+        nowMs - trigger.unless.withinDays * DAY_MS,
+        nowMs,
+        trigger.unless,
+      )
+    : { best: null, runsConsidered: 0, runsExcluded: 0 };
   const openRun = (await getOpenRun(det.id)) !== null;
   const readiness = trigger.require
     ? {
@@ -172,7 +178,7 @@ async function planDecision(
     {
       slot,
       graceMinutes: trigger.schedule.graceMinutes,
-      minMinutes: trigger.unless.minMinutes,
+      minMinutes: trigger.unless?.minMinutes,
       evidence: lookback.best,
       openRun,
       runsConsidered: lookback.runsConsidered,
@@ -436,7 +442,11 @@ async function superviseOpenRun(
   summary: SummarySink,
 ): Promise<void> {
   const supervise = trigger.supervise;
-  if (!supervise) return;
+  // `unless` is not a second condition here, it is where supervision READS FROM: the load point and
+  // the floor both live on it. `parseExerciseTrigger` refuses the pair, so this is the type-level
+  // restatement of a rule already enforced — not a silently-degrading second opinion.
+  const unless = trigger.unless;
+  if (!supervise || !unless) return;
 
   const open = await getOpenRun(det.id);
   if (!open) return;
@@ -458,7 +468,7 @@ async function superviseOpenRun(
     return;
 
   const windowMs = supervise.sustainMinutes * 60_000;
-  const pointId = Point.encode(trigger.unless.loadPointId);
+  const pointId = Point.encode(unless.loadPointId);
   const series = await ReadingsDao.readRaw([pointId], {
     fromMs: nowMs - windowMs,
     toMs: nowMs,
@@ -469,7 +479,7 @@ async function superviseOpenRun(
   }));
   if (
     !shouldAbortRun(samples, runMinutes, {
-      minLoadKw: trigger.unless.minLoadKw,
+      minLoadKw: unless.minLoadKw,
       settleMinutes: supervise.settleMinutes,
       sustainMinutes: supervise.sustainMinutes,
     })
@@ -487,10 +497,9 @@ async function superviseOpenRun(
       tMs: s.measurementTimeMs,
       value: s.value,
     })),
-    trigger.unless,
+    unless,
   );
-  const complete =
-    achieved !== null && achieved.minutes >= trigger.unless.minMinutes;
+  const complete = achieved !== null && achieved.minutes >= unless.minMinutes;
 
   const loaded = await loadPointByUuid(action.pointId);
   const device = loaded
@@ -540,7 +549,7 @@ async function superviseOpenRun(
         abortedAt: nowMs,
         prior: priorContext(row),
         tickMode: "carry",
-        reason: `load stayed under ${trigger.unless.minLoadKw} kW for ${supervise.sustainMinutes} min`,
+        reason: `load stayed under ${unless.minLoadKw} kW for ${supervise.sustainMinutes} min`,
       },
     ),
     nowMs,

@@ -107,30 +107,37 @@ export async function checkReferences(
   }
 
   if (trigger.kind === "exercise") {
-    const load = await loadPointByUuid(trigger.unless.loadPointId);
-    if (!load) return unprocessable("trigger load point not found");
-    const access = await requireDeviceAccess(request, load.deviceRid);
-    if (access instanceof NextResponse) return access;
-    // The unit trap again, and here it is worse than a wrong number: `minLoadKw` is compared
-    // against watts converted by `importKw`. Against a point already in kW, a 1.5 kW floor would
-    // become a 1500 kW floor — never met, so the rule would exercise the engine every single week
-    // regardless of how much work it had already done, and look like it was working.
-    if (load.point.unit !== "W")
-      return unprocessable(
-        `the load point must be in W (this one is in '${load.point.unit ?? "?"}')`,
-      );
-    // A UNIDIRECTIONAL point fails OPEN, which is worse than the unit trap: `load/power` is always
-    // positive, so `importKw` clamps every sample to zero and the rule exercises the engine every
-    // single week no matter what it has already done — while looking like it is working.
-    if (!load.point.logicalPath?.startsWith("bidi."))
-      return unprocessable(
-        `the load point must be a bidirectional channel (bidi.…); ` +
-          `'${load.point.logicalPath ?? "?"}' is unidirectional and would never register import`,
-      );
-    if (load.point.metricType !== "power")
-      return unprocessable(
-        `the load point must be a power point (this one is '${load.point.metricType ?? "?"}')`,
-      );
+    // 🛑 Every check below is about the point the SKIP CONDITION reads, so it is conditional on
+    // there being one. A rule with no `unless` names no load point and runs unconditionally — the
+    // guards have nothing to guard, and demanding one would be the old required-`unless` in a new
+    // place. What makes that safe is that the guards here refuse points that fail OPEN (a rule that
+    // looks like it suppresses and never does); an ABSENT `unless` does not look like anything.
+    if (trigger.unless) {
+      const load = await loadPointByUuid(trigger.unless.loadPointId);
+      if (!load) return unprocessable("trigger load point not found");
+      const access = await requireDeviceAccess(request, load.deviceRid);
+      if (access instanceof NextResponse) return access;
+      // The unit trap again, and here it is worse than a wrong number: `minLoadKw` is compared
+      // against watts converted by `importKw`. Against a point already in kW, a 1.5 kW floor would
+      // become a 1500 kW floor — never met, so the rule would exercise the engine every single week
+      // regardless of how much work it had already done, and look like it was working.
+      if (load.point.unit !== "W")
+        return unprocessable(
+          `the load point must be in W (this one is in '${load.point.unit ?? "?"}')`,
+        );
+      // A UNIDIRECTIONAL point fails OPEN, which is worse than the unit trap: `load/power` is always
+      // positive, so `importKw` clamps every sample to zero and the rule exercises the engine every
+      // single week no matter what it has already done — while looking like it is working.
+      if (!load.point.logicalPath?.startsWith("bidi."))
+        return unprocessable(
+          `the load point must be a bidirectional channel (bidi.…); ` +
+            `'${load.point.logicalPath ?? "?"}' is unidirectional and would never register import`,
+        );
+      if (load.point.metricType !== "power")
+        return unprocessable(
+          `the load point must be a power point (this one is '${load.point.metricType ?? "?"}')`,
+        );
+    }
     if (trigger.require) {
       const soc = await loadPointByUuid(trigger.require.socPointId);
       if (!soc) return unprocessable("trigger.require point not found");
