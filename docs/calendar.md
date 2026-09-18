@@ -14,22 +14,33 @@ broken version passed the test suite.
 
 ## What it serves
 
-One `VEVENT` per **exercise** rule on the area (charge-session rules have no schedule and are
-omitted — an event with no time is not an event), plus two kinds of event about the **past**:
-an override per decided occurrence, and one per generator run no schedule accounts for. The history
-bound is **366 days** — a year and a day, one bound rather than two, so a run and the slot that
-explains it can never fall on opposite sides of the cutoff.
+🛑 **A schedule describes the FUTURE; the past is assembled from records.** That one sentence is the
+whole shape of this feed, and it was learned the hard way — see "Why the past is not part of the
+series" below.
+
+So there are two kinds of component:
+
+- **One `VEVENT` per exercise rule**, carrying its `RRULE` and covering only occurrences still to
+  come. Charge-session rules have no schedule and are omitted — an event with no time is not an
+  event.
+- **One standalone `VEVENT` per thing that already happened**: every generator run at the instant it
+  actually ran, and every slot the evaluator recorded coming to nothing at the instant it was
+  recorded for. These have their own UIDs and no relationship to any series.
+
+The history bound is **366 days** — a year and a day.
 
 | Property | Value | Why |
 | --- | --- | --- |
-| `UID` | `<automation uuid>@liveone.energy` | Stable across every edit, so a client updates its existing entry instead of accumulating duplicates. |
+| `UID` | rule: `<automation uuid>@liveone.energy` · run: `run-<derivation uuid>-<start ms>@…` · recorded slot: `slot-<automation uuid>-<slot ms>@…` | Stable across every edit, so a client updates its existing entry instead of accumulating duplicates. A past event's UID is built from the RECORD, never from the schedule. |
 | `DTSTART`/`DTEND` | local wall clock, `TZID`-qualified | The run length is the action's `set_value` minutes, so the block is how long the engine is asked to run — not an arbitrary slot. |
-| `RRULE`/`EXDATE`/`RDATE` | the stored rule, verbatim | Written by `toRecurrenceLines`; a one-off gets none of them (see below). |
+| `RRULE`/`RDATE` | the stored rule, verbatim | Written by `toRecurrenceLines`; a one-off gets none of them (see below). |
+| `EXDATE` | the owner's own skips, **plus a second property listing every past occurrence** | The synthetic one is what stops the series drawing over history the feed has already published properly. Two `EXDATE` properties rather than one merged list, so the owner's skips stay legible as theirs; both are honoured (proven against `ical.js`). |
 | `SEQUENCE` | `updated_at` in epoch **seconds** | Monotonic per edit so clients pick up changes. Seconds, not ms: `SEQUENCE` is a 32-bit integer in practice. |
-| `SUMMARY` | rule name, `(disabled)` suffixed; a decided past occurrence is prefixed ✅/⏭️/⛔️ | See the `STATUS` trap below, and "What actually happened". |
+| `SUMMARY` | rule name, `(disabled)` suffixed; a past event is prefixed ✅/⏭️/⛔️ and named for the rule that asked for it, or `<detector> run (unscheduled)` | See the `STATUS` trap below, and "What actually happened". |
 | `STATUS` | always `CONFIRMED` | See the `STATUS` trap below. |
 | `DESCRIPTION` | the outcome sentence (past occurrences only) first, then run length, the unless-terms in words (omitted entirely when the rule has none), grace | Enough to answer "what is this, why might it not happen, and what did happen". The outcome leads because Calendar.app shows the start of a description in its list view. |
-| `RECURRENCE-ID` | on an OVERRIDE only: the occurrence it replaces, TZID-qualified | How a single decided occurrence of a recurring rule gets a different title. See below. |
+
+🛑 **There is no `RECURRENCE-ID` anywhere in this feed**, deliberately — see below.
 
 **A one-off gets no `RRULE` at all.** Internally the evaluator expands one as `FREQ=DAILY;COUNT=1`
 so it has a single code path, but that synthetic rule is stripped from the feed: a calendar client
@@ -44,121 +55,154 @@ sentence with it.
 
 ## What actually happened
 
-Each past occurrence carries one glyph on its title: **✅** it ran · **⏭️** it was deliberately not
-started · **⛔️** it should have started and did not. Nothing at all for a future slot, or one still
-inside its grace window — an undecided occurrence is left exactly as the master renders it.
+Every past event carries one glyph: **✅** it ran · **⏭️** it was deliberately not started · **⛔️**
+it should have started and did not.
 
-The rules are in `lib/automations/calendar-marks.ts`, in this order:
+The sources are records, and only records:
 
-1. **A run started in the slot's window → ✅**, whatever the record says. The subscriber's question
-   is "did the generator run", and a human starting it at the right time answers that as well as a
-   dispatch does. It also covers `aborted-complete` — supervision stopping a run that had already
-   done its work is a run that happened.
-2. **`satisfied` or `skipped-full` → ⏭️.** Only the evaluator's own record can say this.
-3. **Past the window with neither → ⛔️.** Including *no record at all*, which is every slot decided
-   before `automation_slot_outcomes` existed. "We have no idea" is not something to publish; what a
-   subscriber can verify is that nothing ran.
+| Glyph | Comes from | Placed at |
+| --- | --- | --- |
+| ✅ | a row in `derived_intervals` | the run's own `start_time`/`end_time` |
+| ⏭️ | `automation_slot_outcomes` — `satisfied` or `skipped-full` | the recorded `slot_at` |
+| ⛔️ | `automation_slot_outcomes` — anything else terminal | the recorded `slot_at` |
 
-🛑 **Two silences that look identical are not.** A ⛔️ inferred from an absent record is suppressed
-for a rule that is **currently disabled**: a disabled rule is never evaluated, so every expired
-occurrence has no record and no run — exactly the shape rule 3 reads as failure — and a rule
-switched off for a month would fill that month with red for weeks nothing was ever going to happen
-in. The flag is only a proxy (it says what is true now, not what was true then), which is why it
-cannot overturn a **recorded** failure: the evaluator writing `missed` proves the rule was live at
-the time, and that verdict stands however the rule was switched afterwards.
+**Every generator start is published**, scheduled or not. A run is titled for the rule whose slot
+claims it, and `<detector> run (unscheduled)` otherwise — so a start from the generator's own panel
+or from the UI appears by itself, and the year of history needed no backfill script.
 
-🛑 **An OPEN run gets no event but still proves its slot started.** It cannot be an event — there is
-no `DTEND` to write — but discarding the row made a generator that was *running at that moment*
-publish "no start was detected", because a run beginning near the end of a grace window is still
-going when the window closes. Its occurrence reads ✅ *"It started, and is still running."*
+🛑 **Nothing is inferred from silence.** A slot is ⛔️ because the evaluator *recorded* that it came
+to nothing — never because the feed re-expanded today's schedule over last month and found no run.
+The cost is real and was accepted deliberately: an occurrence decided before migration 0078 has no
+record, so it is **absent** rather than published at a time it may never have had. Everything
+decided from 0078 onward has a row.
 
-**One run per slot, matched ONCE PER DETECTOR.** A slot claims exactly one start, and a second start
-inside the same grace window becomes its own unscheduled event. Two things this gets right that the
-obvious implementation does not:
+🛑 **An OPEN run gets no event.** There is no end instant, so no `DTEND`. It reappears, complete, on
+the first fetch after it stops.
 
-- The two questions — "which run does this slot show" and "which runs did some slot claim" — are one
-  question with one answer. Answered separately, a restart fell down the gap between them: the slot
-  showed the first run and the restart was published nowhere at all. A generator that had to be
-  started twice is exactly the morning a subscriber wants to see.
+🛑 **A ⛔️ waits for the grace window to close.** `fired` is written the moment the hub accepts a
+dispatch, and the detector needs samples before it opens an interval — so for the minutes in between
+there is a recorded start and no run, which is exactly the shape of a failure. Publishing then would
+put *"Did not run"* on the feed while the engine was turning over. A ⏭️ needs no such wait: it is a
+decision that nothing *will* run, not an absence of evidence.
+
+🛑 **A recorded slot left empty takes its run back from an expansion of its own rule.** When a rule
+is edited, the recorded instant and the occurrence today's schedule expands to are two versions of
+the same morning and both reach the same run. Time order hands it to the phantom, leaving the
+recorded slot unmatched — and an unmatched *recorded* slot is published as ⛔️, so the feed showed a
+failure sitting beside the successful run it was describing.
+
+A **transfer after matching**, and the two simpler rules that were tried first both broke something:
+
+- *Recorded slots first, globally, inside `attributeRuns`* — a recorded slot on one rule then
+  pre-empts an unrecorded slot on another, takes the only run that one could reach, and an ordinary
+  start is published as unscheduled.
+- *Drop any expansion whose window overlaps a record of the same rule* — an overlap proves possible
+  competition, not shared identity. A 09:00 occurrence and a 12:00 `RDATE` overlap at three hours of
+  grace, so recording only the later one discards the only thing that could name the earlier one's
+  run.
+
+The transfer discards nothing and is scoped to one rule, where the two slots really are competing to
+describe the same morning.
+
+**What is immutable, and what is not.** A past event's *instant* cannot be changed by editing a
+rule — that is the guarantee, and it is the one that matters. Everything else about a past event is
+recomputed from the rule's CURRENT configuration on every fetch, and that has consequences worth
+stating plainly:
+
+- Its **title** follows whichever rule's slot claims the run now. Rename a rule, or change its
+  weekday, and an old event is retitled or falls back to "unscheduled".
+- A recorded slot's **length** is its instant plus the rule's current `set_value` minutes.
+- **Editing `graceMinutes` can make a past ⛔️ appear or disappear**, because the grace is half the
+  attribution window: widen it and a recorded slot reaches a run it previously could not, so its
+  published failure is replaced by that run; narrow it and the reverse.
+
+The structural fix for all three is the same — persist the attribution with the decision (the
+claimed run, or at minimum the grace and name in force at the time) rather than recomputing it — and
+it needs a column on `automation_slot_outcomes`. It has not been worth a migration for one
+generator, but that is the trade being made, not an oversight.
+
+**One run per slot.** A slot claims exactly one start, and a second start inside the same grace
+window becomes its own event. Two things this gets right that the obvious implementation does not:
+
 - The matching spans **every rule on the detector at once**, not one rule at a time. Two rules with
   overlapping grace windows each see the earliest run in their own window — the same run — while a
   union pass claims two, and the second disappears. Slots are keyed by `(rule, occurrence)`, because
   two rules on one generator can have occurrences at the same instant.
+- Answering "which run does this slot show" and "which runs did some slot claim" separately let a
+  restart fall down the gap between them: the slot showed the first run and the restart was
+  published nowhere at all.
 
-It is greedy, earliest slot first. That is not always the matching with the most pairs (a long-grace
-slot can take a run a zero-grace slot needed), and it is deliberate: earliest-first is a rule a
-reader can follow, and nothing here has enough slots to notice the difference.
+It is greedy, earliest slot first — not always the matching with the most pairs, and deliberate:
+earliest-first is a rule a reader can follow, and nothing here has enough slots to notice.
 
-🛑 **The window is `exercise.ts`'s own attribution tolerance, imported rather than restated** —
+🛑 The attribution window is `exercise.ts`'s own tolerance, imported rather than restated —
 `[slot − ATTRIBUTION_LEAD_MS, slot + grace + ATTRIBUTION_TAIL_MS]`. A feed with its own numbers
-would eventually mark a slot ⛔️ that the evaluator had already counted as run, publishing a
-disagreement inside LiveOne as a fact about the generator.
+would eventually disagree with the evaluator about whose run a start was, publishing a disagreement
+inside LiveOne as a fact about the generator.
 
-### The recurring-series problem, and RFC 5545's answer
+🛑 Slots are expanded back past the cutoff by **one attribution window** (`attributionSlackMs`) — the
+widest on the area, shared by every rule, because the floor decides which slots get to *compete* —
+and **the reads reach back with them**. Neither half works alone: without the slots, a slot a minute
+before the cutoff and its run a minute after are torn apart by the boundary and the run is
+mislabelled "unscheduled"; without the wider read, that same pre-cutoff slot can see the *later* run
+but not its own, and claims a run it never started. Nothing before the cutoff is ever published.
 
-A recurring rule is **one** VEVENT with an RRULE, so there is no per-occurrence component to
-retitle. The answer is an **override**: a second VEVENT with the **same UID** and a
-`RECURRENCE-ID` naming the occurrence it replaces — exactly what Calendar.app writes when you edit
-"this event only". The master keeps its RRULE and its plain title.
+🛑 The unscheduled description says *"No scheduled slot accounts for this run"*, **not** "not started
+by an automation". The feed knows the first and not the second: a dispatch made at the very end of a
+grace window can start a run just outside the window the slot allows, and the feed never looks at
+`point_commands` at all. Say what you checked.
 
-- `RECURRENCE-ID` is formatted like `DTSTART`: TZID-qualified local wall clock, built from a **luxon
-  `DateTime`**, never a `Date`. The process-timezone trap in bug 1 below applies to it identically,
-  and its failure is quieter: an override naming an instant no occurrence falls on is silently
-  ignored, which looks exactly like the feature not shipping.
-- The override's `SEQUENCE` is the **master's**. An override is not independently edited.
-- 🛑 "Is this master a series?" is asked of the **recurrence lines the feed publishes**
-  (`toRecurrenceLines(...) === null`), never of `schedule.rrule`. They are different questions: a
-  schedule may carry `rdates` and no rrule at all, which renders as a repeating event. Reading that
-  as a one-off applied one occurrence's outcome to the master — i.e. to every future occurrence —
-  and, past the second occurrence, dropped the marking altogether.
-- A **one-off** has no recurrence lines, so there is nothing to override: its master VEVENT is
-  retitled in place — and a decided one-off drops the `(disabled)` suffix, because the evaluator disables a
-  one-off in the write that consumes its last slot, so *every* spent one-off is a disabled rule and
-  "✅ Top-up run (disabled)" reads as a contradiction. A standing rule, and an undecided one-off,
-  keep the suffix.
+## 🛑 Why the past is not part of the series
 
-### Runs nothing scheduled
+This is the second design. The first published each decided occurrence as an RFC 5545 **override** —
+a second `VEVENT` with the master's `UID` and a `RECURRENCE-ID` naming the occurrence it replaced.
+That is the correct mechanism for an *exceptional* occurrence, and it worked: iCloud accepted and
+rendered it.
 
-Every closed run in the window that no slot can claim gets its own event: `UID`
-`run-<derivation uuid>-<start ms>@liveone.energy`, the run's **actual** times, and
-`✅ <detector> run (unscheduled)`. This is why the year of history needed no backfill script — the
-feed reads the runs, so a start from the generator's panel next month appears by itself.
+It was still wrong, for a reason worth keeping:
 
-- The detector set is the union of the rules' own detectors and **every enabled generator detector
-  whose owner device is in the area**, so an area with no automations at all still has a calendar.
-- 🛑 The description says *"No scheduled slot accounts for this run"*, **not** "not started by an
-  automation". The feed knows the first and not the second: a dispatch made at the very end of a
-  grace window can start a run just outside the window the slot allows, and the feed never looks at
-  `point_commands` at all. Say what you checked.
-- 🛑 Slots are expanded back past the 366-day cutoff by **one attribution window**
-  (`attributionSlackMs`) — the WIDEST on the area, shared by every rule, because the floor decides
-  which slots get to *compete*: per-rule floors let a tight-grace rule's slot fall outside its own
-  floor while a loose-grace rule's survived, and the loose one took the run the tight one should
-  have had. The reads reach back with them. Neither half works alone: without
-  the slots, a slot a minute before the cutoff and its run a minute after are torn apart by the
-  boundary and the run is published as "unscheduled"; without the wider read, that same pre-cutoff
-  slot can see the *later* run but not its own, and claims a run it never started — hiding a real
-  unscheduled event. Nothing before the cutoff is ever published either way.
-- `start_time` is the run row's immutable identity (half of `derived_intervals`' primary key), so it
-  is the only stable thing to key a UID on. The consequence is worth knowing: a detector recompute
-  that shifts a start by seconds mints a **new** UID and a client sees a delete plus an add.
-  Acceptable for derived, reproducible rows; it would not be for an automation.
-- **Open intervals are excluded.** A generator running right now is not yet an outcome.
+**An override is addressed by an instant the CURRENT rule generates.** So the past stayed hostage to
+the schedule. On 17 September 2026 the Daylesford generator ran at 09:00 for 31 minutes; the rule was
+then edited from 09:00 to 07:00; and the feed published a **7 a.m. event on a day nothing was ever
+scheduled for 7 a.m.**, carrying the 9 a.m. run's real duration and energy. The master had moved
+(a client expands an `RRULE` backwards as well as forwards), the override moved with it, and the
+180-minute grace window was wide enough that the relocated slot swallowed the genuine run.
 
-### Where ⏭️ comes from
+Two further points settled it:
 
-`automations.armed_context` holds only the **latest** decision, one per rule, overwritten every
-tick — useless a week later. And the runs cannot supply the distinction: "deliberately skipped" and
-"should have started and did not" are both *no run in the window*. So migration 0078 added
-**`automation_slot_outcomes`**, one row per `(automation, slot)`, terminal decisions only. It is
-written by `recordExerciseOutcome` in a **second statement** beside the rule update, deliberately
-not in a transaction with it: a crash between them costs one slot's ⏭️/⛔️ distinction, and a
-display nicety does not belong inside the path that decides whether a generator starts.
+- **Every** past occurrence gets a glyph, so every one becomes a detached instance. A mechanism
+  designed for the rare edited occurrence was carrying 100% of the history.
+- Change the rule to a different weekday and *every past event vanishes at once*, because no address
+  exists to hang them on.
 
-**What is NOT in it:** any reading, any point value. A subscriber learns when the site intends to
-run something, and whether it did — never what anything measured. This reverses the feed's original
-"no outcome at all" invariant, deliberately: a schedule alone left "did it actually run" to somebody
-opening the app, which is the question a subscriber actually has.
+Hence: past events stand alone, at instants taken from records that a later `PATCH` cannot move
+(`derived_intervals.start_time`; `automation_slot_outcomes.slot_at`, which a trigger PATCH
+deliberately does not clear). The series `EXDATE`s its own past so it stops drawing over them.
+
+Two implementation notes that look optional and are not:
+
+- **Do not move the master's `DTSTART` forward** as a way to keep it out of the past. It looks
+  equivalent to the `EXDATE` and is not: `COUNT` counts from `DTSTART`, so shifting it silently
+  changes how many occurrences a `COUNT` rule has left.
+- The `EXDATE` bound is the feed's own history window — and, unlike the slots used for labelling, it
+  is **not** floored at the rule's `createdAt`. A schedule anchored before its own creation still
+  generates occurrences a client will draw, and leaving those unexcluded puts today's schedule back
+  over a stretch of history the feed deliberately publishes nothing about. An occurrence older than
+  the window is still expanded by the client — bare, carrying no glyph and no claim, which is just
+  "a repeating event" rather than a statement about a run.
+
+A spent **one-off** is not published as a schedule at all once a past event stands for it: its master
+would be a second copy of the same occurrence, and after an edit, a copy at the wrong time. The test
+for "already told" is **proximity**, not identity — has the feed published an instant inside this
+occurrence's own window — and neither cruder version works:
+
+- Keyed by the current start, a phantom slips through: edit a spent one-off from 09:00 to 07:00 and
+  the record still sits at 09:00, so the check finds nothing and publishes a 07:00 schedule beside
+  the 09:00 run.
+- Keyed by the rule, it goes too far: a one-off genuinely rescheduled for next week carries last
+  month's history, and that would suppress a run still to come.
+
+A one-off with nothing recorded is always published, so it cannot vanish either way.
 
 ## Security: the URL is the whole credential
 

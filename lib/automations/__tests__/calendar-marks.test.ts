@@ -1,10 +1,12 @@
 /**
  * The calendar feed's outcome marking, without a database or a route.
  *
- * What these pin is the ORDER of the rules and the EDGES of the window, because both are where the
- * feed can say something false about a generator: a slot marked ⛔️ that the evaluator had already
- * counted as run, a run published twice, or — the one a review found — a run that belongs to a slot
- * and yet appears nowhere at all.
+ * What these pin is the EDGES of the attribution window and the one-run-per-slot matching, because
+ * that is where the feed can say something false about a generator: a run published twice, or one
+ * that belongs to a slot and yet appears nowhere at all.
+ *
+ * The glyphs themselves are a total mapping from a RECORDED outcome — the feed never infers a
+ * verdict from silence, so there is no clock in that half any more.
  */
 import { describe, expect, it } from "@jest/globals";
 import {
@@ -14,7 +16,7 @@ import {
 import {
   attributeRuns,
   attributionSlackMs,
-  markForSlot,
+  markForOutcome,
   slotWindow,
 } from "@/lib/automations/calendar-marks";
 
@@ -22,17 +24,6 @@ const SLOT = Date.parse("2026-09-17T09:00:00+10:00");
 const GRACE = 180;
 const WINDOW_END = SLOT + GRACE * 60_000 + ATTRIBUTION_TAIL_MS;
 const LONG_AFTER = WINDOW_END + 86_400_000;
-
-const mark = (over: Partial<Parameters<typeof markForSlot>[0]> = {}) =>
-  markForSlot({
-    slotAtMs: SLOT,
-    graceMinutes: GRACE,
-    nowMs: LONG_AFTER,
-    run: null,
-    outcome: null,
-    enabled: true,
-    ...over,
-  });
 
 describe("slotWindow", () => {
   it("is the evaluator's own tolerances, spanning the whole grace window", () => {
@@ -57,84 +48,28 @@ describe("attributionSlackMs", () => {
   });
 });
 
-describe("markForSlot", () => {
-  it("✅ when the slot's run started in the window", () => {
-    expect(mark({ run: { startMs: SLOT + 60_000 } })).toBe("✅");
+describe("markForOutcome", () => {
+  it("⏭️ for the two outcomes that mean DELIBERATELY not started", () => {
+    expect(markForOutcome("satisfied")).toBe("⏭️");
+    expect(markForOutcome("skipped-full")).toBe("⏭️");
   });
 
-  it("is INCLUSIVE of both window edges, and excludes a millisecond outside either", () => {
-    const { fromMs, toMs } = slotWindow(SLOT, GRACE);
-    expect(mark({ run: { startMs: fromMs } })).toBe("✅");
-    expect(mark({ run: { startMs: toMs } })).toBe("✅");
-    expect(mark({ run: { startMs: fromMs - 1 } })).toBe("⛔️");
-    expect(mark({ run: { startMs: toMs + 1 } })).toBe("⛔️");
-  });
-
-  it("matches on the START instant, not overlap — a run already under way is not ours", () => {
-    // Started two hours before the slot and still running through it. The evaluator's open-run
-    // branch handles this case; it is not evidence that the slot did anything.
-    expect(mark({ run: { startMs: SLOT - 7_200_000 } })).toBe("⛔️");
-  });
-
-  it("🛑 ✅ beats every outcome — a human start at the right time still ran the engine", () => {
-    // `aborted-complete` is the live case: supervision stopped a run that had already done its
-    // work. That is a run that happened, and marking it ⛔️ would be false.
-    for (const outcome of ["aborted-complete", "missed", "satisfied"] as const)
-      expect(mark({ run: { startMs: SLOT }, outcome })).toBe("✅");
-  });
-
-  it("⏭️ for a deliberate skip", () => {
-    expect(mark({ outcome: "satisfied" })).toBe("⏭️");
-    expect(mark({ outcome: "skipped-full" })).toBe("⏭️");
-  });
-
-  it("⛔️ for every terminal outcome that started nothing", () => {
+  it("⛔️ for every outcome that came to nothing", () => {
     for (const outcome of [
       "missed",
       "missed-running",
       "aborted-unloaded",
-      "fired", // dispatched, and no run was ever detected
+      // A dispatch no run ever answered for. When a run DID answer, the run is published as itself
+      // and no slot event is built at all — so reaching here means nothing ran.
+      "fired",
+      "aborted-complete",
     ] as const)
-      expect(mark({ outcome })).toBe("⛔️");
+      expect(markForOutcome(outcome)).toBe("⛔️");
   });
 
-  it("🛑 ⛔️ with NO record at all, on an ENABLED rule — an absent row is not a shrug", () => {
-    // Every slot decided before `automation_slot_outcomes` existed is in this case. What a
-    // subscriber can verify is that nothing ran, so that is what the feed says.
-    expect(mark({ outcome: null })).toBe("⛔️");
-  });
-
-  it("🛑 says NOTHING about a DISABLED rule's silent slot — it was never going to start", () => {
-    // A disabled rule is not evaluated at all, so every expired occurrence looks exactly like a
-    // failure: no record, no run. Inferring ⛔️ there paints a month of red over weeks in which
-    // nothing was ever meant to happen.
-    expect(mark({ enabled: false, outcome: null })).toBe(null);
-  });
-
-  it("🛑 but a RECORDED failure survives the rule being switched off afterwards", () => {
-    // The evaluator only writes for enabled rules, so a `missed` row PROVES the rule was live at
-    // the time. The current flag cannot overturn a verdict from a moment it says nothing about.
-    expect(mark({ enabled: false, outcome: "missed" })).toBe("⛔️");
-    // And a run is a run, whatever the flag says now.
-    expect(mark({ enabled: false, run: { startMs: SLOT } })).toBe("✅");
-    expect(mark({ enabled: false, outcome: "satisfied" })).toBe("⏭️");
-  });
-
-  it("says nothing while the slot is still inside its grace window", () => {
-    expect(mark({ nowMs: WINDOW_END, outcome: null })).toBe(null);
-    expect(mark({ nowMs: WINDOW_END - 1, outcome: "missed" })).toBe(null);
-  });
-
-  it("⛔️ one millisecond after the window closes", () => {
-    expect(mark({ nowMs: WINDOW_END + 1 })).toBe("⛔️");
-  });
-
-  it("says nothing about a future slot", () => {
-    expect(mark({ nowMs: SLOT - 86_400_000 })).toBe(null);
-  });
-
-  it("⏭️ even inside the grace window — a skip is a decision, not a wait", () => {
-    expect(mark({ nowMs: SLOT + 60_000, outcome: "satisfied" })).toBe("⏭️");
+  it("🛑 says nothing about `waiting` — an unfinished slot is not a failure", () => {
+    // `recordSlotOutcome` refuses to store one, so this only guards a hand-written row.
+    expect(markForOutcome("waiting")).toBe(null);
   });
 });
 
@@ -146,50 +81,62 @@ describe("attributeRuns", () => {
     graceMinutes,
   });
   const slots = [slot(SLOT)];
+  /** What no slot claimed — the route's unscheduled list, derived the way the route derives it. */
+  const leftovers = <T>(runs: T[], claimed: Map<string, T>) =>
+    runs.filter((r) => ![...claimed.values()].includes(r));
 
-  it("gives a slot its run, and keeps it out of the unscheduled list", () => {
+  it("gives a slot its run", () => {
     const run = { startMs: SLOT + 30_000 };
-    expect(attributeRuns([run], slots)).toEqual({
-      bySlot: new Map([[slots[0].key, run]]),
-      unattributed: [],
-    });
+    expect(attributeRuns([run], slots)).toEqual(new Map([[slots[0].key, run]]));
   });
 
-  it("hands back everything else", () => {
+  it("leaves everything else unclaimed", () => {
     const july = { startMs: SLOT - 60 * 86_400_000 };
-    expect(attributeRuns([july], slots)).toEqual({
-      bySlot: new Map(),
-      unattributed: [july],
-    });
+    const claimed = attributeRuns([july], slots);
+    expect(claimed.size).toBe(0);
+    expect(leftovers([july], claimed)).toEqual([july]);
   });
 
-  it("🛑 a SECOND run in the same window stays visible, as its own event", () => {
-    // The bug a review found: the slot used to show the first run while the partition swallowed
-    // every run in the window, so a generator that had to be started twice published one run and
-    // hid the other. A restart is exactly the morning a subscriber wants to see.
+  it("🛑 a SECOND run in the same window is left for its own event", () => {
+    // The slot used to show the first run while the partition swallowed every run in the window,
+    // so a generator that had to be started twice published one run and hid the other.
     const first = { startMs: SLOT + 60_000 };
     const restart = { startMs: SLOT + 40 * 60_000 };
-    const { bySlot, unattributed } = attributeRuns([first, restart], slots);
-    expect(bySlot.get(slots[0].key)).toBe(first);
-    expect(unattributed).toEqual([restart]);
+    const claimed = attributeRuns([first, restart], slots);
+    expect(claimed.get(slots[0].key)).toBe(first);
+    expect(leftovers([first, restart], claimed)).toEqual([restart]);
   });
 
   it("🛑 two overlapping slots cannot both rest on the same start", () => {
     const second = slot(SLOT + 60 * 60_000);
     const run = { startMs: SLOT + 90 * 60_000 }; // inside BOTH windows
-    const { bySlot, unattributed } = attributeRuns([run], [slots[0], second]);
-    expect(bySlot.get(slots[0].key)).toBe(run);
-    expect(bySlot.has(second.key)).toBe(false);
-    expect(unattributed).toEqual([]);
+    const claimed = attributeRuns([run], [slots[0], second]);
+    expect(claimed.get(slots[0].key)).toBe(run);
+    expect(claimed.has(second.key)).toBe(false);
   });
 
   it("serves slots in time order however they arrive", () => {
     const earlier = slot(SLOT - 7 * 86_400_000);
     const run = { startMs: earlier.atMs + 60_000 };
     // The later slot is listed FIRST; the run still belongs to the earlier one.
-    const { bySlot } = attributeRuns([run], [slots[0], earlier]);
-    expect(bySlot.get(earlier.key)).toBe(run);
-    expect(bySlot.has(slots[0].key)).toBe(false);
+    const claimed = attributeRuns([run], [slots[0], earlier]);
+    expect(claimed.get(earlier.key)).toBe(run);
+    expect(claimed.has(slots[0].key)).toBe(false);
+  });
+
+  it("🛑 ONE rule's history never pre-empts ANOTHER rule's slot", () => {
+    // Why the record-beats-expansion precedence lives in the route, scoped to a single rule, and
+    // not here as a global sort. Rule A (tight grace, no record) can only reach the 09:00 start;
+    // rule B (wide grace, recorded) can reach either. Serving records first hands 09:00 to B, and
+    // A — which had one candidate — is left with nothing while a perfectly ordinary start is
+    // published as unscheduled. Time order matches both.
+    const tight = slot(SLOT - 60_000, 1, "au_a");
+    const wide = slot(SLOT, 180, "au_b");
+    const first = { startMs: SLOT };
+    const second = { startMs: SLOT + 10 * 60_000 };
+    const claimed = attributeRuns([first, second], [tight, wide]);
+    expect(claimed.get(tight.key)).toBe(first);
+    expect(claimed.get(wide.key)).toBe(second);
   });
 
   it("🛑 keys by RULE and occurrence, so simultaneous slots of two rules stay distinct", () => {
@@ -198,10 +145,9 @@ describe("attributeRuns", () => {
     const weekly = slot(SLOT, GRACE, "au_a");
     const oneOff = slot(SLOT, GRACE, "au_b");
     const run = { startMs: SLOT + 60_000 };
-    const { bySlot } = attributeRuns([run], [weekly, oneOff]);
-    expect(bySlot.size).toBe(1);
-    expect(bySlot.get(weekly.key)).toBe(run);
-    expect(bySlot.has(oneOff.key)).toBe(false);
+    const claimed = attributeRuns([run], [weekly, oneOff]);
+    expect(claimed.size).toBe(1);
+    expect(claimed.get(weekly.key)).toBe(run);
   });
 
   it("documents the greedy policy: earliest slot first, not the most matches", () => {
@@ -212,23 +158,20 @@ describe("attributeRuns", () => {
     const narrow = slot(SLOT + 60 * 60_000, 1, "au_b");
     const early = { startMs: narrow.atMs };
     const late = { startMs: narrow.atMs + 60 * 60_000 };
-    const { bySlot, unattributed } = attributeRuns(
-      [early, late],
-      [wide, narrow],
-    );
-    expect(bySlot.get(wide.key)).toBe(early);
-    expect(bySlot.has(narrow.key)).toBe(false);
-    expect(unattributed).toEqual([late]);
+    const claimed = attributeRuns([early, late], [wide, narrow]);
+    expect(claimed.get(wide.key)).toBe(early);
+    expect(claimed.has(narrow.key)).toBe(false);
+    expect(leftovers([early, late], claimed)).toEqual([late]);
   });
 
-  it("with no slots at all, every run is unscheduled", () => {
+  it("with no slots at all, nothing is claimed", () => {
     const runs = [{ startMs: SLOT }, { startMs: SLOT + 86_400_000 }];
-    expect(attributeRuns(runs, []).unattributed).toEqual(runs);
+    expect(attributeRuns(runs, []).size).toBe(0);
   });
 
   it("a run inside ANY slot's window is claimed, not just the nearest", () => {
     const later = slot(SLOT + 7 * 86_400_000);
     const run = { startMs: later.atMs + 60_000 };
-    expect(attributeRuns([run], [slots[0], later]).unattributed).toEqual([]);
+    expect(attributeRuns([run], [slots[0], later]).size).toBe(1);
   });
 });

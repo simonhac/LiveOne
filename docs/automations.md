@@ -168,23 +168,31 @@ without the calendar adopting it. Both are pinned by tests that read the output 
 one that parses it with `ical.js` — three rounds of `toContain` assertions passed over feeds that
 were broken in production.
 
-**Past occurrences carry what happened**, as one glyph on the title: ✅ it ran, ⏭️ it was
-deliberately not started, ⛔️ it should have started and did not — with ⛔️ suppressed where it would
-be inferred from the silence of a rule that is currently DISABLED, since such a rule is never
-evaluated and its occurrences leave exactly the same silence a failure does. A recurring rule is one VEVENT with
-an RRULE and has no per-occurrence component to retitle, so each decided past slot gets an RFC 5545
-**override** — a second VEVENT with the same UID and a `RECURRENCE-ID`. Runs no schedule accounts
-for (a start from the panel, or from the UI) get their own events. The bound is 366 days.
+**A schedule describes the future; the past is assembled from records.** Every generator start is
+published as its own event at the instant it actually ran, and every slot the evaluator recorded
+coming to nothing gets one at its recorded instant — ✅ it ran, ⏭️ deliberately not started, ⛔️ it
+should have started and did not. The series `EXDATE`s its own past so it stops drawing over that
+history. The bound is 366 days.
+
+🛑 **This is the second design, and the first one's failure is the reason for this one.** Past
+occurrences used to be RFC 5545 overrides hanging off the series — which meant they were addressed
+by an instant the *current* rule generates, so editing a schedule moved history. A 9 a.m. run that
+had already happened was republished as a 7 a.m. one, with its real duration attached. Records
+cannot move: `derived_intervals.start_time` and `automation_slot_outcomes.slot_at` are what the past
+is now built from. Full account in [calendar.md](calendar.md).
 
 🛑 **⏭️ needs a durable per-slot record, which is why migration 0078 added
 `automation_slot_outcomes`.** `automations.armed_context` holds only the LATEST decision, one per
 rule, overwritten every tick — so a week later there is nothing left to say why the 10 Sep slot did
 not run. And the runs cannot answer it: "deliberately skipped" and "should have started and did
-not" are both *no run in the window*, and only the evaluator's own record tells them apart. The new
-table is one row per `(automation, slot)`, terminal decisions only (never `waiting`, which is a slot
-still being worked on), written by `recordExerciseOutcome` beside the rule update. A crash between
-the two statements costs exactly one slot's ⏭️/⛔️ distinction — deliberately not a transaction,
-because a display nicety does not belong inside the path that decides whether a generator starts.
+not" are both *no run in the window*, and only the evaluator's own record tells them apart. One row
+per `(automation, slot)`, terminal decisions only (never `waiting`, which is a slot still being
+worked on), written by `recordExerciseOutcome` beside the rule update. A crash between the two
+statements costs exactly one slot's ⏭️/⛔️ distinction — deliberately not a transaction, because a
+display nicety does not belong inside the path that decides whether a generator starts.
+
+🛑 A PATCH to a trigger clears `armed_context`, and deliberately **does not** clear
+`automation_slot_outcomes`. That is what makes the past survive a schedule edit.
 
 **What is NOT in it:** any reading, any point value. A subscriber learns when the site intends to
 run something and whether it did — never what anything measured.
