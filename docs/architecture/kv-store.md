@@ -86,9 +86,11 @@ Two persisted fields deserve care, because changing either invalidates entries a
   there would be no discriminator for old entries, and `/api/data`'s readings rows put it on the wire
   verbatim. It retires with the handle itself.
 
-**Written by:** `updateLatestPointValue()` (`lib/kv-cache-manager.ts`) — six callers: the
+**Written by:** `updateLatestPointValues()` (`lib/kv-cache-manager.ts`) — six callers: the
 OpenElectricity and Amber adapters, `PointManager`, the HWS recompute, the battery-provenance blend,
-and the run-tracking publisher.
+and the run-tracking publisher. The batched form is the one to call: it writes a whole device's
+values in one `hset` and reads the subscription registry once, where the per-point form it replaced
+cost three commands *per point*. See **Cost** below for why that matters more than it looks.
 **Read by:** `getLatestValues(handle)` / `getLatestValuesForSubject(subject)`
 (`lib/latest-values-store.ts`). `/api/data` is the serving consumer.
 **TTL:** none. Overwritten on each reading.
@@ -132,8 +134,8 @@ A path claimed by two or more of an Area's points is **excluded** — the hash i
 two physical devices. Exclusion is never silent: every rebuild warns one line per contested path
 (area, path, contending point rids) and `?action=build` returns them.
 
-**Read by:** `getPointSubscribers()` (inside `updateLatestPointValue`) and `getSubscriberAreaIds()`
-(`lib/system-summary-store.ts`).
+**Read by:** `updateLatestPointValues()` (once per batch, `lib/kv-cache-manager.ts`) and
+`getSubscriberAreaIds()` (`lib/system-summary-store.ts`).
 **Rebuild triggers:** `refreshAreaServing` on every area/binding mutation; `refreshServingForMintedPoints`
 whenever an ingest batch or a derived-point writer mints a point (best-effort, with a module-level retry
 flag consumed by the next batch); the `/api/cron/daily` aggregate run, as a ≤ 24 h backstop; by hand
@@ -235,9 +237,29 @@ concurrently, so wall-clock latency is unchanged from the single-hash era.
 | Operation                 | Type   | Notes                                       |
 | ------------------------- | ------ | ------------------------------------------- |
 | `kv.hgetall()`            | Hash   | one latest-values hash                      |
-| `kv.hset()`               | Hash   | one point's latest value                    |
+| `kv.hset()`               | Hash   | one subject's latest values (N fields)      |
 | `kv.get()` / `kv.set()`   | String | a subscription-registry entry               |
 | `kv.keys()` / `kv.scan()` | Scan   | pattern match within the environment prefix |
+
+## Cost
+
+🛑 **Upstash bills per COMMAND, and nothing you can observe locally reflects that.** `@vercel/kv`
+creates its client with `enableAutoPipelining: true`, which merges commands issued in the same
+microtask into ONE HTTP request — but every command inside the pipeline is billed. So a `Promise.all`
+of 16 writes shows up as a single round trip in a network trace, in the Upstash latency graph and in
+`Server-Timing`, while costing 16 commands. Request counts and wall time are not cost signals here.
+
+(`hgetall`, `hkeys`, `keys`, `scan`, `lrange`, `smembers`, `zrange` and `exec` are excluded from
+auto-pipelining, so each of those IS its own round trip as well as its own command.)
+
+At ~43 point values a minute fleet-wide, the ingest fan-out is the dominant line item — it runs every
+minute forever, so any per-point multiplier there is the whole bill. Measured on the dev fleet (132
+point values across 17 devices) with `db:rebuild-dev-kv`, which replays every point through the live
+write path: **3.31 commands per point value before batching, 0.80 after.**
+
+To measure a path yourself, arm the counter in `lib/kv.ts` — `startKvCommandCount()` /
+`stopKvCommandCount()` around the code under test. That Proxy is the only place every command
+provably passes through; `db:rebuild-dev-kv` prints its own tally on every run.
 
 ## Security
 

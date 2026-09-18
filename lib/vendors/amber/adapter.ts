@@ -17,7 +17,10 @@ import type {
   AmberPriceRecord,
 } from "./types";
 import { updateUsage, updateForecasts } from "./client";
-import { updateLatestPointValue } from "@/lib/kv-cache-manager";
+import {
+  updateLatestPointValues,
+  type LatestPointValueUpdate,
+} from "@/lib/kv-cache-manager";
 import { PointManager } from "@/lib/point/point-manager";
 import type { PointInfo } from "@/lib/point/point-info";
 
@@ -219,13 +222,12 @@ export class AmberAdapter extends BaseVendorAdapter {
 
   /**
    * Store current period data in KV cache for live dashboard display.
-   * Uses updateLatestPointValue to propagate to composite device subscribers.
+   * Uses updateLatestPointValues to propagate to composite device subscribers.
    */
   private async storeCurrentPeriodInKV(
     systemId: number,
     currentIntervals: AmberPriceRecord[],
     session: SessionInfo,
-    sourceSystemName: string,
   ): Promise<void> {
     // Find import (general) and export (feedIn) channels
     const importRecord = currentIntervals.find(
@@ -287,32 +289,31 @@ export class AmberAdapter extends BaseVendorAdapter {
       });
     }
 
-    // Store each value, looking up point info for proper propagation
-    let storedCount = 0;
+    // Collect every value, then write them in ONE batch — see `updateLatestPointValues` for why the
+    // per-value form costs a `get` and an `hset` each.
+    const updates: LatestPointValueUpdate[] = [];
     let skippedCount = 0;
 
     for (const item of valuesToStore) {
       const point = pointsByLogicalPath.get(item.logicalPath);
 
       if (point) {
-        // Point exists in point_info - use updateLatestPointValue for propagation
-        await updateLatestPointValue(
-          systemId,
-          point.pointUid,
-          item.logicalPath,
-          item.value,
+        updates.push({
+          pointUid: point.pointUid,
+          pointPath: item.logicalPath,
+          value: item.value,
           measurementTimeMs,
           receivedTimeMs,
-          item.metricUnit,
-          point.name, // Use point's display name from DB
-          sourceSystemName,
-        );
-        storedCount++;
+          metricUnit: item.metricUnit,
+          displayName: point.name, // Use point's display name from DB
+        });
       } else {
         // Synthetic point not in point_info - skip (no propagation to composites)
         skippedCount++;
       }
     }
+    await updateLatestPointValues(systemId, updates);
+    const storedCount = updates.length;
 
     console.log(
       `[Amber] Stored ${storedCount} current period values in KV cache` +
@@ -438,7 +439,6 @@ export class AmberAdapter extends BaseVendorAdapter {
                 device.id,
                 currentIntervals,
                 session,
-                device.displayName,
               );
             }
           } catch (kvError) {

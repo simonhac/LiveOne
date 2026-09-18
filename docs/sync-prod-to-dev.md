@@ -186,8 +186,8 @@ organically (crons off), so it goes stale.
 1. `buildSubscriptionRegistry()` — source-point → composite-subscriber reverse map, from
    `area_bindings`. Built **first** so step 2 can propagate to composite systems.
 2. One latest reading per active, typed point (a LATERAL `LIMIT 1` per point, one index probe —
-   never a scan) → `updateLatestPointValue()` for each (which also fans out to composite
-   subscribers via the registry). It reads from **both** `point_readings` and
+   never a scan) → one batched `updateLatestPointValues()` per source device (which also fans out
+   to composite subscribers via the registry). It reads from **both** `point_readings` and
    `point_readings_agg_5m`, preferring raw and falling back to the 5-minute aggregate — 5m-native
    sources (OpenElectricity, etc.) only ever write `agg_5m`, so a `point_readings`-only query would
    silently drop those whole systems (e.g. the grid-signal cards).

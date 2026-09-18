@@ -51,6 +51,37 @@ function getKvClient(): ReturnType<typeof createClient> | null {
   return kvClient;
 }
 
+/**
+ * Per-command tally, for answering "how many Redis commands does this code path cost?".
+ *
+ * Upstash bills PER COMMAND, and `@vercel/kv` enables auto-pipelining by default — which merges
+ * commands issued in the same microtask into ONE HTTP request but bills them individually. So HTTP
+ * request counts, network traces and the Upstash latency graph all understate the cost, and this
+ * Proxy is the only place every command provably passes through.
+ *
+ * Off by default (an unconditional Map write on the hot path would be its own small tax); armed by
+ * {@link startKvCommandCount}. Counting is process-local and not concurrency-safe — it is a
+ * measurement tool for a test or a single hand-run request, not telemetry.
+ */
+let kvCommandCounts: Map<string, number> | null = null;
+
+/** Begin (or restart) counting commands by name. */
+export function startKvCommandCount(): void {
+  kvCommandCounts = new Map();
+}
+
+/** Stop counting and return the tally. Returns an empty result if counting was never started. */
+export function stopKvCommandCount(): {
+  total: number;
+  byCommand: Record<string, number>;
+} {
+  const counts = kvCommandCounts ?? new Map<string, number>();
+  kvCommandCounts = null;
+  let total = 0;
+  for (const n of counts.values()) total += n;
+  return { total, byCommand: Object.fromEntries(counts) };
+}
+
 export const kv = new Proxy({} as ReturnType<typeof createClient>, {
   get(_target, prop) {
     const client = getKvClient();
@@ -59,7 +90,18 @@ export const kv = new Proxy({} as ReturnType<typeof createClient>, {
       // Return no-op functions instead of throwing
       return () => Promise.resolve(null);
     }
-    return (client as any)[prop];
+    const value = (client as any)[prop];
+    // Wrap only while armed, so the default path is byte-for-byte what it was before.
+    if (kvCommandCounts && typeof value === "function") {
+      const name = String(prop);
+      return (...args: unknown[]) => {
+        // Re-read the Map each call: a wrapper captured before `stopKvCommandCount` must not keep
+        // writing into a tally the caller has already taken.
+        kvCommandCounts?.set(name, (kvCommandCounts.get(name) ?? 0) + 1);
+        return value.apply(client, args);
+      };
+    }
+    return value;
   },
 });
 

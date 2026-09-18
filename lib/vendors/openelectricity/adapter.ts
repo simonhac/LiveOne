@@ -21,7 +21,10 @@ import type { DeviceConfigView } from "@/lib/registry/device-config";
 import type { LatestReadingData } from "@/lib/types/readings";
 import type { SessionInfo } from "@/lib/point/point-manager";
 import { PointManager } from "@/lib/point/point-manager";
-import { updateLatestPointValue } from "@/lib/kv-cache-manager";
+import {
+  updateLatestPointValues,
+  type LatestPointValueUpdate,
+} from "@/lib/kv-cache-manager";
 import {
   OpenElectricityApiError,
   fetchMarketData,
@@ -221,20 +224,21 @@ export class OpenElectricityAdapter extends BaseVendorAdapter {
     }
 
     const receivedTimeMs = session.started.getTime();
+    const updates: LatestPointValueUpdate[] = [];
     for (const [path, r] of latestByPath) {
       const point = byLogicalPath.get(path);
       if (!point) continue;
-      await updateLatestPointValue(
-        systemId,
-        point.pointUid,
-        path,
-        Number(r.rawValue),
-        r.intervalEndMs,
+      updates.push({
+        pointUid: point.pointUid,
+        pointPath: path,
+        value: Number(r.rawValue),
+        measurementTimeMs: r.intervalEndMs,
         receivedTimeMs,
-        r.pointMetadata.metricUnit,
-        point.name,
-      );
+        metricUnit: r.pointMetadata.metricUnit,
+        displayName: point.name,
+      });
     }
+    await updateLatestPointValues(systemId, updates);
   }
 
   /** Validate the API key and (if the region is set) smoke-test a tiny market request. */
