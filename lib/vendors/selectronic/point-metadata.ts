@@ -140,13 +140,15 @@ export const SELECTRONIC_POINTS: SelectronicPointConfig[] = [
     },
   },
 
-  // Fault Timestamp (stored as milliseconds since epoch)
+  // Last fault time — the LATEST KNOWN fault occurrence, in milliseconds since epoch, and
+  // deliberately STICKY: it is retained after the fault clears, so a fault that came and went
+  // between two polls still leaves a trace. See `resolveFaultPoints` (./diagnostics.ts).
   {
     field: "faultTimestamp",
     metadata: {
       physicalPathTail: "fault_ts",
       logicalPathStem: null,
-      defaultName: "Fault Time",
+      defaultName: "Last Fault Time",
       subsystem: "system",
       metricType: "time",
       metricUnit: "epochMs",

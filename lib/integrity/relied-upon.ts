@@ -58,7 +58,10 @@ import {
   derivations,
   derivedIntervalProvenance,
   derivedIntervals,
+  deviceEvents,
   devices,
+  diagnosticCaptures,
+  diagnosticJobs,
   managedPollers,
   pointCommands,
   points,
@@ -340,6 +343,52 @@ async function deviceDependents(
       via: "point_commands.device_id (NO ACTION)",
       effect: "cascade-deleted",
       fix: "the audit trail of every control write to this device — clear it deliberately",
+    });
+
+  // The retained fault record. `device_events`, `diagnostic_jobs` and `diagnostic_captures` all
+  // carry a NO ACTION FK onto `devices.rid`, deliberately: these rows are EVIDENCE, and unlike
+  // `agg_1d` or the flow matrix nothing recomputes them. The inverter's own event ring is a few
+  // hundred records deep and the Select.live Events page a few dozen, so what a capture holds is
+  // frequently the only surviving account of an outage. A device delete therefore has to name them
+  // and be told again, rather than take them quietly.
+  const [events] = await db
+    .select({ n: sql<number>`count(*)::int` })
+    .from(deviceEvents)
+    .where(eq(deviceEvents.deviceRid, row?.rid ?? -1));
+  if (events && events.n > 0)
+    out.push({
+      kind: "device-event",
+      id: `${events.n} record(s)`,
+      name: null,
+      via: "device_events.device_rid (NO ACTION)",
+      effect: "cascade-deleted",
+      fix: "the retained fault history — export it first (liveone device diagnostics export), then clear it deliberately",
+    });
+  const [captures] = await db
+    .select({ n: sql<number>`count(*)::int` })
+    .from(diagnosticCaptures)
+    .where(eq(diagnosticCaptures.deviceRid, row?.rid ?? -1));
+  if (captures && captures.n > 0)
+    out.push({
+      kind: "diagnostic-capture",
+      id: `${captures.n} capture(s)`,
+      name: null,
+      via: "diagnostic_captures.device_rid (NO ACTION)",
+      effect: "cascade-deleted",
+      fix: "the original bytes behind those events; nothing re-reads them once the inverter has overwritten its ring",
+    });
+  const [jobs] = await db
+    .select({ n: sql<number>`count(*)::int` })
+    .from(diagnosticJobs)
+    .where(eq(diagnosticJobs.deviceRid, row?.rid ?? -1));
+  if (jobs && jobs.n > 0)
+    out.push({
+      kind: "diagnostic-job",
+      id: `${jobs.n} job(s)`,
+      name: null,
+      via: "diagnostic_jobs.device_rid (NO ACTION)",
+      effect: "cascade-deleted",
+      fix: "the record of why each acquisition was requested — clear it with the captures",
     });
 
   // 🛑 AUTOMATIONS, and this leg exists because THIS CHANGE invalidated the reason it did not.

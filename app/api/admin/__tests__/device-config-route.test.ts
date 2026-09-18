@@ -58,6 +58,7 @@ const FULL_CONFIG: DeviceConfig = {
     },
     reserveFloorMaxPct: 12,
   },
+  diagnostics: { portalEvents: true, autoAcquire: true },
 };
 
 const params = Promise.resolve({ systemId: "13" });

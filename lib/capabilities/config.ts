@@ -152,6 +152,24 @@ export interface DeviceConfig {
   updateCadenceSeconds?: number;
   /** Battery-provenance per-device config (currently the off-grid generator source intensity). */
   batteryProvenance?: BatteryProvenanceConfig;
+  /** Fault-event retention and automatic diagnostic acquisition. Off unless named. */
+  diagnostics?: DiagnosticsConfig;
+}
+
+/**
+ * Per-device switches for the fault-event work (`device_events`, `diagnostic_jobs`,
+ * `diagnostic_captures`).
+ *
+ * Both default to OFF and both are deliberately separate. `portalEvents` only adds one more HTTP
+ * request to a poll that is already authenticated, and its output is a retained history.
+ * `autoAcquire` opens a second, privileged connection to the inverter itself — so enabling event
+ * retention must not imply it.
+ */
+export interface DiagnosticsConfig {
+  /** Fetch the Select.live Events page on each poll and retain what it reports. */
+  portalEvents?: boolean;
+  /** Let a fault transition enqueue an automatic read of the inverter's internal logs. */
+  autoAcquire?: boolean;
 }
 
 /**

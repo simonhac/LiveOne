@@ -1,0 +1,164 @@
+<!-- Captured from the Select.live Events page, 18 September 2026. The portal system number is
+     replaced with 9999: this repository is public and a real one addresses a real site. The
+     event rows are the real ones, because their Created/Cleared pairs are the thing under test. -->
+<!DOCTYPE html>
+<html>
+    <head>
+		<meta charset="utf-8">
+		<meta http-equiv="X-UA-Compatible" content="IE=9;IE=10;IE=Edge,chrome=1" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<meta name="Description" content="Select.Live is web based SCADA for SP Pro inverters and its system" />
+		<meta name="Author" content="Selctronic Australia Pty Ltd" />
+		<title>Select.Live Portal | Selectronic Australia</title>
+		<link href="https://fonts.googleapis.com/css?family=Titillium+Web" rel="stylesheet">
+		<link href="/css/bootstrap.min.css" rel="stylesheet" />
+        <link href="/css/zebra_datepicker.min.css" rel="stylesheet" />
+		<link href="/css/ad-style.css" rel="stylesheet" />
+		<script src="/js/jquery.min.js"></script>
+		<script src="/js/bootstrap.min.js"></script>
+		<script src="/js/zebra_datepicker.min.js"></script>
+        <script src="/js/user_geolocation.js"></script>
+        <script type="text/javascript">
+        </script>
+    </head>
+
+    <body>
+    <div class="ad-header">
+        <button type="button" class="side-toggle left hidden-sm hidden-md hidden-lg" data-toggle="open">
+            <span class="bar"></span> <span class="bar"></span> <span class="bar"></span>
+        </button>
+        <div class="header-logo left"></div>
+        <div class="clear"></div>
+    </div>
+
+    
+<div class="section">
+
+  <div align="center" class="side-menu">
+    <ul>
+      <li><a href="/systems"><span class="glyphicon glyphicon-list"></span><span class="hideit">Systems</span></a></li>
+      <li><a href="/dashboard/9999"><span class="glyphicon glyphicon-dashboard"></span><span class="hideit">Dashboard</span></a></li>
+      <li><a href="/events/9999"><span class="glyphicon glyphicon-tasks"></span><span class="hideit">Events</span></a></li>
+      <li><a href="/myprofile"><span class="glyphicon glyphicon-user"></span><span class="hideit">My Profile</span></a></li>
+      <li><a href="/logout"><span class="glyphicon glyphicon-log-out"></span><span class="hideit">Logout</span></a></li>
+    </ul>
+  </div>
+  <script type="text/javascript">
+	$(".side-menu li:nth-child(3)").addClass("active");
+  </script>
+
+
+  <div class="main-content">
+    <div class="container-fluid">
+      <div class="row">
+        <div class="col-xs-12 nopadding">
+          <div class="main-content-padding">
+            <div class="main-content-inner">
+              <div class="main-content-header">
+                <h4 class="left">Events History</h4>
+                <div class="clearfix"></div>
+              </div>
+              <div class="main-content-body">
+                <input type="text" class="form-control" placeholder="Search For" />
+                <table class="table table-hover table-responsive table-striped">
+                  <thead>
+                    <tr>
+                      <th>Type</th>
+                      <th class="hidden-xs">Code</th>
+                      <th>Description</th>
+                      <th>Created</th>
+                      <th class="hidden-xs">Cleared</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td><span class="glyphicon glyphicon-ok-sign color-green s-large"></span></td>
+                      <td class="hidden-xs">50</td>
+                      <td>Unit - Instant Low DC Voltage Fault</td>
+                      <td>2026-09-18 11:53:00</td>
+                      <td class="hidden-xs">2026-09-18 12:12:59</td>
+                    </tr>
+                    <tr>
+                      <td><span class="glyphicon glyphicon-ok-sign color-green s-large"></span></td>
+                      <td class="hidden-xs">50</td>
+                      <td>Unit - Instant Low DC Voltage Fault</td>
+                      <td>2026-09-17 19:53:00</td>
+                      <td class="hidden-xs">2026-09-17 21:14:02</td>
+                    </tr>
+                    <tr>
+                      <td><span class="glyphicon glyphicon-ok-sign color-green s-large"></span></td>
+                      <td class="hidden-xs">12</td>
+                      <td>Inverter - Low SoC Alert</td>
+                      <td>2026-06-13 20:07:00</td>
+                      <td class="hidden-xs">2026-06-14 06:24:24</td>
+                    </tr>
+                    <tr>
+                      <td><span class="glyphicon glyphicon-ok-sign color-green s-large"></span></td>
+                      <td class="hidden-xs">12</td>
+                      <td>Inverter - Low SoC Alert</td>
+                      <td>2026-06-13 14:19:00</td>
+                      <td class="hidden-xs">2026-06-13 17:15:08</td>
+                    </tr>
+                    <tr>
+                      <td><span class="glyphicon glyphicon-ok-sign color-green s-large"></span></td>
+                      <td class="hidden-xs">1001</td>
+                      <td>Lost Communication - no updates for more than 24 hours.</td>
+                      <td>2025-09-16 16:45:02</td>
+                      <td class="hidden-xs">2025-09-17 08:55:33</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="clear"></div>
+</div>
+<script type="text/javascript">
+  $("input.form-control").keyup(function () {
+      var value = this.value.toLowerCase().trim();
+      $("table.table tr").each(function (index) {
+        if (!index) return;
+        $(this).find("td").each(function () {
+          var id = $(this).text().toLowerCase().trim();
+          var not_found = (id.indexOf(value) == -1);
+          $(this).closest('tr').toggle(!not_found);
+          return not_found;
+        });
+      });
+  });
+	var rowequalhieght=function() {
+		$('.row').each(function(){
+			var he=0;
+			$(this).children('div').each(function(){
+				$(this).children('div.main-content-padding').children('div.main-content-inner').css('min-height','0px');
+				he=Math.max(he,$(this).children('div.main-content-padding').children('div.main-content-inner').height());
+			});
+			$(this).children('div').children('div.main-content-padding').children('div.main-content-inner').css('min-height',he+20+'px');
+		});
+	}
+
+	$('button.side-toggle').on('click',function(){
+		if($(this).hasClass("openned")) {
+			$(this).removeClass("openned");
+			$(".side-menu").removeClass("in");
+		}
+		else {
+			$(this).addClass("openned");
+			$(".side-menu").addClass("in");
+		}
+	});
+
+	$(window).ready(function(){
+		rowequalhieght();
+	});
+	$(window).resize(function(){
+		rowequalhieght();
+	});
+</script>
+
+    </body>
+</html>

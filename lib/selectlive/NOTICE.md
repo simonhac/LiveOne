@@ -6,6 +6,12 @@ The MIT notice for that work follows. History traversal and decoding were indepe
 implemented from interoperability facts observed in SP LINK 16.11.9663. No vendor binaries
 or decompiled source are included in this repository.
 
+`event-labels.json` carries the event-code and state-enum tables that the same SP LINK build
+maps codes to, resolved by offline inspection of its enum switches. They are interoperability
+facts, needed to read our own inverter's logs: without them a stored event is an integer.
+They are data tables, not code, and no vendor binary, installer or decompiled source is
+redistributed. The file records the software version, the assembly hash and the method.
+
 Copyright 2019 David Schoen.
 
 Permission is hereby granted, free of charge, to any person obtaining a copy of this software

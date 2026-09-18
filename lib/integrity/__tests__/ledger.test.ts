@@ -155,7 +155,7 @@ describe("the verdicts hold up", () => {
     // 19 today (18 after 0069 dropped `derivations.source_points`, back to 19 when 0070 added
     // `users.location`). Pinned so that a new jsonb column cannot slip through as "not a reference
     // column".
-    expect(jsonb.length).toBe(19);
+    expect(jsonb.length).toBe(27);
     for (const c of jsonb) {
       const k = key(c.table, c.column);
       const e = ledgerByKey.get(k);

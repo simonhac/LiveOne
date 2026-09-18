@@ -38,6 +38,9 @@ still reach stderr.
   - [selectlive history](#selectlive-history)
     - [selectlive history info](#selectlive-history-info)
     - [selectlive history download](#selectlive-history-download)
+  - [selectlive events](#selectlive-events)
+    - [selectlive events info](#selectlive-events-info)
+    - [selectlive events download](#selectlive-events-download)
 
 ## selectlive
 
@@ -65,6 +68,7 @@ Subcommands:
   info                   Read inverter identity, firmware, interface versions, and logging metadata.
   read                   Read a bounded range of inverter memory without writing settings.
   history                Inspect or preserve the inverter's retained detailed log.
+  events                 Inspect or preserve the inverter's own alert and operational event logs.
 
 Run `selectlive <subcommand> --help` for a subcommand's own options.
 
@@ -408,6 +412,156 @@ Examples:
 Exit codes:
   0    success
   1    raw download preserved, but incomplete, unsupported, or not decoded
+  2    usage error
+  3    authentication failure
+  5    upstream failure
+  130  interrupted
+```
+
+### selectlive events
+
+Inspect or preserve the inverter's own alert and operational event logs.
+
+```
+Inspect or preserve the inverter's own alert and operational event logs.
+
+When to use:
+  A fault, an outage, or a generator start you cannot explain from the portal — these logs record the event and an electrical snapshot taken with it.
+
+A DIFFERENT dataset from `history`, which is periodic measurement history (15-minute averages).
+There are two logs: `alert` (faults) and `operational` (state changes). Both are read; --kind narrows.
+During the September 2026 Daylesford interruptions the portal's fault_code read zero throughout while these logs held the codes that explained them.
+
+Usage:
+  selectlive events <subcommand> [options]
+
+  Read-only. This command changes nothing.
+
+Subcommands:
+  info                   Read both event logs' metadata and their oldest/newest record timestamps.
+  download               Preserve the retained event records and optionally decode them as CSV.
+
+Run `selectlive events <subcommand> --help` for a subcommand's own options.
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  Select.live  Uses local credentials and verified TLS to select.live:7528.
+               Portal/inverter authentication failure is exit 3; connection failure is exit 5.
+
+Exit codes:
+  0    success
+  1    completed, with findings or no results
+  2    usage error
+  3    authentication failure
+  5    upstream failure
+  130  interrupted
+```
+
+#### selectlive events info
+
+Read both event logs' metadata and their oldest/newest record timestamps.
+
+```
+Read both event logs' metadata and their oldest/newest record timestamps.
+
+Usage:
+  selectlive events info [options]
+
+  Read-only. This command changes nothing.
+
+Options:
+  --device <string>          Inverter serial (required when the account has multiple devices)
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  Select.live  Uses local credentials and verified TLS to select.live:7528.
+               Portal/inverter authentication failure is exit 3; connection failure is exit 5.
+
+Examples:
+  selectlive events info --device 123456
+
+Exit codes:
+  0    success
+  1    completed, with findings or no results
+  2    usage error
+  3    authentication failure
+  5    upstream failure
+  130  interrupted
+```
+
+#### selectlive events download
+
+Preserve the retained event records and optionally decode them as CSV.
+
+```
+Preserve the retained event records and optionally decode them as CSV.
+
+Raw records and manifest are preserved before decoding. CSV requires --timezone.
+--start/--end filter only the exported CSV; the acquisition itself is bounded by --resume, not by dates.
+--resume names a previous manifest.json and reads only what is new. The previous capture's newest
+record is read again on purpose: seeing it proves nothing was missed in between. If it is GONE the
+manifest says so — the inverter overwrote it, and those records are not recoverable.
+Timestamps are the device's own clock (epoch 2001-01-01), stored verbatim; the manifest also records
+the clock's measured offset from ours, which is evidence, not a correction applied to the data.
+Each invocation creates a fresh directory; existing downloads are never overwritten.
+
+Usage:
+  selectlive events download [options]
+
+  Creates a new acquisition directory containing raw records, a manifest, and optional CSV.
+
+Options:
+  --device <string>          Inverter serial (required when the account has multiple devices)
+  --out <string>             Parent directory for the new acquisition  (required)
+  --kind <string>            Which of the two event logs to read (default: both)  (one of: alert, operational, both; default: both)
+  --timezone <string>        Device clock's IANA timezone; required to produce CSV
+  --start <string>           Inclusive local start date (YYYY-MM-DD); filters the CSV
+  --end <string>             Exclusive local end date (YYYY-MM-DD); filters the CSV
+  --resume <string>          A previous acquisition's manifest.json, to read only what is new
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  Select.live  Uses local credentials and verified TLS to select.live:7528.
+               Portal/inverter authentication failure is exit 3; connection failure is exit 5.
+
+Examples:
+  selectlive events info --device 123456
+  selectlive events download --device 123456 --out ./downloads --timezone Australia/Melbourne
+  selectlive events download --device 123456 --out ./downloads --timezone Australia/Melbourne --resume ./downloads/selectlive-events-123456-ab12cd/manifest.json
+
+Exit codes:
+  0    success
+  1    raw records preserved, but incomplete, unsupported, not decoded, or the resume overlap was lost
   2    usage error
   3    authentication failure
   5    upstream failure

@@ -18,30 +18,49 @@ export interface LogMetadata {
   sectors: Sector[];
   intervalMinutes: number;
 }
-export async function logMetadata(reader: MemoryReader): Promise<LogMetadata> {
-  const data = await reader.query(0xa335, 5);
+/**
+ * Read one ring buffer's descriptor: a 5-word header immediately followed by its sector table.
+ *
+ * The SP PRO uses the SAME layout for the detailed log and for both event logs — a 5-word header
+ * (sector count, record size in words, current 32-bit address, record count) then `sectorCount`
+ * pairs of 32-bit start/end addresses. Only the base address differs, which is why this is a
+ * parameter and not three copies: the detailed log lives at 0xa335, the alert log at 0xa266 and the
+ * operational log at 0xa2a7 (see ./events.ts). `intervalMinutes` is NOT part of the descriptor —
+ * it is a configuration word that only means anything for the periodic detailed log — so it is
+ * zero here and filled in by `logMetadata`.
+ */
+export async function ringMetadata(
+  reader: MemoryReader,
+  base: number,
+  label = "Log",
+): Promise<LogMetadata> {
+  const data = await reader.query(base, 5);
   const sectorCount = data.readUInt16LE(0);
   if (sectorCount > 64)
     protocolError(
-      "Detailed log advertises more than 64 sectors; this layout is unsupported.",
+      `${label} advertises more than 64 sectors; this layout is unsupported.`,
     );
   const sectors: Sector[] = [];
   if (sectorCount) {
-    const ranges = await reader.query(0xa33a, sectorCount * 4);
+    const ranges = await reader.query(base + 5, sectorCount * 4);
     for (let i = 0; i < sectorCount; i++)
       sectors.push({
         start: ranges.readUInt32LE(i * 8),
         end: ranges.readUInt32LE(i * 8 + 4),
       });
   }
-  const result: LogMetadata = {
+  return {
     sectorCount,
     entryWords: data.readUInt16LE(2),
     currentAddress: data.readUInt32LE(4),
     recordCount: data.readUInt16LE(8),
     sectors,
-    intervalMinutes: (await reader.query(0xc036, 1)).readUInt16LE(0),
+    intervalMinutes: 0,
   };
+}
+export async function logMetadata(reader: MemoryReader): Promise<LogMetadata> {
+  const result = await ringMetadata(reader, 0xa335, "Detailed log");
+  result.intervalMinutes = (await reader.query(0xc036, 1)).readUInt16LE(0);
   validateMetadata(result);
   return result;
 }
@@ -54,7 +73,7 @@ export function validateMetadata(log: LogMetadata): void {
     log.entryWords < 1 ||
     log.entryWords > 256
   )
-    protocolError("Unsupported detailed record size.");
+    protocolError("Unsupported log record size.");
   let capacity = 0;
   for (let i = 0; i < log.sectors.length; i++) {
     const { start, end } = log.sectors[i];
