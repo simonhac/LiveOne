@@ -45,7 +45,8 @@ import {
 import {
   attributeRuns,
   attributionSlackMs,
-  markForSlot,
+  markForOutcome,
+  slotWindow,
   type MarkableSlot,
   type SlotMark,
 } from "@/lib/automations/calendar-marks";
@@ -73,6 +74,30 @@ export const dynamic = "force-dynamic";
 const FEED_HISTORY_DAYS = 366;
 
 /**
+ * A thing that already happened, ready to be written — a run at its real times, or a slot the
+ * evaluator recorded coming to nothing.
+ *
+ * 🛑 Deliberately carries no recurrence and no link to a schedule. That is the model: the past is
+ * assembled from records (`derived_intervals` and `automation_slot_outcomes`), each event standing
+ * on its own UID at its own INSTANT, so editing a rule cannot move or delete a morning that has
+ * already been and gone.
+ *
+ * The instant is the guarantee; the title and the length are not. A run is labelled from whichever
+ * rule's slot claims it NOW, and a recorded slot's end is its instant plus the rule's CURRENT
+ * `set_value` minutes — so a rename, or a change of weekday, can still retitle old events. Pinning
+ * those too would mean storing the name and duration beside every outcome, which has not been worth
+ * a migration. See docs/calendar.md, "What is immutable, and what is not".
+ */
+interface PastEvent {
+  uid: string;
+  start: DateTime;
+  end: DateTime;
+  summary: string;
+  description: string;
+  sequence: number;
+}
+
+/**
  * One run, reduced to what the feed says about it.
  *
  * `endMs` is null for an OPEN run — a generator going right now. Such a run cannot be an event (an
@@ -85,6 +110,9 @@ interface FeedRun {
   endMs: number | null;
   energyKwh: number | null;
 }
+
+/** A run that has finished — the only kind the feed ever writes an event or a sentence about. */
+type ClosedRun = FeedRun & { endMs: number };
 
 /** Everything an unauthorized caller gets, whatever went wrong. */
 function notFound(): NextResponse {
@@ -192,21 +220,216 @@ export async function GET(
     historyFloorMs,
   );
 
+  // Every slot we know of, per rule: the occurrences today's schedule expands to, UNIONED with the
+  // ones the evaluator actually recorded. They agree until somebody edits the schedule, and then
+  // the recorded instants are the true ones — a recorded slot is not moved by a later PATCH.
+  //
+  // Both are here because each answers a different half: a recorded slot can be published (we know
+  // when it really was), while an expanded one can only LABEL a run (we know which rule would have
+  // asked for it). Deduped on `key`, which is `rule:instant`, so an unedited schedule contributes
+  // each slot once.
+  const slotRules = new Map<string, RulePlan>(); // slot key → the rule it belongs to
+  const recordedAt = new Map<string, number>(); // slot key → its instant
+  const slotsByDetector = new Map<string, MarkableSlot[]>();
+  for (const plan of plans) {
+    if (!plan.derivationId) continue;
+    const grace = plan.trigger.schedule.graceMinutes;
+    const merged = new Map<number, MarkableSlot>();
+    for (const slot of plan.slots) merged.set(slot.atMs, slot);
+    // A record at the same instant simply IS that occurrence — same key, so this overwrites.
+    for (const atMs of outcomes.get(plan.row.id)?.keys() ?? [])
+      merged.set(atMs, {
+        key: `${plan.row.id}:${atMs}`,
+        atMs,
+        graceMinutes: grace,
+      });
+    for (const slot of merged.values()) {
+      slotRules.set(slot.key, plan);
+      recordedAt.set(slot.key, slot.atMs);
+    }
+    slotsByDetector.set(plan.derivationId, [
+      ...(slotsByDetector.get(plan.derivationId) ?? []),
+      ...merged.values(),
+    ]);
+  }
+
   // ONE matching per detector, over every rule's slots at once — see `attributeRuns`.
-  const attribution = new Map<
-    string,
-    ReturnType<typeof attributeRuns<FeedRun>>
-  >();
-  for (const derivationId of detectorNames.keys())
-    attribution.set(
-      derivationId,
-      attributeRuns(
-        runsByDerivation.get(derivationId) ?? [],
-        plans
-          .filter((plan) => plan.derivationId === derivationId)
-          .flatMap((plan) => plan.slots),
-      ),
+  const attribution = new Map<string, Map<string, FeedRun>>();
+  for (const derivationId of detectorNames.keys()) {
+    const claimed = attributeRuns(
+      runsByDerivation.get(derivationId) ?? [],
+      slotsByDetector.get(derivationId) ?? [],
     );
+
+    // 🛑 REPAIR: a RECORDED slot left empty takes back a run held by an EXPANSION of its own rule.
+    //
+    // Edit a rule from 09:00 to 07:00 after its 09:00 run and both survive into the matching: the
+    // recorded 09:00 slot, and the phantom 07:00 one today's schedule expands to. They are two
+    // versions of one morning; time order hands the run to the phantom, and an unmatched RECORDED
+    // slot is published as ⛔️ — a failure sitting beside the successful run it was describing.
+    //
+    // A transfer rather than dropping the expansion before matching, which was the first attempt:
+    // an expansion's window can legitimately overlap a DIFFERENT occurrence's record (a 09:00 slot
+    // and a 12:00 RDATE, three hours of grace), and dropping it there loses the only thing that
+    // could put a name to a real run. Nothing is discarded here — only reassigned, and only within
+    // one rule, where the two slots really are competing to describe the same morning.
+    for (const slot of slotsByDetector.get(derivationId) ?? []) {
+      const outcomesForRule = outcomes.get(
+        slotRules.get(slot.key)?.row.id ?? "",
+      );
+      if (!outcomesForRule?.has(slot.atMs)) continue; // expansions never need repairing
+      if (claimed.has(slot.key)) continue; // already has its run
+      const window = slotWindow(slot.atMs, slot.graceMinutes);
+      const donor = [...claimed].find(
+        ([key, run]) =>
+          slotRules.get(key) === slotRules.get(slot.key) &&
+          !outcomesForRule.has(recordedAt.get(key) ?? -1) &&
+          run.startMs >= window.fromMs &&
+          run.startMs <= window.toMs,
+      );
+      if (!donor) continue;
+      claimed.delete(donor[0]);
+      claimed.set(slot.key, donor[1]);
+    }
+
+    attribution.set(derivationId, claimed);
+  }
+
+  // ── The past, assembled from RECORDS ───────────────────────────────────────────────────────────
+  //
+  // 🛑 Built before any master is written, because a rule whose only occurrence is already accounted
+  // for here must not ALSO be published as a schedule.
+  const past: PastEvent[] = [];
+  /**
+   * Occurrences that already have a past event standing for them, keyed `rule:instant`.
+   *
+   * 🛑 Per OCCURRENCE, not per rule. A one-off that ran and was then rescheduled still carries the
+   * old record, so a rule-wide set would let last month's history suppress next week's schedule.
+   */
+  const accountedFor = new Set<string>();
+
+  /**
+   * The INSTANTS the feed has published about, per rule — what decides whether a spent one-off is
+   * also published as a schedule.
+   *
+   * 🛑 Neither the occurrence key nor the bare rule id is the right test, and both were tried. The
+   * key alone lets a phantom master through: edit a spent one-off from 09:00 to 07:00 and the
+   * record still sits at 09:00, so a check against the CURRENT start finds nothing and publishes a
+   * 07:00 schedule beside the 09:00 run. The rule id alone goes too far the other way: a one-off
+   * genuinely rescheduled for next week has last month's history, and that would suppress a run
+   * still to come.
+   *
+   * What separates them is PROXIMITY. An edit describes the same morning — the published instant
+   * falls inside the current occurrence's own window — while a reschedule moves it days away. So
+   * the question is "has the feed already told this morning's story", and the window is the same
+   * one attribution uses.
+   */
+  const accountedInstants = new Map<string, number[]>();
+  const noteAccounted = (ruleId: string, atMs: number) =>
+    accountedInstants.set(ruleId, [
+      ...(accountedInstants.get(ruleId) ?? []),
+      atMs,
+    ]);
+
+  for (const [derivationId, detectorName] of detectorNames) {
+    const matched = attribution.get(derivationId);
+    if (!matched) continue;
+    // `attributeRuns` answers slot → run; the events below need run → slot.
+    const slotOfRun = new Map<FeedRun, string>();
+    for (const [key, run] of matched) slotOfRun.set(run, key);
+
+    // EVERY run, scheduled or not. This is the whole point of the model: a start that happened is
+    // published where it happened, as itself, and the schedule only decides what to CALL it.
+    for (const run of runsByDerivation.get(derivationId) ?? []) {
+      // 🛑 An OPEN run gets no event — no end instant, so no DTEND, and a generator going right now
+      // is not yet a thing that happened. It reappears, complete, on the next fetch after it stops.
+      if (run.endMs === null) continue;
+      const closed = run as ClosedRun;
+      // Pre-cutoff runs were fetched only so the matching could see them.
+      if (run.startMs < sinceMs) continue;
+      const start = DateTime.fromMillis(run.startMs, { zone: timezone });
+      if (!start.isValid) continue; // the zone was already complained about above
+
+      const slotKey = slotOfRun.get(run);
+      const plan = slotKey ? slotRules.get(slotKey) : undefined;
+      if (slotKey) accountedFor.add(slotKey);
+      if (plan && slotKey)
+        noteAccounted(plan.row.id, recordedAt.get(slotKey) ?? run.startMs);
+
+      past.push({
+        // 🛑 `start_time` is the row's IMMUTABLE IDENTITY — half of `derived_intervals`' primary
+        // key — so it is the only stable thing to key a UID on, and it is a property of the RUN
+        // rather than of any schedule. Note the consequence: a detector recompute that shifts a
+        // start by seconds mints a NEW UID, and a client sees a delete plus an add rather than an
+        // update. Acceptable for derived, reproducible rows; it would not be for an automation.
+        uid: `run-${derivationId}-${run.startMs}@liveone.energy`,
+        start,
+        end: DateTime.fromMillis(closed.endMs, { zone: timezone }),
+        summary: plan
+          ? `✅ ${plan.row.name}`
+          : `✅ ${detectorName} run (unscheduled)`,
+        description: plan
+          ? describeRule(plan.row, plan.trigger, plan.minutes, {
+              mark: "✅",
+              outcome: null,
+              run: closed,
+            })
+          : [
+              `${describeRun(closed)}.`,
+              // 🛑 A claim about the SCHEDULE, not about causation. "No slot's window contains this
+              // start" is what the feed knows; it does not know no automation caused it, because a
+              // dispatch at the very end of a grace window can start a run just outside the window
+              // its slot allows, and the feed never looks at `point_commands`.
+              "No scheduled slot accounts for this run.",
+            ].join("\n"),
+        sequence: Math.floor(closed.endMs / 1000),
+      });
+    }
+
+    // …and every RECORDED slot that no run answered for. These are the ⏭️ and ⛔️ — the two things
+    // a run can never evidence, and the reason `automation_slot_outcomes` exists.
+    for (const [key, atMs] of recordedAt) {
+      if (matched.has(key)) continue; // a run answered for it; published above
+      if (atMs < sinceMs) continue;
+      const plan = slotRules.get(key);
+      if (!plan || plan.derivationId !== derivationId) continue;
+      const outcome = outcomes.get(plan.row.id)?.get(atMs);
+      // 🛑 No record, no event. An occurrence that today's schedule expands to but the evaluator
+      // never wrote about cannot be placed truthfully — the expansion moves when the schedule is
+      // edited — so it is simply absent rather than published at a time it may never have had.
+      if (outcome === undefined) continue;
+      const mark = markForOutcome(outcome);
+      if (mark === null) continue;
+      // 🛑 A ⛔️ WAITS for the grace window to close. `fired` is written the moment the hub accepts
+      // a dispatch, and the detector needs samples before it opens an interval — so for the minutes
+      // in between there is a recorded start and no run, which is exactly the shape of a failure.
+      // Publishing then would put "Did not run" on the feed while the engine was turning over.
+      // A ⏭️ needs no such wait: it is a decision that nothing WILL run, not an absence of evidence.
+      if (
+        mark === "⛔️" &&
+        nowMs <= slotWindow(atMs, plan.trigger.schedule.graceMinutes).toMs
+      )
+        continue;
+      const at = DateTime.fromMillis(atMs, { zone: timezone });
+      if (!at.isValid) continue;
+      accountedFor.add(key);
+      noteAccounted(plan.row.id, atMs);
+
+      past.push({
+        // The RECORDED instant, which a later schedule edit cannot move.
+        uid: `slot-${plan.row.id}-${atMs}@liveone.energy`,
+        start: at,
+        end: at.plus({ minutes: plan.minutes }),
+        summary: `${mark} ${plan.row.name}`,
+        description: describeRule(plan.row, plan.trigger, plan.minutes, {
+          mark,
+          outcome,
+          run: null,
+        }),
+        sequence: Math.floor(plan.row.updatedAt.getTime() / 1000),
+      });
+    }
+  }
 
   const calendar = ical({
     name: `${area.displayName} automations`,
@@ -240,39 +463,25 @@ export async function GET(
     url: feedUrlWithoutToken(request.url),
   });
 
+  // ── The schedules, covering the FUTURE only ────────────────────────────────────────────────────
   for (const plan of plans) {
     const { row, trigger, start, minutes, recurrence } = plan;
-    const slotOutcomes =
-      outcomes.get(row.id) ?? new Map<number, ExerciseOutcome>();
-    const bySlot =
-      (plan.derivationId
-        ? attribution.get(plan.derivationId)?.bySlot
-        : undefined) ?? new Map<string, FeedRun>();
 
-    const marks = plan.slots
-      // Slots before the cutoff were expanded ONLY so they could claim their runs — they are
-      // outside the published history and are never marked.
-      .filter((slot) => slot.atMs >= sinceMs)
-      .map((slot) => {
-        const run = bySlot.get(slot.key) ?? null;
-        const outcome = slotOutcomes.get(slot.atMs) ?? null;
-        return {
-          atMs: slot.atMs,
-          run,
-          outcome,
-          mark: markForSlot({
-            slotAtMs: slot.atMs,
-            graceMinutes: slot.graceMinutes,
-            nowMs,
-            run,
-            outcome,
-            enabled: row.enabled,
-          }),
-        };
-      });
-
-    const oneOffMark =
-      recurrence === null && marks.length === 1 ? marks[0] : null;
+    // A spent one-off already told as a past event is not also a schedule. Its master would be a
+    // second copy of the same occurrence — and, after a schedule edit, a copy at the wrong time.
+    //
+    // 🛑 `start` in the past is half the condition, and it is not decoration. A one-off that RAN and
+    // was then rescheduled for tomorrow still has its old record, so a rule-wide "has some history"
+    // test would suppress the master and silently drop a run that is genuinely still coming.
+    const own = slotWindow(start.toMillis(), trigger.schedule.graceMinutes);
+    if (
+      recurrence === null &&
+      start.toMillis() <= nowMs &&
+      (accountedInstants.get(row.id) ?? []).some(
+        (atMs) => atMs >= own.fromMs && atMs <= own.toMs,
+      )
+    )
+      continue;
 
     const event = calendar.createEvent({
       // Stable across every edit, so a client updates the existing entry rather than accumulating
@@ -281,22 +490,11 @@ export async function GET(
       start,
       end: start.plus({ minutes }),
       timezone,
-      // 🛑 A DECIDED one-off drops the `(disabled)` suffix, and that is not an oversight. The
-      // evaluator disables a one-off in the same write that consumes its last slot, so every spent
-      // one-off is a disabled rule — and to a subscriber "✅ Top-up run (disabled)" reads as a
-      // contradiction. Once the glyph says what happened, "disabled" has nothing left to add. A
-      // STANDING rule, and an undecided one-off, keep the suffix: there, disabled still means
-      // "and it will not happen again".
-      summary:
-        oneOffMark?.mark != null
-          ? `${oneOffMark.mark} ${row.name}`
-          : row.enabled
-            ? row.name
-            : `${row.name} (disabled)`,
+      summary: row.enabled ? row.name : `${row.name} (disabled)`,
       description: describeRule(row, trigger, minutes, {
-        mark: oneOffMark?.mark ?? null,
-        outcome: oneOffMark?.outcome ?? null,
-        run: oneOffMark?.run ?? null,
+        mark: null,
+        outcome: null,
+        run: null,
       }),
       // 🛑 A disabled rule is marked in the SUMMARY and left CONFIRMED. It is NOT `CANCELLED`.
       //
@@ -310,79 +508,44 @@ export async function GET(
       sequence: Math.floor(row.updatedAt.getTime() / 1000),
     });
 
-    if (recurrence !== null) event.repeating(recurrence);
-
-    // The overrides. Only where the master is a series: a one-off has no occurrence to override and
-    // was retitled in place above.
     if (recurrence === null) continue;
-    for (const { atMs, mark, outcome, run } of marks) {
-      if (mark === null) continue;
-      // 🛑 LUXON here too. `RECURRENCE-ID` goes through the same formatter as `DTSTART`, so a plain
-      // `Date` would name the occurrence at the PROCESS's wall clock wearing this area's TZID — and
-      // an override whose RECURRENCE-ID matches no occurrence is silently dropped by the client,
-      // leaving the feed looking exactly as if the marking had never been written.
-      const at = DateTime.fromMillis(atMs, { zone: timezone });
-      calendar.createEvent({
-        // 🛑 The MASTER's UID. That, plus RECURRENCE-ID, is what makes this an override of one
-        // occurrence rather than a second event sitting on top of it.
-        id: `${row.id}@liveone.energy`,
-        recurrenceId: at,
-        start: at,
-        end: at.plus({ minutes }),
-        timezone,
-        summary: `${mark} ${row.name}`,
-        description: describeRule(row, trigger, minutes, {
-          mark,
-          outcome,
-          run,
-        }),
-        status: ICalEventStatus.CONFIRMED,
-        // The master's own sequence: an override is not independently edited, so it moves when the
-        // rule does. A client comparing the two sees one consistent version of the series.
-        sequence: Math.floor(row.updatedAt.getTime() / 1000),
-      });
-    }
+
+    // 🛑 EXDATE every occurrence already in the past, so the series describes the FUTURE and only
+    // the future. Without this the client draws the schedule backwards over history the feed has
+    // just published properly — two versions of the same morning, one of them at whatever time the
+    // rule happens to say TODAY. That is the defect this whole model exists to remove.
+    //
+    // A second `EXDATE` property beside the owner's stored one, rather than merged into it: both
+    // are honoured (proven against ical.js), and the owner's skips stay legible as theirs.
+    //
+    // The bound is `plan.slots`, i.e. the feed's own history window. An occurrence older than that
+    // is still expanded by the client from the RRULE — bare, carrying no glyph and no claim, which
+    // is just "a repeating event" rather than a statement about a run.
+    const exdates = plan.exdateSlots.map((atMs) =>
+      DateTime.fromMillis(atMs, { zone: timezone }).toFormat(
+        "yyyyLLdd'T'HHmmss",
+      ),
+    );
+    event.repeating(
+      exdates.length === 0
+        ? recurrence
+        : `${recurrence}\r\nEXDATE;TZID=${timezone}:${exdates.join(",")}`,
+    );
   }
 
-  // Everything the schedules do not account for: a start from the generator's own panel, from the
-  // UI, or from before any rule existed. This is why the history needs no backfill script — the
-  // feed reads the runs, so next month's manual start appears on its own.
-  for (const [derivationId, detectorName] of detectorNames) {
-    for (const run of attribution.get(derivationId)?.unattributed ?? []) {
-      // 🛑 An OPEN run gets no event. It has no end, so there is no DTEND to write — and a
-      // generator going right now is not yet a thing that happened. It has already done its other
-      // job above: a slot it started in is ✅ on the strength of it.
-      if (run.endMs === null) continue;
-      // Pre-cutoff runs were fetched only so the matching could see them; they are not history the
-      // feed publishes.
-      if (run.startMs < sinceMs) continue;
-      const start = DateTime.fromMillis(run.startMs, { zone: timezone });
-      if (!start.isValid) continue; // the zone was already complained about above
-      calendar.createEvent({
-        // 🛑 `start_time` is the row's IMMUTABLE IDENTITY — half of `derived_intervals`' primary
-        // key — so it is the only stable thing to key a UID on. Note the consequence: a detector
-        // recompute that shifts a start by seconds mints a NEW UID, and a client sees a delete plus
-        // an add rather than an update. Acceptable for derived, reproducible rows; it would not be
-        // for an automation.
-        id: `run-${derivationId}-${run.startMs}@liveone.energy`,
-        start,
-        end: DateTime.fromMillis(run.endMs, { zone: timezone }),
-        timezone,
-        summary: `✅ ${detectorName} run (unscheduled)`,
-        description: [
-          `${describeRun(run)}.`,
-          // 🛑 A claim about the SCHEDULE, not about causation. "Nobody scheduled this" is what the
-          // feed actually knows — no slot's window contains this start. It does not know that no
-          // automation caused it: a dispatch made at the very end of a grace window can start a run
-          // just outside the window the slot allows, and "not started by an automation" would be a
-          // categorical statement about a thing the feed never looked at.
-          "No scheduled slot accounts for this run.",
-        ].join("\n"),
-        status: ICalEventStatus.CONFIRMED,
-        sequence: Math.floor(run.endMs / 1000),
-      });
-    }
-  }
+  // Finally the past, after every master — so a client reading top-down meets the rule before the
+  // history of it. Order is not significant to a parser; this is for the human with a text editor.
+  for (const event of past)
+    calendar.createEvent({
+      id: event.uid,
+      start: event.start,
+      end: event.end,
+      timezone,
+      summary: event.summary,
+      description: event.description,
+      status: ICalEventStatus.CONFIRMED,
+      sequence: event.sequence,
+    });
 
   return new NextResponse(calendar.toString(), {
     headers: {
@@ -447,6 +610,16 @@ interface RulePlan {
   /** The published recurrence lines, or null when the master is a single unrepeated event. */
   recurrence: string | null;
   slots: MarkableSlot[];
+  /**
+   * Every past occurrence of the CURRENT rule, for EXDATE — a superset of `slots`.
+   *
+   * 🛑 Not the same set, and the difference is the `createdAt` floor. `slots` is floored there so a
+   * run from before the rule existed cannot be LABELLED with its name. The exclusions cannot share
+   * that floor: a schedule whose DTSTART precedes its own creation still generates occurrences a
+   * client will draw, and leaving those unexcluded puts today's schedule back over a stretch of
+   * history the feed deliberately publishes nothing about.
+   */
+  exdateSlots: number[];
   /** The earliest instant a slot of this rule was expanded from — the reads must reach it. */
   attributionFloorMs: number;
 }
@@ -519,6 +692,15 @@ function planRule(
   // the cutoff and its run a minute after it would be torn apart by the boundary, and the run
   // published as "unscheduled" — a false statement assembled out of an arbitrary number.
   const attributionFloorMs = Math.max(row.createdAt.getTime(), expandFromMs);
+  // ONE expansion, bounded by the feed window; the `createdAt` floor is then applied only to the
+  // half that labels runs. `occurrencesBetween` never returns anything before DTSTART, so this is
+  // bounded by the window however old the series anchor is.
+  const occurrences = occurrencesBetween(
+    trigger.schedule,
+    timezone,
+    expandFromMs,
+    nowMs,
+  ).map((slot) => slot.atMs);
 
   return [
     {
@@ -537,18 +719,16 @@ function planRule(
       // outcome to every future occurrence of the same event — and, past the second occurrence,
       // silently dropped the marking altogether.
       recurrence: toRecurrenceLines(trigger.schedule, timezone),
-      slots: occurrencesBetween(
-        trigger.schedule,
-        timezone,
-        attributionFloorMs,
-        nowMs,
-      ).map((slot) => ({
-        // Keyed by RULE and occurrence: two rules on one generator can have slots at the same
-        // instant, and an instant-keyed matching silently merges them.
-        key: `${row.id}:${slot.atMs}`,
-        atMs: slot.atMs,
-        graceMinutes: grace,
-      })),
+      slots: occurrences
+        .filter((atMs) => atMs >= attributionFloorMs)
+        .map((atMs) => ({
+          // Keyed by RULE and occurrence: two rules on one generator can have slots at the same
+          // instant, and an instant-keyed matching silently merges them.
+          key: `${row.id}:${atMs}`,
+          atMs,
+          graceMinutes: grace,
+        })),
+      exdateSlots: occurrences.filter((atMs) => atMs <= nowMs),
       attributionFloorMs,
     },
   ];
@@ -561,9 +741,13 @@ function exerciseTrigger(row: AutomationRow): ExerciseTrigger | null {
   return parsed.value;
 }
 
-/** "Ran for 28 minutes (0.5 kWh)" — the kWh only when the detector actually accumulated any. */
-function describeRun(run: FeedRun): string {
-  if (run.endMs === null) return "It started, and is still running";
+/**
+ * "Ran for 28 minutes (0.5 kWh)" — the kWh only when the detector actually accumulated any.
+ *
+ * Takes a CLOSED run by type. An open one never reaches here: it cannot be an event, and it is no
+ * longer evidence for a slot either, so the two callers below have both already excluded it.
+ */
+function describeRun(run: ClosedRun): string {
   const ran = `Ran for ${Math.round((run.endMs - run.startMs) / 60_000)} minutes`;
   // NULL is UNKNOWN here, never zero — an unpriceable or un-metered run says nothing rather than
   // claiming it produced nothing.
@@ -582,7 +766,7 @@ function describeRun(run: FeedRun): string {
 function describeOutcome(args: {
   mark: SlotMark;
   outcome: ExerciseOutcome | null;
-  run: FeedRun | null;
+  run: ClosedRun | null;
   graceMinutes: number;
 }): string | null {
   switch (args.mark) {
@@ -610,7 +794,7 @@ function describeRule(
   decided: {
     mark: SlotMark;
     outcome: ExerciseOutcome | null;
-    run: FeedRun | null;
+    run: ClosedRun | null;
   },
 ): string {
   // 🛑 FIRST. On a past occurrence the outcome is the whole reason a subscriber opened the event,
