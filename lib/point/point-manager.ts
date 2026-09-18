@@ -38,10 +38,7 @@ import { canonicalValue } from "./canonical-value";
 import { getAreaBindingRefs } from "@/lib/areas/bindings";
 import { getAreaMemberDeviceIds } from "@/lib/areas/members";
 import { DeviceRegistry } from "@/lib/registry";
-import {
-  updateSystemSummary,
-  updateSubscriberSummaries,
-} from "../system-summary-store";
+import { updateSystemSummary } from "../system-summary-store";
 import { publishObservationBatch } from "../observations/publisher";
 
 // ============================================================================
@@ -1160,16 +1157,18 @@ export class PointManager {
       // than ~48. See `updateLatestPointValues` for why the per-point form was so expensive.
       await updateLatestPointValues(systemId, cacheUpdates);
 
-      // Update system summary (fire-and-forget, don't block)
+      // Update this DEVICE's summary (fire-and-forget, don't block). There is deliberately no
+      // subscriber fan-out any more: it maintained `ar_…` fields in the same hash that nothing ever
+      // read — `/admin/devices` indexes the hash by `dv_` device id — at the cost of a registry
+      // `get` plus an `hgetall` and `hset` PER SUBSCRIBING AREA, on every poll batch.
       if (summaryValues.length > 0) {
-        updateSystemSummary(systemId, summaryValues, maxMeasurementTimeMs)
-          .then(() => {
-            // After updating source summary, update subscriber summaries
-            return updateSubscriberSummaries(systemId);
-          })
-          .catch((err) =>
-            console.error("Failed to update system summary:", err),
-          );
+        updateSystemSummary(
+          systemId,
+          summaryValues,
+          maxMeasurementTimeMs,
+        ).catch((err) =>
+          console.error("Failed to update system summary:", err),
+        );
       }
     } catch (error) {
       console.error("Failed to update KV cache:", error);

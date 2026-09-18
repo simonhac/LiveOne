@@ -12,7 +12,7 @@
  * What it writes (all in the `dev:` namespace, see lib/kv.ts kvKey):
  *   - dev:latest:device:{dv_…}       per-point latest values for a device
  *   - dev:latest:area:{ar_…}         the same, propagated to each subscribing multi-device Area
- *   - dev:system-summaries           aggregated solar/load/battery/grid rollup, keyed by dv_/ar_ TypeID
+ *   - dev:system-summaries           aggregated solar/load/battery/grid rollup, keyed by dv_ TypeID
  *   - dev:subscriptions:device:{dv_…}  reverse map source-point → subscribing Areas
  *
  * config-v4 Phase 13 PR 3 moved this keyspace off the integer handle. This script's own API is
@@ -45,10 +45,7 @@ import {
   updateLatestPointValues,
   type LatestPointValueUpdate,
 } from "@/lib/kv-cache-manager";
-import {
-  updateSystemSummary,
-  updateSubscriberSummaries,
-} from "@/lib/system-summary-store";
+import { updateSystemSummary } from "@/lib/system-summary-store";
 import { groupLatestByDevice } from "./rebuild-dev-kv-helpers";
 
 // Bounded-concurrency runner. The KV writes below are independent per point, but Upstash is a
@@ -120,7 +117,7 @@ async function main(): Promise<void> {
 
   // Build the write tasks up front (pure JS, no awaits) so we can run them with bounded concurrency
   // instead of one-at-a-time. Per-system summary inputs are collected the same way, to run AFTER all
-  // point values land (updateSubscriberSummaries reads them back from KV).
+  // point values land.
   const pointTasks: Array<() => Promise<void>> = [];
   const systemSummaries: Array<{
     systemId: number;
@@ -185,12 +182,11 @@ async function main(): Promise<void> {
   // Phase 1: write every device's latest values (bounded concurrency). Fail hard on any rejection.
   await runPool(pointTasks, KV_CONCURRENCY, (task) => task());
 
-  // Phase 2: source summary + composite propagation, AFTER all points are in KV (mirrors
-  // point-manager.ts: updateSubscriberSummaries reads the just-written subscriber latest values).
-  await runPool(systemSummaries, KV_CONCURRENCY, async (s) => {
-    await updateSystemSummary(s.systemId, s.values, s.maxMeasurementTimeMs);
-    await updateSubscriberSummaries(s.systemId);
-  });
+  // Phase 2: each source device's own summary. No subscriber fan-out — the `ar_…` summary fields it
+  // used to maintain were read by nothing (see point-manager.ts).
+  await runPool(systemSummaries, KV_CONCURRENCY, (s) =>
+    updateSystemSummary(s.systemId, s.values, s.maxMeasurementTimeMs),
+  );
 
   const { total, byCommand } = stopKvCommandCount();
   const breakdown = Object.entries(byCommand)
