@@ -8,7 +8,6 @@ import { specToDisplayStrings } from "@/lib/capabilities/config";
 import { formatTimeAEST } from "@/lib/date-utils";
 import { fromDate } from "@internationalized/date";
 import { VendorRegistry } from "@/lib/vendors/registry";
-import { getLatestValues, LatestValuesMap } from "@/lib/latest-values-store";
 import {
   getAllSystemSummaries,
   SystemSummary,
@@ -73,62 +72,6 @@ export interface AdminDevicesResult {
   totalDevices: number;
   timestamp: string;
   latestValuesIncluded: boolean;
-}
-
-/**
- * Extract power values from KV cache latest values
- */
-function extractPowerValues(latestValues: LatestValuesMap) {
-  const entries = Object.values(latestValues).filter(
-    (v) => v && typeof v.logicalPath === "string",
-  );
-
-  if (entries.length === 0) {
-    return {
-      solarPower: null,
-      loadPower: null,
-      batteryPower: null,
-      gridPower: null,
-      batterySOC: null,
-      timestampMs: null,
-    };
-  }
-
-  const findValue = (pathPrefix: string, metric: string) => {
-    const entry = entries.find(
-      (v) =>
-        v.logicalPath.startsWith(pathPrefix) &&
-        v.logicalPath.includes(`/${metric}`),
-    );
-    return (entry?.value as number) ?? null;
-  };
-
-  const getPowerWithFallback = (basePath: string) => {
-    const exact = entries.find((v) => v.logicalPath === `${basePath}/power`);
-    if (exact) return exact.value as number;
-
-    const parts = entries.filter(
-      (v) =>
-        v.logicalPath.startsWith(`${basePath}.`) &&
-        v.logicalPath.endsWith("/power"),
-    );
-    if (parts.length === 0) return null;
-    return parts.reduce((sum, v) => sum + (v.value as number), 0);
-  };
-
-  const findTimestamp = () => {
-    const first = entries[0];
-    return first?.measurementTimeMs ?? null;
-  };
-
-  return {
-    solarPower: getPowerWithFallback("source.solar"),
-    loadPower: getPowerWithFallback("load"),
-    batteryPower: findValue("bidi.battery", "power"),
-    gridPower: findValue("bidi.grid", "power"),
-    batterySOC: findValue("bidi.battery", "soc"),
-    timestampMs: findTimestamp(),
-  };
 }
 
 /**

@@ -15,21 +15,8 @@
  */
 
 import { kv } from "./kv";
-import {
-  subscriptionsKey,
-  summariesField,
-  summariesKey,
-  type KvAreaSubject,
-} from "./kv-keys";
-import {
-  kvDeviceSubjectForHandle,
-  kvSourceSubjectForHandle,
-} from "./kv-subjects";
-import {
-  getLatestValuesForSubject,
-  LatestValuesMap,
-} from "./latest-values-store";
-import { Area, type AreaId } from "@/lib/ids";
+import { summariesField, summariesKey } from "./kv-keys";
+import { kvSourceSubjectForHandle } from "./kv-subjects";
 import { ROLE_IDS, ROLES } from "@/lib/roles/registry";
 
 /**
@@ -171,115 +158,4 @@ export async function clearSystemSummary(systemId: number): Promise<void> {
   const subject = await kvSourceSubjectForHandle(systemId);
   if (!subject) return;
   await kv.hdel(summariesKey(), summariesField(subject));
-}
-
-/**
- * The Areas that subscribe to a source device, from its `subscriptions:device:{dv_…}` entry.
- *
- * config-v4 Phase 13 PR 3: was `getSubscriberSystemIds`, returning integer handles parsed out of the
- * `"{areaHandle}.{ordinal}"` ref grammar with `ref.split(".")`. The grammar is gone — a ref IS the
- * subscriber's `ar_` TypeID — so the split, the `parseInt` and the `isNaN` guard go with it. A ref left
- * by a pre-PR-3 build fails `Area.is` and is dropped, so a stale entry degrades to "no subscribers".
- *
- * @param sourceSystemId - Source device's integer handle
- */
-export async function getSubscriberAreaIds(
-  sourceSystemId: number,
-): Promise<AreaId[]> {
-  const device = await kvDeviceSubjectForHandle(sourceSystemId);
-  if (!device) return [];
-  const entry = await kv.get<{
-    pointSubscribers: Record<string, string[]>;
-    lastUpdatedTimeMs: number;
-  }>(subscriptionsKey(device.id));
-
-  if (!entry?.pointSubscribers) {
-    return [];
-  }
-
-  const areaIds = new Set<AreaId>();
-  for (const subscriberRefs of Object.values(entry.pointSubscribers)) {
-    for (const ref of subscriberRefs) {
-      if (Area.is(ref)) areaIds.add(ref);
-    }
-  }
-
-  return Array.from(areaIds);
-}
-
-/**
- * Update the summary for a subscriber AREA from the latest values in its own hash.
- *
- * Reads `latest:area:{ar_…}` directly (not the handle union): an Area's summary should describe the
- * Area's resolved point set, which is exactly what the fan-out materialises there. For every subscriber
- * that exists today this is value-identical to the pre-PR-3 union read, because every point in the
- * colliding case (handle 13) is bound into the Area anyway.
- */
-export async function updateSubscriberSummary(
-  area: KvAreaSubject,
-): Promise<void> {
-  const latestValues = await getLatestValuesForSubject(area);
-
-  if (!latestValues || Object.keys(latestValues).length === 0) {
-    return;
-  }
-
-  // Convert LatestValuesMap to values array for aggregation
-  const values: Array<{ logicalPath: string; value: number }> = [];
-  let maxTimestamp = 0;
-
-  for (const entry of Object.values(latestValues)) {
-    // Skip entries without logicalPath (stale cache data)
-    if (entry && typeof entry.value === "number" && entry.logicalPath) {
-      values.push({
-        logicalPath: entry.logicalPath,
-        value: entry.value,
-      });
-      if (entry.measurementTimeMs > maxTimestamp) {
-        maxTimestamp = entry.measurementTimeMs;
-      }
-    }
-  }
-
-  if (values.length === 0 || maxTimestamp === 0) {
-    return;
-  }
-
-  // Aggregate and update the summary
-  const readings = aggregateSummaryReadings(values);
-
-  if (Object.keys(readings).length === 0) {
-    return;
-  }
-
-  const summary: SystemSummary = {
-    measurementTimeMs: maxTimestamp,
-    readings,
-  };
-
-  await kv.hset(summariesKey(), { [summariesField(area)]: summary });
-}
-
-/**
- * Update summaries for all Areas subscribing to a source device.
- *
- * @param sourceSystemId - Source device's integer handle
- */
-export async function updateSubscriberSummaries(
-  sourceSystemId: number,
-): Promise<void> {
-  const areaIds = await getSubscriberAreaIds(sourceSystemId);
-
-  if (areaIds.length === 0) {
-    return;
-  }
-
-  // Update each subscriber's summary in parallel
-  await Promise.all(
-    areaIds.map((id) =>
-      updateSubscriberSummary({ kind: "area", id }).catch((err) =>
-        console.error(`Failed to update summary for subscriber ${id}:`, err),
-      ),
-    ),
-  );
 }
