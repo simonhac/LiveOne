@@ -168,8 +168,26 @@ without the calendar adopting it. Both are pinned by tests that read the output 
 one that parses it with `ical.js` — three rounds of `toContain` assertions passed over feeds that
 were broken in production.
 
-**What is NOT in it:** any reading, any point value, any outcome. A subscriber learns when the site
-*intends* to run something, and nothing else.
+**Past occurrences carry what happened**, as one glyph on the title: ✅ it ran, ⏭️ it was
+deliberately not started, ⛔️ it should have started and did not — with ⛔️ suppressed where it would
+be inferred from the silence of a rule that is currently DISABLED, since such a rule is never
+evaluated and its occurrences leave exactly the same silence a failure does. A recurring rule is one VEVENT with
+an RRULE and has no per-occurrence component to retitle, so each decided past slot gets an RFC 5545
+**override** — a second VEVENT with the same UID and a `RECURRENCE-ID`. Runs no schedule accounts
+for (a start from the panel, or from the UI) get their own events. The bound is 366 days.
+
+🛑 **⏭️ needs a durable per-slot record, which is why migration 0078 added
+`automation_slot_outcomes`.** `automations.armed_context` holds only the LATEST decision, one per
+rule, overwritten every tick — so a week later there is nothing left to say why the 10 Sep slot did
+not run. And the runs cannot answer it: "deliberately skipped" and "should have started and did
+not" are both *no run in the window*, and only the evaluator's own record tells them apart. The new
+table is one row per `(automation, slot)`, terminal decisions only (never `waiting`, which is a slot
+still being worked on), written by `recordExerciseOutcome` beside the rule update. A crash between
+the two statements costs exactly one slot's ⏭️/⛔️ distinction — deliberately not a transaction,
+because a display nicety does not belong inside the path that decides whether a generator starts.
+
+**What is NOT in it:** any reading, any point value. A subscriber learns when the site intends to
+run something and whether it did — never what anything measured.
 
 **Auth is a feed token** (`area_calendar_tokens`, `lib/areas/calendar-tokens.ts`), not a session —
 because a calendar client fetches the URL unattended for years and has no way to sign in. That

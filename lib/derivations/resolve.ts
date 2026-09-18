@@ -771,3 +771,82 @@ export async function ownerDeviceIdForDerivation(
   }
   return null;
 }
+
+/**
+ * The GENERATOR run-detectors whose owner device sits in this area — id and name only.
+ *
+ * Exists for the calendar feed, whose question is not the evaluator's. An exercise rule names the
+ * one detector it watches; the feed wants every generator run at the SITE, including the ones no
+ * rule ever dispatched (a panel start, a start from the UI) and the ones from before any rule
+ * existed. So an area with no automations at all still has a calendar worth subscribing to.
+ *
+ * Deliberately NOT narrowed in SQL by the area. The owner slot is a per-row PRECEDENCE
+ * (`energy` then `signal`), not a column, so a `WHERE devices.area_id = …` on the join would also
+ * return a detector whose signal merely happens to sit on a device here while it belongs elsewhere
+ * — and would drop the other slots needed to tell the two apart. The full generator set is a
+ * handful of rows fleet-wide; resolving the owner in JS is both cheaper to reason about and right.
+ */
+export async function listGeneratorDetectorsForArea(
+  areaUuid: string,
+): Promise<{ id: string; name: string }[]> {
+  const rows = await requirePlanetscaleDb()
+    .select({
+      id: derivations.id,
+      name: derivations.name,
+      slot: derivationSources.slot,
+      deviceAreaId: devices.areaId,
+    })
+    .from(derivations)
+    .innerJoin(
+      derivationSources,
+      eq(derivationSources.derivationId, derivations.id),
+    )
+    .innerJoin(devices, eq(devices.id, derivationSources.deviceId))
+    .where(
+      and(
+        eq(derivations.kind, RUN_DETECTOR_KIND),
+        eq(derivations.role, "generator"),
+        eq(derivations.enabled, true),
+      ),
+    );
+
+  const byDerivation = new Map<
+    string,
+    { name: string; slots: Map<string, string | null> }
+  >();
+  for (const row of rows) {
+    let entry = byDerivation.get(row.id);
+    if (!entry)
+      byDerivation.set(row.id, (entry = { name: row.name, slots: new Map() }));
+    entry.slots.set(row.slot, row.deviceAreaId);
+  }
+
+  const here: { id: string; name: string }[] = [];
+  for (const [id, { name, slots }] of byDerivation) {
+    // `undefined` = the slot is unwired, which is not the same as a device in no area (`null`).
+    const ownerSlot = OWNER_SLOTS.find((slot) => slots.has(slot));
+    if (ownerSlot === undefined) continue; // a detector with no owner slot is broken, not placeless
+    if (slots.get(ownerSlot) === areaUuid) here.push({ id, name });
+  }
+  return here.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/**
+ * `derivation id → name`, for the few ids a caller already holds. Missing ids are simply absent.
+ *
+ * The calendar feed's companion to `listGeneratorDetectorsForArea`: an exercise rule may name a
+ * detector that listing does not return — one whose role is not `generator` — and the feed still
+ * has to be able to title that detector's runs. Kept separate rather than folded into the listing
+ * above, because the two answer different questions: "which detectors does this site have" and
+ * "what is this specific detector called".
+ */
+export async function derivationNames(
+  derivationIds: string[],
+): Promise<Map<string, string>> {
+  if (derivationIds.length === 0) return new Map();
+  const rows = await requirePlanetscaleDb()
+    .select({ id: derivations.id, name: derivations.name })
+    .from(derivations)
+    .where(inArray(derivations.id, derivationIds));
+  return new Map(rows.map((r) => [r.id, r.name]));
+}

@@ -547,6 +547,13 @@
       "when": 1789518735450,
       "tag": "0077_point_readings_session_id_idx",
       "breakpoints": true
+    },
+    {
+      "idx": 78,
+      "version": "7",
+      "when": 1789717639874,
+      "tag": "0078_automation_slot_outcomes",
+      "breakpoints": true
     }
   ]
 }
