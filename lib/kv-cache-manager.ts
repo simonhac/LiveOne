@@ -70,8 +70,14 @@ export interface SubscriptionRegistryEntry {
 }
 
 /**
- * Update the latest value for a point in a system's cache
- * Also updates all subscriber systems that subscribe to this specific point
+ * Update the latest value for ONE point in a system's cache, and fan it out to every Area that
+ * subscribes to it.
+ *
+ * 🛑 **Prefer {@link updateLatestPointValues} whenever more than one value is in hand.** This is a
+ * one-element wrapper over it, and calling it in a loop or a `Promise.all` costs a separate `get` of
+ * the subscription entry and a separate single-field `hset` *per point* — which is billed per command
+ * even though auto-pipelining collapses it to one HTTP request. It is the right call only when the
+ * values genuinely belong to different devices (see `lib/run-tracking/running-latest.ts`).
  *
  * @param systemId - Source device handle. Resolved HERE to its `dv_` subject for the
  *                   `latest:device:{dv_…}` hash key (config-v4 Phase 13 PR 3 — the interior stays
@@ -102,13 +108,85 @@ export async function updateLatestPointValue(
   sessionId?: string,
   sessionLabel?: string,
 ): Promise<void> {
-  const pointValue: LatestValue = {
-    value,
-    logicalPath: pointPath,
-    measurementTimeMs,
-    receivedTimeMs,
-    metricUnit,
-    displayName,
+  await updateLatestPointValues(systemId, [
+    {
+      pointUid,
+      pointPath,
+      value,
+      measurementTimeMs,
+      receivedTimeMs,
+      metricUnit,
+      displayName,
+      sessionId,
+      sessionLabel,
+    },
+  ]);
+}
+
+/** One point's latest value, as {@link updateLatestPointValues} takes it. */
+export interface LatestPointValueUpdate {
+  /** Source point's `points.id` uuid — the subscription-map key and the stored `pt_` reference. */
+  pointUid: string;
+  /** Logical path, e.g. `"source.solar.local/power"`. */
+  pointPath: string;
+  value: number | string | null;
+  measurementTimeMs: number;
+  receivedTimeMs: number;
+  metricUnit: string;
+  displayName: string;
+  sessionId?: string;
+  sessionLabel?: string;
+}
+
+/**
+ * Write a whole device's latest values in one pass — the batched form, and the one to prefer.
+ *
+ * 🛑 **Cost is per COMMAND, and this is the hottest path in the system.** Upstash bills every command,
+ * and `@vercel/kv` turns on auto-pipelining by default, which merges same-microtask commands into one
+ * HTTP request *without* reducing what is billed. So a `Promise.all` of per-point calls looks like a
+ * single round trip in a network trace while costing N times as much. Steady state is ~43 point values
+ * a minute fleet-wide, every minute, forever — the multiplier is the whole bill.
+ *
+ * The per-point shape this replaced cost `3 × points` commands: one `hset` per point on the device
+ * hash, one `get` of the *same* subscription entry per point, and one `hset` per point per subscribing
+ * Area. A 16-point Selectronic poll was 48 commands. Batched it is 3–4, because the fan-out
+ * fundamentally groups by (device, Area), not by point:
+ *
+ * 1. one `hset` on the source hash carrying every path,
+ * 2. **one** `get` of the device's subscription entry for the whole batch,
+ * 3. one `hset` per subscriber Area carrying every path that Area subscribes to.
+ *
+ * Reading the registry once per batch rather than once per point is also strictly *more* consistent
+ * than caching it would be: every point in a batch now fans out against one snapshot, and the
+ * rebuild's "registry first, then GC the area hashes" ordering still holds, because nothing here
+ * retains a snapshot beyond the batch that read it.
+ *
+ * Same-path duplicates within a batch resolve last-one-wins, exactly as the sequential writes did.
+ */
+export async function updateLatestPointValues(
+  systemId: number,
+  updates: LatestPointValueUpdate[],
+): Promise<void> {
+  if (updates.length === 0) return;
+
+  const source = await kvSourceSubjectForHandle(systemId);
+  if (!source) {
+    // Unknown handle: no `legacy_handles` row, so there is no key to write. Before PR 3 this wrote
+    // `latest:system:N` for an id nothing could serve. Log rather than throw — a KV cache failure must
+    // never break reading insertion (point-manager catches, but the other five writers do not).
+    console.warn(
+      `[KV] updateLatestPointValues: handle ${systemId} resolves to no device or area — skipping`,
+    );
+    return;
+  }
+
+  const valueOf = (u: LatestPointValueUpdate): LatestValue => ({
+    value: u.value,
+    logicalPath: u.pointPath,
+    measurementTimeMs: u.measurementTimeMs,
+    receivedTimeMs: u.receivedTimeMs,
+    metricUnit: u.metricUnit,
+    displayName: u.displayName,
     // config-v4 pre-terminal prep: `pointReference` was `"{systemId}.{pointIndex}"`. Its index half
     // came from `point_info.index`, which `points` has no counterpart to, so the terminal drop would
     // have made the value unreproducible. It is now the point's `pt_` TypeID — the locked public ID
@@ -116,72 +194,191 @@ export async function updateLatestPointValue(
     // actually derived from the old string, moves to its own field. The two grammars are mutually
     // unambiguous (`pt_…` vs `"9.7"`), so a stale KV entry written by an older build can never be
     // mis-parsed as the new one; it simply reads as absent.
-    pointReference: Point.encode(pointUid),
+    pointReference: Point.encode(u.pointUid),
     sourceSystemId: systemId,
-    ...(sessionId && { sessionId }),
-    ...(sessionLabel && { sessionLabel }),
-  };
+    ...(u.sessionId && { sessionId: u.sessionId }),
+    ...(u.sessionLabel && { sessionLabel: u.sessionLabel }),
+  });
 
   // Update the SOURCE's own hash. A reading's point always belongs to a device (`points.device_id` is
   // NOT NULL and FK-backed), so this is the device leg; the area fallback inside
   // `kvSourceSubjectForHandle` only guards a handle that names no device at all.
-  const source = await kvSourceSubjectForHandle(systemId);
-  if (!source) {
-    // Unknown handle: no `legacy_handles` row, so there is no key to write. Before PR 3 this wrote
-    // `latest:system:N` for an id nothing could serve. Log rather than throw — a KV cache failure must
-    // never break reading insertion (point-manager catches, but the other five writers do not).
-    console.warn(
-      `[KV] updateLatestPointValue: handle ${systemId} resolves to no device or area — skipping`,
-    );
+  const sourceKey = latestValuesKey(source);
+  const sourceFields: Record<string, LatestValue> = {};
+  for (const u of updates) sourceFields[u.pointPath] = valueOf(u);
+
+  const changedSource = pruneUnchanged(sourceKey, sourceFields);
+  if (!changedSource) {
+    // Every field would have stored byte-identical content, so there is nothing a reader could
+    // observe — and the Area fan-out below derives from these same values, so it cannot differ
+    // either. Skipping the subscription `get` too is the point: this is what makes a derived
+    // writer that re-runs every minute over a 5-minute model grid cost nothing four times in five.
     return;
   }
-  await kv.hset(latestValuesKey(source), { [pointPath]: pointValue });
+  await kv.hset(sourceKey, changedSource);
+  rememberWritten(sourceKey, changedSource);
 
-  // Look up the Areas that subscribe to this specific source point, each with this point's rank in
-  // that Area's chain for `pointPath` (0 unless another binding outranks it there).
-  const subscribers = await getPointSubscribers(systemId, pointUid);
+  // Read the device's subscription entry ONCE for the batch, rather than once per point.
+  const entry = await readSubscriptionEntry(systemId);
+  if (!entry) return;
 
-  // Update each subscriber Area's cache (only for subscribed points). One hset per Area; the refs are
-  // already deduped per Area by the registry, so no grouping pass is needed any more.
+  // Group the fan-out by Area, so each subscriber Area takes a single `hset` carrying every path it
+  // subscribes to in this batch.
   //
   // The FIELD is rank-dependent: a chain winner writes the bare path exactly as before, a fallback
-  // writes `path#rank` beside it. Rank is per-Area — the same point can be an Area's preferred
-  // instrument and another's backstop — which is why this is computed here and not once above. The
+  // writes `path#rank` beside it. Rank is per-(point, Area) — the same point can be one Area's
+  // preferred instrument and another's backstop — which is why it is resolved inside the loop. The
   // source device's own hash is never chained: a device has one point per path by construction.
-  if (subscribers.length > 0) {
+  const byArea = new Map<AreaId, Record<string, LatestValue>>();
+  for (const u of updates) {
+    const subscribers = subscribersForPoint(entry, u.pointUid);
+    if (subscribers.length === 0) continue;
+    const pointValue = valueOf(u);
+    for (const { areaId, rank } of subscribers) {
+      let fields = byArea.get(areaId);
+      if (!fields) byArea.set(areaId, (fields = {}));
+      fields[chainFallbackField(u.pointPath, rank)] = pointValue;
+    }
+  }
+
+  if (byArea.size > 0) {
     await Promise.all(
-      subscribers.map(({ areaId, rank }) =>
-        kv.hset(latestValuesKey(areaSubject(areaId)), {
-          [chainFallbackField(pointPath, rank)]: pointValue,
-        }),
-      ),
+      Array.from(byArea, ([areaId, fields]) => {
+        // Pruned per-Area as well as at the source: the field NAME differs here (`path#rank`), so a
+        // rank change is a content change and must still write.
+        const key = latestValuesKey(areaSubject(areaId));
+        const changed = pruneUnchanged(key, fields);
+        if (!changed) return undefined;
+        return kv
+          .hset(key, changed)
+          .then(() => void rememberWritten(key, changed));
+      }),
     );
   }
 }
 
 /**
- * The Areas subscribing to one source point.
+ * What this process last successfully wrote for each `(KV key, hash field)`.
+ *
+ * 🛑 **The rule is byte-identical content, not "the value looks the same".** A write is skipped only
+ * when BOTH `value` and `measurementTimeMs` match what we last stored — so a reader cannot tell the
+ * difference, including the three places that judge a value by its age: `resolveChainFields`'
+ * `CHAIN_FALLBACK_STALE_MS` (`lib/latest-values-store.ts`), the tile staleness threshold
+ * (`components/Tile.tsx`), and `DeviceMetricsCard`'s row greying.
+ *
+ * Comparing on `value` alone would be a bug: the HWS model can produce a NEW step carrying an
+ * unchanged temperature, and freezing `measurementTimeMs` there would dim the Hot Water tile.
+ *
+ * **A polled value is therefore always written.** Every poll carries a fresh vendor
+ * `measurementTimeMs`, so the pair differs and this never fires on the ingest path — a point pinned
+ * at 0 all night still writes every minute, and age stays exactly as reliable as before. What it
+ * does catch is a derived writer re-running on a cron tick faster than its own data grid.
+ *
+ * The one thing it does NOT preserve is `receivedTimeMs`, which advances on every write and is
+ * rendered as a relative "X ago" by the device Latest Readings table. Where this fires, that column
+ * stops advancing — which is the honest reading, because nothing was in fact received.
+ *
+ * Process-local and best-effort: a cold lambda simply writes once, and concurrent instances each
+ * keep their own memo. Every failure mode resolves toward writing, never toward a missed write.
+ */
+const lastWritten = new Map<
+  string,
+  { value: number | string | null; measurementTimeMs: number }
+>();
+
+/**
+ * Cap on {@link lastWritten}. One entry per (subject, path) — ~200 today, but it scales with the
+ * fleet, so it is cleared wholesale rather than grown without bound. Over-writing is always safe.
+ */
+const LAST_WRITTEN_MAX = 20_000;
+
+const memoKey = (key: string, field: string) => `${key}\u0000${field}`;
+
+/**
+ * The subset of `fields` whose stored content would actually change, or null when none would.
+ */
+function pruneUnchanged(
+  key: string,
+  fields: Record<string, LatestValue>,
+): Record<string, LatestValue> | null {
+  const changed: Record<string, LatestValue> = {};
+  let any = false;
+  for (const [field, next] of Object.entries(fields)) {
+    const prev = lastWritten.get(memoKey(key, field));
+    if (
+      prev &&
+      prev.value === next.value &&
+      prev.measurementTimeMs === next.measurementTimeMs
+    ) {
+      continue;
+    }
+    changed[field] = next;
+    any = true;
+  }
+  return any ? changed : null;
+}
+
+/** Record a write. 🛑 Only ever called AFTER the `hset` resolves — a failed write must not latch. */
+function rememberWritten(
+  key: string,
+  fields: Record<string, LatestValue>,
+): void {
+  if (lastWritten.size >= LAST_WRITTEN_MAX) lastWritten.clear();
+  for (const [field, v] of Object.entries(fields)) {
+    lastWritten.set(memoKey(key, field), {
+      value: v.value,
+      measurementTimeMs: v.measurementTimeMs,
+    });
+  }
+}
+
+/**
+ * Forget every memoised write.
+ *
+ * 🛑 **Called by `buildSubscriptionRegistry`, and that is load-bearing.** Its `gcAreaLatestFields`
+ * pass DELETES area-hash fields that have left the serving set. Without this, a field the GC removed
+ * would still look "already written" and the fan-out would skip re-adding it until its value
+ * happened to change — the one way this optimisation could lose data rather than just cost a write.
+ */
+export function forgetLatestWriteMemo(): void {
+  lastWritten.clear();
+}
+
+/**
+ * A source device's subscription-registry entry, or null when the handle names no device / has none.
  *
  * @param sourceSystemId - Source device handle (selects the `subscriptions:device:{dv_…}` KV entry)
- * @param sourcePointUid - Source point's `points.id`
+ */
+async function readSubscriptionEntry(
+  sourceSystemId: number,
+): Promise<SubscriptionRegistryEntry | null> {
+  const device = await kvDeviceSubjectForHandle(sourceSystemId);
+  if (!device) return null;
+  return (
+    (await kv.get<SubscriptionRegistryEntry>(subscriptionsKey(device.id))) ??
+    null
+  );
+}
+
+/**
+ * The Areas subscribing to one source point, each with that point's chain rank there (0 unless
+ * another binding outranks it in that Area).
+ *
+ * Pure — it reads an entry already in hand, which is what lets a whole batch fan out against one
+ * snapshot for one `get`.
+ *
  * @returns Subscriber Area TypeIDs. A ref written by a pre-PR-3 build (`"13.0"`) fails `Area.parse`
  *          and is dropped, so a stale entry reads as "no subscribers" rather than mis-routing a value
  *          into another entity's hash.
  */
-async function getPointSubscribers(
-  sourceSystemId: number,
+function subscribersForPoint(
+  entry: SubscriptionRegistryEntry,
   sourcePointUid: string,
-): Promise<Array<{ areaId: AreaId; rank: number }>> {
-  const device = await kvDeviceSubjectForHandle(sourceSystemId);
-  if (!device) return [];
-  const entry = await kv.get<SubscriptionRegistryEntry>(
-    subscriptionsKey(device.id),
-  );
-
-  const refs = entry?.pointSubscribers?.[sourcePointUid];
+): Array<{ areaId: AreaId; rank: number }> {
+  const refs = entry.pointSubscribers?.[sourcePointUid];
   if (!refs) return [];
   // Absent for every rank-0 winner, and for every entry written before chains existed.
-  const ranks = entry?.fallbackRanks?.[sourcePointUid];
+  const ranks = entry.fallbackRanks?.[sourcePointUid];
 
   const out: Array<{ areaId: AreaId; rank: number }> = [];
   for (const ref of refs) {
@@ -605,6 +802,13 @@ export async function buildSubscriptionRegistry(): Promise<SubscriptionRegistryS
   // Sweep area hashes AFTER the registry is written, so a value that just left the serving set cannot
   // be re-added by a fan-out still reading the old snapshot in the same instant.
   const gcDeletedFields = await gcAreaLatestFields(servedPathsByArea);
+
+  // 🛑 The GC above DELETED fields, and the write memo does not know that. Forget it, or a field the
+  // GC removed still looks "already written" and the fan-out skips re-adding it until its value
+  // happens to change. This is the one way the skip-unchanged optimisation could lose data rather
+  // than merely cost a write — and a rebuild is also exactly when a chain RANK can change, which
+  // renames the field a value lands in.
+  forgetLatestWriteMemo();
 
   for (const sp of suppressed) {
     console.warn(

@@ -12,7 +12,7 @@
  * What it writes (all in the `dev:` namespace, see lib/kv.ts kvKey):
  *   - dev:latest:device:{dv_…}       per-point latest values for a device
  *   - dev:latest:area:{ar_…}         the same, propagated to each subscribing multi-device Area
- *   - dev:system-summaries           aggregated solar/load/battery/grid rollup, keyed by dv_/ar_ TypeID
+ *   - dev:system-summaries           aggregated solar/load/battery/grid rollup, keyed by dv_ TypeID
  *   - dev:subscriptions:device:{dv_…}  reverse map source-point → subscribing Areas
  *
  * config-v4 Phase 13 PR 3 moved this keyspace off the integer handle. This script's own API is
@@ -36,17 +36,16 @@
  *   # CI: PLANETSCALE_DATABASE_URL=$LIVEONE_DEV_DATABASE_URL npx tsx scripts/utils/rebuild-dev-kv-from-db.ts
  */
 import { getEnvironment } from "@/lib/env";
+import { startKvCommandCount, stopKvCommandCount } from "@/lib/kv";
 import { ReadingsDao } from "@/lib/readings";
 import { RegistryCache } from "@/lib/registry";
 import { Point } from "@/lib/ids";
 import {
   buildSubscriptionRegistry,
-  updateLatestPointValue,
+  updateLatestPointValues,
+  type LatestPointValueUpdate,
 } from "@/lib/kv-cache-manager";
-import {
-  updateSystemSummary,
-  updateSubscriberSummaries,
-} from "@/lib/system-summary-store";
+import { updateSystemSummary } from "@/lib/system-summary-store";
 import { groupLatestByDevice } from "./rebuild-dev-kv-helpers";
 
 // Bounded-concurrency runner. The KV writes below are independent per point, but Upstash is a
@@ -101,7 +100,7 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  // 1) Subscription registry first, so updateLatestPointValue can propagate each source
+  // 1) Subscription registry first, so updateLatestPointValues can propagate each source
   //    point to the composite devices that subscribe to it (same as live ingest).
   console.log("Building subscription registry from area_bindings…");
   await buildSubscriptionRegistry();
@@ -118,7 +117,7 @@ async function main(): Promise<void> {
 
   // Build the write tasks up front (pure JS, no awaits) so we can run them with bounded concurrency
   // instead of one-at-a-time. Per-system summary inputs are collected the same way, to run AFTER all
-  // point values land (updateSubscriberSummaries reads them back from KV).
+  // point values land.
   const pointTasks: Array<() => Promise<void>> = [];
   const systemSummaries: Array<{
     systemId: number;
@@ -129,9 +128,9 @@ async function main(): Promise<void> {
   for (const [systemId, deviceRows] of byDevice) {
     const summaryValues: Array<{ logicalPath: string; value: number }> = [];
     let maxMeasurementTimeMs = 0;
+    const deviceUpdates: LatestPointValueUpdate[] = [];
 
     for (const row of deviceRows) {
-      const address = addresses.get(row.point)!;
       const logicalPath = `${row.logicalPathStem}/${row.metricType}`;
       const cacheValue: number | string | null =
         row.value ?? row.valueStr ?? null;
@@ -140,21 +139,17 @@ async function main(): Promise<void> {
       const measurementTimeMs = row.measurementTimeMs;
       const receivedTimeMs = row.receivedTimeMs;
 
-      pointTasks.push(() =>
-        updateLatestPointValue(
-          systemId,
-          Point.toUuid(row.point),
-          logicalPath,
-          cacheValue,
-          measurementTimeMs,
-          receivedTimeMs,
-          row.metricUnit,
-          row.displayName,
-          undefined, // sourceSystemName (deprecated / unused)
-          row.sessionId ?? undefined,
-          row.sessionLabel ?? undefined,
-        ),
-      );
+      deviceUpdates.push({
+        pointUid: Point.toUuid(row.point),
+        pointPath: logicalPath,
+        value: cacheValue,
+        measurementTimeMs,
+        receivedTimeMs,
+        metricUnit: row.metricUnit,
+        displayName: row.displayName,
+        sessionId: row.sessionId ?? undefined,
+        sessionLabel: row.sessionLabel ?? undefined,
+      });
 
       if (typeof cacheValue === "number") {
         summaryValues.push({ logicalPath, value: cacheValue });
@@ -162,6 +157,11 @@ async function main(): Promise<void> {
           maxMeasurementTimeMs = measurementTimeMs;
         }
       }
+    }
+
+    // One task per DEVICE, not per point — the batched write is what the live ingest path does too.
+    if (deviceUpdates.length > 0) {
+      pointTasks.push(() => updateLatestPointValues(systemId, deviceUpdates));
     }
 
     if (summaryValues.length > 0) {
@@ -173,18 +173,32 @@ async function main(): Promise<void> {
     }
   }
 
-  // Phase 1: write every point's latest value (bounded concurrency). Fail hard on any rejection.
+  // Count what the two write phases cost. This script replays EVERY point the fleet has, through the
+  // same functions live ingest uses, so its tally is the closest thing to a fleet-wide per-poll cost
+  // model we can get without reading the Upstash invoice. Upstash bills per command and `@vercel/kv`
+  // auto-pipelines, so neither the request count nor the wall time reflects the bill — only this does.
+  startKvCommandCount();
+
+  // Phase 1: write every device's latest values (bounded concurrency). Fail hard on any rejection.
   await runPool(pointTasks, KV_CONCURRENCY, (task) => task());
 
-  // Phase 2: source summary + composite propagation, AFTER all points are in KV (mirrors
-  // point-manager.ts: updateSubscriberSummaries reads the just-written subscriber latest values).
-  await runPool(systemSummaries, KV_CONCURRENCY, async (s) => {
-    await updateSystemSummary(s.systemId, s.values, s.maxMeasurementTimeMs);
-    await updateSubscriberSummaries(s.systemId);
-  });
+  // Phase 2: each source device's own summary. No subscriber fan-out — the `ar_…` summary fields it
+  // used to maintain were read by nothing (see point-manager.ts).
+  await runPool(systemSummaries, KV_CONCURRENCY, (s) =>
+    updateSystemSummary(s.systemId, s.values, s.maxMeasurementTimeMs),
+  );
+
+  const { total, byCommand } = stopKvCommandCount();
+  const breakdown = Object.entries(byCommand)
+    .sort(([, a], [, b]) => b - a)
+    .map(([cmd, n]) => `${cmd} ${n}`)
+    .join(", ");
 
   console.log(
-    `✓ Rebuilt dev: KV from DB — ${pointTasks.length} point value(s) across ${byDevice.size} source system(s).`,
+    `✓ Rebuilt dev: KV from DB — ${rows.length} point value(s) across ${byDevice.size} source system(s).`,
+  );
+  console.log(
+    `  ${total} Redis command(s) (${breakdown}) — ${(total / Math.max(rows.length, 1)).toFixed(2)} per point value.`,
   );
   process.exit(0);
 }

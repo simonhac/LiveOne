@@ -140,8 +140,11 @@ export function resolveChainFields(
  * byte-identical second copy of it (same key builder, same `hgetall`, same cast) and is gone. That
  * sole-reader property is what lets {@link resolveChainFields} run here and nowhere else: no other
  * consumer can see a `#`-suffixed field, so the fallback grammar never reaches a wire or a UI.
+ *
+ * Module-private since the subscriber-summary fan-out was deleted — `getLatestValues` below is now
+ * the only caller, which tightens the sole-reader property rather than weakening it.
  */
-export async function getLatestValuesForSubject(
+async function getLatestValuesForSubject(
   subject: KvSubject,
 ): Promise<LatestValuesMap> {
   const values = await kv.hgetall(latestValuesKey(subject));

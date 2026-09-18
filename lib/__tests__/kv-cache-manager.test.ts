@@ -1,7 +1,9 @@
 import { describe, it, expect, beforeEach, jest } from "@jest/globals";
 import { Area, Device } from "@/lib/ids";
 import {
+  forgetLatestWriteMemo,
   updateLatestPointValue,
+  updateLatestPointValues,
   getLatestValues,
   buildSubscriptionRegistry,
   refreshServingForMintedPoints,
@@ -134,6 +136,10 @@ jest.mock("../kv-subjects", () => ({
 describe("kv-cache-manager", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    // The skip-unchanged memo is module-scope and outlives a single test, exactly as it outlives a
+    // single request in a warm lambda. Production forgets it on every `buildSubscriptionRegistry`;
+    // tests must do the same or the second case to write a given value would be silently skipped.
+    forgetLatestWriteMemo();
   });
 
   describe("updateLatestPointValue", () => {
@@ -325,6 +331,215 @@ describe("kv-cache-manager", () => {
       expect(kv.hset).toHaveBeenCalledTimes(1);
       expect(kv.hset).toHaveBeenCalledWith(
         `test:latest:device:${SOURCE_DEVICE}`,
+        expect.any(Object),
+      );
+    });
+  });
+
+  // 🛑 These assert COMMAND COUNTS, not just results. Upstash bills per command and `@vercel/kv`
+  // auto-pipelines, so the per-point shape this replaced cost 3 commands per point while looking
+  // like one HTTP request in any trace. A regression here is invisible except on the invoice.
+  describe("updateLatestPointValues — the batched write", () => {
+    const BATCH = Array.from({ length: 16 }, (_, i) => ({
+      pointUid: `0199aaaa-0000-7000-8000-0000000000${i.toString(16).padStart(2, "0")}`,
+      pointPath: `source.p${i}/power`,
+      value: i * 100,
+      measurementTimeMs: 1731627600000,
+      receivedTimeMs: 1731627605000,
+      metricUnit: "W",
+      displayName: `Point ${i}`,
+    }));
+
+    it("costs ONE hset and ONE get for a 16-point device with no subscribers", async () => {
+      const { kv } = await import("../kv");
+
+      await updateLatestPointValues(SOURCE_HANDLE, BATCH);
+
+      expect(kv.hset).toHaveBeenCalledTimes(1);
+      expect(kv.get).toHaveBeenCalledTimes(1);
+      // Every path lands, in that single call.
+      const fields = (kv.hset as jest.MockedFunction<any>).mock.calls[0][1];
+      expect(Object.keys(fields)).toHaveLength(16);
+      expect(fields["source.p3/power"]).toEqual(
+        expect.objectContaining({ value: 300, displayName: "Point 3" }),
+      );
+    });
+
+    it("costs one hset PER AREA, not per point, when Areas subscribe", async () => {
+      const { kv } = await import("../kv");
+
+      (kv.get as jest.MockedFunction<any>).mockResolvedValueOnce({
+        pointSubscribers: Object.fromEntries(
+          BATCH.map((u) => [u.pointUid, [AREA_A, AREA_B]]),
+        ),
+        lastUpdatedTimeMs: Date.now(),
+      });
+
+      await updateLatestPointValues(SOURCE_HANDLE, BATCH);
+
+      // 1 source + 2 areas. The per-point form would have been 48.
+      expect(kv.hset).toHaveBeenCalledTimes(3);
+      expect(kv.get).toHaveBeenCalledTimes(1);
+
+      for (const area of [AREA_A, AREA_B]) {
+        const call = (kv.hset as jest.MockedFunction<any>).mock.calls.find(
+          (c: any[]) => c[0] === `test:latest:area:${area}`,
+        );
+        expect(Object.keys(call![1])).toHaveLength(16);
+      }
+    });
+
+    it("fans a point out only to the Areas that subscribe to IT", async () => {
+      const { kv } = await import("../kv");
+
+      // Area A takes the first point; Area B takes the second. Grouping must not smear them.
+      (kv.get as jest.MockedFunction<any>).mockResolvedValueOnce({
+        pointSubscribers: {
+          [BATCH[0].pointUid]: [AREA_A],
+          [BATCH[1].pointUid]: [AREA_B],
+        },
+        lastUpdatedTimeMs: Date.now(),
+      });
+
+      await updateLatestPointValues(SOURCE_HANDLE, BATCH);
+
+      const fieldsFor = (area: string) =>
+        (kv.hset as jest.MockedFunction<any>).mock.calls.find(
+          (c: any[]) => c[0] === `test:latest:area:${area}`,
+        )![1];
+
+      expect(Object.keys(fieldsFor(AREA_A))).toEqual(["source.p0/power"]);
+      expect(Object.keys(fieldsFor(AREA_B))).toEqual(["source.p1/power"]);
+    });
+
+    it("keeps per-Area chain ranks distinct when one batch spans both roles", async () => {
+      const { kv } = await import("../kv");
+
+      (kv.get as jest.MockedFunction<any>).mockResolvedValueOnce({
+        pointSubscribers: { [BATCH[0].pointUid]: [AREA_A, AREA_B] },
+        fallbackRanks: { [BATCH[0].pointUid]: { [AREA_B]: 1 } },
+        lastUpdatedTimeMs: Date.now(),
+      });
+
+      await updateLatestPointValues(SOURCE_HANDLE, BATCH);
+
+      const fieldsFor = (area: string) =>
+        (kv.hset as jest.MockedFunction<any>).mock.calls.find(
+          (c: any[]) => c[0] === `test:latest:area:${area}`,
+        )![1];
+
+      // Winner writes the bare path; the rank-1 backstop writes beside it.
+      expect(Object.keys(fieldsFor(AREA_A))).toEqual(["source.p0/power"]);
+      expect(Object.keys(fieldsFor(AREA_B))).toEqual(["source.p0/power#1"]);
+    });
+
+    it("issues no commands at all for an empty batch", async () => {
+      const { kv } = await import("../kv");
+
+      await updateLatestPointValues(SOURCE_HANDLE, []);
+
+      expect(kv.hset).not.toHaveBeenCalled();
+      expect(kv.get).not.toHaveBeenCalled();
+    });
+  });
+
+  // 🛑 The rule is BYTE-IDENTICAL CONTENT, not "the value looks the same". These pin the two halves
+  // that make it safe: a re-stamped reading still writes (so age stays honest), and a genuinely
+  // identical rewrite costs nothing.
+  describe("updateLatestPointValues — skipping byte-identical writes", () => {
+    const one = (value: number, measurementTimeMs: number) => [
+      {
+        pointUid: "0199aaaa-0000-7000-8000-00000000000a",
+        pointPath: "source.solar.local/power",
+        value,
+        measurementTimeMs,
+        receivedTimeMs: measurementTimeMs + 5_000,
+        metricUnit: "W",
+        displayName: "Solar",
+      },
+    ];
+
+    it("🛑 still writes a POLLED value whose number is unchanged", async () => {
+      const { kv } = await import("../kv");
+
+      // Solar pinned at 0 overnight: same value, new vendor timestamp every minute. This must not
+      // be skipped — `measurementTime` is what every staleness check reads.
+      await updateLatestPointValues(SOURCE_HANDLE, one(0, 1731627600000));
+      await updateLatestPointValues(SOURCE_HANDLE, one(0, 1731627660000));
+
+      expect(kv.hset).toHaveBeenCalledTimes(2);
+    });
+
+    it("skips a rewrite identical in BOTH value and measurementTimeMs", async () => {
+      const { kv } = await import("../kv");
+
+      await updateLatestPointValues(SOURCE_HANDLE, one(5234.5, 1731627600000));
+      expect(kv.hset).toHaveBeenCalledTimes(1);
+      expect(kv.get).toHaveBeenCalledTimes(1);
+
+      await updateLatestPointValues(SOURCE_HANDLE, one(5234.5, 1731627600000));
+
+      // Not one command more — including the subscription `get`, which is the bulk of the saving
+      // for a derived writer re-running on a cron tick faster than its own data grid.
+      expect(kv.hset).toHaveBeenCalledTimes(1);
+      expect(kv.get).toHaveBeenCalledTimes(1);
+    });
+
+    it("writes when the value changes at the same timestamp", async () => {
+      const { kv } = await import("../kv");
+
+      await updateLatestPointValues(SOURCE_HANDLE, one(1, 1731627600000));
+      await updateLatestPointValues(SOURCE_HANDLE, one(2, 1731627600000));
+
+      expect(kv.hset).toHaveBeenCalledTimes(2);
+    });
+
+    it("does not latch a skip when the write FAILED", async () => {
+      const { kv } = await import("../kv");
+      (kv.hset as jest.MockedFunction<any>).mockRejectedValueOnce(
+        new Error("KV down"),
+      );
+
+      await expect(
+        updateLatestPointValues(SOURCE_HANDLE, one(7, 1731627600000)),
+      ).rejects.toThrow("KV down");
+
+      // The retry must actually reach KV — memoising before the write resolved would strand the
+      // value out of the cache until it happened to change.
+      await updateLatestPointValues(SOURCE_HANDLE, one(7, 1731627600000));
+      expect(kv.hset).toHaveBeenCalledTimes(2);
+    });
+
+    it("🛑 re-populates an area field the registry GC deleted", async () => {
+      const { kv } = await import("../kv");
+      (kv.get as jest.MockedFunction<any>).mockResolvedValue({
+        pointSubscribers: {
+          "0199aaaa-0000-7000-8000-00000000000a": [AREA_A],
+        },
+        lastUpdatedTimeMs: Date.now(),
+      });
+
+      await updateLatestPointValues(SOURCE_HANDLE, one(42, 1731627600000));
+      expect(kv.hset).toHaveBeenCalledWith(
+        `test:latest:area:${AREA_A}`,
+        expect.any(Object),
+      );
+
+      // A rebuild's `gcAreaLatestFields` can DELETE that field. If the memo survived, the identical
+      // next write would skip and the area hash would stay empty until the value changed — the one
+      // way this optimisation could lose data rather than merely save a command.
+      forgetLatestWriteMemo();
+      jest.clearAllMocks();
+      (kv.get as jest.MockedFunction<any>).mockResolvedValue({
+        pointSubscribers: {
+          "0199aaaa-0000-7000-8000-00000000000a": [AREA_A],
+        },
+        lastUpdatedTimeMs: Date.now(),
+      });
+
+      await updateLatestPointValues(SOURCE_HANDLE, one(42, 1731627600000));
+      expect(kv.hset).toHaveBeenCalledWith(
+        `test:latest:area:${AREA_A}`,
         expect.any(Object),
       );
     });

@@ -31,15 +31,14 @@ import micromatch from "micromatch";
 import {
   isServingRebuildPending,
   refreshServingForMintedPoints,
-  updateLatestPointValue,
+  updateLatestPointValues,
+  type LatestPointValueUpdate,
 } from "../kv-cache-manager";
+import { canonicalValue } from "./canonical-value";
 import { getAreaBindingRefs } from "@/lib/areas/bindings";
 import { getAreaMemberDeviceIds } from "@/lib/areas/members";
 import { DeviceRegistry } from "@/lib/registry";
-import {
-  updateSystemSummary,
-  updateSubscriberSummaries,
-} from "../system-summary-store";
+import { updateSystemSummary } from "../system-summary-store";
 import { publishObservationBatch } from "../observations/publisher";
 
 // ============================================================================
@@ -1110,19 +1109,24 @@ export class PointManager {
     try {
       const points = await this.getActivePointsForDevice(systemId, false);
 
-      // Get device name for sourceSystemName in KV cache
-      const device = await DeviceConfigRegistry.deviceByHandle(systemId);
-      const sourceSystemName = device?.displayName;
-
       // Build summary values and cache updates together
       const summaryValues: Array<{ logicalPath: string; value: number }> = [];
       let maxMeasurementTimeMs = 0;
 
-      const cacheUpdates = valuesToInsert.map((val) => {
+      const cacheUpdates: LatestPointValueUpdate[] = [];
+      for (const val of valuesToInsert) {
         const point = points.find((p: PointInfo) => p.index === val.pointId);
         const logicalPath = point?.getLogicalPath();
         // Combine numeric and string values for cache (KV accepts both)
-        const cacheValue = val.value ?? val.valueStr ?? null;
+        const storedValue = val.value ?? val.valueStr ?? null;
+        // 🛑 `points.transform` applied HERE, so the cache presents what every other reader
+        // presents. Without it the KV latest map was the ONE consumer serving the vendor's raw
+        // sign while `/api/history`, the flow matrix, the battery fold, the trial comparison and
+        // the admin readings route all flipped it — so `liveone device latest` and
+        // `liveone device history` disagreed in sign on the same point at the same instant.
+        // See `lib/point/canonical-value.ts` for why this is a read-time helper rather than a
+        // migration of the stored column.
+        const cacheValue = canonicalValue(storedValue, point?.transform);
         // Only cache active points with a proper logicalPath and a value
         if (point && cacheValue !== null && logicalPath && point.active) {
           // Collect for system summary (only numeric values)
@@ -1136,34 +1140,35 @@ export class PointManager {
             maxMeasurementTimeMs = val.measurementTimeMs;
           }
 
-          return updateLatestPointValue(
-            systemId,
-            point.pointUid, // uuid — the subscription-map key AND the stored `pt_` pointReference
-            logicalPath,
-            cacheValue,
-            val.measurementTimeMs,
-            val.receivedTimeMs,
-            point.metricUnit,
-            point.name, // displayName if set, otherwise defaultName
-            sourceSystemName,
-            val.sessionId ?? undefined,
-            val.sessionLabel ?? undefined,
-          );
+          cacheUpdates.push({
+            pointUid: point.pointUid, // uuid — the subscription-map key AND the stored `pt_` ref
+            pointPath: logicalPath,
+            value: cacheValue,
+            measurementTimeMs: val.measurementTimeMs,
+            receivedTimeMs: val.receivedTimeMs,
+            metricUnit: point.metricUnit,
+            displayName: point.name, // displayName if set, otherwise defaultName
+            sessionId: val.sessionId ?? undefined,
+            sessionLabel: val.sessionLabel ?? undefined,
+          });
         }
-        return Promise.resolve();
-      });
-      await Promise.all(cacheUpdates);
+      }
+      // One batched write for the whole poll: a 16-point device costs ~3 Redis commands here rather
+      // than ~48. See `updateLatestPointValues` for why the per-point form was so expensive.
+      await updateLatestPointValues(systemId, cacheUpdates);
 
-      // Update system summary (fire-and-forget, don't block)
+      // Update this DEVICE's summary (fire-and-forget, don't block). There is deliberately no
+      // subscriber fan-out any more: it maintained `ar_…` fields in the same hash that nothing ever
+      // read — `/admin/devices` indexes the hash by `dv_` device id — at the cost of a registry
+      // `get` plus an `hgetall` and `hset` PER SUBSCRIBING AREA, on every poll batch.
       if (summaryValues.length > 0) {
-        updateSystemSummary(systemId, summaryValues, maxMeasurementTimeMs)
-          .then(() => {
-            // After updating source summary, update subscriber summaries
-            return updateSubscriberSummaries(systemId);
-          })
-          .catch((err) =>
-            console.error("Failed to update system summary:", err),
-          );
+        updateSystemSummary(
+          systemId,
+          summaryValues,
+          maxMeasurementTimeMs,
+        ).catch((err) =>
+          console.error("Failed to update system summary:", err),
+        );
       }
     } catch (error) {
       console.error("Failed to update KV cache:", error);

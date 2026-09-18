@@ -20,6 +20,7 @@ import {
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import {
   automations,
+  automationSlotOutcomes,
   devices,
   derivedIntervals,
   pointCommands,
@@ -30,6 +31,7 @@ import {
   type AutomationTrigger,
   type DerivedInterval,
   type ExerciseArmedContext,
+  type ExerciseOutcome,
 } from "@/lib/db/planetscale/schema";
 import { ownerDeviceIdForDerivation } from "@/lib/derivations/resolve";
 import { Automation } from "@/lib/ids";
@@ -354,6 +356,11 @@ export async function ownCommandsInWindow(
  * the schedule it read, then had an owner PATCH an RDATE onto that schedule mid-dispatch, would
  * retire a rule that now had an occurrence left — recording `final: true` as its reason, which was
  * no longer true. Returns false when the row has moved on, so the caller can say so.
+ *
+ * A terminal decision ALSO lands in `automation_slot_outcomes`, one row per occurrence — see
+ * `recordSlotOutcome` below for why that is a second statement and what a crash between them costs.
+ * All three call sites in `evaluate-exercise.ts` come through here, which is what makes "every
+ * decided slot is recorded" a property of one function rather than a discipline at three.
  */
 export async function recordExerciseOutcome(
   uuid: string,
@@ -389,7 +396,93 @@ export async function recordExerciseOutcome(
         : exerciseClaimWhere(uuid, opts.expectRevision),
     )
     .returning({ id: automations.id });
-  return rows.length > 0;
+  if (rows.length === 0) return false;
+  await recordSlotOutcome(uuid, opts.context, opts.nowMs);
+  return true;
+}
+
+/**
+ * The per-OCCURRENCE half of the write above: one durable row per slot, for the calendar feed.
+ *
+ * 🛑 A SEPARATE STATEMENT, not a transaction with it, and the cost is bounded and stated: a crash
+ * between the two loses the ⏭️/⛔️ distinction for ONE slot — the feed still marks a slot ✅ from the
+ * run itself, and ⛔️ is what an absent row already means. Wrapping both in a transaction would put
+ * a display nicety inside the path that decides whether a generator starts, which is the wrong
+ * trade for a failure whose whole consequence is one glyph.
+ *
+ * `waiting` is skipped: it is not a decision but a slot still being worked on, written once a
+ * minute across a three-hour grace window. Storing it would make this a tick log, and the terminal
+ * decision that follows overwrites it anyway.
+ *
+ * The upsert REPLACES rather than ignores, because a slot's story can legitimately continue —
+ * `fired` becomes `aborted-complete` when supervision later stops the run it started, and the
+ * latest reading of a slot is the true one.
+ */
+async function recordSlotOutcome(
+  uuid: string,
+  context: ExerciseArmedContext,
+  nowMs: number,
+): Promise<void> {
+  if (context.outcome === "waiting") return;
+  // `at` comes from the context so the two records agree about when the decision was taken, but it
+  // is jsonb — `$type<>` is a compile-time annotation over untrusted data, not a guarantee — and an
+  // `Invalid Date` here would fail the insert and take the whole outcome write with it. The tick's
+  // own clock is the right fallback and is never absent.
+  const decidedAt = Number.isFinite(context.at) ? context.at : nowMs;
+  await requirePlanetscaleDb()
+    .insert(automationSlotOutcomes)
+    .values({
+      automationId: uuid,
+      slotAt: new Date(context.slotAt),
+      outcome: context.outcome,
+      decidedAt: new Date(decidedAt),
+      context,
+    })
+    .onConflictDoUpdate({
+      target: [
+        automationSlotOutcomes.automationId,
+        automationSlotOutcomes.slotAt,
+      ],
+      set: {
+        outcome: context.outcome,
+        decidedAt: new Date(decidedAt),
+        context,
+      },
+    });
+}
+
+/**
+ * Every decided slot of these rules at or after `fromMs` → `automation uuid → slotAt ms → outcome`.
+ *
+ * Keyed by the slot INSTANT because that is what the feed holds: it expands the schedule itself and
+ * asks "what happened to this occurrence", so the join is arithmetic on a computed instant rather
+ * than a fuzzy match on an observed one.
+ */
+export async function listSlotOutcomesForAutomations(
+  automationUuids: string[],
+  fromMs: number,
+): Promise<Map<string, Map<number, ExerciseOutcome>>> {
+  const byAutomation = new Map<string, Map<number, ExerciseOutcome>>();
+  if (automationUuids.length === 0) return byAutomation;
+  const rows = await requirePlanetscaleDb()
+    .select({
+      automationId: automationSlotOutcomes.automationId,
+      slotAt: automationSlotOutcomes.slotAt,
+      outcome: automationSlotOutcomes.outcome,
+    })
+    .from(automationSlotOutcomes)
+    .where(
+      and(
+        inArray(automationSlotOutcomes.automationId, automationUuids),
+        gte(automationSlotOutcomes.slotAt, new Date(fromMs)),
+      ),
+    );
+  for (const row of rows) {
+    let slots = byAutomation.get(row.automationId);
+    if (!slots) byAutomation.set(row.automationId, (slots = new Map()));
+    slots.set(row.slotAt.getTime(), row.outcome as ExerciseOutcome);
+  }
+  return byAutomation;
 }
 
 /**

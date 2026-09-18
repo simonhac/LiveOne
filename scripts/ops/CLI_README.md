@@ -71,6 +71,7 @@ still reach stderr.
     - [liveone device vendor-identity](#liveone-device-vendor-identity)
     - [liveone device list](#liveone-device-list)
     - [liveone device show](#liveone-device-show)
+    - [liveone device preflight](#liveone-device-preflight)
     - [liveone device points](#liveone-device-points)
     - [liveone device latest](#liveone-device-latest)
     - [liveone device coverage](#liveone-device-coverage)
@@ -125,6 +126,9 @@ still reach stderr.
   - [liveone automation](#liveone-automation)
     - [liveone automation list](#liveone-automation-list)
     - [liveone automation show](#liveone-automation-show)
+    - [liveone automation commands](#liveone-automation-commands)
+    - [liveone automation health](#liveone-automation-health)
+    - [liveone automation check](#liveone-automation-check)
     - [liveone automation create-exercise](#liveone-automation-create-exercise)  _(writes)_
     - [liveone automation upcoming](#liveone-automation-upcoming)
     - [liveone automation skip](#liveone-automation-skip)  _(writes)_
@@ -2156,6 +2160,7 @@ Subcommands:
   vendor-identity        Verify an Amber device's distributor and NMI at its stored vendor site.
   list                   List the devices you can read: id, handle, vendor, status, name.
   show                   A device's full aggregate: metadata, config, adapter state, capabilities, points.
+  preflight              Would a generator start succeed RIGHT NOW? Asks the hardware, changes nothing.
   points                 A device's point inventory: pt_… id, path, metric, unit.
   latest                 The device's current values, from the serving cache.
   coverage               How many 5-minute readings each of a device's points holds, per local day.
@@ -2526,6 +2531,65 @@ Examples:
 Exit codes:
   0    success
   1    completed, with findings or no results
+  2    usage error
+  3    authentication failure
+  5    upstream failure
+  130  interrupted
+```
+
+#### liveone device preflight
+
+Would a generator start succeed RIGHT NOW? Asks the hardware, changes nothing.
+
+```
+Would a generator start succeed RIGHT NOW? Asks the hardware, changes nothing.
+
+When to use:
+  The hardware half of 'is this configured to run'. `liveone automation check` answers the
+  scheduling half from the database; this one answers whether the panel would actually
+  accept a start — Auto vs local lockout, an engine already running, the hub reachable.
+
+🛑 THIS REACHES THE SITE. It writes nothing and takes no `point_commands` row, but it
+causes a live Modbus read over WireGuard to a controller on the site LAN, holding that
+device's mutex for the round trip. It probes ONCE — there is deliberately no --watch — and
+it is not wired into `automation check`, so looping the cheap read cannot loop this one.
+
+Its verdict comes from the same `gateStart()` a real run consults, which is what makes it
+worth the round trip rather than a guess. 501 for a vendor with no preflight capability.
+
+Usage:
+  liveone device preflight <device> [options]
+
+  Read-only. This command changes nothing.
+
+Arguments:
+  <device>               A device: its dv_… id, integer handle, slug, or name
+
+Options:
+  --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
+
+Examples:
+  liveone device preflight 'Daylesford Generator'
+
+Exit codes:
+  0    success
+  1    a start would NOT proceed right now
   2    usage error
   3    authentication failure
   5    upstream failure
@@ -5711,6 +5775,9 @@ Usage:
 Subcommands:
   list                   Every automation on an area, and what each one does.
   show                   One automation in full, including the last decision the evaluator made.
+  commands               What this rule has actually dispatched — the per-attempt audit trail.
+  health                 Is the evaluator sweeping at all? Fleet-wide, one screen, the kill switch included.
+  check                  Evaluate a rule NOW and report what it would decide, without dispatching anything.
   create-exercise        Schedule a generator exercise run — unless it has already run under load recently.  (writes)
   upcoming               Every scheduled occurrence on an area, dated, for the next N days.
   skip                   Skip one occurrence of a repeating rule, leaving the rule itself alone.  (writes)
@@ -5853,6 +5920,187 @@ Exit codes:
   130  interrupted
 ```
 
+#### liveone automation commands
+
+What this rule has actually dispatched — the per-attempt audit trail.
+
+```
+What this rule has actually dispatched — the per-attempt audit trail.
+
+When to use:
+  Reach for this when a decision says `fired` and the engine did not run. The decision log
+  says what we DECIDED; this says what the hub was TOLD and what it answered.
+
+Resolves the action point from the rule, so no pt_ id is needed. 🛑 The response is
+DEVICE-scoped, not point-scoped: it is every command on the device the action point belongs
+to, including ones a human sent from the browser. `--mine` narrows it to this rule.
+
+Rendered through the same sentences the generator dialog shows, so the CLI and the UI
+cannot disagree about what happened.
+
+Usage:
+  liveone automation commands <area> <automation> [options]
+
+  Read-only. This command changes nothing.
+
+Arguments:
+  <area>                 The area: ar_… id, legacy handle, slug or name
+  <automation>           The automation: au_… id or name
+
+Options:
+  --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
+  --mine                     Only commands this automation issued
+  --limit <20>               How many entries to fetch (default 20)
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
+
+Examples:
+  liveone automation commands daylesford 'Generator exercise' --mine
+
+Exit codes:
+  0    success
+  1    a command was rejected or failed, or a pending one has gone stale
+  2    usage error
+  3    authentication failure
+  5    upstream failure
+  130  interrupted
+```
+
+#### liveone automation health
+
+Is the evaluator sweeping at all? Fleet-wide, one screen, the kill switch included.
+
+```
+Is the evaluator sweeping at all? Fleet-wide, one screen, the kill switch included.
+
+When to use:
+  `check` answers 'will THIS rule fire'; this answers 'is anything being evaluated'. Reach
+  for it when a rule that should have fired did not, and `check` looks fine.
+
+Reads the record the minutely pass leaves in KV, which expires after an hour — so a MISSING
+record is the alarming answer, not a missing feature.
+
+Read the STATE word, most alarming first:
+  DISABLED   CRONS_ENABLED is not 'true' — switched off, not broken. A different fix.
+  SILENT     no sweep inside 5 minutes: the cron is not completing.
+  ERRORS     the last sweep counted errors — see the [automations] logs.
+  UNDECIDED  slots were due and produced no decision. The shape of the CAS bug that
+             stopped two live generator rules firing, and logged nothing for two days.
+
+Admin-only: a sweep spans every owner's rules.
+
+Usage:
+  liveone automation health [options]
+
+  Read-only. This command changes nothing.
+
+Options:
+  --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
+
+Examples:
+  liveone automation health
+
+Exit codes:
+  0    success
+  1    anything but `ok`
+  2    usage error
+  3    authentication failure
+  5    upstream failure
+  130  interrupted
+```
+
+#### liveone automation check
+
+Evaluate a rule NOW and report what it would decide, without dispatching anything.
+
+```
+Evaluate a rule NOW and report what it would decide, without dispatching anything.
+
+When to use:
+  The answer to 'is this configured to run, and will it?'. `show` prints the rule; `check`
+  prints the rule's current VERDICT — the skip condition's answer, the evidence behind it, the
+  readiness reading, and what would be dispatched.
+
+Answers from the evaluator's own read half (`planExercise`), so it cannot drift from what
+the cron actually does, and it has no path to a dispatch — checking never starts an engine.
+
+🛑 The load evidence is read RAW, i.e. the stored column, so `points.transform` is NOT
+applied. A point whose values are stored inverted will read here with the opposite sign to
+`/api/history`. The output says so per call rather than leaving it to be inferred.
+
+Costs a 7-day reading scan per call, which is why the verdict is not folded into `show` or
+`list` — those are the cheap reads that `skip` and `move` share.
+
+Usage:
+  liveone automation check <area> <automation> [options]
+
+  Read-only. This command changes nothing.
+
+Arguments:
+  <area>                 The area: ar_… id, legacy handle, slug or name
+  <automation>           The automation: au_… id or name
+
+Options:
+  --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
+
+Examples:
+  liveone automation check daylesford 'Generator exercise'
+
+Exit codes:
+  0    success
+  1    the rule is disabled, its references do not resolve, or the verdict is one to look at
+  2    usage error
+  3    authentication failure
+  5    upstream failure
+  130  interrupted
+```
+
 #### liveone automation create-exercise
 
 Schedule a generator exercise run — unless it has already run under load recently.
@@ -5863,7 +6111,8 @@ Schedule a generator exercise run — unless it has already run under load recen
 When to use:
   Reach for this for anti-wet-stacking: a diesel that idles for weeks glazes its bores. The
   rule fires on a wall-clock slot and SKIPS itself when the engine has already done real
-  work, so a generator in normal use is never exercised unnecessarily.
+  work, so a generator in normal use is never exercised unnecessarily. Omit --load-point and
+  it has no skip condition at all — the honest shape for a one-off 'run it now for N minutes'.
 
 🛑 This creates something that STARTS AN ENGINE, on a schedule, unattended. Dry-run is the
 default; read the printed rule before `--apply`.
@@ -5871,8 +6120,16 @@ default; read the printed rule before `--apply`.
 Three points are involved and they are not interchangeable:
   --derivation    the run detector, which answers 'is it running' and 'did it run'
   --load-point    a power point in WATTS (negative = import) that says how HARD it ran;
-                  the DeepSea controller has no CTs, so load is read from the inverter
+                  the DeepSea controller has no CTs, so load is read from the inverter.
+                  OPTIONAL: omit it and the rule has no skip condition — it simply runs
+                  every time it is due, which is what a one-off means
   --action-point  the writable run-request point the run is commanded through
+
+🛑 Omitting --load-point on a STANDING rule means it exercises the engine on every single
+occurrence regardless of what the engine has already done — the waste this trigger exists
+to avoid. On a one-off it is simply the truth, and the only way to state it: the skip
+condition used to be mandatory, so a one-off had to carry a threshold picked to be
+unreachable, which the area's calendar feed then published to subscribers as fact.
 
 A point is a pt_… id, a logical path on one of the AREA's devices, or the qualified form
 `<device>:<path>`. The qualified form is not a nicety: only the DERIVATION has to live in
@@ -5906,7 +6163,7 @@ Arguments:
 Options:
   --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
   --derivation <dx_|role>    The run detector: dx_… id, its name, or its role (e.g. generator)  (required)
-  --load-point <path|pt_>    Power point in W used to judge load (e.g. bidi.grid/power, or dev:bidi.grid/power)  (required)
+  --load-point <path|pt_>    Power point in W used to judge load (e.g. bidi.grid/power). Omit = no skip condition
   --action-point <path|pt_>  Writable run-request point, often on another device (e.g. generator:source.generator.control.request/duration)  (required)
   --start <2026-09-17 09:00> First occurrence, local date + 24-hour time (not 02:00–02:59). Alone = a one-off  (required)
   --rrule <FREQ=WEEKLY;BYDAY=TH> How it repeats, RFC 5545. Omit for a one-off
@@ -5915,10 +6172,10 @@ Options:
   --minutes <30>             How long to run for. Must be > 0 — 0 is a STOP, not a run  (required)
   --name <string>            Name (default: 'Generator exercise')
   --grace-minutes <number>   How long a missed slot stays due before it is written off (default 180)
-  --min-minutes <number>     Continuous loaded minutes that count as already exercised (default 30)
-  --min-load-kw <number>     Load floor in kW — an idle run does not clear wet stacking (default 1.5)
-  --dip-seconds <number>     Brief sub-threshold dips bridged rather than splitting a stretch (default 180)
-  --within-days <number>     How far back to look for such a run (default 7)
+  --min-minutes <number>     Continuous loaded minutes that count as already exercised (default 30) — needs --load-point
+  --min-load-kw <number>     Load floor in kW — an idle run does not clear wet stacking (default 1.5) — needs --load-point
+  --dip-seconds <number>     Brief sub-threshold dips bridged rather than splitting a stretch (default 180) — needs --load-point
+  --within-days <number>     How far back to look for such a run (default 7) — needs --load-point
 
 Common options:
   --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
@@ -5942,6 +6199,7 @@ External access:
 Examples:
   liveone automation create-exercise daylesford --derivation=generator --load-point=bidi.grid/power --action-point='Daylesford Generator':source.generator.control.request/duration --start='2026-09-17 09:00' --rrule='FREQ=WEEKLY;BYDAY=TH' --minutes=30
   liveone automation create-exercise daylesford --derivation=generator --load-point=bidi.grid/power --action-point=generator:source.generator.control.request/duration --start='2026-09-12 09:00' --minutes=30
+  liveone automation create-exercise daylesford --derivation=generator --action-point=generator:source.generator.control.request/duration --start='2026-09-18 09:45' --minutes=10
 
 Exit codes:
   0    success

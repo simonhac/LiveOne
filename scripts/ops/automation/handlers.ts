@@ -15,14 +15,25 @@ import {
   actionWords,
   automationLine,
   buildRRule,
+  buildUnless,
   decisionLines,
+  commandLine,
+  evaluationHasFindings,
+  pendingIsStale,
+  evaluatorState,
+  renderEvaluation,
+  renderHealth,
   parseDate,
   parseStart,
   resolveAutomation,
   resolvePointFlag,
   scheduleLines,
+  sourceWords,
   triggerWords,
   type WireAutomation,
+  type WireCommand,
+  type WireEvaluation,
+  type WireEvaluator,
   type WireTrigger,
 } from "./model";
 import { occurrencesBetween } from "@/lib/automations/recurrence";
@@ -114,18 +125,50 @@ async function runShow(ctx: Ctx): Promise<number> {
           `  mode:         ${row.mode}`,
           `  trigger:      ${triggerWords(t)}`,
         ];
+        const src = sourceWords(t);
+        if (src) out.push(`  triggered by: ${src}`);
+        if (row.createdAt) out.push(`  created:      ${row.createdAt}`);
         if (t?.kind === "exercise" && t.schedule)
           out.push(...scheduleLines(t.schedule, timezone, row.nextAt));
         if (t?.kind === "exercise" && t.unless)
           out.push(
             `  unless:       it ran ≥ ${t.unless.minMinutes} min above ${t.unless.minLoadKw} kW in the last ${t.unless.withinDays} days`,
             `  load point:   ${t.unless.loadPointId}`,
-            `  grace:        ${t.schedule?.graceMinutes} min`,
+            `  dip bridged:  up to ${t.unless.dipToleranceSeconds} s`,
+          );
+        // 🛑 Stated, not left as a gap. A rule with no skip condition runs every time it is due,
+        // and the difference between "unconditional" and "I forgot to print that line" is exactly
+        // the kind of silence that made the 12 Sep slot opaque for days.
+        else if (t?.kind === "exercise")
+          out.push(
+            `  unless:       none — runs on EVERY occurrence, whatever the engine has done`,
+          );
+        // Was nested inside the `unless` block, where a rule without one lost it. It belongs to the
+        // SCHEDULE, which every exercise rule has.
+        if (t?.kind === "exercise" && t.schedule)
+          out.push(`  grace:        ${t.schedule.graceMinutes} min`);
+        if (t?.kind === "exercise" && t.require)
+          out.push(
+            `  require:      battery below ${t.require.maxSocPercent}% (${t.require.socPointId})`,
+          );
+        if (t?.kind === "exercise" && t.supervise)
+          out.push(
+            `  supervise:    stop if under the floor for ${t.supervise.sustainMinutes} min, from minute ${t.supervise.settleMinutes}`,
           );
         out.push(`  action:       ${actionWords(row.action)}`);
+        if (row.armedAt) out.push(`  armed:        ${row.armedAt}`);
         if (row.lastTriggeredAt)
           out.push(`  last fired:   ${row.lastTriggeredAt}`);
+        // 🛑 Labelled as the WATERMARK it is, not as a fire time. It means "every slot up to and
+        // including this instant is dealt with" — reading it as "when it last ran" is how the `<=`
+        // semantics get misread, and it is frequently NOT equal to `last fired`.
+        if (row.lastTriggeredRunStart)
+          out.push(`  slots done to:${row.lastTriggeredRunStart}`);
         out.push(...decisionLines(row.armedContext).map((l) => `  ${l}`));
+        out.push(
+          "",
+          `run \`liveone automation check ${area.displayName} '${row.name}'\` for the current verdict`,
+        );
         return out.join("\n");
       },
     );
@@ -146,6 +189,16 @@ async function runCreateExercise(ctx: Ctx): Promise<number> {
           untilFlag === undefined ? undefined : parseDate(untilFlag, "until"),
         count: num(ctx, "count"),
       });
+      // Same reason: the knobs that tune the skip condition are refused here, before four round
+      // trips, when there is no --load-point for them to tune. Holds the REF the operator typed;
+      // the resolved `pt_` id is swapped in below.
+      const loadPointFlag = str(ctx, "loadPoint");
+      const unless = buildUnless(loadPointFlag, {
+        minMinutes: num(ctx, "minMinutes"),
+        minLoadKw: num(ctx, "minLoadKw"),
+        dipSeconds: num(ctx, "dipSeconds"),
+        withinDays: num(ctx, "withinDays"),
+      });
       const minutes = num(ctx, "minutes")!;
       // 🛑 Not a range check. On a run-request point 0 RELEASES the latch — it is a stop — so a
       // "0-minute exercise" would be a scheduled shutdown wearing the name of a scheduled run.
@@ -165,12 +218,10 @@ async function runCreateExercise(ctx: Ctx): Promise<number> {
         str(ctx, "derivation")!,
         area.displayName,
       );
-      const loadPointId = await resolvePointFlag(
-        s,
-        area,
-        str(ctx, "loadPoint")!,
-        "load-point",
-      );
+      const loadPointId = loadPointFlag
+        ? await resolvePointFlag(s, area, loadPointFlag, "load-point")
+        : undefined;
+      if (unless) unless.loadPointId = loadPointId;
       const actionPointId = await resolvePointFlag(
         s,
         area,
@@ -185,17 +236,6 @@ async function runCreateExercise(ctx: Ctx): Promise<number> {
       const graceMinutes = num(ctx, "graceMinutes");
       if (graceMinutes !== undefined) schedule.graceMinutes = graceMinutes;
 
-      const unless: Record<string, unknown> = { loadPointId };
-      for (const [flag, key] of [
-        ["minMinutes", "minMinutes"],
-        ["minLoadKw", "minLoadKw"],
-        ["dipSeconds", "dipToleranceSeconds"],
-        ["withinDays", "withinDays"],
-      ] as const) {
-        const v = num(ctx, flag);
-        if (v !== undefined) unless[key] = v;
-      }
-
       const body = {
         areaId: area.id,
         // Always standing. A one-off is expressed in the SCHEDULE (a start with no rrule), which
@@ -207,7 +247,9 @@ async function runCreateExercise(ctx: Ctx): Promise<number> {
           kind: "exercise",
           source: { kind: "derivation", derivationId: detector.id },
           schedule,
-          unless,
+          // Omitted, not sent as null: the body then says nothing about a skip condition, which is
+          // what "there isn't one" looks like to the parser.
+          ...(unless ? { unless } : {}),
         },
         action: {
           kind: "point-action",
@@ -240,7 +282,9 @@ async function runCreateExercise(ctx: Ctx): Promise<number> {
             `  run:          ${minutes} min, from ${start} local`,
             `  repeats:      ${rrule ?? "no — this is a ONE-OFF, and disables itself once it has run"}`,
             `  detector:     ${detector.name} (${detector.id})`,
-            `  load point:   ${loadPointId}`,
+            loadPointId
+              ? `  load point:   ${loadPointId}`
+              : `  skip when:    never — no --load-point, so it runs EVERY occurrence`,
             `  action point: ${actionPointId}`,
             "  🛑 this STARTS THE ENGINE, unattended, on that schedule",
             created
@@ -620,9 +664,99 @@ async function runDelete(ctx: Ctx): Promise<number> {
   );
 }
 
+async function runCheck(ctx: Ctx): Promise<number> {
+  return withApiSession(ctx, async (s) => {
+    const { area, row, timezone } = await resolveTarget(s, ctx);
+    const evaluation = await s.get<WireEvaluation>(
+      `/api/v4/automations/${encodeURIComponent(row.id)}/evaluation`,
+    );
+    ctx.emit(
+      { area: { id: area.id, name: area.displayName }, timezone, evaluation },
+      () =>
+        [
+          `${row.name} (${row.id})  on ${area.displayName}`,
+          "",
+          renderEvaluation(evaluation),
+        ].join("\n"),
+    );
+    // A finding, not an error: the command did its job. Composes into `… check || alert`.
+    return evaluationHasFindings(evaluation) ? EXIT.FINDINGS : EXIT.OK;
+  });
+}
+
+async function runHealth(ctx: Ctx): Promise<number> {
+  return withApiSession(ctx, async (s) => {
+    const body = await s.get<WireEvaluator>("/api/v4/automations/evaluator");
+    ctx.emit(body, () => renderHealth(body));
+    // The verdict is computed over the WHOLE payload before anything is narrowed — `queue status`'s
+    // rule, and the reason a "could not read" never collapses into "is quiet".
+    return evaluatorState(body) === "ok" ? EXIT.OK : EXIT.FINDINGS;
+  });
+}
+
+async function runCommands(ctx: Ctx): Promise<number> {
+  return withApiSession(ctx, async (s) => {
+    const { area, row } = await resolveTarget(s, ctx);
+    const pointId = row.action?.pointId;
+    if (!pointId)
+      throw usage(
+        "this automation has no readable action point",
+        "its stored action could not be parsed, so there is no point to ask about",
+        "run `liveone automation show` to see the row as stored",
+      );
+
+    const limit = num(ctx, "limit") ?? 20;
+    const body = await s.get<{ commands?: WireCommand[] }>(
+      `/api/v4/points/${encodeURIComponent(pointId)}/commands?limit=${limit}`,
+    );
+    const all = body.commands ?? [];
+    // 🛑 The response is DEVICE-scoped. Narrowing is the caller's choice, but the VERDICT below is
+    // computed over everything fetched — a failure somebody else caused on this device is still a
+    // thing an operator wants to hear about.
+    const mine = bool(ctx, "mine")
+      ? all.filter(
+          (c) =>
+            c.requestedBy?.kind === "automation" &&
+            c.requestedBy.automationId === row.id,
+        )
+      : all;
+
+    ctx.emit(
+      {
+        area: { id: area.id, name: area.displayName },
+        pointId,
+        commands: mine,
+      },
+      () =>
+        [
+          `${row.name} (${row.id}) → ${pointId}`,
+          bool(ctx, "mine")
+            ? `  (this rule's commands only; the device had ${all.length} in the window)`
+            : "  (every command on this DEVICE, not only this rule's)",
+          "",
+          ...(mine.length
+            ? mine.map((c) => commandLine(c))
+            : ["no commands in the window."]),
+        ].join("\n"),
+    );
+    const nowMs = Date.now();
+    return all.some(
+      (c) =>
+        c.status === "rejected" ||
+        c.status === "failed" ||
+        pendingIsStale(c, nowMs),
+    )
+      ? EXIT.FINDINGS
+      : EXIT.OK;
+  });
+}
+
 export const HANDLERS: Record<string, (ctx: Ctx) => Promise<number>> = {
+  health: runHealth,
+  commands: runCommands,
   list: runList,
   show: runShow,
+  check: runCheck,
   "create-exercise": runCreateExercise,
   upcoming: runUpcoming,
   skip: runSkip,

@@ -13,6 +13,12 @@ import {
   automationLine,
   actionWords,
   decisionLines,
+  sourceWords,
+  evaluationHasFindings,
+  evaluatorState,
+  buildUnless,
+  renderEvaluation,
+  renderHealth,
   buildRRule,
   parseStart,
   resolveAutomation,
@@ -85,17 +91,23 @@ describe("create-exercise", () => {
     expect(success(CREATE).args[0]).toBe("daylesford");
   });
 
-  // Each of the three points answers a DIFFERENT question and none can stand in for another, so
-  // all three are required rather than defaulted.
-  it.each([
-    "--derivation",
-    "--load-point",
-    "--action-point",
-    "--start",
-    "--minutes",
-  ])("requires %s", (flag) => {
-    const argv = CREATE.filter((a) => !a.startsWith(`${flag}=`));
-    expect(failure(argv)).toContain(flag.replace(/^--/, ""));
+  // Each of the points answers a DIFFERENT question and none can stand in for another. `--load-point`
+  // is the exception and is NOT on this list: it is the skip condition's input, and a rule is
+  // entitled not to have a skip condition.
+  it.each(["--derivation", "--action-point", "--start", "--minutes"])(
+    "requires %s",
+    (flag) => {
+      const argv = CREATE.filter((a) => !a.startsWith(`${flag}=`));
+      expect(failure(argv)).toContain(flag.replace(/^--/, ""));
+    },
+  );
+
+  // 🛑 The whole point of this change. `unless` used to be required, so a one-off "run it for 10
+  // minutes" had to carry a threshold picked to be unreachable (`--min-minutes=600`), and the
+  // area's calendar feed published that number to subscribers as a real condition.
+  it("does NOT require --load-point — a rule may simply be unconditional", () => {
+    const argv = CREATE.filter((a) => !a.startsWith("--load-point="));
+    expect(success(argv).flags.loadPoint).toBeUndefined();
   });
 
   it("rejects an unknown flag rather than ignoring it", () => {
@@ -165,6 +177,55 @@ describe("parseStart", () => {
     "refuses %s — the daylight-saving gap hour",
     (t) => expect(refusal(() => parseStart(t))).toContain("daylight-saving"),
   );
+});
+
+describe("buildUnless", () => {
+  it("is undefined with no load point — an unconditional rule is the base case", () => {
+    expect(buildUnless(undefined, {})).toBeUndefined();
+  });
+
+  it("is sparse: an omitted knob inherits the server's default", () => {
+    expect(buildUnless("pt_load", {})).toEqual({ loadPointId: "pt_load" });
+  });
+
+  it("carries the knobs it is given, renaming dipSeconds to the wire's field", () => {
+    expect(
+      buildUnless("pt_load", {
+        minMinutes: 20,
+        minLoadKw: 2,
+        dipSeconds: 90,
+        withinDays: 14,
+      }),
+    ).toEqual({
+      loadPointId: "pt_load",
+      minMinutes: 20,
+      minLoadKw: 2,
+      dipToleranceSeconds: 90,
+      withinDays: 14,
+    });
+  });
+
+  // 🛑 Refused, not silently dropped. `--min-minutes=600` with no load point is exactly the shape
+  // someone reaches for while trying to write the old unreachable-threshold trick, and dropping it
+  // would leave them believing they had configured a bar the rule does not have.
+  it.each([
+    ["minMinutes", 600],
+    ["minLoadKw", 1.5],
+    ["dipSeconds", 90],
+    ["withinDays", 7],
+  ])("refuses --%s without a load point", (knob, value) => {
+    const out = refusal(() => buildUnless(undefined, { [knob]: value }));
+    expect(out).toContain("no skip condition");
+    expect(out).toContain("--load-point");
+  });
+
+  it("names every stray knob, not just the first", () => {
+    const out = refusal(() =>
+      buildUnless(undefined, { minMinutes: 600, withinDays: 7 }),
+    );
+    expect(out).toContain("--min-minutes");
+    expect(out).toContain("--within-days");
+  });
 });
 
 describe("buildRRule", () => {
@@ -327,8 +388,63 @@ describe("rendering", () => {
     expect(lines.join("\n")).toContain("34.0 min under load, peak 3.88 kW");
   });
 
-  it("has nothing to say about a charge row's baseline context", () =>
-    expect(decisionLines({ baselineKwh: 42 })).toEqual([]));
+  // 🛑 INVERTED. This used to assert the charge context was dropped, which is what the renderer
+  // did — it early-returned on anything that was not an exercise row, so a kWh limit's baseline (the
+  // value its whole delta is measured from) was invisible on `show`. That was a gap, not a design.
+  it("renders a charge row's baseline context", () => {
+    const lines = decisionLines({
+      baselineKwh: 42,
+      baselineAt: 1_700_000_000_000,
+    });
+    expect(lines.join("\n")).toContain("42.00 kWh");
+    expect(lines.join("\n")).toContain("snapshotted");
+  });
+
+  it("still has nothing to say about an absent context", () =>
+    expect(decisionLines(null)).toEqual([]));
+
+  it("reports the run counts and the battery reading on an exercise decision", () => {
+    const lines = decisionLines({
+      kind: "exercise",
+      outcome: "skipped-full",
+      slotAt: 1_700_000_000_000,
+      at: 1_700_000_060_000,
+      runsConsidered: 0,
+      runsExcluded: 1,
+      socPercent: 98.8,
+    });
+    expect(lines.join("\n")).toContain("0 (1 discounted as our own)");
+    expect(lines.join("\n")).toContain("98.8%");
+  });
+
+  // The line that makes a 180-tick grace window legible instead of silent.
+  it("reports how many ticks saw the slot due", () => {
+    const lines = decisionLines({
+      kind: "exercise",
+      outcome: "missed",
+      slotAt: 1,
+      at: 2,
+      ticks: 180,
+      firstSeenAt: 1_700_000_000_000,
+    });
+    expect(lines.join("\n")).toContain("seen due:     180 tick(s) since");
+  });
+
+  it("sourceWords names the detector a rule is triggered by", () => {
+    expect(
+      sourceWords({
+        kind: "exercise",
+        source: { kind: "derivation", derivationId: "dx_1" },
+      } as never),
+    ).toBe("derivation dx_1");
+    expect(
+      sourceWords({
+        kind: "charge-session",
+        source: { kind: "point", pointId: "pt_1" },
+      } as never),
+    ).toBe("point pt_1");
+    expect(sourceWords(null)).toBeNull();
+  });
 });
 
 describe("resolveAutomation", () => {
@@ -397,5 +513,306 @@ describe("automation move", () => {
    */
   it("parses without --to, leaving the refusal to the handler", () => {
     expect(success(["move", "a", "au_1"]).flags.to).toBeUndefined();
+  });
+});
+
+describe("automation check", () => {
+  it("takes an area and an automation", () => {
+    expect(success(["check", "daylesford", "Generator exercise"]).ok).toBe(
+      true,
+    );
+  });
+
+  it("🛑 is a READ verb — it refuses --apply", () => {
+    expect(failure(["check", "a", "b", "--apply"])).toContain("apply");
+  });
+
+  describe("renderEvaluation", () => {
+    it("states the skip condition's current ANSWER, not just the rule", () => {
+      const out = renderEvaluation({
+        evaluatedAt: "2026-09-24T07:00:00.000Z",
+        enabled: true,
+        unless: {
+          minMinutes: 30,
+          minLoadKw: 1.5,
+          withinDays: 7,
+          best: { minutes: 41.2, peakKw: 3.9, endedAt: "2026-09-21T09:41:00Z" },
+          satisfied: true,
+          runsConsidered: 1,
+          runsExcluded: 0,
+        },
+        decision: { kind: "consume", outcome: "satisfied" },
+      });
+      expect(out).toContain("answer now:   YES");
+      expect(out).toContain("41.2 min");
+      expect(out).toContain("would dispatch: nothing");
+    });
+
+    it("🛑 names the raw-read convention, so a sign mismatch is legible", () => {
+      const out = renderEvaluation({
+        unless: {
+          best: null,
+          runsConsidered: 4,
+          runsExcluded: 0,
+          loadPoint: { id: "pt_x", transformApplied: false },
+        },
+      });
+      expect(out).toContain("answer now:   NO");
+      expect(out).toContain("RAW — no transform applied");
+      expect(out).toContain("4 (0 discounted as our own)");
+    });
+
+    // 🛑 THREE states, not two. `null` is the route saying "this rule has no skip condition";
+    // absent is an origin that said nothing. Rendering them the same would turn "it runs every
+    // time, whatever the engine has done" into a missing line nobody notices.
+    it("says plainly when a rule has NO skip condition", () => {
+      const out = renderEvaluation({
+        evaluatedAt: "2026-09-24T07:00:00.000Z",
+        enabled: true,
+        unless: null,
+        decision: { kind: "dispatch", outcome: null },
+      });
+      expect(out).toContain(
+        "unless:         none — this rule runs on EVERY occurrence",
+      );
+      expect(out).not.toContain("answer now:");
+    });
+
+    it("stays silent about `unless` when the origin said nothing at all", () => {
+      const out = renderEvaluation({
+        evaluatedAt: "2026-09-24T07:00:00.000Z",
+        enabled: true,
+        decision: { kind: "dispatch", outcome: null },
+      });
+      expect(out).not.toContain("unless:");
+    });
+
+    it("reports the readiness gate as ready or too full", () => {
+      expect(
+        renderEvaluation({
+          require: { socPercent: 98.8, maxSocPercent: 95, ready: false },
+        }),
+      ).toContain("TOO FULL");
+      expect(
+        renderEvaluation({
+          require: { socPercent: 84.6, maxSocPercent: 95, ready: true },
+        }),
+      ).toContain("ready");
+    });
+
+    it("degrades to a sentence against an origin that predates the payload", () => {
+      expect(() => renderEvaluation({})).not.toThrow();
+      expect(renderEvaluation({})).toContain("evaluated:      ?");
+      // 🛑 And says so. An unreadable answer must not render as "enabled: yes / would dispatch:
+      // nothing", which is missing information dressed up as affirmative information.
+      expect(renderEvaluation({})).toContain("UNKNOWN, not healthy");
+      expect(renderEvaluation({})).toContain("enabled:        ?");
+    });
+
+    // 🛑 THE CONTRACT TEST. The renderer's fixtures were hand-written in the CLI's own declared
+    // shape, so a server that sent something else was invisible to them — `unless.withinDays` was
+    // nested under `window` on the wire and every real response printed "in the last ? days".
+    // This fixture is copied from the route's actual response body, not from the CLI's types.
+    it("🛑 renders a body shaped like the ROUTE's actual response", () => {
+      const fromRoute = {
+        automationId: "au_x",
+        areaId: "ar_x",
+        timezone: "Australia/Melbourne",
+        evaluatedAt: "2026-09-24T07:00:00.000Z",
+        enabled: true,
+        createdAt: "2026-09-01T00:00:00.000Z",
+        kind: "exercise",
+        source: { derivationId: "dx_1", resolved: true },
+        next: { atMs: 1, at: "2026-10-01T07:00:00.000Z" },
+        exhausted: false,
+        slot: { atMs: 0, at: "2026-09-24T07:00:00.000Z" },
+        due: { due: true },
+        openRun: false,
+        unless: {
+          withinDays: 7,
+          minMinutes: 30,
+          minLoadKw: 1.5,
+          dipToleranceSeconds: 180,
+          loadPoint: { id: "pt_load", transformApplied: false },
+          best: null,
+          satisfied: false,
+          runsConsidered: 0,
+          runsExcluded: 1,
+        },
+        require: {
+          socPointId: "pt_soc",
+          socPercent: 93.2,
+          maxSocPercent: 95,
+          ready: true,
+        },
+        supervise: { settleMinutes: 10, sustainMinutes: 3 },
+        decision: { kind: "dispatch", outcome: null, reason: null },
+        wouldDispatch: { pointId: "pt_act", action: "set_value", value: 30 },
+      };
+      const out = renderEvaluation(fromRoute);
+      expect(out).toContain("in the last 7 days");
+      expect(out).not.toContain("? days");
+      expect(out).toContain("ready");
+      expect(out).toContain("set pt_act = 30");
+      expect(evaluationHasFindings(fromRoute)).toBe(false);
+    });
+
+    it("🛑 an unreadable payload is a FINDING, not a pass", () => {
+      expect(evaluationHasFindings({})).toBe(true);
+      // A server that declined to evaluate this kind is a stated limitation, not an unknown —
+      // but a DISABLED rule is still a finding whatever kind it is.
+      expect(evaluationHasFindings({ supported: false, enabled: true })).toBe(
+        false,
+      );
+      expect(evaluationHasFindings({ supported: false, enabled: false })).toBe(
+        true,
+      );
+    });
+
+    it("a schedule that has not started yet is healthy", () => {
+      expect(
+        evaluationHasFindings({
+          enabled: true,
+          due: { due: false, reason: "not-started" },
+          blockers: [],
+        }),
+      ).toBe(false);
+    });
+
+    it("reports an unsupported rule kind rather than rendering an empty verdict", () => {
+      expect(
+        renderEvaluation({
+          kind: "charge-session",
+          supported: false,
+          detail: "nope",
+        }),
+      ).toBe("charge-session rule: nope");
+    });
+  });
+
+  describe("evaluationHasFindings", () => {
+    it("a healthy verdict is not a finding", () => {
+      expect(
+        evaluationHasFindings({
+          enabled: true,
+          decision: { outcome: "satisfied" },
+        }),
+      ).toBe(false);
+    });
+
+    it.each(["missed", "missed-running"])("%s is a finding", (outcome) => {
+      expect(
+        evaluationHasFindings({ enabled: true, decision: { outcome } }),
+      ).toBe(true);
+    });
+
+    it("a disabled rule, an unresolved detector and a blocker are findings", () => {
+      expect(evaluationHasFindings({ enabled: false })).toBe(true);
+      expect(evaluationHasFindings({ source: { resolved: false } })).toBe(true);
+      expect(
+        evaluationHasFindings({ blockers: [{ code: "no-detector" }] }),
+      ).toBe(true);
+    });
+  });
+});
+
+describe("automation health", () => {
+  it("takes no arguments — it is fleet-wide", () => {
+    expect(success(["health"]).ok).toBe(true);
+    expect(failure(["health", "daylesford"])).toBeTruthy();
+  });
+
+  it("is a read verb", () => {
+    expect(failure(["health", "--apply"])).toContain("apply");
+  });
+
+  describe("evaluatorState — most alarming first", () => {
+    const fresh = { at: "x", ageSeconds: 30, durationMs: 10, summary: {} };
+
+    // 🛑 The ordering that matters: "switched off" must not read as "broken", because the remedies
+    // are an env var and an incident respectively.
+    it("🛑 DISABLED outranks SILENT", () => {
+      expect(evaluatorState({ cronsEnabled: false, lastSweep: null })).toBe(
+        "DISABLED",
+      );
+    });
+
+    it("SILENT when no sweep, or a stale one", () => {
+      expect(evaluatorState({ cronsEnabled: true, lastSweep: null })).toBe(
+        "SILENT",
+      );
+      expect(
+        evaluatorState({
+          cronsEnabled: true,
+          lastSweep: { ...fresh, ageSeconds: 301 },
+        }),
+      ).toBe("SILENT");
+    });
+
+    it("ERRORS when the last sweep counted any", () => {
+      expect(
+        evaluatorState({
+          cronsEnabled: true,
+          lastSweep: { ...fresh, summary: { errors: 2 } },
+        }),
+      ).toBe("ERRORS");
+    });
+
+    it("UNDECIDED when due slots outnumber the decisions", () => {
+      expect(
+        evaluatorState({
+          cronsEnabled: true,
+          lastSweep: { ...fresh, summary: { exercise: { due: 2, fired: 1 } } },
+        }),
+      ).toBe("UNDECIDED");
+    });
+
+    it("a skip counts as decided, not as a shortfall", () => {
+      expect(
+        evaluatorState({
+          cronsEnabled: true,
+          lastSweep: {
+            ...fresh,
+            summary: { exercise: { due: 1, skipped: 1 } },
+          },
+        }),
+      ).toBe("ok");
+    });
+
+    it("🛑 UNKNOWN when a fresh sweep carries no summary — it cannot establish health", () => {
+      expect(
+        evaluatorState({
+          cronsEnabled: true,
+          lastSweep: { at: "x", ageSeconds: 10, durationMs: 1 },
+        }),
+      ).toBe("UNKNOWN");
+    });
+
+    it("ok when a fresh sweep decided everything", () => {
+      expect(
+        evaluatorState({
+          cronsEnabled: true,
+          lastSweep: { ...fresh, summary: { exercise: { due: 1, fired: 1 } } },
+        }),
+      ).toBe("ok");
+    });
+  });
+
+  describe("renderHealth", () => {
+    it("states both readings of an absent sweep rather than picking one", () => {
+      const out = renderHealth({ cronsEnabled: true, lastSweep: null });
+      expect(out).toContain("has not run since this deploy");
+      expect(out).toContain("or it is not running");
+    });
+
+    it("warns that a suppressed alert is not the same as a healthy one", () => {
+      expect(
+        renderHealth({ undecidedAlertSuppressedUntil: "2026-09-18T00:00:00Z" }),
+      ).toContain("does not mean healthy");
+    });
+
+    it("degrades against an origin that predates the payload", () => {
+      expect(() => renderHealth({})).not.toThrow();
+    });
   });
 });

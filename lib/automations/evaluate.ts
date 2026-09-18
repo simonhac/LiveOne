@@ -156,6 +156,7 @@ async function resolvePointSource(
 export async function evaluateAutomations(
   nowMs: number,
 ): Promise<AutomationsSummary> {
+  const startedMs = Date.now();
   const summary: AutomationsSummary = {
     evaluated: 0,
     armed: 0,
@@ -165,11 +166,13 @@ export async function evaluateAutomations(
     errors: 0,
     exercise: {
       due: 0,
-      lostClaim: 0,
       fired: 0,
       satisfied: 0,
       waiting: 0,
       missed: 0,
+      skipped: 0,
+      aborted: 0,
+      lostClaim: 0,
       exhausted: 0,
     },
   };
@@ -184,7 +187,65 @@ export async function evaluateAutomations(
     }
   }
   await reportUndecidedSlots(summary);
+  await recordSweep(summary, Date.now() - startedMs);
   return summary;
+}
+
+/**
+ * The last sweep, kept so an operator can ask "is the evaluator running at all".
+ *
+ * 🛑 This CANNOT be synthesised client-side, which is why it is persisted rather than derived.
+ * `armed_context` is written only on a DUE slot, so a weekly rule touches its row once a week —
+ * making "the evaluator has been dead since Tuesday" and "nothing was due since Tuesday" the same
+ * observation from outside. That is precisely the 2026-09-12 shape, and the `CRONS_ENABLED=false`
+ * shape too.
+ *
+ * TTL of an hour, deliberately: an EXPIRED key is itself the signal. There is no stale-forever
+ * record to misread as healthy, and nothing to clean up if the cron is switched off for a month.
+ *
+ * Best-effort in every respect — modelled on `readCronLeaseHolder`: diagnostic only, gates nothing,
+ * and swallows its own errors, because a KV hiccup must not cost the evaluation that already ran.
+ */
+const SWEEP_KEY = () => kvKey("automations:sweep");
+
+export interface SweepRecord {
+  at: number;
+  durationMs: number;
+  summary: AutomationsSummary;
+}
+
+async function recordSweep(
+  summary: AutomationsSummary,
+  durationMs: number,
+): Promise<void> {
+  try {
+    const record: SweepRecord = { at: Date.now(), durationMs, summary };
+    await kv.set(SWEEP_KEY(), record, { ex: 3600 });
+  } catch (err) {
+    console.error("[automations] sweep record failed:", err);
+  }
+}
+
+/** Null means no sweep inside the TTL — which is the alarming answer, not a missing feature. */
+export async function readLastSweep(): Promise<SweepRecord | null> {
+  try {
+    return ((await kv.get(SWEEP_KEY())) as SweepRecord | null) ?? null;
+  } catch (err) {
+    console.error("[automations] sweep read failed:", err);
+    return null;
+  }
+}
+
+/** Whether the alert above is currently suppressed, and until when. Diagnostic only. */
+export async function readUndecidedSuppressedUntil(): Promise<number | null> {
+  try {
+    const at = (await kv.get(kvKey("automations:alert:exercise-undecided"))) as
+      | number
+      | null;
+    return typeof at === "number" ? at + 3_600_000 : null;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -194,7 +255,7 @@ export async function evaluateAutomations(
  * the winning tick recorded the outcome. Leaving it out made every genuine two-tick race raise the
  * alarm below, which is the fastest way to teach an operator to ignore it.
  *
- * Every outcome — fired, satisfied, waiting, missed — writes `armed_context`, so `due` without one
+ * Every outcome — fired, satisfied, waiting, missed, skipped-full — writes `armed_context`, so `due` without one
  * of them means the evaluator fell out of the path between `isDue` and `decideExercise` (the shape
  * of the microsecond-precision CAS failure that stopped two live generator rules ever firing, and
  * which produced no log line of its own for two days). Anything else that gets stuck the same way
@@ -208,7 +269,12 @@ async function reportUndecidedSlots(
 ): Promise<void> {
   const ex = summary.exercise;
   const decided =
-    ex.fired + ex.satisfied + ex.waiting + ex.missed + ex.lostClaim;
+    ex.fired +
+    ex.satisfied +
+    ex.waiting +
+    ex.missed +
+    ex.skipped +
+    ex.lostClaim;
   if (ex.due === 0 || decided >= ex.due) return;
 
   const message = `${ex.due - decided} scheduled exercise slot(s) were due and produced no decision — see [automations] logs`;

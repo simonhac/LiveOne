@@ -35,6 +35,33 @@ const req = (path: string, headers: Record<string, string> = {}): any => {
 
 const withAuth = (v: string) => req("/api/v4/dashboards", { authorization: v });
 
+describe("the control plane's read surface", () => {
+  it("admits the two reads that were judged individually", () => {
+    for (const p of [
+      "/api/v4/points/pt_x/commands",
+      "/api/v4/points/pt_x/preflight",
+      "/api/v4/automations/au_x/evaluation",
+      "/api/v4/automations/evaluator",
+    ])
+      expect(isCliTokenRoute(req(p))).toBe(true);
+  });
+
+  // 🛑 THE POINT OF THE WHOLE ENTRY. `…/action` actuates hardware and `…/refresh` spends a vendor
+  // round trip and writes readings. Neither was judged, so neither is admitted — and a wildcard
+  // `/api/v4/points/(.*)` would have admitted both by accident. If this test ever goes red because
+  // someone "tidied" the list into a pattern, that is the bug, not the test.
+  it("🛑 does NOT admit action, refresh, or a deeper path under an admitted one", () => {
+    for (const p of [
+      "/api/v4/points/pt_x/action",
+      "/api/v4/points/pt_x/refresh",
+      "/api/v4/points/pt_x",
+      "/api/v4/points/pt_x/commands/extra",
+      "/api/v4/points",
+    ])
+      expect(isCliTokenRoute(req(p))).toBe(false);
+  });
+});
+
 describe("isCliTokenRoute — what the bypass is bounded to", () => {
   it("covers the dashboard surface, the read routes, and the CLI's own token management", () => {
     for (const p of [
@@ -256,6 +283,16 @@ describe("every route the bypass exposes authorizes for itself", () => {
     // admin-or-owner only, never the `isPublic` read term, so an ownerless (public) device is not
     // syncable by a stranger holding a CLI token.
     "requireDeviceAccess",
+    // The automations twin (lib/automations/http.ts), needed by `/api/v4/automations/{id}` and its
+    // `/move` and `/evaluation` sub-resources. Same terms as `loadAreaForOwner` above, and it meets
+    // them: every path begins with `requireAuth`, and the only non-error return is behind
+    // `auth.isAdmin || area.ownerClerkUserId === auth.userId`. It collapses "not yours" to 404 —
+    // which is stricter than the others, not looser, since it declines to confirm the rule exists.
+    //
+    // 🛑 Listed explicitly because the item route was passing this assertion by ACCIDENT: it
+    // mentions `loadAreaForOwner` in passing and matched on that, so the check was green for a
+    // reason unrelated to how it actually authorizes.
+    "loadOwnedAutomation",
   ];
 
   /** Every route.ts under app/api, with the URL path it serves. */

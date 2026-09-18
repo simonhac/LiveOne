@@ -37,6 +37,92 @@ export const AUTOMATION_SUBCOMMANDS = {
     examples: ["liveone automation show daylesford 'Generator exercise'"],
   },
 
+  commands: {
+    name: "commands",
+    summary:
+      "What this rule has actually dispatched — the per-attempt audit trail.",
+    when:
+      "Reach for this when a decision says `fired` and the engine did not run. The decision log\n" +
+      "says what we DECIDED; this says what the hub was TOLD and what it answered.",
+    description:
+      "Resolves the action point from the rule, so no pt_ id is needed. 🛑 The response is\n" +
+      "DEVICE-scoped, not point-scoped: it is every command on the device the action point belongs\n" +
+      "to, including ones a human sent from the browser. `--mine` narrows it to this rule.\n" +
+      "\n" +
+      "Rendered through the same sentences the generator dialog shows, so the CLI and the UI\n" +
+      "cannot disagree about what happened.",
+    args: TARGET_ARGS,
+    flags: {
+      ...BASE_URL_FLAG,
+      mine: {
+        type: "boolean",
+        help: "Only commands this automation issued",
+      },
+      limit: {
+        type: "number",
+        help: "How many entries to fetch (default 20)",
+        placeholder: "20",
+      },
+    },
+    exitCodes: {
+      1: "a command was rejected or failed, or a pending one has gone stale",
+    },
+    examples: [
+      "liveone automation commands daylesford 'Generator exercise' --mine",
+    ],
+  },
+
+  health: {
+    name: "health",
+    summary:
+      "Is the evaluator sweeping at all? Fleet-wide, one screen, the kill switch included.",
+    when:
+      "`check` answers 'will THIS rule fire'; this answers 'is anything being evaluated'. Reach\n" +
+      "for it when a rule that should have fired did not, and `check` looks fine.",
+    description:
+      "Reads the record the minutely pass leaves in KV, which expires after an hour — so a MISSING\n" +
+      "record is the alarming answer, not a missing feature.\n" +
+      "\n" +
+      "Read the STATE word, most alarming first:\n" +
+      "  DISABLED   CRONS_ENABLED is not 'true' — switched off, not broken. A different fix.\n" +
+      "  SILENT     no sweep inside 5 minutes: the cron is not completing.\n" +
+      "  ERRORS     the last sweep counted errors — see the [automations] logs.\n" +
+      "  UNDECIDED  slots were due and produced no decision. The shape of the CAS bug that\n" +
+      "             stopped two live generator rules firing, and logged nothing for two days.\n" +
+      "\n" +
+      "Admin-only: a sweep spans every owner's rules.",
+    args: [],
+    flags: { ...BASE_URL_FLAG },
+    exitCodes: { 1: "anything but `ok`" },
+    examples: ["liveone automation health"],
+  },
+
+  check: {
+    name: "check",
+    summary:
+      "Evaluate a rule NOW and report what it would decide, without dispatching anything.",
+    when:
+      "The answer to 'is this configured to run, and will it?'. `show` prints the rule; `check`\n" +
+      "prints the rule's current VERDICT — the skip condition's answer, the evidence behind it, the\n" +
+      "readiness reading, and what would be dispatched.",
+    description:
+      "Answers from the evaluator's own read half (`planExercise`), so it cannot drift from what\n" +
+      "the cron actually does, and it has no path to a dispatch — checking never starts an engine.\n" +
+      "\n" +
+      "🛑 The load evidence is read RAW, i.e. the stored column, so `points.transform` is NOT\n" +
+      "applied. A point whose values are stored inverted will read here with the opposite sign to\n" +
+      "`/api/history`. The output says so per call rather than leaving it to be inferred.\n" +
+      "\n" +
+      "Costs a 7-day reading scan per call, which is why the verdict is not folded into `show` or\n" +
+      "`list` — those are the cheap reads that `skip` and `move` share.",
+    args: TARGET_ARGS,
+    flags: { ...BASE_URL_FLAG },
+    exitCodes: {
+      1: "the rule is disabled, its references do not resolve, or the verdict is one to look at",
+    },
+    examples: ["liveone automation check daylesford 'Generator exercise'"],
+  },
+
   "create-exercise": {
     name: "create-exercise",
     summary:
@@ -44,7 +130,8 @@ export const AUTOMATION_SUBCOMMANDS = {
     when:
       "Reach for this for anti-wet-stacking: a diesel that idles for weeks glazes its bores. The\n" +
       "rule fires on a wall-clock slot and SKIPS itself when the engine has already done real\n" +
-      "work, so a generator in normal use is never exercised unnecessarily.",
+      "work, so a generator in normal use is never exercised unnecessarily. Omit --load-point and\n" +
+      "it has no skip condition at all — the honest shape for a one-off 'run it now for N minutes'.",
     description:
       "🛑 This creates something that STARTS AN ENGINE, on a schedule, unattended. Dry-run is the\n" +
       "default; read the printed rule before `--apply`.\n" +
@@ -52,8 +139,16 @@ export const AUTOMATION_SUBCOMMANDS = {
       "Three points are involved and they are not interchangeable:\n" +
       "  --derivation    the run detector, which answers 'is it running' and 'did it run'\n" +
       "  --load-point    a power point in WATTS (negative = import) that says how HARD it ran;\n" +
-      "                  the DeepSea controller has no CTs, so load is read from the inverter\n" +
+      "                  the DeepSea controller has no CTs, so load is read from the inverter.\n" +
+      "                  OPTIONAL: omit it and the rule has no skip condition — it simply runs\n" +
+      "                  every time it is due, which is what a one-off means\n" +
       "  --action-point  the writable run-request point the run is commanded through\n" +
+      "\n" +
+      "🛑 Omitting --load-point on a STANDING rule means it exercises the engine on every single\n" +
+      "occurrence regardless of what the engine has already done — the waste this trigger exists\n" +
+      "to avoid. On a one-off it is simply the truth, and the only way to state it: the skip\n" +
+      "condition used to be mandatory, so a one-off had to carry a threshold picked to be\n" +
+      "unreachable, which the area's calendar feed then published to subscribers as fact.\n" +
       "\n" +
       "A point is a pt_… id, a logical path on one of the AREA's devices, or the qualified form\n" +
       "`<device>:<path>`. The qualified form is not a nicety: only the DERIVATION has to live in\n" +
@@ -87,9 +182,8 @@ export const AUTOMATION_SUBCOMMANDS = {
       },
       loadPoint: {
         type: "string",
-        required: true,
         placeholder: "path|pt_",
-        help: "Power point in W used to judge load (e.g. bidi.grid/power, or dev:bidi.grid/power)",
+        help: "Power point in W used to judge load (e.g. bidi.grid/power). Omit = no skip condition",
       },
       actionPoint: {
         type: "string",
@@ -131,22 +225,23 @@ export const AUTOMATION_SUBCOMMANDS = {
       },
       minMinutes: {
         type: "number",
-        help: "Continuous loaded minutes that count as already exercised (default 30)",
+        help: "Continuous loaded minutes that count as already exercised (default 30) — needs --load-point",
       },
       minLoadKw: {
         type: "number",
-        help: "Load floor in kW — an idle run does not clear wet stacking (default 1.5)",
+        help: "Load floor in kW — an idle run does not clear wet stacking (default 1.5) — needs --load-point",
       },
       dipSeconds: {
         type: "number",
-        help: "Brief sub-threshold dips bridged rather than splitting a stretch (default 180)",
+        help: "Brief sub-threshold dips bridged rather than splitting a stretch (default 180) — needs --load-point",
       },
       withinDays: {
         type: "number",
-        help: "How far back to look for such a run (default 7)",
+        help: "How far back to look for such a run (default 7) — needs --load-point",
       },
     },
     exitCodes: { 1: "the server refused the rule (422) — nothing was written" },
+    // The third example is the one-off with no skip condition: a start, a duration, nothing else.
     examples: [
       "liveone automation create-exercise daylesford --derivation=generator " +
         "--load-point=bidi.grid/power " +
@@ -155,6 +250,9 @@ export const AUTOMATION_SUBCOMMANDS = {
       "liveone automation create-exercise daylesford --derivation=generator " +
         "--load-point=bidi.grid/power --action-point=generator:source.generator.control.request/duration " +
         "--start='2026-09-12 09:00' --minutes=30",
+      "liveone automation create-exercise daylesford --derivation=generator " +
+        "--action-point=generator:source.generator.control.request/duration " +
+        "--start='2026-09-18 09:45' --minutes=10",
     ],
   },
 

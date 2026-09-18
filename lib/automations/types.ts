@@ -267,7 +267,13 @@ function parseSchedule(raw: unknown): ParseOutcome<ExerciseSchedule> {
   return { ok: true, value };
 }
 
-function parseUnless(raw: unknown): ParseOutcome<ExerciseUnless> {
+/**
+ * The skip condition. Optional as a whole — absent means "run whenever due", which is the only
+ * honest way to express a one-off. The alternative, before this was optional, was a threshold
+ * picked to be unreachable, and that number is published to calendar subscribers verbatim.
+ */
+function parseUnless(raw: unknown): ParseOutcome<ExerciseUnless | undefined> {
+  if (raw === undefined || raw === null) return { ok: true, value: undefined };
   if (!isObject(raw)) return fail("trigger.unless must be an object");
 
   if (typeof raw.loadPointId !== "string" || !isCanonicalUuid(raw.loadPointId))
@@ -336,7 +342,11 @@ function parseRequire(raw: unknown): ParseOutcome<ExerciseRequire | undefined> {
   };
 }
 
-/** Supervision of a run we started. Optional — absent means the latch runs its full duration. */
+/**
+ * Supervision of a run we started. Optional — absent means the latch runs its full duration.
+ *
+ * Reads its load point and floor from `unless`, so the caller refuses the pair without it.
+ */
 function parseSupervise(
   raw: unknown,
 ): ParseOutcome<ExerciseSupervise | undefined> {
@@ -384,12 +394,23 @@ function parseExerciseTrigger(
   const supervise = parseSupervise(raw.supervise);
   if (!supervise.ok) return fail(supervise.error);
 
+  // 🛑 Supervision measures load against `unless.loadPointId` and `unless.minLoadKw`, so without
+  // `unless` there is nothing for it to read and no floor to compare against. Refused here rather
+  // than left to fall through: a `supervise` block that silently never supervises is precisely the
+  // configuration-that-reads-as-working failure this trigger keeps producing.
+  if (supervise.value && !unless.value)
+    return fail(
+      "trigger.supervise needs trigger.unless — it stops a run by watching unless.loadPointId against unless.minLoadKw",
+    );
+
   const value: ExerciseTrigger = {
     kind: "exercise",
     source: source.value,
     schedule: schedule.value,
-    unless: unless.value,
   };
+  // Omitted rather than stored as undefined, so an unconditional rule's jsonb is the smallest
+  // thing that says what it means — the same discipline as the schedule's optional fields.
+  if (unless.value) value.unless = unless.value;
   if (require.value) value.require = require.value;
   if (supervise.value) value.supervise = supervise.value;
   return { ok: true, value };
@@ -494,6 +515,10 @@ function parseExerciseArmedContext(
   if (excluded !== null) out.runsExcluded = excluded;
   const soc = finite(raw.socPercent);
   const aborted = finite(raw.abortedAt);
+  const ticks = finite(raw.ticks);
+  const firstSeenAt = finite(raw.firstSeenAt);
+  if (ticks !== null) out.ticks = ticks;
+  if (firstSeenAt !== null) out.firstSeenAt = firstSeenAt;
   if (soc !== null) out.socPercent = soc;
   // Load-bearing, not cosmetic: its presence is what stops supervision re-dispatching a stop every
   // tick while the engine spins down. Dropping it on read would mean a stop command per minute.

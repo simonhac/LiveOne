@@ -155,8 +155,19 @@ onboarding now suggests `Amber <distributor> NMI <nmi>`.
 
 ## Deferred candidates (and why)
 
-- **`point` domain** including control preflight/action — widening the edge bypass onto
-  `/api/v4/points/*` is a control-plane security decision, deferred deliberately.
+- **`point` domain, and control `action`/`refresh`** — the blanket deferral of `/api/v4/points/*`
+  has been PARTLY resolved: two reads were judged individually and admitted, on the grounds that
+  each is a read, each is owner-only in-handler (`requireOwner`, which refuses even a non-owning
+  admin — stricter than anything else behind the bypass), and each is enumerated as a named segment
+  rather than a wildcard.
+  - `GET  …/{pt}/commands`  → `liveone automation commands` (the dispatch audit trail)
+  - `POST …/{pt}/preflight` → `liveone device preflight` (writes nothing, but DOES reach the site
+    over WireGuard, so the verb probes once and is never wired into `automation check`)
+
+  🛑 `…/action` and `…/refresh` **remain deferred**: the first actuates hardware, the second spends
+  a vendor round trip and writes readings. Neither has been judged. `cli-token-edge.test.ts` pins
+  that they are refused, and that no wildcard admits them by accident. A generic `point` domain is
+  still deferred — build the verb for the question being asked, not the surface.
 - **`device poll-status`** — needs a v4 read over `device_state`.
 - **Session / raw-vendor-payload lookup** — `sessions.response` is the first stop for "does the
   vendor actually send X?", but it is a large admin-shaped surface; decide transport when needed.

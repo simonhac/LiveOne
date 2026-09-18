@@ -63,6 +63,38 @@ firing, and the exercise path never arms, so nothing has ever read it there.
 Internally the evaluator expands a one-off as `FREQ=DAILY;COUNT=1`, so the engine has one code
 path. That synthetic rule is **not** in the calendar feed, where a repeating VEVENT would be a lie.
 
+## The skip condition is optional
+
+`unless` — "don't exercise if the engine has already done real work recently" — may be **absent**,
+and absent means the rule runs whenever it is due. That is what a one-off *"run it for 10 minutes
+on Thursday morning"* means: there is nothing it should be skipped for.
+
+🛑 It used to be a required field, and the cost of that was not theoretical. The only way through
+the parser was a threshold chosen to be unreachable (`minMinutes: 600`), and the calendar feed
+renders those terms in words — so every subscriber was told the run would be *"Skipped if it has
+already run for 600 minutes or more above 1.5 kW in the previous 7 days"*, describing a condition
+nothing could meet. A required field that has to be lied to is a required field in the wrong place.
+
+Three consequences worth knowing:
+
+- On a **standing** rule, no `unless` means it exercises the engine on every single occurrence
+  regardless of what the engine has already done — the waste this trigger exists to prevent. That
+  is a legitimate thing to ask for (a site with no bidirectional power point cannot answer "did it
+  run under load" at all), so it is allowed, but every rendering of a rule — `automation show`,
+  `automation check`, the `create-exercise` dry run — states it in as many words rather than
+  leaving it as a missing line.
+- The **lookback is not run at all** for such a rule, rather than run and discarded. It is the
+  expensive half of a tick (a 7-day raw-reading scan plus an interval query, per rule), and a rule
+  with no question for it should not pay for it.
+- **`supervise` requires it** (422 otherwise). Supervision stops an unloaded run by watching
+  `unless.loadPointId` against `unless.minLoadKw` — there is deliberately one load point and one
+  floor per rule, so "loaded" means the same thing to both. A `supervise` block with nothing to
+  measure would be a feature that silently never fires, which is the failure mode this trigger
+  keeps producing.
+
+The readiness gate (`require`) is independent: it reads its own SoC point and works with or without
+a skip condition.
+
 ## The zone is the area's, and is never stored
 
 `start`, `exdates` and `rdates` are all local wall clock in the area's `display_timezone`;
@@ -136,8 +168,26 @@ without the calendar adopting it. Both are pinned by tests that read the output 
 one that parses it with `ical.js` — three rounds of `toContain` assertions passed over feeds that
 were broken in production.
 
-**What is NOT in it:** any reading, any point value, any outcome. A subscriber learns when the site
-*intends* to run something, and nothing else.
+**Past occurrences carry what happened**, as one glyph on the title: ✅ it ran, ⏭️ it was
+deliberately not started, ⛔️ it should have started and did not — with ⛔️ suppressed where it would
+be inferred from the silence of a rule that is currently DISABLED, since such a rule is never
+evaluated and its occurrences leave exactly the same silence a failure does. A recurring rule is one VEVENT with
+an RRULE and has no per-occurrence component to retitle, so each decided past slot gets an RFC 5545
+**override** — a second VEVENT with the same UID and a `RECURRENCE-ID`. Runs no schedule accounts
+for (a start from the panel, or from the UI) get their own events. The bound is 366 days.
+
+🛑 **⏭️ needs a durable per-slot record, which is why migration 0078 added
+`automation_slot_outcomes`.** `automations.armed_context` holds only the LATEST decision, one per
+rule, overwritten every tick — so a week later there is nothing left to say why the 10 Sep slot did
+not run. And the runs cannot answer it: "deliberately skipped" and "should have started and did
+not" are both *no run in the window*, and only the evaluator's own record tells them apart. The new
+table is one row per `(automation, slot)`, terminal decisions only (never `waiting`, which is a slot
+still being worked on), written by `recordExerciseOutcome` beside the rule update. A crash between
+the two statements costs exactly one slot's ⏭️/⛔️ distinction — deliberately not a transaction,
+because a display nicety does not belong inside the path that decides whether a generator starts.
+
+**What is NOT in it:** any reading, any point value. A subscriber learns when the site intends to
+run something and whether it did — never what anything measured.
 
 **Auth is a feed token** (`area_calendar_tokens`, `lib/areas/calendar-tokens.ts`), not a session —
 because a calendar client fetches the URL unattended for years and has no way to sign in. That

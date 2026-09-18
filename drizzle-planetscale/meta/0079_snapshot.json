@@ -1,6 +1,6 @@
 {
-  "id": "32f0d1e4-9ea8-4bb7-ad26-cb39474aeb06",
-  "prevId": "a3bb7825-e110-4c89-8590-850bb5b19456",
+  "id": "6f8ef159-68b8-4e70-a22e-4017cc555308",
+  "prevId": "32f0d1e4-9ea8-4bb7-ad26-cb39474aeb06",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -1836,6 +1836,207 @@
       },
       "isRLSEnabled": false
     },
+    "public.device_events": {
+      "name": "device_events",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "device_rid": {
+          "name": "device_rid",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "source": {
+          "name": "source",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "log_type": {
+          "name": "log_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "code": {
+          "name": "code",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "description": {
+          "name": "description",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "source_time_text": {
+          "name": "source_time_text",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "source_timezone": {
+          "name": "source_timezone",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "occurred_at": {
+          "name": "occurred_at",
+          "type": "timestamp (3)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "cleared_time_text": {
+          "name": "cleared_time_text",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "cleared_at": {
+          "name": "cleared_at",
+          "type": "timestamp (3)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "observed_at": {
+          "name": "observed_at",
+          "type": "timestamp (3)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "snapshot": {
+          "name": "snapshot",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "raw": {
+          "name": "raw",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "dedupe_key": {
+          "name": "dedupe_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "capture_id": {
+          "name": "capture_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp (3)",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp (3)",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "device_events_identity_unique": {
+          "name": "device_events_identity_unique",
+          "columns": [
+            {
+              "expression": "device_rid",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "source",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "dedupe_key",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "device_events_timeline_idx": {
+          "name": "device_events_timeline_idx",
+          "columns": [
+            {
+              "expression": "device_rid",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "occurred_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "device_events_device_rid_devices_rid_fk": {
+          "name": "device_events_device_rid_devices_rid_fk",
+          "tableFrom": "device_events",
+          "tableTo": "devices",
+          "columnsFrom": ["device_rid"],
+          "columnsTo": ["rid"],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "device_events_capture_id_diagnostic_captures_id_fk": {
+          "name": "device_events_capture_id_diagnostic_captures_id_fk",
+          "tableFrom": "device_events",
+          "tableTo": "diagnostic_captures",
+          "columnsFrom": ["capture_id"],
+          "columnsTo": ["id"],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "device_events_source_check": {
+          "name": "device_events_source_check",
+          "value": "\"device_events\".\"source\" IN ('portal','inverter')"
+        },
+        "device_events_log_type_check": {
+          "name": "device_events_log_type_check",
+          "value": "(\"device_events\".\"source\" = 'inverter' AND \"device_events\".\"log_type\" IS NOT NULL AND \"device_events\".\"log_type\" IN ('alert','operational'))\n          OR (\"device_events\".\"source\" = 'portal' AND \"device_events\".\"log_type\" IS NULL)"
+        }
+      },
+      "isRLSEnabled": false
+    },
     "public.device_state": {
       "name": "device_state",
       "schema": "",
@@ -2121,6 +2322,320 @@
         "devices_status_check": {
           "name": "devices_status_check",
           "value": "\"devices\".\"status\" IN ('active','disabled','archived')"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.diagnostic_captures": {
+      "name": "diagnostic_captures",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "device_rid": {
+          "name": "device_rid",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "job_id": {
+          "name": "job_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "started_at": {
+          "name": "started_at",
+          "type": "timestamp (3)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "finished_at": {
+          "name": "finished_at",
+          "type": "timestamp (3)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "complete": {
+          "name": "complete",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "identity": {
+          "name": "identity",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "metadata": {
+          "name": "metadata",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "scales": {
+          "name": "scales",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "clock": {
+          "name": "clock",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "decoder_version": {
+          "name": "decoder_version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "record_count": {
+          "name": "record_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "new_record_count": {
+          "name": "new_record_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "coverage": {
+          "name": "coverage",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "sha256": {
+          "name": "sha256",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "raw": {
+          "name": "raw",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "error": {
+          "name": "error",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp (3)",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "diagnostic_captures_device_idx": {
+          "name": "diagnostic_captures_device_idx",
+          "columns": [
+            {
+              "expression": "device_rid",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "started_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "diagnostic_captures_device_rid_devices_rid_fk": {
+          "name": "diagnostic_captures_device_rid_devices_rid_fk",
+          "tableFrom": "diagnostic_captures",
+          "tableTo": "devices",
+          "columnsFrom": ["device_rid"],
+          "columnsTo": ["rid"],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "diagnostic_captures_job_id_diagnostic_jobs_id_fk": {
+          "name": "diagnostic_captures_job_id_diagnostic_jobs_id_fk",
+          "tableFrom": "diagnostic_captures",
+          "tableTo": "diagnostic_jobs",
+          "columnsFrom": ["job_id"],
+          "columnsTo": ["id"],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.diagnostic_jobs": {
+      "name": "diagnostic_jobs",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "device_rid": {
+          "name": "device_rid",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'pending'"
+        },
+        "reasons": {
+          "name": "reasons",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "requested_by": {
+          "name": "requested_by",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "attempts": {
+          "name": "attempts",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "next_attempt_at": {
+          "name": "next_attempt_at",
+          "type": "timestamp (3)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "lease_expires_at": {
+          "name": "lease_expires_at",
+          "type": "timestamp (3)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "lease_token": {
+          "name": "lease_token",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "last_error": {
+          "name": "last_error",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp (3)",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp (3)",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "diagnostic_jobs_open_unique": {
+          "name": "diagnostic_jobs_open_unique",
+          "columns": [
+            {
+              "expression": "device_rid",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "status IN ('pending','running')",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "diagnostic_jobs_due_idx": {
+          "name": "diagnostic_jobs_due_idx",
+          "columns": [
+            {
+              "expression": "status",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "next_attempt_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "diagnostic_jobs_device_rid_devices_rid_fk": {
+          "name": "diagnostic_jobs_device_rid_devices_rid_fk",
+          "tableFrom": "diagnostic_jobs",
+          "tableTo": "devices",
+          "columnsFrom": ["device_rid"],
+          "columnsTo": ["rid"],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "diagnostic_jobs_status_check": {
+          "name": "diagnostic_jobs_status_check",
+          "value": "\"diagnostic_jobs\".\"status\" IN ('pending','running','done','failed','abandoned')"
+        },
+        "diagnostic_jobs_requested_by_check": {
+          "name": "diagnostic_jobs_requested_by_check",
+          "value": "\"diagnostic_jobs\".\"requested_by\" IN ('trigger','cli','baseline')"
         }
       },
       "isRLSEnabled": false

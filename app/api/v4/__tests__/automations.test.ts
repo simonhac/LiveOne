@@ -166,6 +166,8 @@ const action = { kind: "point-action", pointId: ACT_PT, action: "turn_off" };
 const TZ = "Australia/Melbourne";
 const LOAD_PT = Point.generate();
 const LOAD_PT_UUID = Point.toUuid(LOAD_PT);
+const SOC_PT = Point.generate();
+const SOC_PT_UUID = Point.toUuid(SOC_PT);
 /** A weekly Thursday-09:00 exercise trigger, wire-shaped (TypeIDs, not uuids). */
 const exerciseTrigger = {
   kind: "exercise",
@@ -238,7 +240,12 @@ beforeEach(() => {
       ({
         point: {
           id: uuid,
-          logicalPath: uuid === LOAD_PT_UUID ? "bidi.grid" : "ev.charge",
+          logicalPath:
+            uuid === LOAD_PT_UUID
+              ? "bidi.grid"
+              : uuid === SOC_PT_UUID
+                ? "bidi.battery"
+                : "ev.charge",
           // The load point is a real power channel: `bidi.grid/power`, metricType "power". It was
           // fixtured as "active" — a shape that cannot exist — until the exercise checks started
           // asserting on it.
@@ -247,9 +254,17 @@ beforeEach(() => {
               ? "added"
               : uuid === LOAD_PT_UUID
                 ? "power"
-                : "active",
+                : uuid === SOC_PT_UUID
+                  ? "soc"
+                  : "active",
           unit:
-            uuid === SRC_PT_UUID ? "kWh" : uuid === LOAD_PT_UUID ? "W" : null,
+            uuid === SRC_PT_UUID
+              ? "kWh"
+              : uuid === LOAD_PT_UUID
+                ? "W"
+                : uuid === SOC_PT_UUID
+                  ? "%"
+                  : null,
         },
         deviceRid: 10,
       }) as never,
@@ -413,6 +428,41 @@ describe("POST /api/v4/automations", () => {
     });
   });
 
+  it("creates an exercise rule with NO skip condition, storing no `unless`", async () => {
+    // A one-off "run it for 30 minutes" has nothing to be skipped for. Until `unless` was optional
+    // the only way to say that was an unreachable threshold, which the area calendar feed then
+    // published to subscribers as though it were a real condition.
+    const { unless: _dropped, ...unconditional } = exerciseTrigger;
+    const res = await post({
+      areaId: AREA,
+      mode: "standing",
+      trigger: unconditional,
+      action: setValueAction,
+    });
+
+    expect(res.status).toBe(201);
+    const stored = mockStore.create.mock.calls[0][0];
+    expect("unless" in stored.trigger).toBe(false);
+    // 🛑 The load point is never looked up, so its guards cannot refuse a rule that names no point.
+    expect(mockLoadPoint).not.toHaveBeenCalledWith(LOAD_PT_UUID);
+  });
+
+  it("🛑 422s `supervise` without `unless` — it has nothing to measure", async () => {
+    const { unless: _dropped, ...unconditional } = exerciseTrigger;
+    const res = await post({
+      areaId: AREA,
+      mode: "standing",
+      trigger: {
+        ...unconditional,
+        supervise: { settleMinutes: 10, sustainMinutes: 3 },
+      },
+      action: setValueAction,
+    });
+    expect(res.status).toBe(422);
+    expect((await res.json()).error).toContain("trigger.supervise needs");
+    expect(mockStore.create).not.toHaveBeenCalled();
+  });
+
   it("🛑 422s a set_value of 0 — that is a STOP, not a run", async () => {
     const res = await post({
       areaId: AREA,
@@ -442,6 +492,70 @@ describe("POST /api/v4/automations", () => {
     });
     expect(res.status).toBe(422);
     expect((await res.json()).error).toContain("must be in W");
+  });
+
+  // 🛑 THE WIRE LAYER, which is where this went wrong once already. The unit tests build triggers
+  // from raw uuids and never touch `triggerFromWire`, so a `pt_` id that the decoder does not know
+  // about sails through them and 422s only against the real route. `require.socPointId` was exactly
+  // that: added to the parser (which demands raw uuids) and not to the decoder, making the whole
+  // readiness block un-settable through the API.
+  // 🛑 `/api/v4/automations/evaluator` is a LITERAL segment sitting beside `[id]`. Next resolves
+  // static segments first, so the health route wins — but the safety net is that "evaluator" is not
+  // a decodable automation id either, so even if precedence ever changed it could only 400, never
+  // act on a real rule. Before the static route existed this address 405'd against `[id]`, which is
+  // exactly the confusing symptom this pins away.
+  it("🛑 'evaluator' is not a decodable automation id", () => {
+    expect(Automation.toUuidOrNull("evaluator")).toBeNull();
+  });
+
+  it("🛑 accepts a require block addressed by pt_ id, and hands it back as pt_", async () => {
+    const res = await post({
+      areaId: AREA,
+      mode: "standing",
+      trigger: {
+        ...exerciseTrigger,
+        require: { socPointId: SOC_PT, maxSocPercent: 95 },
+        supervise: { settleMinutes: 10, sustainMinutes: 3 },
+      },
+      action: setValueAction,
+    });
+    expect(res.status).toBe(201);
+    // Stored as a RAW uuid...
+    expect(mockStore.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        trigger: expect.objectContaining({
+          require: { socPointId: SOC_PT_UUID, maxSocPercent: 95 },
+          supervise: { settleMinutes: 10, sustainMinutes: 3 },
+        }),
+      }),
+    );
+  });
+
+  it("🛑 422s a require point addressed by raw uuid rather than pt_", async () => {
+    const res = await post({
+      areaId: AREA,
+      mode: "standing",
+      trigger: {
+        ...exerciseTrigger,
+        require: { socPointId: SOC_PT_UUID, maxSocPercent: 95 },
+      },
+      action: setValueAction,
+    });
+    expect(res.status).toBe(422);
+    expect((await res.json()).error).toContain("pt_");
+  });
+
+  it("🛑 422s a readiness point that is not a state-of-charge point", async () => {
+    const res = await post({
+      areaId: AREA,
+      mode: "standing",
+      trigger: {
+        ...exerciseTrigger,
+        require: { socPointId: LOAD_PT, maxSocPercent: 95 },
+      },
+      action: setValueAction,
+    });
+    expect(res.status).toBe(422);
   });
 
   it("🛑 422s a UNIDIRECTIONAL load point — it would satisfy the rule every single week", async () => {

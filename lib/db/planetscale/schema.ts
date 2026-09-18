@@ -1589,6 +1589,18 @@ export interface ExerciseSchedule {
  * Load is not measurable on the DeepSea controller (no CTs), so it is read from a separate power
  * point — at off-grid Daylesford the Selectronic `bidi.grid/power`, where NEGATIVE means the house
  * is importing from the generator. `lib/automations/exercise.ts` owns that sign convention.
+ *
+ * Absent = no skip condition: the rule runs whenever it is due, full stop. That is what a one-off
+ * "run the engine for 10 minutes on Thursday morning" means, and until this was optional there was
+ * no way to say it — `unless` was required, so a one-off had to carry a threshold chosen to be
+ * unreachable (`minMinutes: 600`). That number then went out to every calendar subscriber as
+ * "Skipped if it has already run for 600 minutes or more…", which is not true of anything.
+ *
+ * 🛑 On a STANDING rule, absent means it exercises the engine on EVERY occurrence regardless of
+ * what the engine has already done — which is the wet-stacking-adjacent waste this whole trigger
+ * exists to avoid. That is a legitimate thing to ask for (a site with no bidirectional power point
+ * cannot answer "did it run under load" at all), but it is not the default, and every rendering of
+ * a rule says so in as many words rather than leaving the reader to notice a missing line.
  */
 export interface ExerciseUnless {
   loadPointId: string; // raw points.id uuid; unit must be W (checked in references.ts)
@@ -1601,12 +1613,17 @@ export interface ExerciseUnless {
 /**
  * The readiness condition: don't START unless the site can actually load the engine.
  *
- * At an off-grid site the generator's only load is house draw plus battery charging, and the
- * charge path CLIPS — measured at Daylesford, 101 samples with the top dozen inside 40 W of
- * 3.87 kW, which is the SP-PRO's 80 A charger at 48 V, not the generator. So once the battery is
- * near full there is nothing to load the engine with, and the exercise burns fuel at ~10% load,
- * which is the wet-stacking condition it exists to prevent. 30 minutes at the clipped rate needs
- * roughly 1.9 kWh of headroom — about 3% of a 63.6 kWh pack.
+ * At an off-grid site the generator's load is house draw PLUS battery charging. The CHARGING half
+ * clips at ~3.87 kW — the SP-PRO's 80 A charger at 48 V (measured: 101 samples over two months,
+ * top dozen within 40 W of each other). The TOTAL is not capped there and regularly exceeds it when
+ * the house is drawing: an SP-PRO-initiated run on 2026-09-17 at 20:00 put 4.5–5.5 kW straight into
+ * a 4.9 kW house load with the battery idle. So the engine is perfectly capable of a real load.
+ *
+ * The catch is that an exercise runs at a SCHEDULED time, and the times with battery headroom are
+ * the quiet ones — at 07:00 the house draws ~300 W, so charging is effectively the whole load. Once
+ * the battery is near full there is nothing left to load the engine with and the exercise burns fuel
+ * at ~10% load, which is the wet-stacking condition it exists to prevent. 30 minutes of charging
+ * needs roughly 1.9 kWh of headroom — about 3% of a 63.6 kWh pack.
  *
  * Absent = no readiness gate (every rule that predates this).
  */
@@ -1625,6 +1642,10 @@ export interface ExerciseRequire {
  * for starting late.
  *
  * Absent = no supervision; a run holds the hub's latch for its full commanded duration.
+ *
+ * 🛑 Reads `unless.loadPointId` and `unless.minLoadKw` — there is deliberately ONE load point and
+ * one floor per rule, so "loaded" means the same thing to the skip condition and to supervision.
+ * That makes `supervise` without `unless` unsatisfiable, and the parser refuses the pair.
  */
 export interface ExerciseSupervise {
   settleMinutes: number; // supervision BEGINS after this; before it, low load is just warm-up
@@ -1636,8 +1657,10 @@ export interface ExerciseTrigger {
   kind: "exercise";
   source: AutomationTriggerSource; // must be a derivation (the run detector), enforced when parsing
   schedule: ExerciseSchedule;
-  unless: ExerciseUnless;
+  /** Absent = unconditional: it runs whenever it is due. See `ExerciseUnless`. */
+  unless?: ExerciseUnless;
   require?: ExerciseRequire;
+  /** Requires `unless` — the load point and floor it supervises against live there. */
   supervise?: ExerciseSupervise;
 }
 
@@ -1722,6 +1745,18 @@ export interface ExerciseArmedContext {
   runsExcluded?: number;
   /** State of charge read at the slot, when a readiness gate is configured. */
   socPercent?: number;
+  /**
+   * How many ticks have written a decision for THIS slot, and when the first of them saw it.
+   *
+   * 🛑 Monotone counters rather than a ring of decisions, because the forensic case and the
+   * write-amplification case are the same case: a `waiting` slot writes once a minute across a
+   * three-hour grace window, so a bounded ring is simultaneously the most amplifying option and
+   * still loses the beginning of the story — which is exactly where the 2026-09-12 answer was.
+   * Two integers on a row that is being written anyway cost nothing and answer the question that
+   * mattered: "the slot was seen due 180 times and dispatch was never attempted."
+   */
+  firstSeenAt?: number;
+  ticks?: number;
   /**
    * Epoch-ms of the supervision abort dispatched for THIS slot's run.
    *
@@ -1839,6 +1874,54 @@ export const automations = pgTable(
   }),
 );
 
+// automation_slot_outcomes — what the evaluator decided about ONE exercise slot, kept forever.
+//
+// 🛑 A SECOND home for something `automations.armed_context` already holds, and the duplication is
+// the point: that column is the LATEST decision, one per rule, overwritten every tick. The calendar
+// feed needs a decision per OCCURRENCE — "the 10 Sep slot was skipped because the engine had
+// already run enough" is unanswerable a week later from a column holding only 17 Sep. Runs are not
+// a substitute: ⏭️ (deliberately not started) and ⛔️ (should have started, did not) are both
+// "no run in the window", and only the evaluator's own record tells them apart.
+//
+// Terminal decisions only. `waiting` is a slot still being worked on, written once a minute across
+// a three-hour grace window, and storing it would make this table a tick log rather than a record
+// of outcomes.
+export const automationSlotOutcomes = pgTable(
+  "automation_slot_outcomes",
+  {
+    // CASCADE: a slot outcome is meaningless without the rule it was a decision about, and an
+    // automation is deletable (unlike an area) — `remove()` in the store does exactly that.
+    automationId: uuid("automation_id")
+      .notNull()
+      .references(() => automations.id, { onDelete: "cascade" }),
+    // The OCCURRENCE INSTANT (`ExerciseArmedContext.slotAt`), computed from the schedule rather
+    // than observed, so — unlike a run's `start_time` — it cannot drift under a recompute and is
+    // safe as half of a primary key.
+    slotAt: tsMs("slot_at").notNull(),
+    outcome: text("outcome").notNull(), // CHECK below: EXERCISE_OUTCOMES minus 'waiting'
+    decidedAt: tsMs("decided_at").notNull(),
+    // The whole `ExerciseArmedContext`, for `automation show` and for answering "why" later. Stored
+    // rather than re-derived because the inputs it weighed (the lookback's runs, the SoC read at
+    // the slot) are gone by the time anyone asks.
+    context: jsonb("context").notNull().$type<ExerciseArmedContext>(),
+  },
+  (table) => ({
+    // One row per (rule, occurrence), and the upsert key: a later decision about the SAME slot
+    // (`fired` → `aborted-complete`) REPLACES the earlier one rather than accumulating beside it.
+    pk: primaryKey({
+      columns: [table.automationId, table.slotAt],
+      name: "automation_slot_outcomes_pk",
+    }),
+    // 🛑 Kept in step with `EXERCISE_OUTCOMES` by hand, minus `waiting` — see the table comment.
+    outcomeCheck: check(
+      "automation_slot_outcomes_outcome_check",
+      sql`${table.outcome} IN ('fired','satisfied','missed','missed-running','skipped-full','aborted-complete','aborted-unloaded')`,
+    ),
+    // No extra index. The feed's only read is "every decided slot of these few rules since a
+    // cutoff", which is `(automation_id, slot_at)` left-to-right — exactly the PK's own index.
+  }),
+);
+
 /** Closed lifecycle vocabulary for point_commands.status — kept in step with the CHECK by hand. */
 export type PointCommandStatus = "pending" | "ok" | "rejected" | "failed";
 /** Closed vocabulary for automations.mode — kept in step with the CHECK by hand. */
@@ -1894,6 +1977,9 @@ export type PointCommandRow = typeof pointCommands.$inferSelect;
 export type NewPointCommandRow = typeof pointCommands.$inferInsert;
 export type AutomationRow = typeof automations.$inferSelect;
 export type NewAutomationRow = typeof automations.$inferInsert;
+export type AutomationSlotOutcome = typeof automationSlotOutcomes.$inferSelect;
+export type NewAutomationSlotOutcome =
+  typeof automationSlotOutcomes.$inferInsert;
 
 // Gousher control plane. No collector has direct database credentials.
 export const collectors = pgTable("collectors", {

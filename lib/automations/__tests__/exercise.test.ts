@@ -10,6 +10,7 @@ import {
   decideExercise,
   importKw,
   isDue,
+  exerciseContext,
   isSelfCommandedRun,
   longestLoadedStretch,
   shouldAbortRun,
@@ -435,6 +436,89 @@ describe("decideExercise", () => {
     });
   });
 
+  describe("the per-slot tick counters", () => {
+    const decide = (prior?: unknown) =>
+      decideExercise(
+        { ...base, evidence: null, openRun: true, prior: prior as never },
+        slot.atMs + MIN,
+      );
+
+    it("starts at one when nothing has decided this slot yet", () => {
+      const d = decide(null);
+      expect(d.kind !== "dispatch" && d.context.ticks).toBe(1);
+      expect(d.kind !== "dispatch" && d.context.firstSeenAt).toBe(
+        slot.atMs + MIN,
+      );
+    });
+
+    it("advances while the slot is the same, keeping the first sighting", () => {
+      const d = decide({
+        kind: "exercise",
+        slotAt: slot.atMs,
+        at: slot.atMs,
+        outcome: "waiting",
+        ticks: 179,
+        firstSeenAt: slot.atMs,
+      });
+      expect(d.kind !== "dispatch" && d.context.ticks).toBe(180);
+      expect(d.kind !== "dispatch" && d.context.firstSeenAt).toBe(slot.atMs);
+    });
+
+    // 🛑 Supervision CARRIES without counting. Stopping a run is not another tick that found the
+    // slot due, and incrementing there would inflate the one number whose job is to say how many
+    // ticks looked at an outstanding slot.
+    it("🛑 tickMode 'carry' preserves the counters without advancing them", () => {
+      const ctx = exerciseContext(slot, "aborted-unloaded", slot.atMs + MIN, {
+        tickMode: "carry",
+        prior: {
+          kind: "exercise",
+          slotAt: slot.atMs,
+          at: slot.atMs,
+          outcome: "fired",
+          ticks: 7,
+          firstSeenAt: slot.atMs,
+        },
+      });
+      expect(ctx.ticks).toBe(7);
+      expect(ctx.firstSeenAt).toBe(slot.atMs);
+    });
+
+    it("'carry' invents nothing when the prior has no counters", () => {
+      const ctx = exerciseContext(slot, "aborted-unloaded", slot.atMs + MIN, {
+        tickMode: "carry",
+        prior: null,
+      });
+      expect(ctx.ticks).toBeUndefined();
+      expect(ctx.firstSeenAt).toBeUndefined();
+    });
+
+    // 🛑 A new occurrence starts a new count, or "seen due N times" stops being a statement about
+    // one slot and becomes a meaningless running total for the rule's whole life.
+    it("🛑 resets for a DIFFERENT slot", () => {
+      const d = decide({
+        kind: "exercise",
+        slotAt: slot.atMs - 7 * 24 * 60 * MIN,
+        at: slot.atMs,
+        outcome: "fired",
+        ticks: 42,
+        firstSeenAt: slot.atMs - 7 * 24 * 60 * MIN,
+      });
+      expect(d.kind !== "dispatch" && d.context.ticks).toBe(1);
+    });
+  });
+
+  it("🛑 a missed slot says WHY, and how late", () => {
+    const d = decideExercise(
+      { ...base, evidence: null, openRun: false },
+      slot.atMs + 200 * MIN,
+    );
+    expect(d.kind !== "dispatch" && d.context.outcome).toBe("missed");
+    expect(d.kind !== "dispatch" && d.context.reason).toContain(
+      "grace of 180 min expired",
+    );
+    expect(d.kind !== "dispatch" && d.context.reason).toContain("200 min past");
+  });
+
   it("consumes as satisfied when a long enough loaded run already happened", () => {
     const d = decideExercise(
       { ...base, evidence: loaded(45), openRun: false },
@@ -460,6 +544,53 @@ describe("decideExercise", () => {
         slot.atMs + MIN,
       ),
     ).toEqual({ kind: "dispatch" });
+  });
+
+  /**
+   * 🛑 An UNCONDITIONAL rule (`trigger.unless` absent) has no bar to clear, so `minMinutes` is
+   * undefined rather than a number chosen to be unreachable. The evaluator never runs the lookback
+   * for such a rule, so `evidence` is always null — but the branch guards on BOTH, because a
+   * `>= undefined` comparison is `false` by coercion rather than by intent, and relying on that
+   * would make an invisible dependency out of a JS wart.
+   */
+  it("never satisfies without a bar, whatever the evidence says", () => {
+    const unconditional = { slot, graceMinutes: 180 };
+    expect(
+      decideExercise(
+        { ...unconditional, evidence: loaded(600), openRun: false },
+        slot.atMs + MIN,
+      ),
+    ).toEqual({ kind: "dispatch" });
+  });
+
+  it("still writes off an unconditional slot when grace expires", () => {
+    const d = decideExercise(
+      { slot, graceMinutes: 180, evidence: null, openRun: false },
+      slot.atMs + 181 * MIN,
+    );
+    expect(d.kind !== "dispatch" && d.context.outcome).toBe("missed");
+  });
+
+  it("an unconditional rule still waits for a run in progress", () => {
+    const d = decideExercise(
+      { slot, graceMinutes: 180, evidence: null, openRun: true },
+      slot.atMs + MIN,
+    );
+    expect(d.kind).toBe("wait");
+  });
+
+  it("an unconditional rule still honours the readiness gate", () => {
+    const d = decideExercise(
+      {
+        slot,
+        graceMinutes: 180,
+        evidence: null,
+        openRun: false,
+        readiness: { socPercent: 97.2, maxSocPercent: 95 },
+      },
+      slot.atMs + MIN,
+    );
+    expect(d.kind !== "dispatch" && d.context.outcome).toBe("skipped-full");
   });
 
   it("🛑 satisfied beats a run in progress — the cheapest answer wins", () => {
