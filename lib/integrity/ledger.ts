@@ -57,6 +57,7 @@ import {
   areas,
   areaCalendarTokens,
   automations,
+  automationSlotOutcomes,
   batteryProvenanceDaily,
   dashboardGrants,
   dashboardRevisions,
@@ -716,6 +717,19 @@ export const REFERENCE_LEDGER: LedgerEntry[] = [
       protectedBy: "deliberately-unprotected",
       reason:
         "`action.pointId` has no FK. It used to say a point is never deleted by a config path, so there was no delete to refuse — that stopped being true when `hardDeleteDevice` shipped, which deletes a device's points outright. `deviceDependents` now scans this path (and the two in `trigger`) against the device's owned points and REFUSES, so the protection is real rather than incidental; the verdict stays unprotected because it is the scan, not a constraint, that provides it.",
+    },
+  },
+  {
+    column: automationSlotOutcomes.automationId,
+    verdict: { protectedBy: "fk", onDelete: "cascade" },
+  },
+  {
+    column: automationSlotOutcomes.context,
+    holdsNoRefs:
+      "the `ExerciseArmedContext` that produced this slot's outcome — the same shape as `automations.armed_context` beside it, and the same interior: timestamps, minutes, kW and tick counters. No id of anything.",
+    verdict: {
+      protectedBy: "deliberately-unprotected",
+      reason: "decision log, one row per occurrence.",
     },
   },
   {

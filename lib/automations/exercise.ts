@@ -90,9 +90,14 @@ export interface CommandedRun {
  * the rule is less likely to be satisfied and exercises the engine again: an unnecessary run.
  * Under-attributing counts our own exercise as evidence and SKIPS the next one, letting the engine
  * wet-stack — the failure this whole feature exists to prevent. So when in doubt, claim the run.
+ *
+ * EXPORTED because the calendar feed asks the same question of a SLOT that this asks of a command —
+ * "did this run start close enough to count as that one's doing" — and the two answers must not be
+ * allowed to drift. A feed that marked a slot ⛔️ while the evaluator had counted the very same run
+ * as the slot's own would be reporting a disagreement inside LiveOne as a fact about the generator.
  */
-const ATTRIBUTION_LEAD_MS = 120_000;
-const ATTRIBUTION_TAIL_MS = 300_000;
+export const ATTRIBUTION_LEAD_MS = 120_000;
+export const ATTRIBUTION_TAIL_MS = 300_000;
 
 /**
  * Was this run started by one of OUR OWN dispatches?

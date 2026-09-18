@@ -24,6 +24,8 @@ import * as store from "@/lib/automations/store";
 import type {
   AutomationAction,
   AutomationTrigger,
+  ExerciseArmedContext,
+  ExerciseOutcome,
 } from "@/lib/db/planetscale/schema";
 
 const TRIGGER = {
@@ -129,8 +131,15 @@ maybe("claimExerciseSlot against a real Postgres", () => {
 
   // ── the outcome write, which is now a CAS too ──────────────────────────────────────────────────
 
-  const context = (outcome: "fired" | "waiting") =>
-    ({ slotAt: SLOT_MS, outcome, decidedAt: Date.now() }) as never;
+  const context = (
+    outcome: ExerciseOutcome,
+    slotAt = SLOT_MS,
+  ): ExerciseArmedContext => ({
+    kind: "exercise",
+    slotAt,
+    outcome,
+    at: Date.now(),
+  });
 
   it("🛑 refuses an outcome whose expected revision has moved on", async () => {
     const stale = (await store.getById(id!))!.revision;
@@ -175,6 +184,71 @@ maybe("claimExerciseSlot against a real Postgres", () => {
 
     expect(applied).toBe(true);
     expect((await store.getById(id!))!.lastTriggeredRunStart).toEqual(prior);
+  });
+
+  // ── the per-SLOT record the calendar feed reads ───────────────────────────────────────────────
+
+  it("writes a terminal decision to automation_slot_outcomes, and reads it back by slot", async () => {
+    await store.recordExerciseOutcome(id!, {
+      context: context("fired"),
+      nowMs: Date.now(),
+    });
+
+    const byAutomation = await store.listSlotOutcomesForAutomations(
+      [id!],
+      SLOT_MS - 86_400_000,
+    );
+    expect(byAutomation.get(id!)?.get(SLOT_MS)).toBe("fired");
+  });
+
+  it("🛑 REPLACES an earlier decision about the same slot rather than duplicating it", async () => {
+    // The live case: supervision stops a run this rule started, so `fired` becomes
+    // `aborted-complete`. `(automation_id, slot_at)` is the PK, and the latest reading of a slot is
+    // the true one.
+    await store.recordExerciseOutcome(id!, {
+      context: context("aborted-complete"),
+      nowMs: Date.now(),
+    });
+
+    const byAutomation = await store.listSlotOutcomesForAutomations(
+      [id!],
+      SLOT_MS - 86_400_000,
+    );
+    expect(byAutomation.get(id!)?.size).toBe(1);
+    expect(byAutomation.get(id!)?.get(SLOT_MS)).toBe("aborted-complete");
+  });
+
+  it("🛑 stores NOTHING for a `waiting` decision — it is a slot in progress, not an outcome", async () => {
+    const other = SLOT_MS + 7 * 86_400_000;
+    await store.recordExerciseOutcome(id!, {
+      context: context("waiting", other),
+      nowMs: Date.now(),
+    });
+
+    const byAutomation = await store.listSlotOutcomesForAutomations(
+      [id!],
+      SLOT_MS - 86_400_000,
+    );
+    expect(byAutomation.get(id!)?.has(other)).toBe(false);
+  });
+
+  it("does not write a slot outcome when the CAS refuses the row", async () => {
+    const stale = (await store.getById(id!))!.revision;
+    await store.patch(id!, { name: `__test__ moved again ${Date.now()}` });
+    const unseen = SLOT_MS + 14 * 86_400_000;
+
+    const applied = await store.recordExerciseOutcome(id!, {
+      context: context("fired", unseen),
+      nowMs: Date.now(),
+      expectRevision: stale,
+    });
+
+    expect(applied).toBe(false);
+    const byAutomation = await store.listSlotOutcomesForAutomations(
+      [id!],
+      SLOT_MS - 86_400_000,
+    );
+    expect(byAutomation.get(id!)?.has(unseen)).toBe(false);
   });
 
   it("leaves the watermark alone when no runStart is given", async () => {

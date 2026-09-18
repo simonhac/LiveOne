@@ -1874,6 +1874,54 @@ export const automations = pgTable(
   }),
 );
 
+// automation_slot_outcomes — what the evaluator decided about ONE exercise slot, kept forever.
+//
+// 🛑 A SECOND home for something `automations.armed_context` already holds, and the duplication is
+// the point: that column is the LATEST decision, one per rule, overwritten every tick. The calendar
+// feed needs a decision per OCCURRENCE — "the 10 Sep slot was skipped because the engine had
+// already run enough" is unanswerable a week later from a column holding only 17 Sep. Runs are not
+// a substitute: ⏭️ (deliberately not started) and ⛔️ (should have started, did not) are both
+// "no run in the window", and only the evaluator's own record tells them apart.
+//
+// Terminal decisions only. `waiting` is a slot still being worked on, written once a minute across
+// a three-hour grace window, and storing it would make this table a tick log rather than a record
+// of outcomes.
+export const automationSlotOutcomes = pgTable(
+  "automation_slot_outcomes",
+  {
+    // CASCADE: a slot outcome is meaningless without the rule it was a decision about, and an
+    // automation is deletable (unlike an area) — `remove()` in the store does exactly that.
+    automationId: uuid("automation_id")
+      .notNull()
+      .references(() => automations.id, { onDelete: "cascade" }),
+    // The OCCURRENCE INSTANT (`ExerciseArmedContext.slotAt`), computed from the schedule rather
+    // than observed, so — unlike a run's `start_time` — it cannot drift under a recompute and is
+    // safe as half of a primary key.
+    slotAt: tsMs("slot_at").notNull(),
+    outcome: text("outcome").notNull(), // CHECK below: EXERCISE_OUTCOMES minus 'waiting'
+    decidedAt: tsMs("decided_at").notNull(),
+    // The whole `ExerciseArmedContext`, for `automation show` and for answering "why" later. Stored
+    // rather than re-derived because the inputs it weighed (the lookback's runs, the SoC read at
+    // the slot) are gone by the time anyone asks.
+    context: jsonb("context").notNull().$type<ExerciseArmedContext>(),
+  },
+  (table) => ({
+    // One row per (rule, occurrence), and the upsert key: a later decision about the SAME slot
+    // (`fired` → `aborted-complete`) REPLACES the earlier one rather than accumulating beside it.
+    pk: primaryKey({
+      columns: [table.automationId, table.slotAt],
+      name: "automation_slot_outcomes_pk",
+    }),
+    // 🛑 Kept in step with `EXERCISE_OUTCOMES` by hand, minus `waiting` — see the table comment.
+    outcomeCheck: check(
+      "automation_slot_outcomes_outcome_check",
+      sql`${table.outcome} IN ('fired','satisfied','missed','missed-running','skipped-full','aborted-complete','aborted-unloaded')`,
+    ),
+    // No extra index. The feed's only read is "every decided slot of these few rules since a
+    // cutoff", which is `(automation_id, slot_at)` left-to-right — exactly the PK's own index.
+  }),
+);
+
 /** Closed lifecycle vocabulary for point_commands.status — kept in step with the CHECK by hand. */
 export type PointCommandStatus = "pending" | "ok" | "rejected" | "failed";
 /** Closed vocabulary for automations.mode — kept in step with the CHECK by hand. */
@@ -1929,6 +1977,9 @@ export type PointCommandRow = typeof pointCommands.$inferSelect;
 export type NewPointCommandRow = typeof pointCommands.$inferInsert;
 export type AutomationRow = typeof automations.$inferSelect;
 export type NewAutomationRow = typeof automations.$inferInsert;
+export type AutomationSlotOutcome = typeof automationSlotOutcomes.$inferSelect;
+export type NewAutomationSlotOutcome =
+  typeof automationSlotOutcomes.$inferInsert;
 
 // Gousher control plane. No collector has direct database credentials.
 export const collectors = pgTable("collectors", {

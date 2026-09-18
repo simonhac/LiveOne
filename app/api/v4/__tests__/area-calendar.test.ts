@@ -47,7 +47,15 @@ jest.mock("@/lib/areas/calendar-tokens", () => ({
   listCalendarTokens: jest.fn(),
   revokeCalendarToken: jest.fn(),
 }));
-jest.mock("@/lib/automations/store", () => ({ listForArea: jest.fn() }));
+jest.mock("@/lib/automations/store", () => ({
+  listForArea: jest.fn(),
+  intervalsOverlapping: jest.fn(),
+  listSlotOutcomesForAutomations: jest.fn(),
+}));
+jest.mock("@/lib/derivations/resolve", () => ({
+  listGeneratorDetectorsForArea: jest.fn(),
+  derivationNames: jest.fn(),
+}));
 
 import { loadAreaForAuth, loadAreaForOwner } from "@/lib/areas/http";
 import {
@@ -57,8 +65,14 @@ import {
   validateCalendarToken,
 } from "@/lib/areas/calendar-tokens";
 import * as store from "@/lib/automations/store";
+import {
+  derivationNames,
+  listGeneratorDetectorsForArea,
+} from "@/lib/derivations/resolve";
 import type {
   AutomationRow,
+  DerivedInterval,
+  ExerciseOutcome,
   ExerciseTrigger,
 } from "@/lib/db/planetscale/schema";
 import { GET as FEED } from "../areas/[id]/calendar.ics/route";
@@ -75,6 +89,39 @@ const mockMint = jest.mocked(mintCalendarToken);
 const mockList = jest.mocked(listCalendarTokens);
 const mockRevoke = jest.mocked(revokeCalendarToken);
 const mockStore = jest.mocked(store);
+const mockDetectors = jest.mocked(listGeneratorDetectorsForArea);
+const mockNames = jest.mocked(derivationNames);
+
+/**
+ * 🛑 The feed now reads the CLOCK — it expands each rule's past occurrences and marks them — so
+ * every assertion below about how many events there are is a statement about "now". Pinned here,
+ * not left to the machine's date, for `exercise.ts`'s reason: every interesting case is a clock
+ * case. The default sits BEFORE the fixture's first occurrence, so a test that says nothing about
+ * outcomes gets the same feed it always did.
+ */
+const NOW_BEFORE_FIRST_SLOT = Date.parse("2026-09-16T00:00:00+10:00");
+const SLOT_17_SEP = Date.parse("2026-09-17T09:00:00+10:00");
+let nowMs = NOW_BEFORE_FIRST_SLOT;
+const setNow = (ms: number) => {
+  nowMs = ms;
+};
+
+/** A closed `derived_intervals` row, as `intervalsOverlapping` returns it. */
+const runRow = (startMs: number, minutes = 30, energyKwh = 0.5) =>
+  ({
+    derivationId: DX_UUID,
+    startTime: new Date(startMs),
+    endTime: new Date(startMs + minutes * 60_000),
+    durationSeconds: minutes * 60,
+    energyKwh,
+  }) as DerivedInterval;
+
+/** The VEVENT blocks of a feed body, unfolded, in order. */
+const vevents = (body: string) =>
+  unfold(body)
+    .split("BEGIN:VEVENT")
+    .slice(1)
+    .map((block) => block.slice(0, block.indexOf("END:VEVENT")));
 
 const exerciseRow = (over: Partial<AutomationRow> = {}): AutomationRow =>
   ({
@@ -147,6 +194,12 @@ beforeEach(() => {
     area: { id: AREA_UUID, displayName: "Daylesford", displayTimezone: TZ },
   } as never);
   mockStore.listForArea.mockResolvedValue([exerciseRow()]);
+  mockStore.intervalsOverlapping.mockResolvedValue([]);
+  mockStore.listSlotOutcomesForAutomations.mockResolvedValue(new Map());
+  mockDetectors.mockResolvedValue([{ id: DX_UUID, name: "Generator" }]);
+  mockNames.mockResolvedValue(new Map());
+  nowMs = NOW_BEFORE_FIRST_SLOT;
+  jest.spyOn(Date, "now").mockImplementation(() => nowMs);
 });
 
 describe("GET …/calendar.ics", () => {
@@ -290,7 +343,9 @@ describe("GET …/calendar.ics", () => {
     err.mockRestore();
   });
 
-  it("carries the schedule and NOTHING about readings", async () => {
+  // Renamed from "carries the schedule and NOTHING about readings". Run OUTCOMES are now in the
+  // feed deliberately; point values still are not, and that is the line this guards.
+  it("carries no point values", async () => {
     const body = await (await feed(AREA, `?token=${TOKEN}`)).text();
     expect(body).toContain("Run for 30 minutes");
     expect(body).not.toContain(LOAD_PT_UUID);
@@ -427,6 +482,487 @@ describe("GET …/calendar.ics", () => {
 
   it("404s a malformed area id, indistinguishably", async () => {
     expect((await feed("not-an-area", `?token=${TOKEN}`)).status).toBe(404);
+  });
+});
+
+/**
+ * The outcome marking, at the ROUTE level.
+ *
+ * `calendar-marks.test.ts` pins WHICH glyph a slot gets; these pin that the glyph reaches a
+ * subscriber as legal iCalendar — which for a recurring rule means an OVERRIDE component, the one
+ * shape a `toContain` on the whole body cannot tell apart from a duplicate event.
+ */
+describe("GET …/calendar.ics — what actually happened", () => {
+  /** The override components: same UID as the master, plus a RECURRENCE-ID. */
+  const overrides = (body: string) =>
+    vevents(body).filter((ve) => ve.includes("RECURRENCE-ID"));
+  const master = (body: string) =>
+    vevents(body).find((ve) => ve.includes("RRULE:"));
+
+  /** A decided slot, as `listSlotOutcomesForAutomations` returns it. */
+  const decided = (slotAtMs: number, outcome: ExerciseOutcome) =>
+    new Map([[AU_UUID, new Map([[slotAtMs, outcome]])]]);
+
+  const afterTheSlot = () => setNow(Date.parse("2026-09-18T09:00:00+10:00"));
+
+  it("🛑 marks a run at a past slot with an OVERRIDE, leaving the master series alone", async () => {
+    afterTheSlot();
+    mockStore.intervalsOverlapping.mockResolvedValue([
+      runRow(SLOT_17_SEP + 60_000),
+    ]);
+
+    const body = await (await feed(AREA, `?token=${TOKEN}`)).text();
+
+    // The master is untouched: still the rule, still recurring, still plainly titled.
+    expect(master(body)).toContain("SUMMARY:Generator exercise");
+    expect(master(body)).toContain("RRULE:FREQ=WEEKLY;BYDAY=TH");
+    expect(master(body)).not.toContain("✅");
+
+    const [override, ...rest] = overrides(body);
+    expect(rest).toEqual([]);
+    // 🛑 The master's UID. Without it this is a second event on top of the occurrence, not a
+    // replacement of it — the subscriber sees the run twice.
+    expect(override).toContain(`UID:${AU_UUID}@liveone.energy`);
+    // 🛑 TZID-qualified local wall clock, like DTSTART. A RECURRENCE-ID naming an instant no
+    // occurrence falls on is silently ignored, which looks exactly like the feature not shipping.
+    expect(override).toContain(`RECURRENCE-ID;TZID=${TZ}:20260917T090000`);
+    expect(override).toContain(`DTSTART;TZID=${TZ}:20260917T090000`);
+    expect(override).toContain("SUMMARY:✅ Generator exercise");
+    expect(override).toContain("Ran for 30 minutes (0.5 kWh).");
+    expect(override).not.toContain("RRULE:");
+  });
+
+  it("🛑 a reference parser resolves the override onto the occurrence it replaces", async () => {
+    afterTheSlot();
+    mockStore.intervalsOverlapping.mockResolvedValue([runRow(SLOT_17_SEP)]);
+
+    const raw = await (await feed(AREA, `?token=${TOKEN}`)).text();
+    const comp = new ICAL.Component(ICAL.parse(raw));
+    const components = comp.getAllSubcomponents("vevent");
+    const masterComp = components.find(
+      (ve) => !ve.hasProperty("recurrence-id"),
+    )!;
+    const event = new ICAL.Event(masterComp);
+    for (const ve of components)
+      if (ve.hasProperty("recurrence-id")) event.relateException(ve);
+
+    // The question a client actually asks, and asked with the SERIES' OWN instants rather than a
+    // hand-built `ICAL.Time`: an exception is keyed by its recurrence id, so a time carrying a
+    // differently-resolved zone silently matches nothing and the test passes or fails on whether
+    // some other suite happened to register Australia/Melbourne in ICAL's global TimezoneService.
+    const iter = event.iterator();
+    const seventeenth = iter.next();
+    const first = iter.next(); // 24 Sep is EXDATEd, so this is 1 Oct
+    expect(event.getOccurrenceDetails(seventeenth).item.summary).toBe(
+      "✅ Generator exercise",
+    );
+    // …and the next one is still the plain rule, not the marked past.
+    expect(event.getOccurrenceDetails(first).item.summary).toBe(
+      "Generator exercise",
+    );
+  });
+
+  it("⛔️ a past slot with no run and no record at all", async () => {
+    afterTheSlot();
+    const [override] = overrides(
+      await (await feed(AREA, `?token=${TOKEN}`)).text(),
+    );
+    expect(override).toContain("SUMMARY:⛔️ Generator exercise");
+    expect(override).toContain(
+      "Did not run: no start was detected within 180 minutes of the scheduled time.",
+    );
+  });
+
+  it("⏭️ a slot the evaluator deliberately skipped", async () => {
+    afterTheSlot();
+    mockStore.listSlotOutcomesForAutomations.mockResolvedValue(
+      decided(SLOT_17_SEP, "satisfied"),
+    );
+    const [override] = overrides(
+      await (await feed(AREA, `?token=${TOKEN}`)).text(),
+    );
+    expect(override).toContain("SUMMARY:⏭️ Generator exercise");
+    expect(override).toContain(
+      "Skipped: the generator had already run enough.",
+    );
+  });
+
+  it("⏭️ says WHICH kind of skip — a full battery is not the same story", async () => {
+    afterTheSlot();
+    mockStore.listSlotOutcomesForAutomations.mockResolvedValue(
+      decided(SLOT_17_SEP, "skipped-full"),
+    );
+    const [override] = overrides(
+      await (await feed(AREA, `?token=${TOKEN}`)).text(),
+    );
+    expect(override).toContain(
+      "Skipped: the battery was too full to load the engine.",
+    );
+  });
+
+  it("🛑 says NOTHING about a slot still inside its grace window", async () => {
+    // Half an hour past a 09:00 slot with three hours of grace: the evaluator may yet start it,
+    // and publishing ⛔️ here would be a verdict on a slot that has not finished.
+    setNow(SLOT_17_SEP + 30 * 60_000);
+    const body = await (await feed(AREA, `?token=${TOKEN}`)).text();
+    expect(overrides(body)).toEqual([]);
+  });
+
+  it("🛑 never marks an EXDATEd occurrence — it was never going to happen", async () => {
+    setNow(Date.parse("2026-09-25T09:00:00+10:00"));
+    mockStore.listSlotOutcomesForAutomations.mockResolvedValue(new Map());
+    const body = await (await feed(AREA, `?token=${TOKEN}`)).text();
+    // 17 Sep is marked; the excluded 24 Sep is not.
+    expect(overrides(body)).toHaveLength(1);
+    expect(overrides(body)[0]).toContain("20260917T090000");
+  });
+
+  it("🛑 never marks a slot from before the rule existed", async () => {
+    afterTheSlot();
+    mockStore.listForArea.mockResolvedValue([
+      // Created AFTER the 17 Sep occurrence its own rule would expand to.
+      exerciseRow({ createdAt: new Date("2026-09-18T00:00:00Z") }),
+    ]);
+    expect(
+      overrides(await (await feed(AREA, `?token=${TOKEN}`)).text()),
+    ).toEqual([]);
+  });
+
+  it("retitles a decided ONE-OFF in place, with no override and no (disabled)", async () => {
+    // A spent one-off is disabled by the evaluator in the write that consumes its last slot, so
+    // every decided one-off is a disabled rule — and "✅ Top-up (disabled)" reads as a
+    // contradiction to somebody who just wants to know whether it ran.
+    afterTheSlot();
+    mockStore.listForArea.mockResolvedValue([
+      exerciseRow({
+        enabled: false,
+        trigger: {
+          ...(exerciseRow().trigger as ExerciseTrigger),
+          schedule: { start: "2026-09-17T09:00", graceMinutes: 180 },
+        },
+      }),
+    ]);
+    mockStore.intervalsOverlapping.mockResolvedValue([runRow(SLOT_17_SEP)]);
+
+    const body = await (await feed(AREA, `?token=${TOKEN}`)).text();
+    expect(body).toContain("SUMMARY:✅ Generator exercise");
+    expect(body).not.toContain("(disabled)");
+    expect(body).not.toContain("This rule is currently DISABLED.");
+    expect(overrides(body)).toEqual([]);
+  });
+
+  it("an UNDECIDED disabled one-off still says (disabled)", async () => {
+    // Still inside its grace window: nothing has been decided, so "disabled" is the only thing
+    // there is to say, and it is still true.
+    setNow(SLOT_17_SEP + 60_000);
+    mockStore.listForArea.mockResolvedValue([
+      exerciseRow({
+        enabled: false,
+        trigger: {
+          ...(exerciseRow().trigger as ExerciseTrigger),
+          schedule: { start: "2026-09-17T09:00", graceMinutes: 180 },
+        },
+      }),
+    ]);
+    const body = unfold(await (await feed(AREA, `?token=${TOKEN}`)).text());
+    expect(body).toContain("SUMMARY:Generator exercise (disabled)");
+    expect(body).toContain("This rule is currently DISABLED.");
+  });
+
+  it("publishes a run no schedule accounts for, as its own event", async () => {
+    afterTheSlot();
+    const panelStart = Date.parse("2026-08-02T14:00:00+10:00");
+    mockStore.intervalsOverlapping.mockResolvedValue([
+      runRow(panelStart, 45, 3.25),
+    ]);
+
+    const body = await (await feed(AREA, `?token=${TOKEN}`)).text();
+    const unscheduled = vevents(body).find((ve) =>
+      ve.includes("(unscheduled)"),
+    )!;
+    // 🛑 Keyed on `start_time`, the run row's immutable identity — the only stable thing there is.
+    expect(unscheduled).toContain(
+      `UID:run-${DX_UUID}-${panelStart}@liveone.energy`,
+    );
+    // The ACTUAL times, not a slot's.
+    expect(unscheduled).toContain(`DTSTART;TZID=${TZ}:20260802T140000`);
+    expect(unscheduled).toContain(`DTEND;TZID=${TZ}:20260802T144500`);
+    expect(unscheduled).toContain("SUMMARY:✅ Generator run (unscheduled)");
+    expect(unscheduled).toContain("Ran for 45 minutes (3.3 kWh).");
+    // 🛑 A claim about the SCHEDULE, not about causation — the feed knows no slot's window contains
+    // this start; it does NOT know no automation caused it.
+    expect(unscheduled).toContain("No scheduled slot accounts for this run.");
+  });
+
+  it("🛑 does NOT publish a slot's own run a second time as unscheduled", async () => {
+    afterTheSlot();
+    mockStore.intervalsOverlapping.mockResolvedValue([
+      runRow(SLOT_17_SEP + 60_000),
+    ]);
+    const body = await (await feed(AREA, `?token=${TOKEN}`)).text();
+    expect(body).not.toContain("(unscheduled)");
+    expect(overrides(body)).toHaveLength(1);
+  });
+
+  it("🛑 an OPEN run gets no EVENT, but still proves its slot started", async () => {
+    // The distinction a review caught the code getting wrong. An open interval cannot be an event
+    // — there is no DTEND to write — but discarding the row entirely made a generator that was
+    // RUNNING AT THAT MOMENT publish "no start was detected": a run beginning near the end of a
+    // grace window is still going when the window closes.
+    afterTheSlot();
+    mockStore.intervalsOverlapping.mockResolvedValue([
+      { ...runRow(SLOT_17_SEP), endTime: null, energyKwh: null },
+    ] as DerivedInterval[]);
+
+    const body = await (await feed(AREA, `?token=${TOKEN}`)).text();
+    expect(body).not.toContain("(unscheduled)");
+    expect(overrides(body)[0]).toContain("SUMMARY:✅ Generator exercise");
+    // The comma is RFC 5545-escaped in a DESCRIPTION.
+    expect(overrides(body)[0]).toContain("It started\\, and is still running.");
+  });
+
+  it("🛑 a SECOND run in one grace window is published rather than swallowed", async () => {
+    // The slot takes the first start; the restart becomes its own event. Before the fix the slot
+    // showed the first run and the restart appeared nowhere at all — and a generator that had to
+    // be started twice is exactly the morning worth seeing.
+    afterTheSlot();
+    mockStore.intervalsOverlapping.mockResolvedValue([
+      runRow(SLOT_17_SEP + 60_000, 3, 0.1),
+      runRow(SLOT_17_SEP + 40 * 60_000, 30, 1.2),
+    ]);
+
+    const body = await (await feed(AREA, `?token=${TOKEN}`)).text();
+    expect(overrides(body)[0]).toContain("Ran for 3 minutes (0.1 kWh).");
+    const restart = vevents(body).find((ve) => ve.includes("(unscheduled)"))!;
+    expect(restart).toContain("Ran for 30 minutes (1.2 kWh).");
+  });
+
+  it("🛑 an RDATE-only schedule is a SERIES, not a one-off", async () => {
+    // `toRecurrenceLines` renders `start` + `rdates` with no RRULE as a repeating event, so reading
+    // "no rrule" as "one occurrence" applied ONE occurrence's outcome to the master — i.e. to every
+    // future occurrence — and, past the second, dropped the marking entirely.
+    setNow(Date.parse("2026-09-20T09:00:00+10:00"));
+    mockStore.listForArea.mockResolvedValue([
+      exerciseRow({
+        trigger: {
+          ...(exerciseRow().trigger as ExerciseTrigger),
+          schedule: {
+            start: "2026-09-17T09:00",
+            rdates: ["2026-09-19T09:00"],
+            graceMinutes: 180,
+          },
+        },
+      }),
+    ]);
+    mockStore.intervalsOverlapping.mockResolvedValue([runRow(SLOT_17_SEP)]);
+
+    const body = await (await feed(AREA, `?token=${TOKEN}`)).text();
+    // The master keeps its plain title — its outcome is NOT smeared over the RDATE occurrence…
+    const [firstEvent] = vevents(body);
+    expect(firstEvent).toContain("SUMMARY:Generator exercise");
+    expect(firstEvent).toContain(`RDATE;TZID=${TZ}:20260919T090000`);
+    // …and both occurrences are marked individually.
+    expect(overrides(body)).toHaveLength(2);
+    expect(overrides(body)[0]).toContain("SUMMARY:✅ Generator exercise");
+    expect(overrides(body)[1]).toContain("SUMMARY:⛔️ Generator exercise");
+    expect(overrides(body)[1]).toContain(
+      `RECURRENCE-ID;TZID=${TZ}:20260919T090000`,
+    );
+  });
+
+  it("🛑 says nothing about a DISABLED rule's silent past slots", async () => {
+    // A disabled rule is never evaluated, so every expired occurrence has no record and no run —
+    // the exact shape the marker otherwise reads as a failure. A rule switched off for a month
+    // would fill that month with red for weeks nothing was ever going to happen in.
+    setNow(Date.parse("2026-10-20T09:00:00+10:00"));
+    mockStore.listForArea.mockResolvedValue([exerciseRow({ enabled: false })]);
+    const body = await (await feed(AREA, `?token=${TOKEN}`)).text();
+    expect(overrides(body)).toEqual([]);
+    expect(body).toContain("SUMMARY:Generator exercise (disabled)");
+  });
+
+  it("🛑 but a RECORDED miss survives the rule being switched off afterwards", async () => {
+    afterTheSlot();
+    mockStore.listForArea.mockResolvedValue([exerciseRow({ enabled: false })]);
+    mockStore.listSlotOutcomesForAutomations.mockResolvedValue(
+      decided(SLOT_17_SEP, "missed"),
+    );
+    const [override] = overrides(
+      await (await feed(AREA, `?token=${TOKEN}`)).text(),
+    );
+    expect(override).toContain("SUMMARY:⛔️ Generator exercise");
+  });
+
+  // `now` such that the 366-day cutoff lands BETWEEN the 17 Sep slot and a run a minute after it.
+  const cutoffBetweenSlotAndRun = () =>
+    setNow(SLOT_17_SEP + 30_000 + 366 * 86_400_000);
+
+  it("🛑 a run just inside the cutoff is not orphaned by a slot just outside it", async () => {
+    // The history bound is arbitrary; attribution must not be. The 17 Sep slot falls before the
+    // cutoff while its run lands after — so without expanding slots back by one attribution
+    // window, the run would be published as "unscheduled": a false statement built entirely out of
+    // where the boundary happened to fall.
+    cutoffBetweenSlotAndRun();
+    mockStore.intervalsOverlapping.mockResolvedValue([
+      runRow(SLOT_17_SEP + 60_000),
+    ]);
+
+    const body = await (await feed(AREA, `?token=${TOKEN}`)).text();
+    expect(body).not.toContain("(unscheduled)");
+    // And the slot itself is outside the published history, so it gets no override of its own —
+    // it was expanded ONLY so that it could claim its run.
+    expect(
+      overrides(body).filter((ve) => ve.includes("20260917T090000")),
+    ).toEqual([]);
+  });
+
+  it("🛑 …and the pre-cutoff slot takes its OWN run, not the next one along", async () => {
+    // The other half of the same boundary. Expanding slots backwards without also READING
+    // backwards let the pre-cutoff slot claim a run it never started — hiding a real unscheduled
+    // event — because the run it should have claimed was never fetched.
+    cutoffBetweenSlotAndRun();
+    mockStore.intervalsOverlapping.mockResolvedValue([
+      runRow(SLOT_17_SEP - 60_000, 20, 0.4), // its own run, BEFORE the cutoff
+      runRow(SLOT_17_SEP + 60_000, 45, 2.5), // a second start, after it
+    ]);
+
+    const body = await (await feed(AREA, `?token=${TOKEN}`)).text();
+    // The pre-cutoff run is claimed but never published — it is outside the history.
+    expect(body).not.toContain("20260917T085900");
+    // The second start is nobody's slot, so it is published as what it is.
+    const unscheduled = vevents(body).find((ve) =>
+      ve.includes("(unscheduled)"),
+    );
+    expect(unscheduled).toContain("Ran for 45 minutes (2.5 kWh).");
+  });
+
+  it("🛑 a TIGHT-grace rule's pre-cutoff slot still competes for its run", async () => {
+    // The expansion floor is shared across rules — the widest window on the area, not each rule's
+    // own. Per-rule floors decided which slots got to COMPETE: the 1-minute-grace rule's slot fell
+    // outside its own floor while the 180-minute rule's survived, so the loose rule took the run the
+    // tight one should have had, and the leftover was published as "unscheduled".
+    cutoffBetweenSlotAndRun();
+    const tight = exerciseRow({
+      name: "Tight",
+      trigger: {
+        ...(exerciseRow().trigger as ExerciseTrigger),
+        schedule: { start: "2026-09-17T08:59", graceMinutes: 1 },
+      },
+    });
+    const loose = exerciseRow({
+      id: "b2c3d4e5-0000-4000-8000-000000000002",
+      name: "Loose",
+      trigger: {
+        ...(exerciseRow().trigger as ExerciseTrigger),
+        schedule: { start: "2026-09-17T09:00", graceMinutes: 180 },
+      },
+    });
+    mockStore.listForArea.mockResolvedValue([tight, loose]);
+    mockStore.intervalsOverlapping.mockResolvedValue([
+      runRow(SLOT_17_SEP, 20, 0.4), // before the cutoff; inside BOTH windows
+      runRow(SLOT_17_SEP + 60_000, 45, 2.5), // after it; only the loose rule can reach
+    ]);
+
+    const body = await (await feed(AREA, `?token=${TOKEN}`)).text();
+    // The tight rule takes the earlier run, so the loose rule takes the later one — and nothing is
+    // left over to be called unscheduled.
+    expect(body).not.toContain("(unscheduled)");
+  });
+
+  it("🛑 reads further back than it publishes, by one attribution window", async () => {
+    // Only when a rule's occurrences actually reach past the cutoff — which is the straddle case.
+    cutoffBetweenSlotAndRun();
+    await feed(AREA, `?token=${TOKEN}`);
+    const [, fromMs] = mockStore.intervalsOverlapping.mock.calls[0];
+    const sinceMs = nowMs - 366 * 86_400_000;
+    // The fixture's 180-minute grace, its lead and its tail — `attributionSlackMs(180)`.
+    expect(sinceMs - fromMs).toBe(180 * 60_000 + 120_000 + 300_000);
+    // And the outcomes are read from the same floor, so all three reads agree.
+    expect(mockStore.listSlotOutcomesForAutomations).toHaveBeenCalledWith(
+      [AU_UUID],
+      fromMs,
+    );
+  });
+
+  it("🛑 TWO rules on one detector cannot hide a run between them", async () => {
+    // Attribution is a per-DETECTOR matching, not a per-rule one. Run once per rule and once over
+    // the union and the two disagree: each rule's own pass shows it the earliest run in its window
+    // — the same run, for both — while the union pass claims two, and the second vanishes.
+    afterTheSlot();
+    const nineAm = exerciseRow();
+    const tenAm = exerciseRow({
+      id: "b2c3d4e5-0000-4000-8000-000000000002",
+      name: "Second exercise",
+      trigger: {
+        ...(exerciseRow().trigger as ExerciseTrigger),
+        schedule: {
+          start: "2026-09-17T10:00",
+          rrule: "FREQ=WEEKLY;BYDAY=TH",
+          graceMinutes: 180,
+        },
+      },
+    });
+    mockStore.listForArea.mockResolvedValue([nineAm, tenAm]);
+    // Both runs fall inside BOTH rules' grace windows.
+    mockStore.intervalsOverlapping.mockResolvedValue([
+      runRow(SLOT_17_SEP + 90 * 60_000, 10, 0.2),
+      runRow(SLOT_17_SEP + 100 * 60_000, 30, 1.1),
+    ]);
+
+    const body = await (await feed(AREA, `?token=${TOKEN}`)).text();
+    // One run each, and neither is lost.
+    expect(unfold(body)).toContain("Ran for 10 minutes (0.2 kWh).");
+    expect(unfold(body)).toContain("Ran for 30 minutes (1.1 kWh).");
+    expect(body).not.toContain("(unscheduled)");
+    expect(overrides(body)).toHaveLength(2);
+  });
+
+  it("🛑 an UNATTRIBUTED open run is published nowhere at all", async () => {
+    // No slot to be evidence for, and no DTEND to write an event with.
+    afterTheSlot();
+    mockStore.listForArea.mockResolvedValue([]);
+    mockStore.intervalsOverlapping.mockResolvedValue([
+      {
+        ...runRow(Date.parse("2026-09-18T08:00:00+10:00")),
+        endTime: null,
+        energyKwh: null,
+      },
+    ] as DerivedInterval[]);
+
+    const body = await (await feed(AREA, `?token=${TOKEN}`)).text();
+    expect(body).not.toContain("BEGIN:VEVENT");
+  });
+
+  it("serves an area's runs even when it has no automations at all", async () => {
+    afterTheSlot();
+    mockStore.listForArea.mockResolvedValue([]);
+    mockStore.intervalsOverlapping.mockResolvedValue([
+      runRow(Date.parse("2026-08-02T14:00:00+10:00")),
+    ]);
+    const body = await (await feed(AREA, `?token=${TOKEN}`)).text();
+    expect(body).toContain("SUMMARY:✅ Generator run (unscheduled)");
+    expect(mockStore.intervalsOverlapping).toHaveBeenCalledWith(
+      DX_UUID,
+      expect.any(Number),
+      expect.any(Number),
+    );
+  });
+
+  it("bounds the history it reads to a year and a day", async () => {
+    afterTheSlot();
+    await feed(AREA, `?token=${TOKEN}`);
+    const [, fromMs, toMs] = mockStore.intervalsOverlapping.mock.calls[0];
+    expect(toMs).toBe(nowMs);
+    // Exactly 366 days here: the attribution slack only widens the read when a rule's occurrences
+    // actually reach past the cutoff, and this fixture was created well inside it. The widened
+    // case is pinned separately.
+    expect(toMs - fromMs).toBe(366 * 86_400_000);
+    // The slot outcomes are read over the SAME window — a run and the slot explaining it must
+    // never fall on opposite sides of the cutoff.
+    expect(mockStore.listSlotOutcomesForAutomations).toHaveBeenCalledWith(
+      [AU_UUID],
+      fromMs,
+    );
   });
 });
 
