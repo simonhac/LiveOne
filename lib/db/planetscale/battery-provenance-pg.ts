@@ -37,7 +37,8 @@ import {
 } from "@/lib/battery-provenance/types";
 import {
   buildSubscriptionRegistry,
-  updateLatestPointValue,
+  updateLatestPointValues,
+  type LatestPointValueUpdate,
 } from "@/lib/kv-cache-manager";
 import {
   bindingPoint,
@@ -541,22 +542,26 @@ async function writeBlendOutputs(
   }
 
   if (opts.updateLatest) {
+    // All six blend points live on the same helper device, so one batched write — 3 Redis commands
+    // rather than 18. See `updateLatestPointValues`.
+    const nowMs = Date.now();
+    const updates: LatestPointValueUpdate[] = [];
     for (const spec of BLEND_POINTS) {
       const pointId = ensure.pointIds[spec.metricType];
       const pointUid = ensure.pointUids[spec.metricType];
       const l = latest.get(spec.metricType);
       if (pointId === undefined || pointUid === undefined || !l) continue;
-      await updateLatestPointValue(
-        helperSystemId,
+      updates.push({
         pointUid,
-        `${BATTERY_STEM}/${spec.metricType}`,
-        l.value,
-        l.tsMs,
-        Date.now(),
-        spec.metricUnit,
-        spec.displayName,
-      );
+        pointPath: `${BATTERY_STEM}/${spec.metricType}`,
+        value: l.value,
+        measurementTimeMs: l.tsMs,
+        receivedTimeMs: nowMs,
+        metricUnit: spec.metricUnit,
+        displayName: spec.displayName,
+      });
     }
+    await updateLatestPointValues(helperSystemId, updates);
   }
 
   return {

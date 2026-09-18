@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, jest } from "@jest/globals";
 import { Area, Device } from "@/lib/ids";
 import {
   updateLatestPointValue,
+  updateLatestPointValues,
   getLatestValues,
   buildSubscriptionRegistry,
   refreshServingForMintedPoints,
@@ -327,6 +328,113 @@ describe("kv-cache-manager", () => {
         `test:latest:device:${SOURCE_DEVICE}`,
         expect.any(Object),
       );
+    });
+  });
+
+  // 🛑 These assert COMMAND COUNTS, not just results. Upstash bills per command and `@vercel/kv`
+  // auto-pipelines, so the per-point shape this replaced cost 3 commands per point while looking
+  // like one HTTP request in any trace. A regression here is invisible except on the invoice.
+  describe("updateLatestPointValues — the batched write", () => {
+    const BATCH = Array.from({ length: 16 }, (_, i) => ({
+      pointUid: `0199aaaa-0000-7000-8000-0000000000${i.toString(16).padStart(2, "0")}`,
+      pointPath: `source.p${i}/power`,
+      value: i * 100,
+      measurementTimeMs: 1731627600000,
+      receivedTimeMs: 1731627605000,
+      metricUnit: "W",
+      displayName: `Point ${i}`,
+    }));
+
+    it("costs ONE hset and ONE get for a 16-point device with no subscribers", async () => {
+      const { kv } = await import("../kv");
+
+      await updateLatestPointValues(SOURCE_HANDLE, BATCH);
+
+      expect(kv.hset).toHaveBeenCalledTimes(1);
+      expect(kv.get).toHaveBeenCalledTimes(1);
+      // Every path lands, in that single call.
+      const fields = (kv.hset as jest.MockedFunction<any>).mock.calls[0][1];
+      expect(Object.keys(fields)).toHaveLength(16);
+      expect(fields["source.p3/power"]).toEqual(
+        expect.objectContaining({ value: 300, displayName: "Point 3" }),
+      );
+    });
+
+    it("costs one hset PER AREA, not per point, when Areas subscribe", async () => {
+      const { kv } = await import("../kv");
+
+      (kv.get as jest.MockedFunction<any>).mockResolvedValueOnce({
+        pointSubscribers: Object.fromEntries(
+          BATCH.map((u) => [u.pointUid, [AREA_A, AREA_B]]),
+        ),
+        lastUpdatedTimeMs: Date.now(),
+      });
+
+      await updateLatestPointValues(SOURCE_HANDLE, BATCH);
+
+      // 1 source + 2 areas. The per-point form would have been 48.
+      expect(kv.hset).toHaveBeenCalledTimes(3);
+      expect(kv.get).toHaveBeenCalledTimes(1);
+
+      for (const area of [AREA_A, AREA_B]) {
+        const call = (kv.hset as jest.MockedFunction<any>).mock.calls.find(
+          (c: any[]) => c[0] === `test:latest:area:${area}`,
+        );
+        expect(Object.keys(call![1])).toHaveLength(16);
+      }
+    });
+
+    it("fans a point out only to the Areas that subscribe to IT", async () => {
+      const { kv } = await import("../kv");
+
+      // Area A takes the first point; Area B takes the second. Grouping must not smear them.
+      (kv.get as jest.MockedFunction<any>).mockResolvedValueOnce({
+        pointSubscribers: {
+          [BATCH[0].pointUid]: [AREA_A],
+          [BATCH[1].pointUid]: [AREA_B],
+        },
+        lastUpdatedTimeMs: Date.now(),
+      });
+
+      await updateLatestPointValues(SOURCE_HANDLE, BATCH);
+
+      const fieldsFor = (area: string) =>
+        (kv.hset as jest.MockedFunction<any>).mock.calls.find(
+          (c: any[]) => c[0] === `test:latest:area:${area}`,
+        )![1];
+
+      expect(Object.keys(fieldsFor(AREA_A))).toEqual(["source.p0/power"]);
+      expect(Object.keys(fieldsFor(AREA_B))).toEqual(["source.p1/power"]);
+    });
+
+    it("keeps per-Area chain ranks distinct when one batch spans both roles", async () => {
+      const { kv } = await import("../kv");
+
+      (kv.get as jest.MockedFunction<any>).mockResolvedValueOnce({
+        pointSubscribers: { [BATCH[0].pointUid]: [AREA_A, AREA_B] },
+        fallbackRanks: { [BATCH[0].pointUid]: { [AREA_B]: 1 } },
+        lastUpdatedTimeMs: Date.now(),
+      });
+
+      await updateLatestPointValues(SOURCE_HANDLE, BATCH);
+
+      const fieldsFor = (area: string) =>
+        (kv.hset as jest.MockedFunction<any>).mock.calls.find(
+          (c: any[]) => c[0] === `test:latest:area:${area}`,
+        )![1];
+
+      // Winner writes the bare path; the rank-1 backstop writes beside it.
+      expect(Object.keys(fieldsFor(AREA_A))).toEqual(["source.p0/power"]);
+      expect(Object.keys(fieldsFor(AREA_B))).toEqual(["source.p0/power#1"]);
+    });
+
+    it("issues no commands at all for an empty batch", async () => {
+      const { kv } = await import("../kv");
+
+      await updateLatestPointValues(SOURCE_HANDLE, []);
+
+      expect(kv.hset).not.toHaveBeenCalled();
+      expect(kv.get).not.toHaveBeenCalled();
     });
   });
 

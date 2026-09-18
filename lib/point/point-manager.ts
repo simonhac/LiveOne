@@ -31,7 +31,8 @@ import micromatch from "micromatch";
 import {
   isServingRebuildPending,
   refreshServingForMintedPoints,
-  updateLatestPointValue,
+  updateLatestPointValues,
+  type LatestPointValueUpdate,
 } from "../kv-cache-manager";
 import { canonicalValue } from "./canonical-value";
 import { getAreaBindingRefs } from "@/lib/areas/bindings";
@@ -1111,15 +1112,12 @@ export class PointManager {
     try {
       const points = await this.getActivePointsForDevice(systemId, false);
 
-      // Get device name for sourceSystemName in KV cache
-      const device = await DeviceConfigRegistry.deviceByHandle(systemId);
-      const sourceSystemName = device?.displayName;
-
       // Build summary values and cache updates together
       const summaryValues: Array<{ logicalPath: string; value: number }> = [];
       let maxMeasurementTimeMs = 0;
 
-      const cacheUpdates = valuesToInsert.map((val) => {
+      const cacheUpdates: LatestPointValueUpdate[] = [];
+      for (const val of valuesToInsert) {
         const point = points.find((p: PointInfo) => p.index === val.pointId);
         const logicalPath = point?.getLogicalPath();
         // Combine numeric and string values for cache (KV accepts both)
@@ -1145,23 +1143,22 @@ export class PointManager {
             maxMeasurementTimeMs = val.measurementTimeMs;
           }
 
-          return updateLatestPointValue(
-            systemId,
-            point.pointUid, // uuid — the subscription-map key AND the stored `pt_` pointReference
-            logicalPath,
-            cacheValue,
-            val.measurementTimeMs,
-            val.receivedTimeMs,
-            point.metricUnit,
-            point.name, // displayName if set, otherwise defaultName
-            sourceSystemName,
-            val.sessionId ?? undefined,
-            val.sessionLabel ?? undefined,
-          );
+          cacheUpdates.push({
+            pointUid: point.pointUid, // uuid — the subscription-map key AND the stored `pt_` ref
+            pointPath: logicalPath,
+            value: cacheValue,
+            measurementTimeMs: val.measurementTimeMs,
+            receivedTimeMs: val.receivedTimeMs,
+            metricUnit: point.metricUnit,
+            displayName: point.name, // displayName if set, otherwise defaultName
+            sessionId: val.sessionId ?? undefined,
+            sessionLabel: val.sessionLabel ?? undefined,
+          });
         }
-        return Promise.resolve();
-      });
-      await Promise.all(cacheUpdates);
+      }
+      // One batched write for the whole poll: a 16-point device costs ~3 Redis commands here rather
+      // than ~48. See `updateLatestPointValues` for why the per-point form was so expensive.
+      await updateLatestPointValues(systemId, cacheUpdates);
 
       // Update system summary (fire-and-forget, don't block)
       if (summaryValues.length > 0) {
