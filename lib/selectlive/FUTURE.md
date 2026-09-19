@@ -77,24 +77,36 @@ request budget, and test interaction with SP LINK and normal Select.live reporti
 Keep one request in flight per connection; the current transport explicitly rejects
 concurrent reads. Do not assume additional cloud sessions are independent.
 
-## 3. Read configuration and explain changes
+## 3. ~~Read configuration~~ and explain changes
 
-**Documented, with partial static evidence.** SP LINK can retrieve configuration;
-our analysis already traced the detailed-log interval to common-configuration word
-54 (`0xc036`). A `config show`, `config export`, and offline `config diff` could:
+✅ **Reading implemented** (September 2026): `selectlive config show` / `config download`,
+`lib/selectlive/config.ts`, and the field map in `config-map.json` — 749 settings recovered
+from the vendor's four `subLoadArrayToSettings_*` methods by
+`tools/splink/extract_config_map.py`. The five block addresses and lengths, the
+non-contiguous common block, the per-setting version gating and the model-dependent
+battery-voltage scaling are all traced; `0xc000 + 54 = 0xc036` anchors the map to the logging interval
+`history.ts` reads independently. Raw words are preserved for everything, and a setting whose
+conversion is not traced reports its raw word with an explicit status rather than a guess.
 
-- Explain how shunts and connected equipment affect the meaning of readings.
-- Record the logging interval and settings relevant to generator and charging behavior.
-- Show exactly which decoded settings changed between two dated snapshots.
-- Preserve a baseline alongside history so later analysis has the right context.
+What was **not** done, and what a follow-up would pick up:
 
-Trace versioned configuration templates, enum values, scaling and passcode handling.
-Export only understood fields by default, redact credentials and authentication
-material, and retain unknown fields only in an explicitly protected raw artifact.
-Compare both raw and decoded values to distinguish an actual setting change from a
-decoder change. An export would initially be a record for inspection, not a tested
-restore file. SP LINK's retrieval workflow is described in the
-[manual, pp. 28–29](https://www.selectronic.com.au/manuals/OI0005_31%20SP%20LINK%20Manual.pdf).
+- **The enum converters.** Around 35 of the vendor's conversions are enums that each need their
+  own extracted code-to-string table, in the manner of `event-labels.json`. Two more are called
+  out in `docs/vendors/selectlive-cli.md`: `InputPowerSetting`, where one word carries both a
+  value and its unit selector, and `DayMonthSetting`, whose single-word packing is untraced.
+- **`config diff`.** Still wanted, and still the most useful part of the original idea: compare
+  two dated snapshots and say which settings changed. 🛑 It must diff the **raw words first**
+  and the decoded values second, and report the two separately — otherwise a decoder change is
+  indistinguishable from somebody having altered a setting, which is the one question the
+  command exists to answer. `config download` already stores the decoder version, the map's
+  assembly hash and every raw word, so both comparisons are available.
+- **Service settings.** `mServiceTab.DownloadOneInvertersServiceSettings` reads a separate block
+  at `0xC201`, 42 words, deliberately out of scope here.
+- **Schedule names**, which are not in these five reads at all.
+
+Configuration **writes** remain out of scope, for the reasons in §8. There was nothing to
+redact: the five blocks carry no passcode or credential material, and
+`config-map.test.ts` fails if a regeneration ever introduces one.
 
 ## 4. Discover attached equipment and useful diagnostics
 

@@ -41,6 +41,9 @@ still reach stderr.
   - [selectlive history](../scripts/CLI_README.md#selectlive-history) — Inspect or preserve the inverter's retained detailed log.
     - [selectlive history info](../scripts/CLI_README.md#selectlive-history-info) — Read detailed log metadata and the oldest/newest record timestamps.
     - [selectlive history download](../scripts/CLI_README.md#selectlive-history-download) — Preserve the full detailed buffer and optionally decode it as CSV.
+  - [selectlive config](../scripts/CLI_README.md#selectlive-config) — Inspect or preserve the inverter's stored configuration settings.
+    - [selectlive config show](../scripts/CLI_README.md#selectlive-config-show) — Read the configuration and print the settings.
+    - [selectlive config download](../scripts/CLI_README.md#selectlive-config-download) — Preserve the configuration as raw words, a manifest and CSV.
   - [selectlive events](../scripts/CLI_README.md#selectlive-events) — Inspect or preserve the inverter's own alert and operational event logs.
     - [selectlive events info](../scripts/CLI_README.md#selectlive-events-info) — Read both event logs' metadata and their oldest/newest record timestamps.
     - [selectlive events download](../scripts/CLI_README.md#selectlive-events-download) — Preserve the retained event records and optionally decode them as CSV.

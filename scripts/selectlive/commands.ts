@@ -28,17 +28,18 @@ const leaf = (spec: CommandSpec) =>
 export const selectliveCommand = defineCommand({
   name: "selectlive",
   summary: "Explore an SP PRO inverter through Select.live.",
-  when: "Authenticate, list inverters, inspect memory, or preserve retained detailed history through the SP LINK tunnel.",
+  when: "Authenticate, list inverters, inspect memory, read stored configuration, or preserve retained detailed history through the SP LINK tunnel.",
   description:
     "Independent of LiveOne's API and database. Device commands read data; only inverter authentication writes are permitted.\nCredentials are saved locally by auth. Downloads create a new local directory. Neither operation needs --apply.",
   uses: ["selectlive"],
   handlesInterrupt: true,
   localEffects:
-    "auth updates local credentials; history download creates local files. Inverter settings are not changed.",
+    "auth updates local credentials; history, events and config downloads create local files. Inverter settings are only ever read, never changed.",
   examples: [
     "selectlive auth",
     "selectlive devices",
     "selectlive history download --device 123456 --out ./downloads --timezone Australia/Melbourne",
+    "selectlive config show --device 123456",
   ],
   subcommands: {
     auth: leaf({
@@ -150,6 +151,64 @@ export const selectliveCommand = defineCommand({
           examples: [
             "selectlive history download --device 123456 --out ./downloads --timezone Australia/Melbourne --start 2026-09-10 --end 2026-09-11",
             "selectlive history download --device 123456 --out ./downloads",
+          ],
+        }),
+      },
+    }),
+    config: defineCommand({
+      name: "config",
+      summary:
+        "Inspect or preserve the inverter's stored configuration settings.",
+      when: "You need to know what the inverter is actually SET to — charge targets, generator thresholds, shunt assignments, the logging interval — rather than what it measured.",
+      description:
+        "READ ONLY. These are the same five memory ranges SP LINK reads to fill its configuration tabs; nothing is written.\nSettings whose conversion has not been traced are reported with their raw words rather than guessed at.\nA configuration snapshot is also the context stored readings need later: shunt assignments decide what the DC channels mean, and the logging interval decides what a record covers.",
+      subcommands: {
+        show: leaf({
+          name: "show",
+          summary: "Read the configuration and print the settings.",
+          description:
+            "Prints a curated set by default — charging, battery, generator and logging — because the full map is around 750 settings.\n--all prints every setting the map names, including those awaiting a converter; it applies to JSON output too.\nExits 1 when anything could not be decoded, or when a re-read could not confirm the snapshot, so a script can tell a complete read from a partial one.",
+          flags: {
+            ...device,
+            all: {
+              type: "boolean",
+              help: "Print every setting, not just the commonly useful ones",
+            },
+            raw: {
+              type: "boolean",
+              help: "Show raw words beside each decoded value (human output; JSON always carries them)",
+            },
+          },
+          exitCodes: {
+            1: "read succeeded, but some settings could not be decoded",
+          },
+          examples: [
+            "selectlive config show --device 123456",
+            "selectlive config show --device 123456 --all --raw",
+          ],
+        }),
+        download: leaf({
+          name: "download",
+          summary:
+            "Preserve the configuration as raw words, a manifest and CSV.",
+          localEffects:
+            "Creates a new acquisition directory containing raw blocks, a manifest, and CSVs.",
+          description:
+            "Raw words and their SHA-256 are written before any decoding, so a capture survives a decoder that fails.\nEvery block is read twice and compared: configuration should not change mid-read, and a snapshot mixing two states is not written.\nUnmapped words are exported too, so the capture states its own coverage rather than implying it.\nThis is a record for inspection, NOT a restore file, and nothing here can write to the inverter.\nEach invocation creates a fresh directory; existing downloads are never overwritten.",
+          flags: {
+            ...device,
+            out: {
+              type: "string",
+              required: true,
+              help: "Parent directory for the new acquisition",
+              schema: z.string().min(1),
+            },
+          },
+          exitCodes: {
+            1: "raw blocks preserved, but incomplete, unstable, or not fully decoded",
+          },
+          examples: [
+            "selectlive config download --device 123456 --out ./downloads",
           ],
         }),
       },

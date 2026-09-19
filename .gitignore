@@ -112,3 +112,7 @@ scripts/collector/fly/collector.cjs
 /.playwright/
 /playwright-report/
 /test-results/
+
+# Python bytecode (tools/splink is run by hand)
+__pycache__/
+*.pyc

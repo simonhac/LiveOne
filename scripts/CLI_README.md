@@ -38,6 +38,9 @@ still reach stderr.
   - [selectlive history](#selectlive-history)
     - [selectlive history info](#selectlive-history-info)
     - [selectlive history download](#selectlive-history-download)
+  - [selectlive config](#selectlive-config)
+    - [selectlive config show](#selectlive-config-show)
+    - [selectlive config download](#selectlive-config-download)
   - [selectlive events](#selectlive-events)
     - [selectlive events info](#selectlive-events-info)
     - [selectlive events download](#selectlive-events-download)
@@ -52,7 +55,7 @@ Explore an SP PRO inverter through Select.live.
 Explore an SP PRO inverter through Select.live.
 
 When to use:
-  Authenticate, list inverters, inspect memory, or preserve retained detailed history through the SP LINK tunnel.
+  Authenticate, list inverters, inspect memory, read stored configuration, or preserve retained detailed history through the SP LINK tunnel.
 
 Independent of LiveOne's API and database. Device commands read data; only inverter authentication writes are permitted.
 Credentials are saved locally by auth. Downloads create a new local directory. Neither operation needs --apply.
@@ -60,7 +63,7 @@ Credentials are saved locally by auth. Downloads create a new local directory. N
 Usage:
   selectlive <subcommand> [options]
 
-  auth updates local credentials; history download creates local files. Inverter settings are not changed.
+  auth updates local credentials; history, events and config downloads create local files. Inverter settings are only ever read, never changed.
 
 Subcommands:
   auth                   Verify and save the portal login, inspect authentication, or forget credentials.
@@ -68,6 +71,7 @@ Subcommands:
   info                   Read inverter identity, firmware, interface versions, and logging metadata.
   read                   Read a bounded range of inverter memory without writing settings.
   history                Inspect or preserve the inverter's retained detailed log.
+  config                 Inspect or preserve the inverter's stored configuration settings.
   events                 Inspect or preserve the inverter's own alert and operational event logs.
 
 Run `selectlive <subcommand> --help` for a subcommand's own options.
@@ -91,6 +95,7 @@ Examples:
   selectlive auth
   selectlive devices
   selectlive history download --device 123456 --out ./downloads --timezone Australia/Melbourne
+  selectlive config show --device 123456
 
 Exit codes:
   0    success
@@ -412,6 +417,153 @@ Examples:
 Exit codes:
   0    success
   1    raw download preserved, but incomplete, unsupported, or not decoded
+  2    usage error
+  3    authentication failure
+  5    upstream failure
+  130  interrupted
+```
+
+### selectlive config
+
+Inspect or preserve the inverter's stored configuration settings.
+
+```
+Inspect or preserve the inverter's stored configuration settings.
+
+When to use:
+  You need to know what the inverter is actually SET to — charge targets, generator thresholds, shunt assignments, the logging interval — rather than what it measured.
+
+READ ONLY. These are the same five memory ranges SP LINK reads to fill its configuration tabs; nothing is written.
+Settings whose conversion has not been traced are reported with their raw words rather than guessed at.
+A configuration snapshot is also the context stored readings need later: shunt assignments decide what the DC channels mean, and the logging interval decides what a record covers.
+
+Usage:
+  selectlive config <subcommand> [options]
+
+  Read-only. This command changes nothing.
+
+Subcommands:
+  show                   Read the configuration and print the settings.
+  download               Preserve the configuration as raw words, a manifest and CSV.
+
+Run `selectlive config <subcommand> --help` for a subcommand's own options.
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  Select.live  Uses local credentials and verified TLS to select.live:7528.
+               Portal/inverter authentication failure is exit 3; connection failure is exit 5.
+
+Exit codes:
+  0    success
+  1    completed, with findings or no results
+  2    usage error
+  3    authentication failure
+  5    upstream failure
+  130  interrupted
+```
+
+#### selectlive config show
+
+Read the configuration and print the settings.
+
+```
+Read the configuration and print the settings.
+
+Prints a curated set by default — charging, battery, generator and logging — because the full map is around 750 settings.
+--all prints every setting the map names, including those awaiting a converter; it applies to JSON output too.
+Exits 1 when anything could not be decoded, or when a re-read could not confirm the snapshot, so a script can tell a complete read from a partial one.
+
+Usage:
+  selectlive config show [options]
+
+  Read-only. This command changes nothing.
+
+Options:
+  --device <string>          Inverter serial (required when the account has multiple devices)
+  --all                      Print every setting, not just the commonly useful ones
+  --raw                      Show raw words beside each decoded value (human output; JSON always carries them)
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  Select.live  Uses local credentials and verified TLS to select.live:7528.
+               Portal/inverter authentication failure is exit 3; connection failure is exit 5.
+
+Examples:
+  selectlive config show --device 123456
+  selectlive config show --device 123456 --all --raw
+
+Exit codes:
+  0    success
+  1    read succeeded, but some settings could not be decoded
+  2    usage error
+  3    authentication failure
+  5    upstream failure
+  130  interrupted
+```
+
+#### selectlive config download
+
+Preserve the configuration as raw words, a manifest and CSV.
+
+```
+Preserve the configuration as raw words, a manifest and CSV.
+
+Raw words and their SHA-256 are written before any decoding, so a capture survives a decoder that fails.
+Every block is read twice and compared: configuration should not change mid-read, and a snapshot mixing two states is not written.
+Unmapped words are exported too, so the capture states its own coverage rather than implying it.
+This is a record for inspection, NOT a restore file, and nothing here can write to the inverter.
+Each invocation creates a fresh directory; existing downloads are never overwritten.
+
+Usage:
+  selectlive config download [options]
+
+  Creates a new acquisition directory containing raw blocks, a manifest, and CSVs.
+
+Options:
+  --device <string>          Inverter serial (required when the account has multiple devices)
+  --out <string>             Parent directory for the new acquisition  (required)
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  Select.live  Uses local credentials and verified TLS to select.live:7528.
+               Portal/inverter authentication failure is exit 3; connection failure is exit 5.
+
+Examples:
+  selectlive config download --device 123456 --out ./downloads
+
+Exit codes:
+  0    success
+  1    raw blocks preserved, but incomplete, unstable, or not fully decoded
   2    usage error
   3    authentication failure
   5    upstream failure

@@ -13,3 +13,11 @@
 # happened on the commit that introduced the catalogue.) Regenerate with
 # `npm run cli:reference -- --apply` instead.
 docs/cli-tools.json
+
+# GENERATED — owned byte-for-byte by tools/splink/extract_config_map.py, for the same reason as
+# above. The extractor emits sorted, stable JSON precisely so that regenerating it after a new SP
+# LINK build produces a diff a person can read. Prettier collapses its short arrays
+# (`"index": [\n 0\n ]` -> `"index": [0]`), which on the very first commit turned a
+# regeneration into a 3,890-line no-op diff and hid whatever actually changed. Regenerate per
+# tools/splink/README.md instead.
+lib/selectlive/config-map.json

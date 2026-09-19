@@ -1,4 +1,4 @@
-import { EXIT, failWith, str, num, type Ctx } from "@/lib/cli/cli";
+import { EXIT, bool, failWith, str, num, type Ctx } from "@/lib/cli/cli";
 import {
   connect,
   Portal,
@@ -44,7 +44,133 @@ import {
   validateEventDownloadOptions,
   type EventDownloadOptions,
 } from "@/lib/selectlive/event-download";
+import {
+  decodeConfig,
+  readConfig,
+  sameRawConfig,
+  type ConfigSnapshot,
+  type DecodedSetting,
+} from "@/lib/selectlive/config";
+import {
+  downloadConfig,
+  validateConfigDownloadOptions,
+} from "@/lib/selectlive/config-download";
 import { SelectLiveError } from "@/lib/selectlive/errors";
+
+/**
+ * What `config show` prints without `--all`.
+ *
+ * The map names around 750 settings, most of them schedule slots and I/O assignments that are
+ * noise unless you went looking for them. This is the set that answers the questions the command
+ * exists for: how the battery is charged, when the generator runs, what the shunts measure, and
+ * how often the inverter logs. `--all` prints everything.
+ */
+const CURATED = new Set([
+  // Charging — the reason this decoder exists.
+  "MaximumChargeCapability",
+  "InitialChargeV",
+  "InitialChargeI",
+  "InitialChargeTime",
+  "BulkChargeV",
+  "BulkChargeI",
+  "BulkChargeTime",
+  "AbsorbChargeV",
+  "AbsorbChargeI",
+  "AbsorbIChange",
+  "AbsorbChangeTime",
+  "AbsorbMaxTime",
+  "FloatV",
+  "FloatI",
+  // Battery limits and protection.
+  "LowDcShutDown0PercentLoad",
+  "LowDcShutDown100PercentLoad",
+  "LowDcShutDownRecovery",
+  "HighDcAlert",
+  "HighDcAlertClear",
+  "InitialReturnVoltage",
+  "StateOfChargeShutdown",
+  "StatOfChargeShutdownSoC",
+  // Generator.
+  "GeneratorControl",
+  "GeneratorAvailable",
+  "LowSoCToStartGen",
+  "BattMidPointStartGenerator",
+  // Measurement context for stored readings.
+  "Shunt1Name",
+  "Shunt2Name",
+  "ExternalContactorCT",
+  "ExternalCTRatio",
+  "SoCMonitor",
+  // Logging.
+  "DetailedDataLogInterval",
+]);
+
+/** `value unit`, or an explicit reason the value is absent. Never a bare blank. */
+function settingValue(setting: DecodedSetting, showRaw: boolean): string {
+  const raw = showRaw ? `  [raw ${setting.raw.join(" ")}]` : "";
+  if (setting.status === "decoded")
+    return `${setting.value}${setting.unit ? ` ${setting.unit}` : ""}${raw}`;
+  const why = {
+    converter_not_implemented: `raw ${setting.raw.join(" ")} — no converter yet (${setting.converter})`,
+    phase_not_read: "not read (multi-phase slot)",
+    unknown_model: `raw ${setting.raw.join(" ")} — needs the model's cell count`,
+    not_at_this_version: `needs configuration version ${setting.minVersion} or later`,
+    block_not_read: "block not read",
+    decoded: "",
+  }[setting.status];
+  return why;
+}
+
+function renderConfig(
+  snapshot: ConfigSnapshot,
+  settings: DecodedSetting[],
+  options: {
+    verification: "stable" | "changed" | "unverified";
+    showAll: boolean;
+    showRaw: boolean;
+  },
+): string {
+  const model = snapshot.model
+    ? `${snapshot.model.model} (${snapshot.model.nominalBatteryVoltage} V nominal, ${snapshot.model.batteryCells} cells)`
+    : `unknown model code ${snapshot.modelCode}`;
+  const lines = [
+    `Configuration version ${snapshot.configurationVersion}, ${model}`,
+    `Read ${snapshot.coverage.readWords} words from ${snapshot.blocks.length} blocks; ` +
+      `${snapshot.coverage.decoded} of ${snapshot.coverage.settings} settings decoded, ` +
+      `${snapshot.coverage.unmappedWords} words unmapped.`,
+  ];
+  if (options.verification === "changed")
+    lines.push(
+      "🛑 The configuration CHANGED between two reads; these values mix two states.",
+    );
+  else if (options.verification === "unverified")
+    lines.push(
+      "🛑 The verification re-read failed, so these values are unconfirmed — not evidence of a change.",
+    );
+  const width = Math.max(...settings.map((s) => s.name.length), 0);
+  for (const block of [
+    "battery",
+    "common",
+    "application",
+    "scheduler",
+  ] as const) {
+    const group = settings.filter((s) => s.block === block);
+    if (!group.length) continue;
+    lines.push("", `${block}`);
+    for (const setting of group)
+      lines.push(
+        `  ${setting.name.padEnd(width)}  ${settingValue(setting, options.showRaw)}`,
+      );
+  }
+  if (!options.showAll)
+    lines.push(
+      "",
+      `Showing ${settings.length} of ${snapshot.coverage.settings} settings; --all for the rest.`,
+    );
+  // Worth stating every time: this is the command's core claim, and it is cheap to repeat.
+  lines.push("Nothing was written to the inverter.");
+  return lines.join("\n");
+}
 
 export interface Dependencies {
   env: Environment;
@@ -117,6 +243,9 @@ export async function executeSelectlive(
   // Validate before opening a socket: a mistyped timezone must not cost an inverter session.
   if (command === "events" && ctx.subcommandPath[1] === "download")
     validateEventDownloadOptions(eventDownloadOptions);
+  // Same reason: a mistyped --out must not cost an inverter session, which is single-user.
+  if (command === "config" && ctx.subcommandPath[1] === "download")
+    validateConfigDownloadOptions({ out: str(ctx, "out") ?? "" });
   if (command === "read")
     request("Q", Number(str(ctx, "address")), num(ctx, "words")!);
   const stored = readCredentials(deps.storePath);
@@ -325,6 +454,72 @@ export async function executeSelectlive(
         (value) => JSON.stringify(value, null, 2),
       );
       return stable ? EXIT.OK : EXIT.FINDINGS;
+    }
+    if (command === "config") {
+      if (ctx.subcommandPath[1] === "download") {
+        const manifest = await downloadConfig(inverter, info, {
+          out: str(ctx, "out") ?? "",
+          signal,
+        });
+        ctx.emit(
+          manifest,
+          () =>
+            `Saved to ${manifest.directory}\n` +
+            `Blocks: ${manifest.complete ? "complete" : "incomplete"}; ` +
+            `snapshot: ${
+              {
+                stable: "stable",
+                changed: "CHANGED DURING READ",
+                unverified: "unverified (re-read failed)",
+              }[manifest.verification]
+            }; ` +
+            `decoding: ${manifest.decoding}` +
+            (manifest.coverage
+              ? `\n${manifest.coverage.decoded} of ${manifest.coverage.settings} settings decoded, ` +
+                `${manifest.coverage.unmappedWords} words unmapped`
+              : "") +
+            (manifest.error ? `\n${manifest.error}` : ""),
+        );
+        if (signal?.aborted) return EXIT.INTERRUPTED;
+        return manifest.complete &&
+          manifest.verification === "stable" &&
+          manifest.decoding === "decoded"
+          ? EXIT.OK
+          : EXIT.FINDINGS;
+      }
+
+      const raw = await readConfig(inverter, { signal });
+      // Cheap honesty: read it again and say so if it moved. `config show` prints numbers
+      // somebody may act on, and a configuration read across a change is not a state the
+      // inverter was ever in. A failed second read is reported as unverified, not as a change.
+      const second = await readConfig(inverter, { signal });
+      const verification = !second.blocks.every((block) => !block.error)
+        ? "unverified"
+        : sameRawConfig(raw, second)
+          ? "stable"
+          : "changed";
+      const snapshot = decodeConfig(raw, info);
+      const showAll = bool(ctx, "all");
+      const showRaw = bool(ctx, "raw");
+      const settings = showAll
+        ? snapshot.settings
+        : snapshot.settings.filter((s) => CURATED.has(s.name));
+      // 🛑 The filtered list goes into the EMITTED model, not just the renderer. JSON is the
+      // default whenever stdout is not a terminal, and `ctx.emit` serialises its first argument
+      // without consulting the renderer at all — so building the model from every setting made
+      // `--all` a no-op for exactly the scripted callers the flag matters to, and silently gave
+      // them the opposite of the documented curated default.
+      ctx.emit({ ...snapshot, settings, verification }, () =>
+        renderConfig(snapshot, settings, {
+          verification,
+          showAll,
+          showRaw,
+        }),
+      );
+      if (signal?.aborted) return EXIT.INTERRUPTED;
+      return verification === "stable" && snapshot.coverage.undecoded === 0
+        ? EXIT.OK
+        : EXIT.FINDINGS;
     }
     if (command === "history" && ctx.subcommandPath[1] === "download") {
       const acquisition = await downloadHistory(
