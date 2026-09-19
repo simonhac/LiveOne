@@ -227,6 +227,102 @@ def applicable_versions(
     return minimum, maximum
 
 
+# Converters whose labels live in a helper rather than in the converter itself.
+ENUM_HELPERS = {
+    "BaudRateSetting": "mConfig.ReturnBaudrateDisplayString",
+    "ShuntNameSetting": "mConfig.ReturnShuntDisplayString",
+}
+
+# Converters whose only `switch` is NOT their label table.
+#
+# 🛑 `RegionSetting` builds its label from a region code and a text box
+# (`fnConvertRegionToString` plus `ProcessTextBoxChanges`); the switch this extractor finds
+# belongs to unrelated percentage strings and yields the entirely false table
+# `{0: " ", 1: "20 %", 2: "0 %", 3: "20 %", 4: "20 %"}`. A generic switch reader can fabricate a
+# plausible table, so anything it cannot be trusted on is named here rather than filtered by
+# eye once and forgotten.
+ENUM_NOT_A_TABLE = {"RegionSetting"}
+
+# Labels the vendor shows when a code is outside its table. These are its error path, not a
+# meaning, so they are dropped rather than recorded as the name of a real setting value.
+ENUM_SENTINELS = {"Error", ""}
+
+
+def extract_enum_tables(
+    asm: Assembly, converters: list[str]
+) -> tuple[dict[str, dict[str, str]], list[str]]:
+    """Code -> label tables for the combo-box converters.
+
+    Each compiles to a `switch` whose targets are the `ldstr` for each case, exactly like the
+    event-code tables in `event-labels.json`. Some subtract a constant first, so case 0 is not
+    always code 0 -- `subUpdateDataLogIntervalSetting` does `ldc.i4.1; sub`, making its first
+    case the value 1.
+
+    Returns (tables, skipped). A converter with no switch is reported rather than guessed at:
+    a few compute their label instead of choosing it, and those need tracing individually.
+    """
+    tables: dict[str, dict[str, str]] = {}
+    skipped: list[str] = []
+    for converter in converters:
+        if converter in ENUM_NOT_A_TABLE:
+            continue
+        method = ENUM_HELPERS.get(converter, f"mConfig.subUpdate{converter}")
+        try:
+            instructions = asm.instructions(method)
+        except LookupError:
+            skipped.append(f"{converter} (no method {method})")
+            continue
+
+        # Only a converter that fills a combo or text box produces a LABEL. The arithmetic
+        # ones have no switch because there is nothing to choose, and reporting them as
+        # missing enum tables would bury the handful that genuinely need tracing.
+        produces_label = any(
+            resolved.endswith(("ProcessComboBoxChanges", "ProcessTextBoxChanges"))
+            for _o, op, _r, resolved in instructions
+            if op.startswith("call")
+        ) or converter in ENUM_HELPERS
+
+        switches = [i for i, (_o, op, _r, _s) in enumerate(instructions) if op == "switch"]
+        if len(switches) != 1:
+            if produces_label:
+                skipped.append(f"{converter} ({len(switches)} switch statements)")
+            continue
+        index = switches[0]
+        targets = list(instructions[index][2])
+
+        # `ldc.i4 N; sub` immediately before the switch shifts case 0 to code N.
+        offset = 0
+        if index >= 2 and instructions[index - 1][1] == "sub":
+            shift = int_operand(instructions[index - 2][1], instructions[index - 2][2])
+            if shift is not None:
+                offset = shift
+
+        strings = {
+            il_offset: resolved
+            for il_offset, opcode, _operand, resolved in instructions
+            if opcode == "ldstr"
+        }
+        table = {
+            str(case + offset): strings[target]
+            for case, target in enumerate(targets)
+            if target in strings and strings[target] not in ENUM_SENTINELS
+        }
+        if not table:
+            if produces_label:
+                skipped.append(f"{converter} (switch targets are not string literals)")
+            continue
+        # A real enum names distinct things. A switch scraped from the wrong part of a method
+        # tends to repeat a handful of strings, which is what `RegionSetting` looked like
+        # before it was excluded by name.
+        if len(set(table.values())) * 2 < len(table):
+            skipped.append(
+                f"{converter} (mostly duplicate labels: {sorted(set(table.values()))}) "
+                "- probably not its label table"
+            )
+            continue
+        tables[converter] = table
+    return tables, skipped
+
 def extract_blocks(asm: Assembly) -> list[dict[str, Any]]:
     """The five reads, taken from the assembly rather than trusted from a constant.
 
@@ -693,6 +789,16 @@ def build(assembly_path: Path, allow_other_assembly: bool) -> dict[str, Any]:
     settings.sort(key=lambda s: (s["block"], s["index"], s["name"]))
     models = extract_models(asm)
     defaults, row_order = extract_default_tables(asm)
+    enums, skipped_enums = extract_enum_tables(
+        asm, sorted({setting["converter"] for setting in settings})
+    )
+    if skipped_enums:
+        print(
+            "note: no enum table extracted for "
+            + ", ".join(skipped_enums)
+            + " (these compute a label rather than selecting one)",
+            file=sys.stderr,
+        )
 
     problems = self_check(settings, row_order, merged_words(blocks))
     if problems:
@@ -740,6 +846,7 @@ def build(assembly_path: Path, allow_other_assembly: bool) -> dict[str, Any]:
         "commonMergedWords": merged_words(blocks)["common"],
         "models": models,
         "settings": settings,
+        "enums": enums,
         "factoryDefaults": defaults,
     }
 
@@ -761,7 +868,8 @@ def main() -> None:
     sys.stdout.write("\n")
     print(
         f"extracted {len(document['settings'])} settings, "
-        f"{len(document['models'])} models",
+        f"{len(document['models'])} models, "
+        f"{len(document['enums'])} enum tables",
         file=sys.stderr,
     )
 

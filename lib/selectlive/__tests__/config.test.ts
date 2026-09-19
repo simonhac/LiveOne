@@ -263,6 +263,45 @@ describe("refusals and gaps", () => {
   });
 });
 
+describe("enum and multi-word converters", () => {
+  const ctx = { batteryCells: 24 };
+
+  it("names combo-box settings from the vendor's own tables", () => {
+    expect(CONVERTERS.BatteryTypeSetting.decode([2], ctx)).toBe(
+      "Lithium LiFePO4",
+    );
+    expect(CONVERTERS.ShuntNameSetting.decode([1], ctx)).toBe("Solar");
+    expect(CONVERTERS.GeneratorAvailableSetting.decode([0], ctx)).toBe(
+      "Assume Always",
+    );
+    expect(CONVERTERS.ChargerLockoutSetting.decode([2], ctx)).toBe(
+      "Charging Off",
+    );
+  });
+
+  it("lets a traced converter beat a generic table", () => {
+    // Both exist for the logging interval. The number is what a consumer can compare.
+    expect(CONVERTERS.DataLogIntervalSetting.decode([15], ctx)).toBe(15);
+    expect(CONVERTERS.DataLogIntervalSetting.unit).toBe("min");
+  });
+
+  it("zeroes a 0xffff high word rather than reading it as disabled", () => {
+    // 🛑 The vendor sets the high word to 0 and combines. Treating 0xffff as a disable
+    // sentinel turns this inverter's 6.00 kW generator-start threshold into "no threshold",
+    // which is the opposite of what it does.
+    expect(
+      CONVERTERS.AverageBatteryToStartGeneratorSetting.decode(
+        [6000, 0xffff],
+        ctx,
+      ),
+    ).toBe(6);
+    expect(
+      CONVERTERS.AverageBatteryToStartGeneratorSetting.decode([7000, 0], ctx),
+    ).toBe(7);
+    expect(CONVERTERS.AverageBatteryToStartGeneratorSetting.words).toBe(2);
+  });
+});
+
 describe("evidence and identity", () => {
   it("masks the model word before looking it up", async () => {
     // 🛑 The low byte is the model; SP LINK applies `And 255` before indexing the same table.

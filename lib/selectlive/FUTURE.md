@@ -90,10 +90,11 @@ conversion is not traced reports its raw word with an explicit status rather tha
 
 What was **not** done, and what a follow-up would pick up:
 
-- **The enum converters.** Around 35 of the vendor's conversions are enums that each need their
-  own extracted code-to-string table, in the manner of `event-labels.json`. Two more are called
-  out in `docs/vendors/selectlive-cli.md`: `InputPowerSetting`, where one word carries both a
-  value and its unit selector, and `DayMonthSetting`, whose single-word packing is untraced.
+- ~~**The enum converters.**~~ ✅ Done (September 2026): 32 code-to-label tables extracted from
+  the same assembly, so combo-box settings read as names. Three conversions remain:
+  `InputPowerSetting`, where one word carries both a value and its unit selector;
+  `DayMonthSetting`, whose single-word packing is untraced; and `RegionSetting`, which computes
+  its label rather than selecting it.
 - **`config diff`.** Still wanted, and still the most useful part of the original idea: compare
   two dated snapshots and say which settings changed. 🛑 It must diff the **raw words first**
   and the decoded values second, and report the two separately — otherwise a decoder change is

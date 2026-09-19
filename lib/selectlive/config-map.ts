@@ -75,6 +75,7 @@ interface ConfigMapFile {
   commonMergedWords: number;
   models: Record<string, ConfigModelSpec>;
   settings: ConfigSettingSpec[];
+  enums: Record<string, Record<string, string>>;
   factoryDefaults: Record<string, Record<string, string[]>>;
 }
 
@@ -139,6 +140,29 @@ export function configAddressOf(block: ConfigBlockName, index: number): number {
   return index < COMMON_PART1_WORDS
     ? part1.address + index
     : part2.address + (index - COMMON_PART1_WORDS);
+}
+
+/**
+ * Code -> label tables for the combo-box settings, keyed by vendor converter name.
+ *
+ * Same shape and same provenance as `event-labels.json`: each is the `switch` a vendor converter
+ * selects its display string from, read out of the assembly rather than guessed. Without them
+ * `BatteryType` is the integer 2 rather than "Lithium LiFePO4".
+ */
+export const CONFIG_ENUMS: Readonly<Record<string, Record<string, string>>> =
+  FILE.enums;
+
+/** Every converter that has a table, for building the enum decoders. */
+export const enumConverterNames = (): string[] => Object.keys(FILE.enums);
+
+/**
+ * The label for a code, or `UNDECODED(n)`.
+ *
+ * 🛑 Never guessed and never dropped, exactly as in `event-labels.ts`: a code the vendor has no
+ * entry for is one we cannot name, and saying so is more useful than omitting the row.
+ */
+export function enumLabel(converter: string, code: number): string {
+  return CONFIG_ENUMS[converter]?.[String(code)] ?? `UNDECODED(${code})`;
 }
 
 /**

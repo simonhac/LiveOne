@@ -66,6 +66,21 @@ Output is stable and sorted, so a regeneration diff is reviewable. `dnfile` prin
 `invalid compressed int: leading byte: 0xf3` to stderr on this assembly; it is harmless
 metadata noise from a table the script does not read.
 
+## Enum tables
+
+Combo-box settings are named from code-to-label tables read out of each converter's `switch`,
+the same technique that produced `event-labels.json`. 32 tables are emitted.
+
+🛑 **A generic switch reader can fabricate a plausible table.** `RegionSetting` builds its label
+from a helper plus a text box; the switch found inside it belongs to unrelated percentage
+strings and produced `{0: " ", 1: "20 %", 2: "0 %", 3: "20 %", 4: "20 %"}` — five codes, three
+identical labels, and completely wrong. It is excluded by name in `ENUM_NOT_A_TABLE`, and any
+table whose labels are mostly duplicates is now rejected and reported rather than emitted. If
+you add a converter here, look at the table it produces before trusting it.
+
+Two converters keep their labels in a helper rather than in themselves (`BaudRateSetting`,
+`ShuntNameSetting`); those are listed in `ENUM_HELPERS`.
+
 ## What it checks before emitting anything
 
 The script exits non-zero rather than write a plausible but wrong map. It fails if:
