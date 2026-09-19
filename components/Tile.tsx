@@ -1,211 +1,101 @@
-import React, { useState, useRef, useEffect } from "react";
-import { createPortal } from "react-dom";
-import { Clock } from "lucide-react";
-import { ttInterphases } from "@/lib/fonts/amber";
+import React from "react";
 import Value from "@/components/ui/value";
+import TileSurface, { TileHeader } from "@/components/ui/tile-surface";
+import { useStaleness } from "@/components/ui/tile-stale";
+import {
+  TILE_CAPTION,
+  TILE_HERO,
+  TILE_LABEL,
+  TILE_STALE,
+} from "@/lib/tile-style";
 
 interface TileProps {
   title: string;
+  /** The role glyph in the header. */
+  icon?: React.ReactNode;
+  /** The tile's THEME colour (`ROLE_CHROME[role].value`) — the header's icon and title. */
+  tone?: string;
   value: string;
   /** Unit to display after value (e.g. "kW", "%", "°C"). Binding is decided by `classifyUnit`. */
   unit?: string;
-  icon: React.ReactNode;
-  iconColor: string;
-  bgColor: string;
-  borderColor: string;
+  /** A label over the hero ("Now") — the Activity app's "Today" line. */
+  label?: React.ReactNode;
   staleThresholdSeconds: number;
   measurementTime?: Date;
   /** The qualifying line under the hero. A node, not a string: a tile may need to colour part of
-   *  it (the generator's amber countdown) without the whole line changing tone. */
+   *  it (the generator's countdown) without the whole line changing tone. */
   extraInfo?: React.ReactNode;
-  /** Tailwind text colour for the HERO. Defaults to `text-gray-100`; a tile overrides it to say
-   *  something the word alone cannot (the generator's red "Locked out"). */
+  /**
+   * Tailwind text colour for the HERO and its unit — the DATA's colour, which is where a tile's
+   * identity lives (`ROLE_CHROME[role].value`). Defaults to white: a value with no series of its
+   * own has no colour. Dims (`TILE_STALE`), keeping its hue, while the reading is stale.
+   */
   valueColor?: string;
   /** Extra classes on the hero value itself — e.g. the running generator's shimmer. */
   valueClassName?: string;
+  /** Beside the hero, right-aligned — e.g. the generator's countdown ring. */
+  heroAside?: React.ReactNode;
+  /** Top-right of the header: a direction chip, a control. */
+  accessory?: React.ReactNode;
+  /** The body under the hero: bars, Trends rows. */
   extra?: React.ReactNode;
-  /**
-   * Absolutely-positioned chrome drawn inside the tile's own box — the generator's control cog.
-   *
-   * 🛑 THIS EXISTS SO A TILE NEVER WRAPS ITSELF IN A POSITIONING DIV. The tile grid is
-   * `auto-rows-fr` (lib/dashboard/tile-grid.ts): every grid ITEM is stretched to the row height. A
-   * plugin that returns `<div className="relative"><Tile/></div>` makes the DIV the grid item, so
-   * the div stretches and the Tile inside it stays at content height — a visibly shorter card in a
-   * row of equal ones. The root here is already `relative`, so overlay chrome belongs in it.
-   */
+  /** Absolutely-positioned chrome inside the surface — see `TileSurfaceProps.overlay`. */
   overlay?: React.ReactNode;
 }
 
 /**
- * `@container` on the root lets a tile's own contents respond to the TILE's width rather than the
- * viewport's. The `md:` variants elsewhere in here cannot: on a desktop viewport `md:` is always
- * true, so a 180px tile in a dashboard grid still got every "wide" treatment. Purely additive —
- * nothing changes until a descendant uses an `@[…]` variant.
+ * The standard tile: title, one hero value, then whatever supports it. "Silent card, loud data" —
+ * see docs/architecture/tile-style.md. The card is the same neutral slab for every role; colour
+ * arrives only through `valueColor` and the body the plugin draws.
+ *
+ * Stale is quiet: no hatch and no dimmed box. The live hero dims (keeping its hue) and the header carries a
+ * clock + the reading's age, with the exact time on hover; period data in the body keeps its colour.
  */
 export default function Tile({
   title,
+  icon,
+  tone,
   value,
   unit,
-  icon,
-  iconColor,
-  bgColor,
-  borderColor,
+  label,
   staleThresholdSeconds,
   measurementTime,
   extraInfo,
   extra,
   overlay,
+  accessory,
+  heroAside,
   valueColor,
   valueClassName,
 }: TileProps) {
-  const [isStale, setIsStale] = useState(false);
-  const [isTooltipVisible, setIsTooltipVisible] = useState(false);
-  const [tooltipPosition, setTooltipPosition] = useState({ x: 0, y: 0 });
-  const clockIconRef = useRef<HTMLDivElement>(null);
-
-  // Re-evaluate staleness every second, but only re-render if staleness changes
-  useEffect(() => {
-    const checkStaleness = () => {
-      const secondsSinceUpdate = measurementTime
-        ? Math.floor((Date.now() - measurementTime.getTime()) / 1000)
-        : Infinity;
-      const nowStale = secondsSinceUpdate > staleThresholdSeconds;
-
-      // Only update state if staleness actually changed
-      setIsStale((prevStale) => {
-        if (prevStale !== nowStale) {
-          return nowStale;
-        }
-        return prevStale;
-      });
-    };
-
-    // Check immediately
-    checkStaleness();
-
-    // Then check every second
-    const interval = setInterval(checkStaleness, 1000);
-
-    return () => clearInterval(interval);
-  }, [measurementTime, staleThresholdSeconds]);
-
-  const handleClockMouseEnter = () => {
-    if (clockIconRef.current) {
-      const rect = clockIconRef.current.getBoundingClientRect();
-      const viewportWidth = window.innerWidth;
-
-      // Position tooltip, ensuring it doesn't go offscreen
-      let x = rect.left;
-      let y = rect.bottom + 8;
-
-      // Rough estimate: tooltip is about 200px wide
-      if (x + 200 > viewportWidth) {
-        x = viewportWidth - 210; // 200px width + 10px margin
-      }
-
-      setTooltipPosition({ x, y });
-    }
-    setIsTooltipVisible(true);
-  };
-
-  // Format tooltip date: show time first, omit date if today
-  const formatTooltipDate = (date: Date): string => {
-    const now = new Date();
-    const isToday =
-      date.getDate() === now.getDate() &&
-      date.getMonth() === now.getMonth() &&
-      date.getFullYear() === now.getFullYear();
-
-    const timeStr = date.toLocaleString("en-AU", {
-      timeZone: "Australia/Sydney",
-      hour: "numeric",
-      minute: "2-digit",
-      hour12: true,
-    });
-
-    if (isToday) {
-      return timeStr;
-    }
-
-    const dateStr = date.toLocaleString("en-AU", {
-      timeZone: "Australia/Sydney",
-      month: "short",
-      day: "numeric",
-      year: "numeric",
-    });
-
-    return `${timeStr}, ${dateStr}`;
-  };
+  const staleness = useStaleness(measurementTime, staleThresholdSeconds);
+  const heroColor = `${valueColor ?? "text-white"} ${staleness.isStale ? TILE_STALE : ""}`;
 
   return (
-    <div
-      className={`${bgColor} border ${borderColor} rounded-lg p-2 md:p-4 @container relative overflow-hidden min-h-[110px] md:min-h-0 ${isStale ? "opacity-75" : ""} ${ttInterphases.className}`}
-    >
-      {isStale && (
-        <div
-          className="absolute inset-0 opacity-30 pointer-events-none"
-          style={{
-            backgroundImage:
-              "repeating-linear-gradient(135deg, transparent, transparent 10px, rgba(255,255,255,0.15) 10px, rgba(255,255,255,0.15) 20px)",
-          }}
-        />
-      )}
-      {overlay}
-      <div className="relative z-10">
-        {/* Mobile: horizontal layout (icon left of title), Desktop: vertical (icon right) */}
-        <div className="flex items-start md:items-center md:justify-between mb-0.5 gap-1.5">
-          {/* Icon on left for mobile */}
-          <div
-            className={`${iconColor} md:hidden flex-shrink-0 [&_svg]:w-4 [&_svg]:h-4`}
-          >
-            {icon}
-          </div>
-
-          <div className="flex items-center gap-1.5 flex-1 min-w-0">
-            <span className="text-gray-400 text-xs md:text-sm truncate">
-              {title}
-            </span>
-            {isStale && measurementTime && (
-              <>
-                <div
-                  ref={clockIconRef}
-                  onMouseEnter={handleClockMouseEnter}
-                  onMouseLeave={() => setIsTooltipVisible(false)}
-                  className="text-gray-500 cursor-help flex-shrink-0"
-                >
-                  <Clock size={12} className="md:w-[14px] md:h-[14px]" />
-                </div>
-                {isTooltipVisible &&
-                  typeof document !== "undefined" &&
-                  createPortal(
-                    <div
-                      className="fixed z-[9999] bg-black border border-gray-700 rounded-lg px-3 py-2 shadow-xl text-xs text-white whitespace-nowrap pointer-events-none"
-                      style={{
-                        left: `${tooltipPosition.x}px`,
-                        top: `${tooltipPosition.y}px`,
-                      }}
-                    >
-                      Last update: {formatTooltipDate(measurementTime)}
-                    </div>,
-                    document.body,
-                  )}
-              </>
-            )}
-          </div>
-
-          {/* Icon on right for desktop */}
-          <div className={`${iconColor} hidden md:block flex-shrink-0`}>
-            {icon}
-          </div>
-        </div>
-        <p
-          className={`text-xl md:text-2xl font-bold ${valueColor ?? "text-gray-100"}`}
-        >
+    <TileSurface overlay={overlay} surfaceClassName="flex flex-col">
+      <TileHeader
+        title={title}
+        icon={icon}
+        tone={tone}
+        accessory={accessory}
+        staleness={staleness}
+        measurementTime={measurementTime}
+      />
+      {label && <p className={`mt-1.5 ${TILE_LABEL}`}>{label}</p>}
+      <div
+        className={`flex items-center justify-between gap-2 ${label ? "mt-0.5" : "mt-1.5"}`}
+      >
+        <p className={`${TILE_HERO} ${heroColor} min-w-0`}>
           <Value value={value} unit={unit} className={valueClassName} />
         </p>
-        {extraInfo && <p className="text-xs text-gray-400">{extraInfo}</p>}
-        {extra && <div className="mt-0.5 md:mt-1">{extra}</div>}
+        {heroAside}
       </div>
-    </div>
+      {extraInfo && <p className={`mt-1 ${TILE_CAPTION}`}>{extraInfo}</p>}
+      {extra && (
+        // Never greyed when stale: the body is the period's bars and totals, which a lagging live
+        // feed does not make wrong. Only the LIVE hero dims (`TILE_STALE`).
+        <div className="mt-2 flex flex-1 flex-col">{extra}</div>
+      )}
+    </TileSurface>
   );
 }

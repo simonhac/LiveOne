@@ -78,8 +78,15 @@ describe("tile grid policy", () => {
     for (const cls of [tileGridClass(8), tileRowClass()]) {
       expect(cls).toContain("grid ");
       expect(cls).toContain("auto-rows-fr");
-      expect(cls).toContain("gap-2");
+      expect(cls).toContain("gap-2.5 @[560px]:gap-3");
     }
+  });
+
+  it("back-fills the hole a medium tile leaves, and only in a wrapping grid", () => {
+    // A medium tile (span 2) that no longer fits at the end of a row would otherwise leave a gap;
+    // dense flow lets a later small tile take it. A forced single row has no rows to back-fill.
+    expect(tileGridClass(7)).toContain("grid-flow-row-dense");
+    expect(tileRowClass()).not.toContain("dense");
   });
 
   it("forces a single equal-width row when wrapping is off", () => {

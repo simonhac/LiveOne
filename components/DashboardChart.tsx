@@ -65,13 +65,21 @@ const SOC_DOMAIN: [number, number] = [0, 100];
  * `plot` is the PLOT BOX, not the SVG's: centring on the svg would pull the panel down by half the
  * time-axis gutter, so it would sit visibly low against the data it describes.
  *
- * No pointer position: the panel sits beside the run and centred on the plot, so where in the run
- * the pointer happens to be is not part of the answer.
+ * No pointer position: the panel sits beside the run and its beak aims at the vertical middle of the
+ * run's own band (`yTop`..`yBottom`), so where in the run the pointer happens to be is not part of
+ * the answer.
  */
 export interface RunTooltipAnchor {
   x0: number;
   x1: number;
+  /** The band's stack ceiling and floor over the run, in the same chart-box coords as `x0`/`x1`. */
+  yTop: number;
+  yBottom: number;
   plot: { left: number; top: number; width: number; height: number };
+  /** The chart box's own width. The panel may overhang the axis gutters sideways (covering tick
+   *  labels for the duration of a hover), which on a phone is the difference between a panel that
+   *  fits beside the run and one dropped on top of it. */
+  boxWidth: number;
 }
 
 /**
@@ -369,12 +377,15 @@ export default function DashboardChart(props: DashboardChartProps) {
       const anchor: RunTooltipAnchor = {
         x0: geo.plot.left + x0,
         x1: geo.plot.left + x1,
+        yTop: geo.plot.top + box.yTop,
+        yBottom: geo.plot.top + box.yBottom,
         plot: {
           left: geo.plot.left,
           top: geo.plot.top,
           width: geo.plot.width,
           height: geo.plot.height,
         },
+        boxWidth: size.width,
       };
       return [{ run, index: i, d: band.d, x0, x1, box, anchor }];
     });

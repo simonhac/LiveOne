@@ -5,6 +5,9 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Gauge, Settings } from "lucide-react";
 import Tile from "@/components/Tile";
 import Value from "@/components/ui/value";
+import ProgressRing from "@/components/ui/progress-ring";
+import TrendRow from "@/components/ui/trend-row";
+import { TILE_CHIP } from "@/lib/tile-style";
 import GeneratorControlDialog from "@/components/GeneratorControlDialog";
 import { subjectOf, useAreaDatum } from "@/components/dashboard/cards/shared";
 import { useTemporalRange } from "@/lib/charts/useTemporalRange";
@@ -32,42 +35,6 @@ import type { TilePlugin, TileRenderProps } from "./types";
 import { getMeasurementTime, getPointValue, getTextValue } from "./shared";
 
 /**
- * One sub-row: label, then two right-aligned numeric cells that line up down the tile.
- *
- * The label carries a short and a long form, like the Grid tile's `PeriodRow`, because the first
- * column is `auto`: a long label in a narrow tile wraps to two lines and drags the numbers out of
- * alignment with the rows above it. `whitespace-nowrap` is the backstop for the same reason —
- * squeezing the numeric columns is recoverable, wrapping the label is not.
- */
-function Row({
-  short,
-  long,
-  left,
-  right,
-}: {
-  short: string;
-  long: React.ReactNode;
-  left: React.ReactNode;
-  right: React.ReactNode;
-}) {
-  return (
-    <>
-      <span className="whitespace-nowrap">
-        {/* Keyed on the TILE's width, not the viewport's — see `@container` on Tile. `md:` was a
-            viewport query, so on any desktop the long label won every time and a 150px tile in a
-            dashboard grid rendered "This period" where it had room for "Period". */}
-        <span className="@[130px]:hidden">{short}</span>
-        <span className="hidden @[130px]:inline">{long}</span>
-      </span>
-      {/* Both number columns are RIGHT-aligned, so the two rows' magnitudes sit under one another
-          and the tile has one clean right edge. */}
-      <span className="text-right">{left}</span>
-      <span className="text-right">{right}</span>
-    </>
-  );
-}
-
-/**
  * How long an open run has been going, compactly: "45m" under an hour, "4.2h" over it.
  *
  * Deliberately NOT `formatSecondsAsDuration` ("4h 12m"), which is the house spelling everywhere it
@@ -92,14 +59,11 @@ function compactElapsed(
 /**
  * The generator tile — what the engine is doing, what it produced, and how long it has left.
  *
- * Chrome is `ROLE_CHROME.neutral`, which lib/role-chrome.ts reserves for "tiles with no series of
- * their own": the generator has no entry in `CHART_COLORS`, and inventing one to tint a tile would
- * be a palette decision made for the wrong reason. State rides on the hero word and the amber
- * countdown — the amber-on-neutral treatment `TeslaSmallCard` already uses for its armed limit.
- *
- * The three sub-rows share the Grid tile's `[auto_1fr_auto]` sub-grid, so the two tiles' numbers
- * line up when they sit side by side, and its `pricedTotal` rule, so neither can show a confident
- * money total for a period that was only partly priced.
+ * The hero is the engine's state word, coloured by state (see `heroColor`); a run LiveOne commanded
+ * counts down as a ring beside it. Under it, two Trends rows: the engine's vitals while it turns, and
+ * what it generated (this run, or this period between runs) with the fuel cost as the caption — the
+ * Grid tile's `pricedTotal` rule, so neither tile shows a confident total for a period that was only
+ * partly priced.
  */
 function GeneratorTile({
   latest,
@@ -324,7 +288,6 @@ function GeneratorTile({
     nowMs,
   });
 
-  const chrome = status.isRunning ? ROLE_CHROME.neutral : IDLE_CHROME;
   const showControls = canControl && systemId != null;
   // The lockout is appended rather than replacing the hero when the engine is turning: a running
   // engine is the more urgent fact, but the panel state still has to be visible.
@@ -334,52 +297,109 @@ function GeneratorTile({
       : status.detail;
 
   /**
-   * The qualifying line: what is running the engine, and how long it has left.
-   *
-   * The countdown sits HERE rather than in its own sub-grid row because it is a clause of the same
-   * sentence — "LiveOne request, stops in 23 min" — not another measurement. As a row it
-   * had a label in the label column and a lone value under the rpm, which read as a third number
-   * the tile did not have. The minutes keep the amber they had: on a commanded run that colour is
-   * the deadline WE set, and it is the one thing on this tile the reader can still change.
+   * A run WE commanded counts down as a ring: the fraction of the requested run still to go, with
+   * the minutes inside. Only when both ends are known — the deadline (`stop_at`) and the run's start
+   * (the open run's event) — since a ring needs a whole to be a fraction of. Otherwise the countdown
+   * stays the words it always was, in the line under the hero.
+   */
+  const stopAtMs = stopAt != null ? stopAt * 1000 : null;
+  const startMs = openRunStart ? Date.parse(openRunStart) : NaN;
+  const countdown =
+    status.isCommandedRun &&
+    time &&
+    stopAtMs != null &&
+    Number.isFinite(startMs) &&
+    stopAtMs > startMs
+      ? Math.min(1, Math.max(0, (stopAtMs - nowMs) / (stopAtMs - startMs)))
+      : null;
+
+  /**
+   * The qualifying line: what is running the engine, and how long it has left — a clause of one
+   * sentence ("LiveOne request, stops in 23 min"), not another measurement. When the countdown is
+   * drawn as a ring (a tile wide enough to hold it beside the hero) the words give way to it; in a
+   * narrower tile the words ARE the countdown.
    */
   const heroDetail = !time ? (
-    // Nothing to colour, so the line stays the plain string it has always been.
     detailWords
   ) : (
     <>
       {detailWords}
-      {detailWords ? ", " : ""}
-      {detailWords ? time.long.toLowerCase() : time.long}{" "}
-      <span className={status.isCommandedRun ? "text-amber-400/90" : undefined}>
-        {time.value}
+      <span className={countdown != null ? "@[180px]:hidden" : undefined}>
+        {detailWords ? ", " : ""}
+        {detailWords ? time.long.toLowerCase() : time.long}{" "}
+        <span className="text-white">{time.value}</span>
       </span>
     </>
   );
 
+  /**
+   * The hero word is coloured by STATE — the generator has no series colour of its own
+   * (`CHART_COLORS` has no generator), so its word says what the engine is doing: green while it
+   * turns (and pulsing, see `.shimmer-text`), red for "Locked out" / "Stop failing" — both mean it
+   * will not do what the reader expects — and the idle grey when it is off.
+   */
+  const heroColor =
+    status.tone === "warning"
+      ? "text-red-400"
+      : status.isRunning
+        ? ROLE_CHROME.battery.value
+        : IDLE_CHROME.value;
+
+  const showEngine = status.isRunning && (rpm != null || hz != null);
+  const showScope =
+    scope != null &&
+    scope.energyKwh != null &&
+    (scope.showZero || scope.energyKwh > 0);
+
   return (
     <Tile
       title="Generator"
+      icon={<Gauge />}
       value={status.label}
-      // The cog takes the top-right corner when the viewer can command this generator. For a
-      // viewer who cannot, there is no cog to take it, and dropping the icon anyway would leave the
-      // tile with an empty corner and no role marker — so the Gauge stays exactly then.
-      icon={showControls ? undefined : <Gauge className="w-6 h-6" />}
-      iconColor={status.tone === "warning" ? "text-red-400" : chrome.icon}
-      // A red hero for "Locked out" / "Stop failing": the words alone are easy to read past on a
-      // wall of tiles, and both mean the generator will not do what the reader expects of it.
-      //
-      // Otherwise the DEFAULT hero colour, exactly like every other tile. A running engine used to
-      // get `text-white` to make the old shimmer (which dimmed the resting word and swept a
-      // brighter band through it) readable — but that made "Running" the one hero on the dashboard
-      // that was a different colour from its neighbours, for a reason that was about the animation
-      // rather than about the generator. The shimmer now rests at full strength and sweeps a DIMMED
-      // band instead, so it no longer needs the extra headroom.
-      valueColor={status.tone === "warning" ? "text-red-400" : undefined}
+      valueColor={heroColor}
       // A turning engine pulses. `.shimmer-text` sweeps a dimmed band THROUGH the glyphs, so unlike
       // the skeleton `.shimmer` the word stays fully readable — this says "live", not "loading".
       valueClassName={status.isRunning ? "shimmer-text" : undefined}
-      bgColor={chrome.tint}
-      borderColor={chrome.border}
+      heroAside={
+        countdown != null && time ? (
+          <ProgressRing
+            fraction={countdown}
+            color={ROLE_CHROME.battery.rgb}
+            strokeRatio={0.16}
+            className="hidden h-11 w-11 shrink-0 @[180px]:block"
+          >
+            <span className="text-[10px] font-bold leading-none text-white">
+              {time.value.replace(/\u00A0min$/, "m")}
+            </span>
+          </ProgressRing>
+        ) : undefined
+      }
+      accessory={
+        <>
+          {/* The error TEXT lives in the dialog, where there is room for a sentence; out here it
+              is only a signal that there is something to go and read. */}
+          {lastError && (
+            <span
+              className={`${TILE_CHIP} text-[13px] font-bold text-red-400`}
+              title="The generator reported an error — open the controls to read it"
+            >
+              !
+            </span>
+          )}
+          {showControls && (
+            // Top-right, exactly where TeslaSmallCard puts its charge-control cog — the corner a
+            // reader looks in for settings.
+            <button
+              type="button"
+              onClick={() => setControlsOpen(true)}
+              aria-label="Generator controls"
+              className={`${TILE_CHIP} text-white/60 transition-colors hover:bg-white/15 hover:text-white`}
+            >
+              <Settings className="h-4 w-4" />
+            </button>
+          )}
+        </>
+      }
       staleThresholdSeconds={staleThresholdSeconds}
       measurementTime={
         getMeasurementTime(latest, GENERATOR_STATUS_PATH) ?? undefined
@@ -387,69 +407,51 @@ function GeneratorTile({
       extraInfo={heroDetail ?? undefined}
       overlay={
         showControls ? (
-          <>
-            {/* Top-right, exactly where TeslaSmallCard puts its charge-control cog — the corner a
-                reader looks in for settings. It was bottom-right, tucked under the "Generated"
-                row's dollars, where it read as decoration rather than a control. The role icon
-                yields the corner (see `icon` below) rather than the two sharing it. */}
-            <button
-              type="button"
-              onClick={() => setControlsOpen(true)}
-              aria-label="Generator controls"
-              className="absolute top-2 right-2 z-40 flex items-center justify-center text-gray-500 transition-colors hover:text-gray-200"
-            >
-              <Settings className="h-4 w-4" />
-            </button>
-            <GeneratorControlDialog
-              systemId={systemId as number}
-              open={controlsOpen}
-              onOpenChange={setControlsOpen}
-              latest={latest}
-            />
-          </>
+          <GeneratorControlDialog
+            systemId={systemId as number}
+            open={controlsOpen}
+            onOpenChange={setControlsOpen}
+            latest={latest}
+          />
         ) : undefined
       }
       extra={
-        <div className="grid grid-cols-[auto_1fr_auto] gap-x-1.5 text-[10px] md:text-xs text-gray-400 tabular-nums">
-          {/* Engine vitals, only while it is turning — 0 rpm on a stopped engine is noise. */}
-          {status.isRunning && (rpm != null || hz != null) && (
-            <Row
-              short="Eng"
-              long="Engine"
-              left={
-                rpm != null ? (
-                  <Value value={String(Math.round(rpm))} unit="rpm" />
-                ) : (
-                  "—"
-                )
-              }
-              right={
-                hz != null ? <Value value={hz.toFixed(1)} unit="Hz" /> : "—"
-              }
-            />
-          )}
-          {scope != null &&
-            scope.energyKwh != null &&
-            (scope.showZero || scope.energyKwh > 0) && (
-              <Row
-                short={scope.short}
-                long={scope.long}
-                left={<Value value={formatKwh(scope.energyKwh)} unit="kWh" />}
-                // "—" = not fully priced — never a misleading $0. Same rule as the Grid tile.
-                right={scope.cents != null ? formatDollars(scope.cents) : "—"}
+        showEngine || showScope ? (
+          <div className="mt-auto space-y-2">
+            {/* Engine vitals, only while it is turning — 0 rpm on a stopped engine is noise. */}
+            {showEngine && (
+              <TrendRow
+                label="Engine"
+                value={
+                  rpm != null ? (
+                    <Value value={String(Math.round(rpm))} unit="rpm" />
+                  ) : (
+                    "—"
+                  )
+                }
+                caption={
+                  hz != null ? <Value value={hz.toFixed(1)} unit="Hz" /> : null
+                }
               />
             )}
-          {/* The error TEXT lives in the dialog, where there is room for a sentence; out here it
-              is only a signal that there is something to go and read. */}
-          {lastError && (
-            <Row
-              short=""
-              long=""
-              left=""
-              right={<span className="text-red-400">●</span>}
-            />
-          )}
-        </div>
+            {showScope && scope && (
+              <TrendRow
+                label={
+                  <>
+                    {/* Keyed on the TILE's width — see `@container` on the tile root. */}
+                    <span className="@[200px]:hidden">{scope.short}</span>
+                    <span className="hidden @[200px]:inline">{scope.long}</span>
+                  </>
+                }
+                value={
+                  <Value value={formatKwh(scope.energyKwh ?? 0)} unit="kWh" />
+                }
+                // "—" = not fully priced — never a misleading $0. Same rule as the Grid tile.
+                caption={scope.cents != null ? formatDollars(scope.cents) : "—"}
+              />
+            )}
+          </div>
+        ) : undefined
       }
     />
   );

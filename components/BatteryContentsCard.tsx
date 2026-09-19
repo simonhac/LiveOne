@@ -1,6 +1,5 @@
 "use client";
 
-import { Battery } from "lucide-react";
 import Stat from "@/components/ui/stat";
 import StatCardShell from "@/components/ui/stat-card-shell";
 import { formatCarbonTotal } from "@/lib/provenance-format";
@@ -30,7 +29,7 @@ function cents(c: number): string {
  * payload; the absolute totals are `intensity × stored-energy`, reconstructed exactly.
  *
  * Layout/staleness come from the shared {@link StatCardShell}: an `@container` grid of labelled stats that
- * reflows by the card's OWN width; when stale the card dims and a Clock tooltip shows the last update. The
+ * reflows by the card's OWN width; when stale the header shows the reading's age (exact time on hover). The
  * absolute totals degrade to "—" during warm-up (no `stored-energy` point yet); the export stat is hidden
  * without a tariff; an empty battery reads "0.0 kWh" with em-dashes elsewhere.
  */
@@ -72,7 +71,6 @@ export default function BatteryContentsCard({
 
   return (
     <StatCardShell
-      icon={<Battery size={16} />}
       title={title}
       measurementTime={
         values.measurementTime != null
@@ -109,14 +107,14 @@ export default function BatteryContentsCard({
           }
           unit={renewableFraction != null ? "%" : undefined}
           caption="renewable"
-          valueClassName={renewableGreen ? "text-green-400" : undefined}
+          valueClassName={renewableGreen ? "text-green-400" : "text-white"}
         />
       </div>
 
       {/* Secondary: the absolute totals — financial (out-of-pocket) cost, total
           emissions, export value, and the forgone feed-in revenue (when > $0). */}
       {hasSecondary && (
-        <div className="mt-3 flex flex-wrap items-baseline gap-x-3 gap-y-1 border-t border-gray-700/60 pt-2 text-[11px] text-gray-400">
+        <div className="mt-3 flex flex-wrap items-baseline gap-x-3 gap-y-1 border-t border-white/10 pt-2 text-[11px] font-medium text-white/55">
           {totalCostActualC != null && (
             <span>{dollars(totalCostActualC)} financial cost</span>
           )}

@@ -63,5 +63,12 @@ export interface TilePlugin {
    * `Tile`; see `TileSkeleton` in ../cards/shared.tsx for the default.
    */
   skeletonClass?: string;
+  /**
+   * Grid columns this tile occupies: 1 (the iOS "small" widget, the default) or 2 ("medium"). A
+   * medium tile carries a viz AND a stat column side by side (Home Energy's rings, the grid signals'
+   * 2×2). Presentation only — it is a property of the plugin, not of the stored document, so no
+   * `dashboards.doc` changes. The row's column count is derived from the SUM of spans.
+   */
+  span?: 1 | 2;
   Render: React.FC<TileRenderProps>;
 }

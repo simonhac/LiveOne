@@ -9,7 +9,7 @@
  * The column count is derived from the tile count and the CONTAINER's width (not the viewport —
  * v4 groups nest, so a row group can sit in a narrow sub-group while the viewport is still "lg"):
  *
- *   cap  = clamp(floor((W + gap) / (MIN_TILE + gap)), 2, 6)   // MIN_TILE 176px, gap 16px
+ *   cap  = clamp(floor((W + gap) / (MIN_TILE + gap)), 2, 6)   // MIN_TILE 176px, gap 12px
  *   cols = n <= cap ? n : ceil(n / ceil(n / cap))              // fewest rows, then balance them
  *
  * `cap` is how many tiles fit at a readable width; `cols` then takes the fewest rows that fit and
@@ -27,13 +27,14 @@
 /**
  * Layout every tile grid shares, independent of the column count.
  *
- * 🛑 The mobile inset is `px-0.5` (2px) and not `px-0`. Below `sm` the section runs to the screen
- * edge (see `CHART_PANEL_BLEED`), and a tile draws its own 1px border: flush against the viewport
- * the outermost column's outer border lands half on the last pixel and half off it, so it renders
- * as a broken hairline down one side of the grid while every other tile edge looks crisp. Two
- * pixels is enough for the border to land whole and still reads as full-bleed.
+ * The gutter is tight — 10px, 12px once there is room — because the tiles are borderless slabs on a
+ * black page (docs/architecture/tile-style.md): the gap IS the edge between them, and the Activity
+ * app's own gutter is about that.
+ *
+ * The 2px mobile inset predates the borderless surface (a 1px tile border flush against the viewport
+ * rendered as a broken hairline); it is kept so a tile's rounded corner never kisses the bezel.
  */
-const GRID_BASE = "grid gap-2 @[560px]:gap-4 auto-rows-fr px-0.5 sm:px-1";
+const GRID_BASE = "grid gap-2.5 @[560px]:gap-3 auto-rows-fr px-0.5 sm:px-1";
 
 /**
  * count -> the responsive `grid-cols-*` classes, one per container tier
@@ -59,11 +60,14 @@ const COLS_AT_CAP =
   "grid-cols-2 @[560px]:grid-cols-3 @[752px]:grid-cols-4 @[944px]:grid-cols-5 @[1136px]:grid-cols-6";
 
 /**
- * Classes for a grid of `count` tiles. The grid must sit inside an `@container` ancestor
+ * Classes for a grid of `count` COLUMN UNITS — the sum of the tiles' spans (`TilePlugin.span`), so a
+ * medium tile counts twice. `grid-flow-row-dense` lets a later small tile fill the hole a medium tile
+ * would otherwise leave at the end of a row it no longer fits; with no medium tiles there are no
+ * holes and it changes nothing. The grid must sit inside an `@container` ancestor
  * (`TILE_GRID_CONTAINER`) — its breakpoints are the container's width, not the viewport's.
  */
 export function tileGridClass(count: number): string {
-  return `${GRID_BASE} ${COLS_BY_COUNT[count] ?? COLS_AT_CAP}`;
+  return `${GRID_BASE} grid-flow-row-dense ${COLS_BY_COUNT[count] ?? COLS_AT_CAP}`;
 }
 
 /**

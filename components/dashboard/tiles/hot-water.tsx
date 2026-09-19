@@ -6,6 +6,8 @@ import HwsSmallCard from "@/components/HwsSmallCard";
 import { historyQuery, siteDataQuery } from "@/lib/queries";
 import { useTemporalRange } from "@/lib/charts/useTemporalRange";
 import { DEFAULT_HWS_MODEL_OPTIONS } from "@/lib/hws-model";
+import { dayTicks } from "@/lib/charts/tile-bars";
+import { subjectOf, useAreaDatum } from "@/components/dashboard/cards/shared";
 import type { TilePlugin, TileRenderProps } from "./types";
 import { getPointValue, getMeasurementTime } from "./shared";
 
@@ -54,24 +56,51 @@ function HotWaterTile({
   // routinely null while the producer catches up — compacting those away would let the sparkline
   // stretch the remaining points across the full width and claim to be current. See
   // lib/charts/sparkline.ts.
-  const hwsSparkValues = useMemo<(number | null)[]>(() => {
+  //
+  // Timestamps ride along for the time-axis ticks only — x stays positional either way.
+  const spark = useMemo<{
+    values: (number | null)[];
+    timestamps: Date[];
+  }>(() => {
     const toSlot = (v: unknown): number | null =>
       typeof v === "number" && Number.isFinite(v) ? v : null;
     if (wantShared) {
-      const values = sharedSite.data?.hwsTemperature?.values;
-      return Array.isArray(values) ? values.map(toSlot) : [];
+      const hws = sharedSite.data?.hwsTemperature;
+      if (!hws || !Array.isArray(hws.values)) {
+        return { values: [], timestamps: [] };
+      }
+      return { values: hws.values.map(toSlot), timestamps: hws.timestamps };
     }
-    const series = (
-      hwsHistory.data as { data?: Array<{ history?: { data?: unknown[] } }> }
-    )?.data?.[0]?.history?.data;
-    if (!Array.isArray(series)) return [];
-    return series.map(toSlot);
+    const history = (
+      hwsHistory.data as {
+        data?: Array<{
+          history?: { data?: unknown[]; firstInterval?: string };
+        }>;
+      }
+    )?.data?.[0]?.history;
+    const series = history?.data;
+    if (!Array.isArray(series)) return { values: [], timestamps: [] };
+    const firstMs = history?.firstInterval
+      ? Date.parse(history.firstInterval)
+      : NaN;
+    return {
+      values: series.map(toSlot),
+      // The dedicated fetch is always `interval: "5m"`.
+      timestamps: Number.isFinite(firstMs)
+        ? series.map((_, i) => new Date(firstMs + i * 300_000))
+        : [],
+    };
   }, [wantShared, sharedSite.data, hwsHistory.data]);
+  const { datum } = useAreaDatum(systemId ?? 0, {
+    enabled: systemId != null,
+  });
+  const tz = subjectOf(datum)?.timezoneOffsetMin ?? 600;
 
   return (
     <HwsSmallCard
       faucetC={hwsTemp}
-      sparkValues={hwsSparkValues}
+      sparkValues={spark.values}
+      sparkTicks={dayTicks(spark.timestamps, tz)}
       measurementTime={
         getMeasurementTime(latest, "load.hws/temperature") ?? undefined
       }

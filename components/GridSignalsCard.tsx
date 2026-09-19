@@ -1,11 +1,17 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
-import { createPortal } from "react-dom";
-import { Clock, Zap } from "lucide-react";
-import { ttInterphases } from "@/lib/fonts/amber";
-import Stat from "@/components/ui/stat";
+import { Zap } from "lucide-react";
+import Value from "@/components/ui/value";
+import TrendRow from "@/components/ui/trend-row";
+import ProgressRing from "@/components/ui/progress-ring";
+import TileSurface, { TileHeader } from "@/components/ui/tile-surface";
+import { useStaleness } from "@/components/ui/tile-stale";
+import { ROLE_CHROME } from "@/lib/role-chrome";
+import { TILE_STALE } from "@/lib/tile-style";
 import type { GridLiveValues } from "@/lib/grid/latest";
+
+/** The ring runs green-400 → green-300, the Home Energy renewable ring's hue. */
+const RENEWABLES_LIGHT_RGB = "rgb(134, 239, 172)";
 
 export interface GridSignalsCardProps {
   regionLabel: string;
@@ -15,18 +21,13 @@ export interface GridSignalsCardProps {
 
 /**
  * Presentational "<region> Grid" card (e.g. "NSW Grid"). Shows four live grid signals for the
- * household's local NEM region: spot price ($/MWh), emissions intensity (g CO₂e/kWh),
- * renewables (%), and operational demand (MW). No data fetching happens here — the typed `values`
- * prop is supplied by the caller (cross-device OE region fetch).
+ * household's local NEM region — spot price ($/MWh), emissions intensity (g CO₂e/kWh), renewables
+ * (%) and operational demand (MW). A MEDIUM tile (`span: 2`): the renewable share as a ring beside
+ * the other three as Trends rows; narrower than 300px it falls back to a label-over-value 2×2. No data fetching happens here — the typed `values`
+ * prop is supplied by the caller.
  *
- * Layout: four compact, label-less stats (bold value + a power-card-style unit, like solar's
- * "kW") in an `@container` grid that reflows by the card's OWN width — 1 column when narrow, then
- * 2/3/4 columns as it widens. Price reads "$N/MWh", emissions abbreviates to "EI"
- * (emissions intensity), renewables reads "<n>% RE", demand reads "<n> MW". Values never truncate.
- *
- * Staleness follows Tile: the newest measurementTime across the present
- * metrics is compared against `staleThresholdSeconds` (recomputed every second);
- * when stale, the card dims and a Clock icon exposes a "Last update" tooltip.
+ * Staleness follows Tile: the newest measurementTime across the present metrics against
+ * `staleThresholdSeconds`; stale values grey out and the header shows the reading's age.
  */
 export default function GridSignalsCard({
   regionLabel,
@@ -36,18 +37,6 @@ export default function GridSignalsCard({
   // 900s keeps the card "fresh" across a normal cycle and a single missed interval.
   staleThresholdSeconds = 900,
 }: GridSignalsCardProps) {
-  const [nowMs, setNowMs] = useState<number>(() => Date.now());
-  const [isTooltipVisible, setIsTooltipVisible] = useState(false);
-  const [tooltipPosition, setTooltipPosition] = useState({ x: 0, y: 0 });
-  const clockIconRef = useRef<HTMLDivElement>(null);
-
-  // Recompute the current time every second so staleness stays live.
-  useEffect(() => {
-    setNowMs(Date.now());
-    const interval = setInterval(() => setNowMs(Date.now()), 1000);
-    return () => clearInterval(interval);
-  }, []);
-
   const price = values?.price?.value ?? null;
   const emissions = values?.emissionsIntensity?.value ?? null;
   const renewables = values?.renewables?.value ?? null;
@@ -66,62 +55,16 @@ export default function GridSignalsCard({
   const newestMs = measurementTimes.length
     ? Math.max(...measurementTimes)
     : null;
-
-  const secondsSinceUpdate =
-    newestMs !== null ? Math.floor((nowMs - newestMs) / 1000) : Infinity;
-  const isStale = secondsSinceUpdate > staleThresholdSeconds;
-
-  const handleClockMouseEnter = () => {
-    if (clockIconRef.current) {
-      const rect = clockIconRef.current.getBoundingClientRect();
-      const viewportWidth = window.innerWidth;
-      let x = rect.left;
-      const y = rect.bottom + 8;
-      if (x + 200 > viewportWidth) {
-        x = viewportWidth - 210;
-      }
-      setTooltipPosition({ x, y });
-    }
-    setIsTooltipVisible(true);
-  };
-
-  // Format tooltip date: show time first, omit date if today.
-  const formatTooltipDate = (date: Date): string => {
-    const now = new Date();
-    const isToday =
-      date.getDate() === now.getDate() &&
-      date.getMonth() === now.getMonth() &&
-      date.getFullYear() === now.getFullYear();
-
-    const timeStr = date.toLocaleString("en-AU", {
-      timeZone: "Australia/Sydney",
-      hour: "numeric",
-      minute: "2-digit",
-      hour12: true,
-    });
-
-    if (isToday) {
-      return timeStr;
-    }
-
-    const dateStr = date.toLocaleString("en-AU", {
-      timeZone: "Australia/Sydney",
-      month: "short",
-      day: "numeric",
-      year: "numeric",
-    });
-
-    return `${timeStr}, ${dateStr}`;
-  };
+  const staleness = useStaleness(newestMs, staleThresholdSeconds);
 
   // Defensive: nothing to show at all.
   if (!regionLabel && values === null) {
     return null;
   }
 
-  // Display values (client-side conversions per the OE stored units). Units render separately
-  // (small + non-bold), so these are the bare numbers only.
-  // Price is stored in $/MWh; show it directly as integer dollars ("$2/MWh"). The "$" rides as a
+  // Display values (client-side conversions per the OE stored units). Units render separately, so
+  // these are the bare numbers only.
+  // Price is stored in $/MWh; show it directly as integer dollars ("$84/MWh"). The "$" rides as a
   // `prefix` so it renders at unit size, not hero size.
   const priceText = price != null ? `${Math.round(price)}` : "—";
   // 0 g/kWh is physically impossible for a generating grid (a transient OE artifact); show
@@ -140,78 +83,98 @@ export default function GridSignalsCard({
   // region index defensively so a raw "NSW1" still renders "NSW Grid".
   const regionShort = regionLabel.replace(/\d+$/, "").trim() || regionLabel;
 
-  return (
-    <div
-      className={`@container bg-gray-800/50 border border-gray-700 rounded-lg p-2 md:p-4 relative overflow-hidden ${isStale ? "opacity-75" : ""} ${ttInterphases.className}`}
-    >
-      {isStale && (
-        <div
-          className="absolute inset-0 opacity-30 pointer-events-none"
-          style={{
-            backgroundImage:
-              "repeating-linear-gradient(135deg, transparent, transparent 10px, rgba(255,255,255,0.15) 10px, rgba(255,255,255,0.15) 20px)",
-          }}
-        />
-      )}
-      <div className="relative z-10">
-        {/* Header row */}
-        <div className="flex items-center gap-1.5 mb-2">
-          <span className="text-blue-400 flex-shrink-0">
-            <Zap size={16} />
-          </span>
-          <span className="text-gray-300 text-xs md:text-sm truncate">
-            {regionShort} Grid
-          </span>
-          {isStale && newestMs !== null && (
-            <>
-              <div
-                ref={clockIconRef}
-                onMouseEnter={handleClockMouseEnter}
-                onMouseLeave={() => setIsTooltipVisible(false)}
-                className="text-gray-500 cursor-help flex-shrink-0"
-              >
-                <Clock size={12} className="md:w-[14px] md:h-[14px]" />
-              </div>
-              {isTooltipVisible &&
-                typeof document !== "undefined" &&
-                createPortal(
-                  <div
-                    className="fixed z-[9999] bg-black border border-gray-700 rounded-lg px-3 py-2 shadow-xl text-xs text-white whitespace-nowrap pointer-events-none"
-                    style={{
-                      left: `${tooltipPosition.x}px`,
-                      top: `${tooltipPosition.y}px`,
-                    }}
-                  >
-                    Last update: {formatTooltipDate(new Date(newestMs))}
-                  </div>,
-                  document.body,
-                )}
-            </>
-          )}
-        </div>
+  // Stale values dim and keep their colour, rather than the box dimming — see `TILE_STALE`.
+  const tone = (live: string) =>
+    `${live} ${staleness.isStale ? TILE_STALE : ""}`;
 
-        {/* Compact, label-less stats: bold value + power-card-style unit. 1 → 2 → 3 → 4 columns as
-            the card widens (its OWN width via @container). Price reads "$N/MWh"; emissions uses
-            "EI" (emissions intensity); renewables is "<n>% RE"; demand is "<n> MW". */}
-        <div className="grid grid-cols-1 gap-x-4 gap-y-1 @[180px]:grid-cols-2 @[300px]:grid-cols-3 @[400px]:grid-cols-4">
-          <Stat
-            value={priceText}
-            prefix={price != null ? "$" : undefined}
-            unit={price != null ? "/MWh" : undefined}
-          />
-          <Stat
-            value={emissionsText}
-            qualifier={emissions != null ? "EI" : undefined}
-          />
-          <Stat
-            value={renewablesText}
-            unit={renewables != null ? "%" : undefined}
-            qualifier={renewables != null ? "RE" : undefined}
-            valueClassName={renewablesGreen ? "text-green-400" : undefined}
-          />
-          <Stat value={demandText} unit={demand != null ? "MW" : undefined} />
+  const renewablesValue = (
+    <Value value={renewablesText} unit={renewables != null ? "%" : undefined} />
+  );
+  // Price and demand are the grid's magenta (they are facts about the grid); emissions stays white.
+  const priceRow = (
+    <TrendRow
+      label="Price"
+      value={
+        <Value
+          value={priceText}
+          prefix={price != null ? "$" : undefined}
+          unit={price != null ? "/MWh" : undefined}
+        />
+      }
+      valueColor={tone(ROLE_CHROME.grid.value)}
+    />
+  );
+  const emissionsRow = (
+    <TrendRow
+      label="Emissions"
+      value={
+        <Value
+          value={emissionsText}
+          unit={emissionsText !== "—" ? "g/kWh" : undefined}
+        />
+      }
+      valueColor={tone("text-white")}
+    />
+  );
+  const demandRow = (
+    <TrendRow
+      label="Demand"
+      value={
+        <Value value={demandText} unit={demand != null ? "MW" : undefined} />
+      }
+      valueColor={tone(ROLE_CHROME.grid.value)}
+    />
+  );
+
+  return (
+    <TileSurface surfaceClassName="flex flex-col">
+      <TileHeader
+        title={`${regionShort} Grid`}
+        icon={<Zap />}
+        tone={ROLE_CHROME.grid.value}
+        staleness={staleness}
+        measurementTime={newestMs}
+      />
+      {/* MEDIUM (the width a two-column tile has): the Activity Rings shape — the grid's
+          renewable share as a ring on the left, the other three signals as Trends rows on the
+          right, so the card fills its height the way Home Energy beside it does instead of one line
+          of numbers over an empty box. SMALL: the four as a label-over-value 2×2 (1 column when
+          very narrow). The renewables number sits inside the ring in the medium form, so it is a
+          row only in the small one. */}
+      <div className="mt-2 hidden flex-1 items-center gap-5 @[300px]:flex">
+        <ProgressRing
+          fraction={(renewables ?? 0) / 100}
+          color={ROLE_CHROME.battery.rgb}
+          gradientTo={RENEWABLES_LIGHT_RGB}
+          className={`h-[112px] w-[112px] shrink-0 @[440px]:h-[128px] @[440px]:w-[128px] ${
+            staleness.isStale ? TILE_STALE : ""
+          }`}
+        >
+          <span className="text-[24px] font-bold leading-none text-white">
+            {renewablesValue}
+          </span>
+          <span className="mt-1 text-[11px] font-medium leading-none text-white/55">
+            renewable
+          </span>
+        </ProgressRing>
+        <div className="min-w-0 flex-1 space-y-2">
+          {priceRow}
+          {emissionsRow}
+          {demandRow}
         </div>
       </div>
-    </div>
+      <div className="mt-2 grid grid-cols-1 gap-x-4 gap-y-2 @[200px]:grid-cols-2 @[300px]:hidden">
+        {priceRow}
+        {emissionsRow}
+        <TrendRow
+          label="Renewables"
+          value={renewablesValue}
+          valueColor={tone(
+            renewablesGreen ? ROLE_CHROME.battery.value : "text-white",
+          )}
+        />
+        {demandRow}
+      </div>
+    </TileSurface>
   );
 }

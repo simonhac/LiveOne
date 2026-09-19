@@ -5,12 +5,6 @@
  * `useTileNodes` (dismantled into per-view plugins). All pure functions over `latest`; no hooks.
  */
 import React from "react";
-import {
-  ChevronLeft,
-  ChevronRight,
-  ChevronsLeft,
-  ChevronsRight,
-} from "lucide-react";
 import Value from "@/components/ui/value";
 import { stemSplit, getMetricType } from "@/lib/identifiers/logical-path";
 import type { LatestPointValues, LatestPointValue } from "@/lib/types/api";
@@ -72,77 +66,6 @@ export function getTextValue(
 ): string | null {
   const value = latest[pointPath]?.value as unknown;
   return typeof value === "string" && value.length > 0 ? value : null;
-}
-
-/**
- * Generate flow direction chevron for bidirectional power sources
- * @param powerWatts - Power value in watts (sign determines direction)
- * @param isIntoSource - true if power flows INTO the source (charge/export)
- * @param colorClass - Tailwind color class to match the icon
- * @returns React node with chevron(s) or null if |power| < 100W
- */
-export function getFlowChevron(
-  powerWatts: number,
-  isIntoSource: boolean,
-  colorClass: string,
-): React.ReactNode {
-  const absPower = Math.abs(powerWatts);
-
-  // No chevron for < 100W
-  if (absPower < 100) {
-    return null;
-  }
-
-  const isDouble = absPower > 5000;
-
-  // Desktop: chevrons left of icon, so INTO = right arrow, OUT = left arrow
-  // Mobile: chevrons right of icon, so INTO = left arrow, OUT = right arrow (reversed)
-
-  if (isIntoSource) {
-    // Power flowing INTO the source (charge battery / export to grid)
-    return (
-      <>
-        {/* Mobile: chevrons on right of icon, point left (into icon on left) */}
-        <span className={`${colorClass} md:hidden`}>
-          {isDouble ? (
-            <ChevronsLeft className="w-4 h-4" />
-          ) : (
-            <ChevronLeft className="w-4 h-4" />
-          )}
-        </span>
-        {/* Desktop: chevrons on left of icon, point right (into icon on right) */}
-        <span className={`${colorClass} hidden md:block`}>
-          {isDouble ? (
-            <ChevronsRight className="w-5 h-5" />
-          ) : (
-            <ChevronRight className="w-5 h-5" />
-          )}
-        </span>
-      </>
-    );
-  } else {
-    // Power flowing OUT of the source (discharge battery / import from grid)
-    return (
-      <>
-        {/* Mobile: chevrons on right of icon, point right (away from icon on left) */}
-        <span className={`${colorClass} md:hidden`}>
-          {isDouble ? (
-            <ChevronsRight className="w-4 h-4" />
-          ) : (
-            <ChevronRight className="w-4 h-4" />
-          )}
-        </span>
-        {/* Desktop: chevrons on left of icon, point left (away from icon on right) */}
-        <span className={`${colorClass} hidden md:block`}>
-          {isDouble ? (
-            <ChevronsLeft className="w-5 h-5" />
-          ) : (
-            <ChevronLeft className="w-5 h-5" />
-          )}
-        </span>
-      </>
-    );
-  }
 }
 
 /**

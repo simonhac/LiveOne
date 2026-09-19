@@ -1,65 +1,102 @@
 "use client";
 
 import { Battery } from "lucide-react";
-import Tile from "@/components/Tile";
+import TileSurface, { TileHeader } from "@/components/ui/tile-surface";
+import { useStaleness } from "@/components/ui/tile-stale";
+import ProgressRing from "@/components/ui/progress-ring";
+import DirectionChip, {
+  FLOW_DOUBLE_W,
+  flowDirection,
+} from "@/components/ui/direction-chip";
+import TrendRow from "@/components/ui/trend-row";
+import Value from "@/components/ui/value";
 import { IDLE_CHROME, ROLE_CHROME } from "@/lib/role-chrome";
-import { formatPercent } from "@/lib/point/format-value";
+import { TILE_STALE } from "@/lib/tile-style";
 import type { TilePlugin, TileRenderProps } from "./types";
-import {
-  formatPowerValue,
-  formatPowerSmallUnit,
-  getFlowChevron,
-  getPointValue,
-  getMeasurementTime,
-} from "./shared";
+import { formatPowerValue, getPointValue, getMeasurementTime } from "./shared";
+
+/** Below this state of charge the ring leaves its identity colour and warns. */
+const LOW_SOC = 20;
+const LOW_RGB = "rgb(239, 68, 68)"; // red-500
+/** The ring's gradient runs green-400 → green-300: one hue, lit toward its tip. */
+const BATTERY_LIGHT_RGB = "rgb(134, 239, 172)";
 
 /**
- * Battery SoC tile. Chrome is the battery's IDENTITY colour (green, matching `CHART_COLORS.battery`)
- * whenever there is flow — it used to flip green/orange on the charge (−) / discharge (+) sign, which
- * made green mean "charging" here and "exporting" on the Grid tile. Direction now rides entirely on
- * the chevron and the Charging/Discharging label. Below the 100 W dead band — the same threshold
- * `getFlowChevron` and the label already use — the tile goes grey, which reads as *no flow* rather
- * than as a direction. See lib/role-chrome.ts.
+ * Battery — a fat ring holding the state of charge (it pairs with the EV tile's ring), and under it
+ * one Trends row: the direction chip, what the battery is doing, and at what power.
+ *
+ * The ring is the battery's IDENTITY colour, green, whatever the battery is doing — direction rides
+ * on the chip (up = discharge, down = charge; see `DirectionChip`), never on the colour, which used
+ * to make green mean "charging" here and "exporting" on the Grid tile. The one exception is a low
+ * charge: under 20% the ring goes red, because that is the fact the reader most needs from it.
  */
 function BatteryTile({ latest, staleThresholdSeconds }: TileRenderProps) {
-  const batterySoc = getPointValue(latest, "bidi.battery/soc");
+  const batterySoc = getPointValue(latest, "bidi.battery/soc") ?? 0;
   const batteryPower = getPointValue(latest, "bidi.battery/power") || 0;
-  const chrome =
-    Math.abs(batteryPower) >= 100 ? ROLE_CHROME.battery : IDLE_CHROME;
+  // Positive battery power is DISCHARGE: energy leaving the battery, so "up".
+  const direction = flowDirection(batteryPower, true);
+  const measurementTime =
+    getMeasurementTime(latest, "bidi.battery/soc") ?? undefined;
+  const staleness = useStaleness(measurementTime, staleThresholdSeconds);
+
+  const low = batterySoc < LOW_SOC;
+  const ringColor = low ? LOW_RGB : ROLE_CHROME.battery.rgb;
+  // Stale dims the live readings and keeps their colour — see `TILE_STALE`.
+  const staleClass = staleness.isStale ? TILE_STALE : "";
 
   return (
-    <Tile
-      title="Battery"
-      value={formatPercent(batterySoc ?? 0)}
-      unit="%"
-      icon={
-        <span className="inline-flex items-center h-6 flex-row-reverse md:flex-row">
-          {getFlowChevron(
-            batteryPower,
-            batteryPower < 0, // negative = charging = into battery
-            chrome.icon,
-          )}
-          <Battery className="w-6 h-6" />
-        </span>
-      }
-      iconColor={chrome.icon}
-      bgColor={chrome.tint}
-      borderColor={chrome.border}
-      staleThresholdSeconds={staleThresholdSeconds}
-      measurementTime={
-        getMeasurementTime(latest, "bidi.battery/soc") || undefined
-      }
-      extra={
-        Math.abs(batteryPower) >= 100 ? (
-          <div className="text-xs text-gray-400">
-            {batteryPower < 0 ? "Charging" : "Discharging"}{" "}
-            {formatPowerSmallUnit(Math.abs(batteryPower))}
-          </div>
-        ) : (
-          <div className="text-xs text-gray-400">Idle</div>
-        )
-      }
-    />
+    <TileSurface surfaceClassName="flex flex-col">
+      <TileHeader
+        title="Battery"
+        icon={<Battery />}
+        tone={ROLE_CHROME.battery.value}
+        staleness={staleness}
+        measurementTime={measurementTime}
+      />
+      <div className="flex flex-1 items-center justify-center py-2">
+        <ProgressRing
+          fraction={batterySoc / 100}
+          color={ringColor}
+          gradientTo={low ? undefined : BATTERY_LIGHT_RGB}
+          className={`h-[76px] w-[76px] @[200px]:h-[92px] @[200px]:w-[92px] ${staleClass}`}
+        >
+          <span className="text-[17px] font-bold leading-none text-white @[200px]:text-[22px]">
+            <Value value={String(Math.round(batterySoc))} unit="%" />
+          </span>
+        </ProgressRing>
+      </div>
+      <div className={staleClass}>
+        <TrendRow
+          chip={
+            <DirectionChip
+              direction={direction}
+              color={ROLE_CHROME.battery.rgb}
+              double={Math.abs(batteryPower) > FLOW_DOUBLE_W}
+            />
+          }
+          label={
+            direction === "idle"
+              ? "Idle"
+              : direction === "up"
+                ? "Discharging"
+                : "Charging"
+          }
+          value={
+            direction === "idle" ? (
+              "—"
+            ) : (
+              <Value
+                value={formatPowerValue(Math.abs(batteryPower))}
+                unit="kW"
+              />
+            )
+          }
+          valueColor={
+            direction === "idle" ? IDLE_CHROME.value : ROLE_CHROME.battery.value
+          }
+        />
+      </div>
+    </TileSurface>
   );
 }
 

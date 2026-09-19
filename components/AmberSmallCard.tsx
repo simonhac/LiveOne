@@ -3,7 +3,8 @@
 import { useRef, useState, useEffect } from "react";
 import Value from "@/components/ui/value";
 import { Zap } from "lucide-react";
-import { ttInterphases } from "@/lib/fonts/amber";
+import TileSurface from "@/components/ui/tile-surface";
+import { TILE_CHIP } from "@/lib/tile-style";
 import {
   type LatestValue,
   getNumericValue,
@@ -26,14 +27,17 @@ interface AmberSmallCardProps {
  * Compact Amber pricing card - displays live price data in a card format
  * similar to the power cards (Solar, Load, Battery, Grid)
  *
- * Container Query Breakpoints (all based on card width, no viewport breakpoints):
- * | Width    | Height | Padding | Circle D | Circle V | Logo      | Feed-in Pos | Sun  | Weight | /kWh    |
- * |----------|--------|---------|----------|----------|-----------|-------------|------|--------|---------|
- * | 66px min | 110px  | 8px     | 75       | Center   | Hidden    | 6px edges   | Hide | Medium | Hidden  |
- * | 90px+    | 110px  | 8px     | 75       | Center   | LogoMark  | 6px edges   | Show | Medium | Hidden  |
- * | 120px+   | 110px  | 8px     | 85       | Center   | LogoMark  | 8px edges   | Show | Bold   | Hidden  |
- * | 180px+   | 180px  | 12px    | 140      | Center   | Full logo | 10px edges  | Show | Bold   | Hidden  |
- * | 300px+   | 180px  | 12px    | 140      | Center   | Full logo | 10px edges  | Show | Bold   | Visible |
+ * Drawn on the shared tile surface (docs/architecture/tile-style.md): the brand mark sits in the
+ * title slot, the price disc keeps its brand gradient — it IS the data — and the feed-in price is a
+ * chip row bottom-right.
+ *
+ * Container Query Breakpoints (the TILE's width, never the viewport):
+ * | Width    | Height | Disc D              | Logo      | Feed-in        | Weight |
+ * |----------|--------|---------------------|-----------|----------------|--------|
+ * | 66px min | 110px  | 83                  | Hidden    | Hidden         | Medium |
+ * | 90px+    | 110px  | 83                  | LogoMark  | chip row       | Medium |
+ * | 120px+   | 110px  | 93                  | LogoMark  | chip row       | Bold   |
+ * | 180px+   | 180px  | 124                 | Full logo | chip row (lg)  | Bold   |
  */
 export default function AmberSmallCard({ latest }: AmberSmallCardProps) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -102,9 +106,10 @@ export default function AmberSmallCard({ latest }: AmberSmallCardProps) {
   const showFeedIn = feedInPrice !== null;
 
   return (
-    <div
-      ref={containerRef}
-      className={`@container relative bg-gray-800/50 border border-gray-700 rounded-lg p-2 @[180px]:p-3 min-h-[110px] @[180px]:min-h-[180px] min-w-[66px] self-stretch ${ttInterphases.className}`}
+    <TileSurface
+      rootRef={containerRef}
+      className="min-w-[66px] self-stretch"
+      surfaceClassName="min-h-[110px] @[180px]:min-h-[180px]"
     >
       {/* DEBUG: Container size indicator - only shown when ?debug is in URL */}
       {showDebug && (
@@ -116,11 +121,11 @@ export default function AmberSmallCard({ latest }: AmberSmallCardProps) {
       {/* Compact layout - shown when card < 180px */}
       <div className="@[180px]:hidden h-full flex flex-col">
         {/* Logo mark - absolute positioned top left */}
-        <AmberLogoMark className="absolute top-2 left-2 h-4 w-4 hidden @[90px]:block" />
+        <AmberLogoMark className="absolute top-3 left-3 h-4 w-4 hidden @[90px]:block" />
         {/* Price circle - centered horizontally and vertically */}
         <div className="flex-1 flex items-center justify-center">
           <div
-            className="w-[75px] h-[75px] @[120px]:w-[85px] @[120px]:h-[85px] rounded-full flex flex-col items-center justify-center"
+            className="w-[83px] h-[83px] @[120px]:w-[93px] @[120px]:h-[93px] rounded-full flex flex-col items-center justify-center"
             style={{ background: circleGradient }}
           >
             <Zap
@@ -147,37 +152,38 @@ export default function AmberSmallCard({ latest }: AmberSmallCardProps) {
         </div>
       </div>
 
-      {/* Feed-in at bottom right - all screen sizes */}
-      {/* Container query: show /kWh only when card is >= 300px wide */}
+      {/* Feed-in, bottom-right, as a chip row: the sun in a grey disc, then the price. Hidden on
+          the narrowest card, where the disc needs the whole width. */}
       {showFeedIn && (
-        <div className="absolute bottom-1.5 right-1.5 @[120px]:bottom-2 @[120px]:right-2 @[180px]:bottom-2.5 @[180px]:right-2.5 flex flex-col items-center">
-          <SunIcon className="w-2.5 h-2.5 @[180px]:w-4 @[180px]:h-4 mb-0.5 hidden @[90px]:block" />
-          <span className="text-white text-[10px] @[180px]:text-sm font-medium @[120px]:font-bold">
+        <div className="absolute bottom-2 right-2 @[180px]:bottom-3 @[180px]:right-3 hidden @[90px]:flex items-center gap-1">
+          <span className={`${TILE_CHIP} !size-5 @[180px]:!size-6`}>
+            <SunIcon className="w-3 h-3 @[180px]:w-3.5 @[180px]:h-3.5" />
+          </span>
+          <span className="text-white text-[11px] @[180px]:text-sm font-bold">
             <Value
               value={`${feedInPrice < 0 ? "" : "-"}${Math.abs(Math.round(feedInPrice))}`}
               unit="¢"
             />
-          </span>
-          <span className="hidden @[300px]:block text-gray-500 text-[10px]">
-            /kWh
           </span>
         </div>
       )}
 
       {/* Full layout - shown when card ≥ 180px */}
       <div className="hidden @[180px]:flex h-full flex-col">
-        {/* Amber logo - absolute positioned top left */}
-        <AmberLogo className="absolute top-3 left-3 h-5 w-auto" />
+        {/* The brand mark in the title slot — in flow, so the disc below can never slide under it. */}
+        <div className="flex min-h-7 items-center">
+          <AmberLogo className="h-5 w-auto" />
+        </div>
 
         {/* Price circle - centered horizontally and vertically */}
         <div className="flex-1 flex items-center justify-center">
           <div
-            className="w-[140px] h-[140px] rounded-full flex flex-col items-center justify-center"
+            className="w-[124px] h-[124px] rounded-full flex flex-col items-center justify-center"
             style={{ background: circleGradient }}
           >
             {/* Lightning icon */}
             <Zap
-              className="w-4 h-4 mb-0.5"
+              className="w-3.5 h-3.5 mb-0.5"
               style={{ color: "rgb(0, 11, 36)" }}
               fill="rgb(0, 11, 36)"
             />
@@ -192,7 +198,7 @@ export default function AmberSmallCard({ latest }: AmberSmallCardProps) {
 
             {/* Large price */}
             <div
-              className="font-bold leading-none text-[36px]"
+              className="font-bold leading-none text-[32px]"
               style={{ color: "rgb(0, 11, 36)" }}
             >
               <Value value={Math.round(importPrice)} unit="¢" />
@@ -205,10 +211,10 @@ export default function AmberSmallCard({ latest }: AmberSmallCardProps) {
             {renewables !== null && (
               <div className="text-center -mt-0.5">
                 <span
-                  className="font-bold block mt-[6px]"
+                  className="font-bold block mt-[3px]"
                   style={{
                     color: "rgb(0, 0, 0)",
-                    fontSize: "16px",
+                    fontSize: "14px",
                   }}
                 >
                   <Value value={Math.round(renewables)} unit="%" />
@@ -224,6 +230,6 @@ export default function AmberSmallCard({ latest }: AmberSmallCardProps) {
           </div>
         </div>
       </div>
-    </div>
+    </TileSurface>
   );
 }

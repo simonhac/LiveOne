@@ -2,7 +2,8 @@
 
 import { Sun } from "lucide-react";
 import Tile from "@/components/Tile";
-import { ROLE_CHROME } from "@/lib/role-chrome";
+import MiniBars from "@/components/ui/mini-bars";
+import { IDLE_CHROME, ROLE_CHROME } from "@/lib/role-chrome";
 import type { LatestPointValues } from "@/lib/types/api";
 import type { TilePlugin, TileRenderProps } from "./types";
 import {
@@ -11,7 +12,11 @@ import {
   getPointValue,
   getMeasurementTime,
 } from "./shared";
+import { pickSolar, useSiteBars } from "./use-site-bars";
 import { SOLAR_TOTAL_PATH } from "@/lib/areas/derived-display-paths";
+
+/** Below this the array is asleep, and the hero greys rather than claiming a yellow 0.0. */
+const GENERATING_W = 50;
 
 /** Solar can be a single total, local+remote children, or one lone child — resolve the shown value. */
 function solarValueFrom(latest: LatestPointValues): {
@@ -44,18 +49,29 @@ function solarValueFrom(latest: LatestPointValues): {
   return { solarValue, solarLocal, solarRemote, showBreakdown };
 }
 
-function SolarTile({ latest, staleThresholdSeconds }: TileRenderProps) {
+/**
+ * Solar — the Activity app's Step Count card: "Now" over the live generation in solar yellow, then
+ * the period's generation as bars (the same series the stacked chart draws, read from its cache).
+ * At night the hero greys and the bars still show the day that was.
+ */
+function SolarTile({
+  latest,
+  systemId,
+  staleThresholdSeconds,
+}: TileRenderProps) {
   const { solarValue, solarLocal, solarRemote, showBreakdown } =
     solarValueFrom(latest);
+  const bars = useSiteBars(systemId, pickSolar);
+  const generating = (solarValue ?? 0) >= GENERATING_W;
   return (
     <Tile
       title="Solar"
+      icon={<Sun />}
+      tone={ROLE_CHROME.solar.value}
+      label="Now"
       value={formatPowerValue(solarValue ?? 0)}
       unit="kW"
-      icon={<Sun className="w-6 h-6" />}
-      iconColor={ROLE_CHROME.solar.icon}
-      bgColor={ROLE_CHROME.solar.tint}
-      borderColor={ROLE_CHROME.solar.border}
+      valueColor={generating ? ROLE_CHROME.solar.value : IDLE_CHROME.value}
       staleThresholdSeconds={staleThresholdSeconds}
       measurementTime={
         getMeasurementTime(latest, "source.solar/power") ||
@@ -63,16 +79,27 @@ function SolarTile({ latest, staleThresholdSeconds }: TileRenderProps) {
         getMeasurementTime(latest, "source.solar.remote/power") ||
         undefined
       }
-      extra={
+      extraInfo={
         showBreakdown ? (
-          <div className="text-xs text-gray-400 space-y-0.5">
+          <>
             {solarLocal !== null && (
-              <div>Local: {formatPowerSmallUnit(solarLocal)}</div>
+              <>Local {formatPowerSmallUnit(solarLocal)}</>
             )}
+            {solarLocal !== null && solarRemote !== null && " · "}
             {solarRemote !== null && (
-              <div>Remote: {formatPowerSmallUnit(solarRemote)}</div>
+              <>Remote {formatPowerSmallUnit(solarRemote)}</>
             )}
-          </div>
+          </>
+        ) : undefined
+      }
+      extra={
+        bars.length > 0 ? (
+          <MiniBars
+            bars={bars}
+            color={ROLE_CHROME.solar.rgb}
+            className="h-10"
+            ariaLabel="Solar generation over the period"
+          />
         ) : undefined
       }
     />

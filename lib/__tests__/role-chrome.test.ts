@@ -3,8 +3,8 @@ import { CHART_COLORS } from "../chart-colors";
 import { IDLE_CHROME, ROLE_CHROME } from "../role-chrome";
 
 /**
- * Enforces the tile↔series rule that `lib/role-chrome.ts` states: a tile's ICON is the exact series
- * colour, its border is that hue at -700, its tint that hue at -900/20.
+ * Enforces the tile↔series rule that `lib/role-chrome.ts` states: a tile's VALUE colour is the exact
+ * series colour, and its `rgb` (what rings and bars are drawn in) is that same colour.
  *
  * A comment used to assert this and it did not hold. Load and Hot Water matched their series exactly;
  * Solar's sun quietly sat on yellow-400 while the solar series was yellow-200, and nothing failed.
@@ -19,44 +19,40 @@ const TAILWIND: Record<string, string> = {
   "text-pink-500": "rgb(236, 72, 153)",
   "text-cyan-400": "rgb(34, 211, 238)",
   "text-violet-400": "rgb(167, 139, 250)",
-  "text-slate-400": "rgb(148, 163, 184)",
-  "text-gray-400": "rgb(156, 163, 175)",
+  "text-red-600": "rgb(220, 38, 38)",
 };
 
-describe("tile icon colour is the exact series colour", () => {
-  it.each([
-    ["solar", CHART_COLORS.solar.primary],
-    ["load", CHART_COLORS.load],
-    ["hotWater", CHART_COLORS.hotWater],
-    ["battery", CHART_COLORS.battery.main],
-    ["grid", CHART_COLORS.grid.main],
-    ["pool", CHART_COLORS.pool],
-    ["hvac", CHART_COLORS.hvac],
-  ] as const)("%s", (role, seriesColour) => {
-    expect(TAILWIND[ROLE_CHROME[role].icon]).toBe(seriesColour);
+const ROLES = [
+  ["solar", CHART_COLORS.solar.primary],
+  ["load", CHART_COLORS.load],
+  ["hotWater", CHART_COLORS.hotWater],
+  ["battery", CHART_COLORS.battery.main],
+  ["grid", CHART_COLORS.grid.main],
+  ["pool", CHART_COLORS.pool],
+  ["hvac", CHART_COLORS.hvac],
+  ["ev", CHART_COLORS.ev],
+] as const;
+
+describe("tile value colour is the exact series colour", () => {
+  it.each(ROLES)("%s", (role, seriesColour) => {
+    expect(TAILWIND[ROLE_CHROME[role].value]).toBe(seriesColour);
+    expect(ROLE_CHROME[role].rgb).toBe(seriesColour);
   });
 
-  it("neutral has no series and is grey", () => {
-    expect(ROLE_CHROME.neutral.icon).toBe("text-slate-400");
+  it("neutral has no series and no colour", () => {
+    expect(ROLE_CHROME.neutral.value).toBe("text-white");
   });
 
-  it("idle is grey — an absence signal, not a direction", () => {
-    expect(TAILWIND[IDLE_CHROME.icon]).toBe(CHART_COLORS.restOfHouse);
+  it("idle is a dimmed white — an absence signal, not a direction", () => {
+    expect(IDLE_CHROME.value).toBe("text-white/40");
   });
 });
 
-describe("border and tint follow the hue of the icon", () => {
-  // Derivation, not decoration: border = <hue>-700, tint = <hue>-900/20. `neutral` and `idle` are the
-  // exceptions — they are chrome for tiles with no role, so they use the generic gray scale.
-  it.each(
-    (
-      ["solar", "load", "hotWater", "battery", "grid", "pool", "hvac"] as const
-    ).map((r) => [r] as const),
-  )("%s", (role) => {
-    const { icon, border, tint } = ROLE_CHROME[role];
-    const hue = icon.replace(/^text-/, "").replace(/-\d+$/, "");
-    expect(border).toBe(`border-${hue}-700`);
-    expect(tint).toBe(`bg-${hue}-900/20`);
+describe("colour is data, never chrome", () => {
+  it("no role carries a border or a background", () => {
+    for (const chrome of [...Object.values(ROLE_CHROME), IDLE_CHROME]) {
+      expect(Object.keys(chrome).sort()).toEqual(["rgb", "value"]);
+    }
   });
 });
 
@@ -65,9 +61,7 @@ describe("class strings stay literal", () => {
     // Interpolation would silently drop the class from the built CSS and the tile would render
     // unstyled. Guard the shape rather than trusting review.
     for (const chrome of [...Object.values(ROLE_CHROME), IDLE_CHROME]) {
-      expect(chrome.icon).toMatch(/^text-[a-z]+-\d+$/);
-      expect(chrome.border).toMatch(/^border-[a-z]+-\d+$/);
-      expect(chrome.tint).toMatch(/^bg-[a-z]+-\d+\/\d+$/);
+      expect(chrome.value).toMatch(/^text-[a-z]+(-\d+)?(\/\d+)?$/);
     }
   });
 });

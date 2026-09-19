@@ -482,78 +482,47 @@
     },
     "leaves": [
       {
-        "component": "Tile",
+        "component": "ProgressRing",
         "props": {
-          "bgColor": "bg-green-900/20",
-          "borderColor": "border-green-700",
-          "extra": {
-            "$element": "div",
-            "$props": {
-              "children": [
-                "Charging",
-                " ",
-                {
-                  "$element": "Value",
-                  "$props": {
-                    "unit": "kW",
-                    "value": "1.5"
-                  }
-                }
-              ],
-              "className": "text-xs text-gray-400"
-            }
-          },
-          "icon": {
+          "children": {
             "$element": "span",
             "$props": {
-              "children": [
-                {
-                  "$element": "Fragment",
-                  "$props": {
-                    "children": [
-                      {
-                        "$element": "span",
-                        "$props": {
-                          "children": {
-                            "$element": "ChevronLeft",
-                            "$props": {
-                              "className": "w-4 h-4"
-                            }
-                          },
-                          "className": "text-green-400 md:hidden"
-                        }
-                      },
-                      {
-                        "$element": "span",
-                        "$props": {
-                          "children": {
-                            "$element": "ChevronRight",
-                            "$props": {
-                              "className": "w-5 h-5"
-                            }
-                          },
-                          "className": "text-green-400 hidden md:block"
-                        }
-                      }
-                    ]
-                  }
-                },
-                {
-                  "$element": "Battery",
-                  "$props": {
-                    "className": "w-6 h-6"
-                  }
+              "children": {
+                "$element": "Value",
+                "$props": {
+                  "unit": "%",
+                  "value": "73"
                 }
-              ],
-              "className": "inline-flex items-center h-6 flex-row-reverse md:flex-row"
+              },
+              "className": "text-[17px] font-bold leading-none text-white @[200px]:text-[22px]"
             }
           },
-          "iconColor": "text-green-400",
-          "measurementTime": "<Date 2026-07-30T04:05:00.000Z>",
-          "staleThresholdSeconds": 60,
-          "title": "Battery",
-          "unit": "%",
-          "value": "72.5"
+          "className": "h-[76px] w-[76px] @[200px]:h-[92px] @[200px]:w-[92px] opacity-55",
+          "color": "rgb(74, 222, 128)",
+          "fraction": 0.725,
+          "gradientTo": "rgb(134, 239, 172)"
+        }
+      },
+      {
+        "component": "TrendRow",
+        "props": {
+          "chip": {
+            "$element": "DirectionChip",
+            "$props": {
+              "color": "rgb(74, 222, 128)",
+              "direction": "down",
+              "double": false
+            }
+          },
+          "label": "Charging",
+          "value": {
+            "$element": "Value",
+            "$props": {
+              "unit": "kW",
+              "value": "1.5"
+            }
+          },
+          "valueColor": "text-green-400"
         }
       }
     ]
@@ -570,78 +539,47 @@
     },
     "leaves": [
       {
-        "component": "Tile",
+        "component": "ProgressRing",
         "props": {
-          "bgColor": "bg-green-900/20",
-          "borderColor": "border-green-700",
-          "extra": {
-            "$element": "div",
-            "$props": {
-              "children": [
-                "Charging",
-                " ",
-                {
-                  "$element": "Value",
-                  "$props": {
-                    "unit": "kW",
-                    "value": "1.5"
-                  }
-                }
-              ],
-              "className": "text-xs text-gray-400"
-            }
-          },
-          "icon": {
+          "children": {
             "$element": "span",
             "$props": {
-              "children": [
-                {
-                  "$element": "Fragment",
-                  "$props": {
-                    "children": [
-                      {
-                        "$element": "span",
-                        "$props": {
-                          "children": {
-                            "$element": "ChevronLeft",
-                            "$props": {
-                              "className": "w-4 h-4"
-                            }
-                          },
-                          "className": "text-green-400 md:hidden"
-                        }
-                      },
-                      {
-                        "$element": "span",
-                        "$props": {
-                          "children": {
-                            "$element": "ChevronRight",
-                            "$props": {
-                              "className": "w-5 h-5"
-                            }
-                          },
-                          "className": "text-green-400 hidden md:block"
-                        }
-                      }
-                    ]
-                  }
-                },
-                {
-                  "$element": "Battery",
-                  "$props": {
-                    "className": "w-6 h-6"
-                  }
+              "children": {
+                "$element": "Value",
+                "$props": {
+                  "unit": "%",
+                  "value": "73"
                 }
-              ],
-              "className": "inline-flex items-center h-6 flex-row-reverse md:flex-row"
+              },
+              "className": "text-[17px] font-bold leading-none text-white @[200px]:text-[22px]"
             }
           },
-          "iconColor": "text-green-400",
-          "measurementTime": "<Date 2026-07-30T04:05:00.000Z>",
-          "staleThresholdSeconds": 30,
-          "title": "Battery",
-          "unit": "%",
-          "value": "72.5"
+          "className": "h-[76px] w-[76px] @[200px]:h-[92px] @[200px]:w-[92px] opacity-55",
+          "color": "rgb(74, 222, 128)",
+          "fraction": 0.725,
+          "gradientTo": "rgb(134, 239, 172)"
+        }
+      },
+      {
+        "component": "TrendRow",
+        "props": {
+          "chip": {
+            "$element": "DirectionChip",
+            "$props": {
+              "color": "rgb(74, 222, 128)",
+              "direction": "down",
+              "double": false
+            }
+          },
+          "label": "Charging",
+          "value": {
+            "$element": "Value",
+            "$props": {
+              "unit": "kW",
+              "value": "1.5"
+            }
+          },
+          "valueColor": "text-green-400"
         }
       }
     ]
@@ -682,27 +620,21 @@
       {
         "component": "Tile",
         "props": {
-          "bgColor": "bg-gray-900/20",
-          "borderColor": "border-gray-700",
-          "extra": {
-            "$element": "div",
+          "accessory": {
+            "$element": "Fragment",
             "$props": {
-              "children": [false, false, null],
-              "className": "grid grid-cols-[auto_1fr_auto] gap-x-1.5 text-[10px] md:text-xs text-gray-400 tabular-nums"
+              "children": [null, false]
             }
           },
           "extraInfo": "Ready to start",
           "icon": {
-            "$element": "Gauge",
-            "$props": {
-              "className": "w-6 h-6"
-            }
+            "$element": "Gauge"
           },
-          "iconColor": "text-gray-400",
           "measurementTime": "<Date 2026-07-30T04:05:00.000Z>",
           "staleThresholdSeconds": 60,
           "title": "Generator",
-          "value": "Auto"
+          "value": "Auto",
+          "valueColor": "text-white/40"
         }
       }
     ]
@@ -724,6 +656,7 @@
           "faucetC": 58,
           "heating": true,
           "measurementTime": "<Date 2026-07-30T04:05:00.000Z>",
+          "sparkTicks": [],
           "sparkValues": [],
           "staleThresholdSeconds": 60
         }
@@ -744,60 +677,26 @@
       {
         "component": "Tile",
         "props": {
-          "bgColor": "bg-pink-900/20",
-          "borderColor": "border-pink-700",
-          "extraInfo": "Importing",
-          "icon": {
-            "$element": "span",
+          "accessory": {
+            "$element": "DirectionChip",
             "$props": {
-              "children": [
-                {
-                  "$element": "Fragment",
-                  "$props": {
-                    "children": [
-                      {
-                        "$element": "span",
-                        "$props": {
-                          "children": {
-                            "$element": "ChevronRight",
-                            "$props": {
-                              "className": "w-4 h-4"
-                            }
-                          },
-                          "className": "text-pink-500 md:hidden"
-                        }
-                      },
-                      {
-                        "$element": "span",
-                        "$props": {
-                          "children": {
-                            "$element": "ChevronLeft",
-                            "$props": {
-                              "className": "w-5 h-5"
-                            }
-                          },
-                          "className": "text-pink-500 hidden md:block"
-                        }
-                      }
-                    ]
-                  }
-                },
-                {
-                  "$element": "Zap",
-                  "$props": {
-                    "className": "w-6 h-6"
-                  }
-                }
-              ],
-              "className": "inline-flex items-center h-6 flex-row-reverse md:flex-row"
+              "color": "rgb(236, 72, 153)",
+              "direction": "down",
+              "double": false,
+              "label": "Importing"
             }
           },
-          "iconColor": "text-pink-500",
+          "icon": {
+            "$element": "Zap"
+          },
+          "label": "Importing",
           "measurementTime": "<Date 2026-07-30T04:05:00.000Z>",
           "staleThresholdSeconds": 60,
           "title": "Grid",
+          "tone": "text-pink-500",
           "unit": "kW",
-          "value": "0.8"
+          "value": "0.8",
+          "valueColor": "text-pink-500"
         }
       }
     ]
@@ -816,45 +715,65 @@
       {
         "component": "Tile",
         "props": {
-          "bgColor": "bg-blue-900/20",
-          "borderColor": "border-blue-700",
           "extra": {
-            "$element": "div",
+            "$element": "Fragment",
             "$props": {
               "children": [
                 {
                   "$element": "div",
-                  "$key": "load.hws/power",
                   "$props": {
                     "children": [
-                      "HWS",
-                      ": ",
                       {
-                        "$element": "Value",
+                        "$element": "div",
+                        "$key": "load.hws/power",
                         "$props": {
-                          "unit": "kW",
-                          "value": "3.6"
+                          "children": [
+                            {
+                              "$element": "span",
+                              "$props": {
+                                "children": "HWS",
+                                "className": "truncate text-[13px] leading-tight text-white"
+                              }
+                            },
+                            {
+                              "$element": "span",
+                              "$props": {
+                                "children": {
+                                  "$element": "Value",
+                                  "$props": {
+                                    "unit": "kW",
+                                    "value": "3.6"
+                                  }
+                                },
+                                "className": "whitespace-nowrap text-[13px] font-bold tabular-nums",
+                                "style": {
+                                  "color": "rgb(251, 146, 60)"
+                                }
+                              }
+                            }
+                          ],
+                          "className": "flex items-baseline justify-between gap-2"
                         }
                       }
-                    ]
+                    ],
+                    "className": "space-y-0.5"
                   }
-                }
-              ],
-              "className": "text-xs text-gray-400 space-y-0.5"
+                },
+                false
+              ]
             }
           },
           "icon": {
-            "$element": "House",
-            "$props": {
-              "className": "w-6 h-6"
-            }
+            "$element": "House"
           },
-          "iconColor": "text-blue-400",
+          "label": "Now",
           "measurementTime": "<Date 2026-07-30T04:05:00.000Z>",
           "staleThresholdSeconds": 60,
           "title": "Load",
+          "tone": "text-blue-400",
           "unit": "kW",
-          "value": "3.5"
+          "value": "3.5",
+          "valueColor": "text-blue-400"
         }
       }
     ]
@@ -933,17 +852,15 @@
       {
         "component": "Tile",
         "props": {
-          "bgColor": "bg-yellow-900/20",
-          "borderColor": "border-yellow-700",
-          "extra": {
-            "$element": "div",
+          "extraInfo": {
+            "$element": "Fragment",
             "$props": {
               "children": [
                 {
-                  "$element": "div",
+                  "$element": "Fragment",
                   "$props": {
                     "children": [
-                      "Local: ",
+                      "Local ",
                       {
                         "$element": "Value",
                         "$props": {
@@ -954,11 +871,12 @@
                     ]
                   }
                 },
+                " · ",
                 {
-                  "$element": "div",
+                  "$element": "Fragment",
                   "$props": {
                     "children": [
-                      "Remote: ",
+                      "Remote ",
                       {
                         "$element": "Value",
                         "$props": {
@@ -969,22 +887,20 @@
                     ]
                   }
                 }
-              ],
-              "className": "text-xs text-gray-400 space-y-0.5"
+              ]
             }
           },
           "icon": {
-            "$element": "Sun",
-            "$props": {
-              "className": "w-6 h-6"
-            }
+            "$element": "Sun"
           },
-          "iconColor": "text-yellow-200",
+          "label": "Now",
           "measurementTime": "<Date 2026-07-30T04:05:00.000Z>",
           "staleThresholdSeconds": 60,
           "title": "Solar",
+          "tone": "text-yellow-200",
           "unit": "kW",
-          "value": "4.2"
+          "value": "4.2",
+          "valueColor": "text-yellow-200"
         }
       }
     ]
