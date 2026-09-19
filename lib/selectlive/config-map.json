@@ -8349,6 +8349,258 @@
       "minVersion": 29
     }
   ],
+  "enums": {
+    "AccPortSetting": {
+      "0": "External (DB9)",
+      "1": "Internal (RJ45)"
+    },
+    "AdvancedMultiplePhasePhaseSetting": {
+      "0": "Disabled",
+      "1": "L1 (0\u00b0)",
+      "2": "L2 (120\u00b0)",
+      "3": "L3 (240\u00b0)",
+      "4": "Split (180\u00b0)",
+      "5": "L1 Worker 1",
+      "6": "L2 Worker 1",
+      "7": "L3 Worker 1",
+      "8": "Split Worker 1",
+      "9": "L1 Worker 2",
+      "10": "L2 Worker 2",
+      "11": "L3 Worker 2",
+      "12": "Split Worker 2",
+      "13": "L1 Worker 3",
+      "14": "L2 Worker 3",
+      "15": "L3 Worker 3",
+      "16": "Split Worker 3"
+    },
+    "AdvancedMultiplePhaseStructureSetting": {
+      "0": "Disabled",
+      "1": "Multi Single Phase",
+      "2": "Two Phase (120\u00b0)",
+      "3": "Three Phase",
+      "4": "Three Phase + Split",
+      "5": "Split Phase (180\u00b0)"
+    },
+    "AlarmTypeSetting": {
+      "0": "Alert",
+      "1": "Shutdown",
+      "2": "Alert + Shutdown"
+    },
+    "AnalogueInputSelectionSetting": {
+      "0": "None",
+      "1": "Analogue Input 1",
+      "2": "Analogue Input 2"
+    },
+    "AppTypeSetting": {
+      "0": "Off Grid",
+      "1": "Mobile",
+      "2": "Solar Hybrid (On Grid)",
+      "3": "Solar Hybrid (AS4777.2:2020)"
+    },
+    "BatteryTypeSetting": {
+      "0": "Lead Acid Sealed",
+      "1": "Lead Acid Flooded",
+      "2": "Lithium LiFePO4",
+      "3": "Custom",
+      "4": "BMS - LG Energy Solutions",
+      "5": "BMS - BYD",
+      "6": "BMS - Sonnenschein",
+      "7": "BMS - RedFlow ZBM2",
+      "8": "BMS - Pylontech",
+      "9": "Lithium genZ",
+      "10": "Lithium PowerPlus",
+      "11": "BMS - Cegasa 48V",
+      "12": "BMS - Cegasa/SelectCell 144V",
+      "13": "BMS - Ecoult",
+      "14": "BMS - Murata",
+      "15": "BMS - ZYC",
+      "16": "BMS - Dyness",
+      "17": "BMS - Discover",
+      "18": "BMS - SelectCell River Gum",
+      "19": "BMS - AERL",
+      "20": "BMS - XESS"
+    },
+    "BaudRateSetting": {
+      "0": "1200",
+      "1": "2400",
+      "2": "4800",
+      "3": "9600",
+      "4": "19200",
+      "5": "38400",
+      "6": "57600",
+      "7": "115200",
+      "8": "128000",
+      "9": "230400",
+      "10": "Auto"
+    },
+    "BeepControlSetting": {
+      "0": "Disabled",
+      "1": "Enabled",
+      "2": "Locked Out"
+    },
+    "ChargerLockoutSetting": {
+      "0": "Charging On",
+      "1": "Renewable Only",
+      "2": "Charging Off"
+    },
+    "ChargerOverrideACSourceLimitSetting": {
+      "0": "Grid Input Limit",
+      "1": "AC Source Power"
+    },
+    "ControlStateSetting": {
+      "0": "Follow",
+      "1": "Opposite"
+    },
+    "DataLogIntervalSetting": {
+      "1": "1 min",
+      "5": "5 min",
+      "10": "10 min",
+      "15": "15 min",
+      "30": "30 min"
+    },
+    "DigitalInputSelectionSetting": {
+      "0": "None",
+      "1": "Digital Control Input 1",
+      "2": "Digital Control Input 2",
+      "3": "Digital Control Input 3",
+      "4": "Digital Control Input 4",
+      "5": "Follow Backup Select"
+    },
+    "EdgeSelectionSetting": {
+      "0": "Rising",
+      "1": "Falling",
+      "2": "Both"
+    },
+    "ExportImportSetting": {
+      "0": "Export",
+      "1": "Import"
+    },
+    "FrequencySetting": {
+      "0": "50 Hz",
+      "1": "60 Hz"
+    },
+    "GeneratorAvailableSetting": {
+      "0": "Assume Always",
+      "1": "Follow Input",
+      "2": "Follow Grid"
+    },
+    "GenericAcCouplingSetting": {
+      "0": "Disabled",
+      "1": "Enabled",
+      "2": "Microgrid"
+    },
+    "LevelSelectionSetting": {
+      "0": "Active High",
+      "1": "Active Low"
+    },
+    "ModbusPortSetting": {
+      "0": "Disabled",
+      "1": "9600 8bit Even 1stop",
+      "2": "9600 8bit None 1stop",
+      "3": "9600 8bit None 2stop",
+      "4": "19200 8bit Even 1stop",
+      "5": "19200 8bit None 1stop",
+      "6": "19200 8bit None 2stop",
+      "7": "57600 8bit Even 1stop",
+      "8": "57600 8bit None 1stop",
+      "9": "57600 8bit None 2stop",
+      "10": "115200 8bit Even 1stop",
+      "11": "115200 8bit None 1stop",
+      "12": "115200 8bit None 2stop"
+    },
+    "ModeSetting": {
+      "0": "Idle",
+      "1": "Econo",
+      "2": "On"
+    },
+    "MultiplePhaseSetting": {
+      "0": "Disabled",
+      "1": "L1-Primary",
+      "2": "L2-Secondary",
+      "3": "L3-Secondary",
+      "4": "Split Phase-Secondary"
+    },
+    "OutputSelectionSetting": {
+      "0": "None",
+      "1": "Digital Control Output 1",
+      "2": "Digital Control Output 2",
+      "3": "Digital Control Output 3",
+      "4": "Relay Output 1",
+      "5": "Relay Output 2",
+      "6": "Relay Output 3",
+      "7": "Relay Output 4"
+    },
+    "ParallelSetting": {
+      "0": "Disabled",
+      "1": "Master",
+      "2": "Slave L1",
+      "3": "Slave L2",
+      "4": "Slave L3",
+      "5": "Slave Split Phase"
+    },
+    "PeriodicEqualiseSetting": {
+      "0": "Disabled",
+      "1": "Charge to Equalise",
+      "2": "Charge to Float"
+    },
+    "PortSetting": {
+      "0": "Disabled",
+      "1": "RS232 Port 1 Powador",
+      "2": "RS232 Port 2 Powador",
+      "3": "RS485 Port 1 Powador",
+      "5": "External Comms",
+      "7": "ABB / FIMER",
+      "9": "SelectSun",
+      "10": "Fronius SnapIN Symo",
+      "11": "Fronius GEN24 Primo",
+      "12": "Fronius GEN24 Symo",
+      "13": "Fronius Verto"
+    },
+    "PowerFactorModeSetting": {
+      "0": "Fixed AC Inverter p.f.",
+      "1": "Fixed AC Source p.f.",
+      "2": "Fixed Vars"
+    },
+    "ScheduleSetting": {
+      "0": "All",
+      "1": "Monday",
+      "2": "Tuesday",
+      "3": "Wednesday",
+      "4": "Thursday",
+      "5": "Friday",
+      "6": "Saturday",
+      "7": "Sunday",
+      "8": "Monday to Friday",
+      "9": "Saturday to Sunday"
+    },
+    "ShuntNameSetting": {
+      "0": "None",
+      "1": "Solar",
+      "2": "Wind",
+      "3": "Hydro",
+      "4": "Charger",
+      "5": "Load",
+      "6": "Dual",
+      "7": "Multiple SP PROs",
+      "8": "Log Only",
+      "9": "System SoC",
+      "10": "Direct SoC Input"
+    },
+    "SoftBatterySetting": {
+      "0": "Disabled",
+      "1": "Softness 1",
+      "2": "Softness 2",
+      "3": "Softness 3",
+      "4": "Softness 4",
+      "5": "Softness 5",
+      "6": "Softness 6"
+    },
+    "ThreePhaseAcSourceBalancedSetting": {
+      "0": "Disabled",
+      "1": "Balanced within 10%",
+      "2": "Balanced within 5%"
+    }
+  },
   "factoryDefaults": {
     "BatterySettingDefaults": {
       "LowDcShutDown0PercentLoad": [

@@ -81,6 +81,10 @@ const CURATED = new Set([
   "AbsorbMaxTime",
   "FloatV",
   "FloatI",
+  // What the battery IS — the setting every voltage above is only interpretable against.
+  "BatteryType",
+  "ApplicationType",
+  "PeriodicEqualise",
   // Battery limits and protection.
   "LowDcShutDown0PercentLoad",
   "LowDcShutDown100PercentLoad",
@@ -94,6 +98,16 @@ const CURATED = new Set([
   "GeneratorControl",
   "GeneratorAvailable",
   "LowSoCToStartGen",
+  "LowSoCToStartGenStartSoC",
+  "LowSoCToStartGenStopSoC",
+  "LowBatteryToStartGenNoLoad",
+  "LowBatteryToStartGenFullLoad",
+  "5MinAveBatteryPowerToStartGen",
+  "15MinAveBatteryPowerToStartGen",
+  "5MinuteAverageBatteryToStartGenerator",
+  "15MinuteAverageBatteryToStartGenerator",
+  "GeneratorMinimumRunTime",
+  "GeneratorCoolDown",
   "BattMidPointStartGenerator",
   // Measurement context for stored readings.
   "Shunt1Name",

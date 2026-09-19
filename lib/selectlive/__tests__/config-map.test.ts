@@ -8,8 +8,10 @@
  */
 import labels from "../event-labels.json";
 import {
+  CONFIG_ENUMS,
   CONFIG_BLOCKS,
   CONFIG_SETTINGS,
+  enumLabel,
   COMMON_MERGED_WORDS,
   COMMON_PART1_WORDS,
   blockWords,
@@ -146,6 +148,35 @@ describe("settings", () => {
       if (setting.maxVersion !== undefined)
         expect(setting.maxVersion).toBeGreaterThanOrEqual(setting.minVersion);
     }
+  });
+
+  it("carries enum tables that name distinct things", () => {
+    // 🛑 A generic switch reader can fabricate a plausible table. `RegionSetting` builds its
+    // label from a helper and a text box, and the switch found in it yielded
+    // `{0: " ", 1: "20 %", 2: "0 %", 3: "20 %", 4: "20 %"}` — a real enum does not repeat one
+    // label across most of its codes.
+    expect(Object.keys(CONFIG_ENUMS).length).toBeGreaterThan(25);
+    for (const [converter, table] of Object.entries(CONFIG_ENUMS)) {
+      const labels = Object.values(table);
+      expect(labels.length).toBeGreaterThan(1);
+      expect(`${converter}: ${new Set(labels).size * 2 >= labels.length}`).toBe(
+        `${converter}: true`,
+      );
+      for (const label of labels) expect(label.trim()).not.toBe("");
+    }
+    expect(CONFIG_ENUMS.RegionSetting).toBeUndefined();
+  });
+
+  it("names the codes this inverter actually reports", () => {
+    expect(enumLabel("BatteryTypeSetting", 2)).toBe("Lithium LiFePO4");
+    expect(enumLabel("ShuntNameSetting", 1)).toBe("Solar");
+    expect(enumLabel("ShuntNameSetting", 0)).toBe("None");
+    expect(enumLabel("GeneratorAvailableSetting", 0)).toBe("Assume Always");
+  });
+
+  it("refuses to invent a label for a code the vendor has no entry for", () => {
+    expect(enumLabel("BatteryTypeSetting", 99)).toBe("UNDECODED(99)");
+    expect(enumLabel("NoSuchConverter", 0)).toBe("UNDECODED(0)");
   });
 
   it("holds no credential material", () => {

@@ -252,11 +252,22 @@ large; `--all` prints everything, `--raw` adds the raw words.
 ### What is not decoded, and why
 
 A setting whose conversion has not been traced is reported with its raw word and an explicit
-status, never a guess. About 32% of settings are in that state, because roughly 35 of the
-vendor's converters are enums that each need their own extracted code-to-string table, and a
-bulk-derived label is a confident wrong fact in a capture somebody reads a year later. The
-implemented conversions are the arithmetic families, the time-of-day forms, the enabled/disabled
-flag, and the logging interval — which covers every charge setting.
+status, never a guess.
+
+The combo-box settings are named from **32 code-to-label tables extracted from the assembly**,
+the same way and from the same build as `event-labels.json` — so `BatteryType` reads
+"Lithium LiFePO4" rather than the integer 2. They are generated, not transcribed: 32 tables of
+up to 24 entries each is exactly the kind of thing copied wrongly once and then believed.
+
+🛑 A generic switch reader can fabricate a **plausible but entirely false** table. `RegionSetting`
+builds its label from a helper and a text box, and the switch found inside it yielded
+`{0: " ", 1: "20 %", 2: "0 %", 3: "20 %", 4: "20 %"}`. It is excluded by name in the extractor,
+and a duplicate-heavy table is now rejected rather than emitted, because a real enum names
+distinct things. `config-map.test.ts` asserts that property over every table.
+
+Three converters remain deliberately unimplemented: `InputPowerSetting` (one word carries both a
+value and its unit selector), `DayMonthSetting` (day and month share a word for schedule dates
+but not for the year-to-date rollover), and `RegionSetting` above.
 
 A further quarter of the map is multi-phase: the same word index repeated for phases 1–3. A
 single inverter answers for phase 0 only, so those rows carry `phase_not_read` and **no raw
@@ -299,8 +310,9 @@ Two are called out in the map as deliberately deferred:
 **Configuration, live-verified 2026-09-19** against inverter 221452 (SPMC482, firmware 12.25,
 configuration version 39). All five blocks served over the tunnel — 593 words, including the
 197-word read, which is longer than anything else this client sends. Two reads compared equal.
-312 of 749 settings decoded. The remaining 437 break down as 238 awaiting a converter, 186
-multi-phase slots a single inverter never answers for, and 13 that postdate version 39.
+480 of 749 settings decoded. The remainder is mostly the 186 multi-phase slots a single
+inverter never answers for, plus a small number awaiting a converter and 13 that postdate
+version 39.
 
 The anchor held end to end: `read --address 0xc036` returned 15 and `history info` independently
 reported a 15-minute interval. Decoded values are self-consistent — `InitialChargeV`,

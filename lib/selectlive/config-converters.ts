@@ -1,3 +1,5 @@
+import { enumConverterNames, enumLabel } from "./config-map";
+
 /**
  * Conversions from a stored configuration word to a value a person can read.
  *
@@ -78,7 +80,7 @@ const MINUTES_PER_DAY = 1440;
 const timeOfDay = (raw: number): string =>
   raw < MINUTES_PER_DAY ? clockTime(raw) : `UNDECODED(${raw})`;
 
-export const CONVERTERS: Record<string, Converter> = {
+const ARITHMETIC: Record<string, Converter> = {
   // --- Plain arithmetic -----------------------------------------------------------------
   NumericalSetting: { words: 1, decode: ([raw]) => raw },
   // Identical to NumericalSetting; the vendor's extra flag only resizes the widget.
@@ -139,12 +141,57 @@ export const CONVERTERS: Record<string, Converter> = {
     decode: ([raw]) =>
       raw === 0 ? "Disabled" : raw === 1 ? "Enabled" : `UNDECODED(${raw})`,
   },
+
+  /**
+   * The vendor's own table is `{1: "1 min", ... 15: "15 min"}`. The number is more use to a
+   * consumer comparing two snapshots, and carries the unit separately.
+   */
   DataLogIntervalSetting: {
     words: 1,
     unit: "min",
     decode: ([raw]) =>
       [1, 5, 10, 15, 30].includes(raw) ? raw : `UNDECODED(${raw})`,
   },
+
+  /**
+   * Two words, low then high, as a power threshold in kW.
+   *
+   * 🛑 A high word of 0xffff is ZEROED by the vendor before the two are combined — it is a
+   * marker, not a disable. Reading it as "disabled" turns this inverter's 6.00 kW
+   * generator-start threshold into "no threshold", which is the opposite of what it does.
+   */
+  AverageBatteryToStartGeneratorSetting: {
+    words: 2,
+    unit: "kW",
+    decode: ([low, high]) =>
+      realRound(((high === 0xffff ? 0 : high) << 16) | low, 1000, 2),
+  },
+};
+
+/**
+ * The combo-box converters, built from the extracted tables.
+ *
+ * These are generated rather than transcribed: 33 tables of up to 24 entries each is precisely
+ * the kind of thing that is copied wrongly once and then believed for a year.
+ */
+const ENUMS: Record<string, Converter> = Object.fromEntries(
+  enumConverterNames().map((converter) => [
+    converter,
+    {
+      words: 1,
+      decode: ([raw]: number[]): string => enumLabel(converter, raw),
+    } satisfies Converter,
+  ]),
+);
+
+/**
+ * 🛑 A specifically traced converter beats a generic table. `DataLogIntervalSetting` has both:
+ * the vendor's own labels ("15 min") and the arithmetic form here, which yields the number 15
+ * with a unit. The number is what a consumer of a snapshot can compare, so it wins.
+ */
+export const CONVERTERS: Record<string, Converter> = {
+  ...ENUMS,
+  ...ARITHMETIC,
 };
 
 /**
@@ -155,44 +202,13 @@ export const CONVERTERS: Record<string, Converter> = {
  * not a silent `converter_not_implemented` in every future manifest.
  */
 export const KNOWN_UNIMPLEMENTED = new Set([
-  "AccPortSetting",
-  "AdvancedMultiplePhasePhaseSetting",
-  "AdvancedMultiplePhaseStructureSetting",
-  "AlarmTypeSetting",
-  "AnalogueInputSelectionSetting",
-  "AppTypeSetting",
-  "AverageBatteryToStartGeneratorSetting",
-  "BatteryTypeSetting",
-  "BaudRateSetting",
-  "BeepControlSetting",
-  "ChargerLockoutSetting",
-  "ChargerOverrideACSourceLimitSetting",
-  "ControlStateSetting",
   // Day and month share one word for schedule dates but occupy two for the year-to-date
   // rollover. The packing of the single-word form is not traced, and a half-right date is
   // worse than none.
   "DayMonthSetting",
-  "DigitalInputSelectionSetting",
-  "EdgeSelectionSetting",
-  "ExportImportSetting",
-  "FrequencySetting",
-  "GeneratorAvailableSetting",
-  "GenericAcCouplingSetting",
   // One word carries both a value and its unit selector, and the same raw number means
   // `raw / 100` kW or `raw * 10 / 240` A. The encoding of the selector is not traced.
   "InputPowerSetting",
-  "LevelSelectionSetting",
-  "ModbusPortSetting",
-  "ModeSetting",
-  "MultiplePhaseSetting",
-  "OutputSelectionSetting",
-  "ParallelSetting",
-  "PeriodicEqualiseSetting",
-  "PortSetting",
-  "PowerFactorModeSetting",
+  // The vendor builds this label from a region code plus a text box rather than selecting it.
   "RegionSetting",
-  "ScheduleSetting",
-  "ShuntNameSetting",
-  "SoftBatterySetting",
-  "ThreePhaseAcSourceBalancedSetting",
 ]);
