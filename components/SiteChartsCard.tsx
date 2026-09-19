@@ -117,7 +117,7 @@ const DAY_MS = 24 * 60 * 60_000;
  * components/dashboard/cards/footprints.ts, which is what the HOST reserves for this whole block.
  */
 const SANKEY_W = 600;
-const SANKEY_H = 680;
+const SANKEY_H = 640;
 
 /**
  * The sankey block's stand-in: the same wrapper, the same header row, a box of the same SVG size,
@@ -126,9 +126,14 @@ const SANKEY_H = 680;
  * (`FlowsSettingsMenu` is omitted: it needs the capabilities that only arrive with the data, and its
  * button sits inside the fixed-height header row either way.)
  */
-function SankeyBlockPlaceholder() {
+function SankeyBlockPlaceholder({ anchor }: { anchor: string }) {
   return (
-    <div className={CHART_BODY_PAD} data-skeleton="" aria-hidden>
+    <div
+      className={CHART_BODY_PAD}
+      data-skeleton=""
+      data-scroll-anchor={anchor}
+      aria-hidden
+    >
       <div className="mb-2 flex items-center justify-between px-2 sm:px-0">
         <h3 className="text-base font-semibold text-gray-300">Flows</h3>
       </div>
@@ -1024,7 +1029,10 @@ export default function SiteChartsCard({
         >
           {/* Loads Chart with Table */}
           {cardVisible("chart:load") && (
-            <div className={CHART_BODY_PAD}>
+            <div
+              className={CHART_BODY_PAD}
+              data-scroll-anchor={`${systemId}:chart:load`}
+            >
               <div className="flex flex-col md:flex-row md:gap-4">
                 <div className="flex-1 min-w-0">
                   <StackedChart
@@ -1069,7 +1077,10 @@ export default function SiteChartsCard({
 
           {/* Generation Chart with Table */}
           {cardVisible("chart:generation") && (
-            <div className={CHART_BODY_PAD}>
+            <div
+              className={CHART_BODY_PAD}
+              data-scroll-anchor={`${systemId}:chart:generation`}
+            >
               <div className="flex flex-col md:flex-row md:gap-4">
                 <div className="flex-1 min-w-0">
                   <StackedChart
@@ -1119,14 +1130,16 @@ export default function SiteChartsCard({
           {/* Energy Flow Sankey Diagram.
               🛑 The visibility gate is `cardVisible("sankey")` ALONE. It used to also require the
               processed history, which meant the largest single element on a dashboard — a 680px SVG
-              plus its header and label, 764px of block — materialised out of zero reserved space
+              (640px since 2026-09) plus its header and label, 764px of block (now 724px) — materialised out of zero reserved space
               once `/api/history` landed, shoving everything below it down. (Measured on Kinkora
               2026-08-01: the site-charts block went 806px → 1570px mid-load.) The data check now
               chooses between the sankey and a same-sized placeholder instead of between the sankey
               and nothing. */}
           {cardVisible("sankey") &&
             (!processedHistoryData.generation ||
-              !processedHistoryData.load) && <SankeyBlockPlaceholder />}
+              !processedHistoryData.load) && (
+              <SankeyBlockPlaceholder anchor={`${systemId}:sankey`} />
+            )}
           {cardVisible("sankey") &&
             processedHistoryData.generation &&
             processedHistoryData.load &&
@@ -1462,7 +1475,10 @@ export default function SiteChartsCard({
               };
 
               return (
-                <div className={CHART_BODY_PAD}>
+                <div
+                  className={CHART_BODY_PAD}
+                  data-scroll-anchor={`${systemId}:sankey`}
+                >
                   <div className="mb-2 flex items-center justify-between px-2 sm:px-0">
                     <h3 className="text-base font-semibold text-gray-300">
                       Flows

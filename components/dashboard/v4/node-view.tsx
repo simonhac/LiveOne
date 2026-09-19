@@ -326,6 +326,9 @@ function GroupNodeView({
   areasResolved: boolean;
 }) {
   const nodeContext = childContext(node, context);
+  // Prefix for this group's children's scroll-anchor keys; siblings sharing a key (two sections'
+  // `site-charts`) are told apart by the hold's same-key index anyway.
+  const anchorScope = node.id ?? "g";
   const area: ResolvedArea | null = nodeContext.area
     ? resolver.area(nodeContext.area)
     : null;
@@ -396,7 +399,7 @@ function GroupNodeView({
         selfSurfaced.push(false);
         // The block's height is additive in the very keys the collapse pass just gathered, so the
         // reservation is exact rather than approximate — and it must NOT collapse once areas
-        // resolve. This is the single biggest thing on a dashboard (Kinkora: 1570px).
+        // resolve. This is the single biggest thing on a dashboard (Kinkora: 1530px).
         return handle != null ? (
           <SiteChartsGroup
             key="site-charts"
@@ -431,7 +434,22 @@ function GroupNodeView({
         />
       );
     })
-    .filter((n) => n !== null);
+    .filter((n) => n !== null)
+    // Scroll anchors for lib/charts/scroll-hold.ts — column children only. A row's children are
+    // grid items (a wrapper would become the grid item and break `h-full` tiles), and the row as a
+    // whole is already an anchor in its parent column.
+    .map((el, i) =>
+      node.direction === "row" ? (
+        el
+      ) : (
+        <div
+          key={(el as React.ReactElement).key ?? i}
+          data-scroll-anchor={`${anchorScope}/${String((el as React.ReactElement).key ?? i)}`}
+        >
+          {el}
+        </div>
+      ),
+    );
 
   // A `row` group is a GRID of equal columns, not a flex row: flex items size to max-content, which
   // leaves tiles ragged and collapses the ones that size themselves from their own `@container`

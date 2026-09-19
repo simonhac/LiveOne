@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
@@ -23,6 +23,7 @@ import {
 } from "@/lib/dashboard/temporal-cards";
 import { HeaderTemporalNav } from "@/components/dashboard/HeaderTemporalNav";
 import { ChartFocusProvider } from "@/lib/charts/ChartFocusContext";
+import { useHideOnScroll } from "@/lib/dashboard/useHideOnScroll";
 import type { ReadableArea } from "@/lib/areas/list";
 import type { ReadableDevice } from "@/lib/devices/list";
 import type { ResolvedDevice } from "@/lib/dashboard/resolve-shell";
@@ -99,6 +100,11 @@ export default function DashboardClient({
   const [addAreaOpen, setAddAreaOpen] = useState(false);
   const [createAreaOpen, setCreateAreaOpen] = useState(false);
   const [switcherOpen, setSwitcherOpen] = useState(false);
+  const [actionsOpen, setActionsOpen] = useState(false);
+  // The header slides away while scrolling down and returns on any scroll up — on a phone its two
+  // rows otherwise permanently eat the screen. Held shown while a menu hanging off it is open.
+  const headerRef = useRef<HTMLElement>(null);
+  const headerHidden = useHideOnScroll(headerRef, switcherOpen || actionsOpen);
 
   // Warm the switcher's dashboards + default so the dropdown paints fully on first open (no jump).
   // The switcher is only shown to a real authed owner (not the read-only shared view).
@@ -160,7 +166,11 @@ export default function DashboardClient({
   return (
     <ChartFocusProvider>
       <div className="min-h-screen bg-black">
-        <header className="sticky top-0 z-30 border-b border-white/10 bg-black/80 px-4 py-3 backdrop-blur">
+        {/* A transform, not a layout change: hiding moves nothing beneath it. */}
+        <header
+          ref={headerRef}
+          className={`sticky top-0 z-30 border-b border-white/10 bg-black/80 px-4 py-3 backdrop-blur transition-transform duration-200 motion-reduce:transition-none ${headerHidden ? "-translate-y-full" : ""}`}
+        >
           <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-3">
             <div className="relative min-w-0">
               {sharedAreas ? (
@@ -205,7 +215,7 @@ export default function DashboardClient({
                 </div>
               )}
               {canEdit && (
-                <DropdownMenu.Root>
+                <DropdownMenu.Root onOpenChange={setActionsOpen}>
                   <DropdownMenu.Trigger asChild>
                     <button
                       type="button"

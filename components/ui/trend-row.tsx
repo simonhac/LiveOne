@@ -28,8 +28,7 @@ export default function TrendRow({
       className={`flex min-w-0 items-center gap-2 ${title ? "cursor-help" : ""}`}
       title={title}
     >
-      {/* The chip gives way in the narrowest tiles, where it would squeeze the label to "C…". */}
-      {chip && <span className="hidden shrink-0 @[120px]:block">{chip}</span>}
+      {chip && <span className="shrink-0">{chip}</span>}
       <div className="min-w-0 flex-1">
         <p className={`truncate ${TILE_LABEL}`}>{label}</p>
         <p className="flex min-w-0 items-baseline gap-1.5">

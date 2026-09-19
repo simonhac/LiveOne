@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo } from "react";
 import { useSearchParams } from "next/navigation";
 import { toast } from "sonner";
+import { holdScrollAnchor } from "@/lib/charts/scroll-hold";
 import type { ChartTimeRange } from "@/lib/charts/temporal";
 import {
   decodeRangeFromParams,
@@ -114,7 +115,10 @@ export function useTemporalRange({
   // Shallow client-side URL write via the native History API: NO server round-trip (the
   // dashboard RSC reads only `?access`), so `useSearchParams()` — and therefore every
   // navigator's label — updates IMMEDIATELY on click instead of after the fetch/redraw commits.
+  // Every push reshapes the data-sized cards, so hold the reader's place first (iOS has no native
+  // scroll anchoring) — see lib/charts/scroll-hold.ts.
   const push = useCallback((params: URLSearchParams) => {
+    holdScrollAnchor();
     window.history.pushState(null, "", `?${params.toString()}`);
   }, []);
 

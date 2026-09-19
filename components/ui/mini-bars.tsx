@@ -9,6 +9,22 @@
 import type { TileBar } from "@/lib/charts/tile-bars";
 import { TILE_TICK } from "@/lib/tile-style";
 
+/**
+ * The bars' own footprint, held open while the period's data is in flight. Same box as the real
+ * thing — the plot area plus the tick-label row — because the bars arrive on a SEPARATE fetch from
+ * the tile's live value, so without this the tile grows under the reader the moment it lands, and
+ * every tile below it moves. Deliberately empty rather than a shimmer: it is a fraction of a second
+ * on a warm cache, and a pulsing block in every tile would be the loudest thing on the page.
+ */
+export function MiniBarsSkeleton({ className }: { className?: string }) {
+  return (
+    <div className="mt-auto w-full" aria-hidden data-skeleton="">
+      <div className={`w-full ${className ?? "h-10"}`} />
+      <div className="h-3.5 w-full" />
+    </div>
+  );
+}
+
 export default function MiniBars({
   bars,
   color,

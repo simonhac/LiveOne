@@ -4,7 +4,8 @@ import { useRef, useState, useEffect } from "react";
 import Value from "@/components/ui/value";
 import { Zap } from "lucide-react";
 import TileSurface from "@/components/ui/tile-surface";
-import { TILE_CHIP } from "@/lib/tile-style";
+import TrendRow from "@/components/ui/trend-row";
+import { TILE_CHIP, TILE_RING } from "@/lib/tile-style";
 import {
   type LatestValue,
   getNumericValue,
@@ -28,16 +29,16 @@ interface AmberSmallCardProps {
  * similar to the power cards (Solar, Load, Battery, Grid)
  *
  * Drawn on the shared tile surface (docs/architecture/tile-style.md): the brand mark sits in the
- * title slot, the price disc keeps its brand gradient — it IS the data — and the feed-in price is a
- * chip row bottom-right.
+ * title slot and the price disc keeps its brand gradient — it IS the data. From 180px it is a ring
+ * tile like Battery and EV: the disc at the shared `TILE_RING` size, then one bottom row of feed-in
+ * and renewables. Narrower, feed-in is a small chip bottom-right and renewables is not shown.
  *
- * Container Query Breakpoints (the TILE's width, never the viewport):
- * | Width    | Height | Disc D              | Logo      | Feed-in        | Weight |
- * |----------|--------|---------------------|-----------|----------------|--------|
- * | 66px min | 110px  | 83                  | Hidden    | Hidden         | Medium |
- * | 90px+    | 110px  | 83                  | LogoMark  | chip row       | Medium |
- * | 120px+   | 110px  | 93                  | LogoMark  | chip row       | Bold   |
- * | 180px+   | 180px  | 124                 | Full logo | chip row (lg)  | Bold   |
+ * TWO forms, because the tile grid only ever makes two (see `tile-grid.ts`: never fewer than 2
+ * columns at a 176px minimum, so a tile is ~150–280px, or the whole section when it is alone):
+ * | Width  | Height | Disc D            | Logo      | Feed-in           | Renewables |
+ * |--------|--------|-------------------|-----------|-------------------|------------|
+ * | 150px+ | 110px  | 93                | LogoMark  | chip bottom-right | —          |
+ * | 180px+ | 180px  | 108 (`TILE_RING`) | Full logo | bottom row        | bottom row |
  */
 export default function AmberSmallCard({ latest }: AmberSmallCardProps) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -104,6 +105,12 @@ export default function AmberSmallCard({ latest }: AmberSmallCardProps) {
 
   const circleGradient = getPriceLevelGradient(priceLevel);
   const showFeedIn = feedInPrice !== null;
+  const feedInValue = showFeedIn ? (
+    <Value
+      value={`${feedInPrice < 0 ? "" : "-"}${Math.abs(Math.round(feedInPrice))}`}
+      unit="¢"
+    />
+  ) : null;
 
   return (
     <TileSurface
@@ -121,11 +128,11 @@ export default function AmberSmallCard({ latest }: AmberSmallCardProps) {
       {/* Compact layout - shown when card < 180px */}
       <div className="@[180px]:hidden h-full flex flex-col">
         {/* Logo mark - absolute positioned top left */}
-        <AmberLogoMark className="absolute top-3 left-3 h-4 w-4 hidden @[90px]:block" />
+        <AmberLogoMark className="absolute top-3 left-3 h-4 w-4" />
         {/* Price circle - centered horizontally and vertically */}
         <div className="flex-1 flex items-center justify-center">
           <div
-            className="w-[83px] h-[83px] @[120px]:w-[93px] @[120px]:h-[93px] rounded-full flex flex-col items-center justify-center"
+            className="w-[93px] h-[93px] rounded-full flex flex-col items-center justify-center"
             style={{ background: circleGradient }}
           >
             <Zap
@@ -152,18 +159,15 @@ export default function AmberSmallCard({ latest }: AmberSmallCardProps) {
         </div>
       </div>
 
-      {/* Feed-in, bottom-right, as a chip row: the sun in a grey disc, then the price. Hidden on
-          the narrowest card, where the disc needs the whole width. */}
+      {/* Compact feed-in, bottom-right: the sun in a grey disc, then the price. From 180px it is a
+          row instead. */}
       {showFeedIn && (
-        <div className="absolute bottom-2 right-2 @[180px]:bottom-3 @[180px]:right-3 hidden @[90px]:flex items-center gap-1">
-          <span className={`${TILE_CHIP} !size-5 @[180px]:!size-6`}>
-            <SunIcon className="w-3 h-3 @[180px]:w-3.5 @[180px]:h-3.5" />
+        <div className="absolute bottom-2 right-2 flex @[180px]:hidden items-center gap-1">
+          <span className={`${TILE_CHIP} !size-5`}>
+            <SunIcon className="w-3 h-3" />
           </span>
-          <span className="text-white text-[11px] @[180px]:text-sm font-bold">
-            <Value
-              value={`${feedInPrice < 0 ? "" : "-"}${Math.abs(Math.round(feedInPrice))}`}
-              unit="¢"
-            />
+          <span className="text-white text-[11px] font-bold">
+            {feedInValue}
           </span>
         </div>
       )}
@@ -175,30 +179,25 @@ export default function AmberSmallCard({ latest }: AmberSmallCardProps) {
           <AmberLogo className="h-5 w-auto" />
         </div>
 
-        {/* Price circle - centered horizontally and vertically */}
-        <div className="flex-1 flex items-center justify-center">
+        {/* Price disc - centred in the free height, at the shared ring size. */}
+        <div className="flex-1 flex items-center justify-center py-2">
           <div
-            className="w-[124px] h-[124px] rounded-full flex flex-col items-center justify-center"
+            className={`${TILE_RING} rounded-full flex flex-col items-center justify-center`}
             style={{ background: circleGradient }}
           >
-            {/* Lightning icon */}
             <Zap
-              className="w-3.5 h-3.5 mb-0.5"
+              className="w-3 h-3 mb-0.5"
               style={{ color: "rgb(0, 11, 36)" }}
               fill="rgb(0, 11, 36)"
             />
-
-            {/* Price level label */}
             <div
-              className="text-center text-[10px] font-bold mb-0.5"
+              className="text-center text-[9px] font-bold mb-0.5"
               style={{ color: "rgb(0, 0, 0)" }}
             >
               {getPriceLevelShortLabel(priceLevel)}
             </div>
-
-            {/* Large price */}
             <div
-              className="font-bold leading-none text-[32px]"
+              className="font-bold leading-none text-[28px]"
               style={{ color: "rgb(0, 11, 36)" }}
             >
               <Value value={Math.round(importPrice)} unit="¢" />
@@ -206,29 +205,36 @@ export default function AmberSmallCard({ latest }: AmberSmallCardProps) {
             <div className="text-[10px]" style={{ color: "rgb(0, 0, 0)" }}>
               /kWh
             </div>
+          </div>
+        </div>
 
-            {/* Renewables percentage */}
+        {/* One bottom row, as on Battery: feed-in with its chip, renewables beside it. */}
+        {(showFeedIn || renewables !== null) && (
+          <div className="flex items-end justify-between gap-3">
+            {showFeedIn ? (
+              <TrendRow
+                // The chip waits for 220px: at 180 it squeezes "Feed-in" to "Fe…" beside Renewables.
+                chip={
+                  <span className={`${TILE_CHIP} !hidden @[220px]:!grid`}>
+                    <SunIcon className="w-3.5 h-3.5" />
+                  </span>
+                }
+                label="Feed-in"
+                value={feedInValue}
+              />
+            ) : (
+              <span />
+            )}
             {renewables !== null && (
-              <div className="text-center -mt-0.5">
-                <span
-                  className="font-bold block mt-[3px]"
-                  style={{
-                    color: "rgb(0, 0, 0)",
-                    fontSize: "14px",
-                  }}
-                >
-                  <Value value={Math.round(renewables)} unit="%" />
-                </span>
-                <div
-                  className="text-[8px] -mt-[4px]"
-                  style={{ color: "rgb(0, 0, 0)" }}
-                >
-                  renewables
-                </div>
+              <div className="shrink-0">
+                <TrendRow
+                  label="Renewables"
+                  value={<Value value={Math.round(renewables)} unit="%" />}
+                />
               </div>
             )}
           </div>
-        </div>
+        )}
       </div>
     </TileSurface>
   );

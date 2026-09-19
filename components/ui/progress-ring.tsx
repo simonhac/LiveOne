@@ -4,7 +4,7 @@ import React, { useId } from "react";
 
 /**
  * A donut that reads as a proportion: an arc from top-centre, clockwise, over a track of the same
- * hue at low alpha — the Activity ring (docs/architecture/tile-style.md, rule 7): a FAT stroke,
+ * hue at low alpha — the Activity ring (docs/architecture/tile-style.md, rule 8): a FAT stroke,
  * round caps, an optional gradient along the arc, an optional glyph riding the arc's tip, and an
  * optional notch marking a target (Tesla's charge limit).
  *

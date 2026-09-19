@@ -24,8 +24,9 @@
 /** Site-charts collapse: one stacked chart + its side table, including the block's own padding. */
 const STACKED_CHART_ROW = 403; // measured: Kinkora load+generation block = 806 / 2
 
-/** Site-charts collapse: the "Flows" header + the 680px sankey SVG + its period label + padding. */
-const SANKEY_BLOCK = 764; // measured: Daylesford (sankey with no stacked charts) = 764
+/** Site-charts collapse: the "Flows" header + the 640px sankey SVG + its period label + padding. */
+const SANKEY_BLOCK = 724; // measured 764 on Daylesford (sankey alone) with the 680px SVG; the SVG
+// was then shortened by 40px (2026-09) to fit a phone screen, header/label/padding unchanged.
 
 export const CARD_FOOTPRINTS = {
   /** measured — `LinesChartCard` is `h-full min-h-[360px]` and settles exactly there. */
@@ -62,7 +63,7 @@ export const CARD_FOOTPRINTS = {
  * The collapsed site-charts group's footprint, from the very keys the collapse pass already
  * computed (`collapseKeyOf` in v4/node-view.tsx). Additive because the block IS additive: each
  * stacked chart is a fixed-height row and the sankey is a fixed-height SVG, so Kinkora
- * (load + generation + sankey) reserves 403+403+764 = 1570 and Daylesford (sankey alone) 764 —
+ * (load + generation + sankey) reserves 403+403+724 = 1530 and Daylesford (sankey alone) 724 —
  * both exactly what they measure settled.
  */
 export function siteChartsFootprint(keys: Iterable<string>): number {
