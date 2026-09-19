@@ -117,14 +117,19 @@ interoperability facts were traced through `mSelectLive`, `mRawDataDownload`,
 | `0xa2a7` | Five-word **operational**-log header, same layout; sector table at `0xa2ac` |
 | `0xa028` | Six-word installation scaling block: AC voltage, AC current, DC voltage, DC current, temperature, and one unidentified word |
 | `0x1d0000` | Eight-word device clock, BCD: centiseconds, seconds, minutes, hours, day-of-week, day, month (bit 7 = century), year |
-| `0xc036` | Configured detailed logging interval in minutes (read only) |
+| `0xc000` / `0xc0e5` | Common configuration, 197 words then 18 more; SP LINK concatenates them into one 215-word block |
+| `0xc100` | Application-type configuration, 125 words |
+| `0xc180` | Battery-type configuration, 60 words — the charge targets live here |
+| `0xc800` | System scheduler configuration, 193 words |
+| `0xc036` | Configured detailed logging interval in minutes (read only); also common-configuration word 54 |
 | `0xa374` / `0xa378` | Date-search request / response, deliberately unused |
 
 The tunnel is TLS to `select.live:7528`: `LOGIN`, `USER:email:password`, `OK`,
 `LIST DEVICES`, `CONNECT:serial`, `READY`, followed by the binary memory protocol.
 TLS certificate and hostname verification remain enabled. The only supported write is the
-MD5 challenge-response to the authentication mailbox. There are no configuration, clock,
-firmware, date-search, or log-clear writes, and no general write command.
+MD5 challenge-response to the authentication mailbox. Configuration is **read** from five
+ranges and never written; there are no configuration, clock, firmware, date-search, or
+log-clear writes, and no general write command.
 
 Detailed entries use little-endian 16-bit words. Words 0–1 are the timestamp; words 39–43
 carry AC voltage/current, DC voltage/current, and temperature scales. Version 3 reuses words
@@ -220,6 +225,91 @@ anchor, so the next `--resume` re-attempts the same gap rather than stepping ove
 Times are the inverter's own clock, stored verbatim. The manifest also records the clock's measured
 offset from ours (45.9 s slow, measured 18 September 2026) as an observation; it is never applied to
 a timestamp.
+
+## Configuration
+
+`config show` and `config download` read the inverter's stored settings — what it is set to,
+rather than what it measured. The five reads are the ones SP LINK itself issues to fill its
+configuration tabs (`mConfig.DownloadOneInvertersConfig`); they are ordinary `Q` reads, they need
+no passcode, and nothing is written.
+
+🛑 **The vendor's length argument is a count minus one.** `SetWithCreatedReadRequest` takes
+`NumOfAddressLocationsToReadMinusOne`, so the literals in the IL are 196/17/124/59/192 while the
+real lengths are 197/18/125/60/193. Three things agree on this: the parameter name, SP LINK's
+merge of the two common reads into a 215-element array (197 + 18), and the highest array index any
+decode method uses — 214, 124, 59 and 191, each exactly one less than its block's length.
+
+🛑 **The common block is not contiguous.** Words 0–196 come from `0xc000` and words 197–214 from
+`0xc0e5`; the gap between them is not read, by us or by SP LINK. `0xc036` — the detailed logging
+interval, which `history.ts` reads independently — is common word 54, and `0xc000 + 54 = 0xc036`
+is the anchor that ties the whole map to something documented outside it.
+
+The field map is `lib/selectlive/config-map.json`: 749 settings, recovered from the vendor's four
+`subLoadArrayToSettings_*` methods by `tools/splink/extract_config_map.py`, with provenance
+attached. `config show` prints a curated subset by default because the full map is unreadably
+large; `--all` prints everything, `--raw` adds the raw words.
+
+### What is not decoded, and why
+
+A setting whose conversion has not been traced is reported with its raw word and an explicit
+status, never a guess. About 32% of settings are in that state, because roughly 35 of the
+vendor's converters are enums that each need their own extracted code-to-string table, and a
+bulk-derived label is a confident wrong fact in a capture somebody reads a year later. The
+implemented conversions are the arithmetic families, the time-of-day forms, the enabled/disabled
+flag, and the logging interval — which covers every charge setting.
+
+A further quarter of the map is multi-phase: the same word index repeated for phases 1–3. A
+single inverter answers for phase 0 only, so those rows carry `phase_not_read` and **no raw
+value at all** — attaching the connected inverter's word to a phase that was never captured
+would be presenting phase-0 evidence as though it came from somewhere else.
+
+🛑 Values are rounded the way SP LINK rounds, half away from zero in decimal, not with
+JavaScript's `toFixed`. The two disagree on exact midpoints — `toFixed` sees 1.005 as 1.00499…
+and gives 1.00 where SP LINK gives 1.01 — and a snapshot differing from the vendor in its last
+digit is the kind of thing later mistaken for a setting having changed.
+
+Two are called out in the map as deliberately deferred:
+
+- **`InputPowerSetting`** shares one word between a value and its unit selector, and the same raw
+  number means `raw / 100` kW or `raw * 10 / 240` A. The selector's encoding is not traced.
+- **`DayMonthSetting`** packs day and month into one word for schedule dates but occupies two for
+  the year-to-date rollover. The single-word packing is not traced.
+
+### Limits
+
+- **Version gating is per setting, not a floor.** The vendor's decode methods branch on the
+  configuration-settings version in 53 places, but those branches are feature availability, not a
+  different layout: `if version >= 15 then ... Get(0, 44)` means word 44 always meant that and
+  simply did not exist before 15. So each setting in the map carries a `minVersion`, a device
+  decodes exactly the settings its version has, and anything newer reports
+  `not_at_this_version` rather than a number. Our inverter reports version **39** and 736 of the
+  749 settings apply to it.
+  🛑 An earlier draft of this used a single floor set to the highest gate found anywhere (45).
+  That refused to decode *every* setting on our own inverter, including the charge settings,
+  which are not gated at all. If you touch this, keep the model per setting.
+- **Battery voltages are model-dependent.** They are stored per cell, so the same word is 57.6 V on
+  a 48 V SPMC482 and 28.8 V on a 24 V SPMC241. An unknown model code yields no value rather than
+  one that is wrong by a factor of two.
+- **Phase 0 only.** A single inverter answers for its own phase; multi-phase slots are reported as
+  not read.
+- **Schedule names are not in these blocks** and are not obtainable this way.
+- **A download is a record for inspection, not a restore file.** Nothing here can write to the
+  inverter, and nothing produces something SP LINK could import.
+
+**Configuration, live-verified 2026-09-19** against inverter 221452 (SPMC482, firmware 12.25,
+configuration version 39). All five blocks served over the tunnel — 593 words, including the
+197-word read, which is longer than anything else this client sends. Two reads compared equal.
+312 of 749 settings decoded. The remaining 437 break down as 238 awaiting a converter, 186
+multi-phase slots a single inverter never answers for, and 13 that postdate version 39.
+
+The anchor held end to end: `read --address 0xc036` returned 15 and `history info` independently
+reported a 15-minute interval. Decoded values are self-consistent — `InitialChargeV`,
+`BulkChargeV`, `AbsorbChargeV` and `FloatV` all 57.6 V (2.4 V/cell x 24), `LowDcShutDown0PercentLoad`
+48 V, `HighDcAlert` 60 V, and the three charge currents 100 A.
+
+🛑 **Parity with SP LINK's own configuration display is still unverified**, exactly as it is for
+the detailed CSV. The manifest says "decoded per the traced conversions", not "matches SP LINK",
+and should keep saying that until somebody compares the two side by side.
 
 ## Validation status
 

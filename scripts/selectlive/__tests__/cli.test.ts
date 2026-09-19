@@ -203,3 +203,208 @@ it.each([true, false])(
     ).toEqual([0x1f0000]);
   },
 );
+
+/**
+ * A scripted inverter that answers any read with zeros, recording every frame sent.
+ *
+ * Reused by the configuration tests below, whose entire point is what is NOT sent.
+ */
+async function invertedSession(values: Record<number, number> = {}) {
+  const { appendCrc } = await import("@/lib/selectlive/protocol");
+  const sent: Buffer[] = [];
+  const connect = async () => {
+    let binary = false;
+    const { channel, socket } = simulated((message, stream) => {
+      sent.push(message);
+      if (!binary) {
+        if (message.toString().startsWith("USER:")) stream.push("OK\r\n");
+        else if (message.toString().startsWith("LIST DEVICES"))
+          stream.push("DEVICES:1\r\nDEVICE:123\r\n");
+        else {
+          binary = true;
+          stream.push("READY\r\n");
+        }
+        return;
+      }
+      if (message[0] === 87) {
+        stream.push(message);
+        return;
+      }
+      const words = message[1] + 1;
+      const address = message.readUInt32LE(2);
+      const data = Buffer.alloc(words * 2);
+      if (address === 0x1f0010) data.writeUInt16LE(1);
+      // Identity: serial 123, model code 0 (SPMC482), and a supported settings version.
+      if (address === 0xa05d) {
+        data.writeUInt16LE(0, 0);
+        data.writeUInt32LE(123, 2);
+      }
+      if (address === 0xa007) data.writeUInt16LE(51, 0);
+      for (let i = 0; i < words; i++) {
+        const value = values[address + i];
+        if (value !== undefined) data.writeUInt16LE(value, i * 2);
+      }
+      stream.push(appendCrc(Buffer.concat([message, data])));
+    });
+    socket.push("LOGIN\r\n");
+    return channel;
+  };
+  return { sent, connect };
+}
+
+const writesIn = (sent: Buffer[]) =>
+  sent.filter((frame) => frame[0] === 87).map((frame) => frame.readUInt32LE(2));
+
+it("reads the configuration without writing anything but the login challenge", async () => {
+  const dependencies = deps();
+  // 0xc18b is BulkChargeI; 0xc18a is BulkChargeV, scaled by the model's 24 cells.
+  const { sent, connect } = await invertedSession({
+    0xc18b: 100,
+    0xc18a: 2400,
+  });
+  dependencies.connect = connect;
+  const ctx = context(["config", "show", "--device", "123"]);
+  await executeSelectlive(ctx, dependencies);
+
+  // 🛑 The read-only contract's teeth. `config` touches five new memory ranges, and the only
+  // write frame the whole client may ever send is the authentication challenge.
+  expect(writesIn(sent)).toEqual([0x1f0000]);
+
+  const model = (ctx.emit as jest.Mock).mock.calls[0][0];
+  const setting = (name: string) =>
+    model.settings.find((s: { name: string }) => s.name === name);
+  expect(setting("BulkChargeI")).toMatchObject({
+    value: 100,
+    status: "decoded",
+  });
+  expect(setting("BulkChargeV")).toMatchObject({ value: 57.6, unit: "V" });
+});
+
+it("reads exactly the five configuration blocks, twice, and nothing else nearby", async () => {
+  const dependencies = deps();
+  const { sent, connect } = await invertedSession();
+  dependencies.connect = connect;
+  await executeSelectlive(
+    context(["config", "show", "--device", "123"]),
+    dependencies,
+  );
+
+  const configReads = sent
+    .filter((frame) => {
+      const address = frame.readUInt32LE(2);
+      return frame[0] === 81 && address >= 0xc000 && address < 0xd000;
+    })
+    .map((frame) => [frame.readUInt32LE(2), frame[1] + 1]);
+  // Read once to report, once more to prove the snapshot did not move underneath us.
+  expect(configReads).toEqual([
+    [0xc000, 197],
+    [0xc0e5, 18],
+    [0xc100, 125],
+    [0xc180, 60],
+    [0xc800, 193],
+    [0xc000, 197],
+    [0xc0e5, 18],
+    [0xc100, 125],
+    [0xc180, 60],
+    [0xc800, 193],
+  ]);
+  // The gap between the two common reads is never touched.
+  expect(
+    configReads.some(([address]) => address > 0xc0c4 && address < 0xc0e5),
+  ).toBe(false);
+});
+
+it("writes a configuration download without ever writing to the inverter", async () => {
+  const dependencies = deps();
+  const { sent, connect } = await invertedSession({ 0xc18b: 100 });
+  dependencies.connect = connect;
+  const out = fs.mkdtempSync(path.join(os.tmpdir(), "selectlive-config-test-"));
+  const ctx = context(["config", "download", "--device", "123", "--out", out]);
+  await executeSelectlive(ctx, dependencies);
+
+  expect(writesIn(sent)).toEqual([0x1f0000]);
+  const directory = (ctx.emit as jest.Mock).mock.calls[0][0]
+    .directory as string;
+  // Raw evidence, its digest, and the decoded views all land.
+  for (const file of [
+    "manifest.json",
+    "blocks.jsonl",
+    "settings.csv",
+    "unmapped.csv",
+  ])
+    expect(fs.existsSync(path.join(directory, file))).toBe(true);
+  const manifest = JSON.parse(
+    fs.readFileSync(path.join(directory, "manifest.json"), "utf8"),
+  );
+  expect(manifest.verification).toBe("stable");
+  expect(manifest.complete).toBe(true);
+  expect(manifest.rawSha256).toMatch(/^[0-9a-f]{64}$/);
+  expect(
+    fs.readFileSync(path.join(directory, "settings.csv"), "utf8"),
+  ).toContain("BulkChargeI");
+});
+
+it("rejects a configuration download with no --out before opening a socket", async () => {
+  const dependencies = deps();
+  await expect(
+    executeSelectlive(
+      context(["config", "download", "--device", "123", "--out", "   "]),
+      dependencies,
+    ),
+  ).rejects.toMatchObject({ kind: "usage" });
+  expect(dependencies.connect).not.toHaveBeenCalled();
+});
+
+it("applies --all to the emitted model, not just the human renderer", async () => {
+  // 🛑 JSON is the default whenever stdout is not a terminal, and `ctx.emit` serialises its
+  // first argument without consulting the renderer. Building the model from every setting made
+  // `--all` a no-op for exactly the scripted callers it matters to, and handed them the
+  // opposite of the documented curated default.
+  const curated = deps();
+  const a = await invertedSession();
+  curated.connect = a.connect;
+  const curatedCtx = context(["config", "show", "--device", "123"]);
+  await executeSelectlive(curatedCtx, curated);
+  const curatedModel = (curatedCtx.emit as jest.Mock).mock.calls[0][0];
+
+  const all = deps();
+  const b = await invertedSession();
+  all.connect = b.connect;
+  const allCtx = context(["config", "show", "--device", "123", "--all"]);
+  await executeSelectlive(allCtx, all);
+  const allModel = (allCtx.emit as jest.Mock).mock.calls[0][0];
+
+  expect(curatedModel.settings.length).toBeLessThan(allModel.settings.length);
+  expect(allModel.settings.length).toBe(allModel.coverage.settings);
+  // The curated view is still the useful one: it carries the charge settings.
+  expect(
+    curatedModel.settings.some(
+      (s: { name: string }) => s.name === "BulkChargeI",
+    ),
+  ).toBe(true);
+});
+
+it("reports a failed verification read as unverified, not as a changed configuration", async () => {
+  // 🛑 `readConfig` records a failed block instead of throwing, so a transient error on the
+  // second pass makes the two reads differ. Calling that "changed" would assert a
+  // configuration change on no evidence — the one claim somebody would act on.
+  const dependencies = deps();
+  let pass = 0;
+  const { connect } = await invertedSession();
+  dependencies.connect = async (signal?: AbortSignal) => {
+    const channel = await connect();
+    const realWrite = channel.write.bind(channel);
+    channel.write = (frame: Buffer) => {
+      const address = frame[0] === 81 ? frame.readUInt32LE(2) : 0;
+      // Fail the battery block, but only on the verification pass.
+      if (address === 0xc180 && ++pass === 2) throw new Error("transient");
+      return realWrite(frame);
+    };
+    void signal;
+    return channel;
+  };
+  const ctx = context(["config", "show", "--device", "123"]);
+  await executeSelectlive(ctx, dependencies);
+  const model = (ctx.emit as jest.Mock).mock.calls[0][0];
+  expect(model.verification).toBe("unverified");
+});

@@ -12,6 +12,14 @@ facts, needed to read our own inverter's logs: without them a stored event is an
 They are data tables, not code, and no vendor binary, installer or decompiled source is
 redistributed. The file records the software version, the assembly hash and the method.
 
+`config-map.json` carries the configuration field map — which word of which memory block holds
+which setting, and which of the vendor's conversions applies — resolved from the same SP LINK
+build by the same offline method. It is an interoperability fact of the same kind: without it a
+downloaded configuration is several hundred anonymous 16-bit words. It is a data table, not code,
+and records the software version, the assembly hash and the method. The extractor that produced
+it is `tools/splink/extract_config_map.py`; the vendor installer and assembly it reads are NOT in
+this repository and must not be committed.
+
 Copyright 2019 David Schoen.
 
 Permission is hereby granted, free of charge, to any person obtaining a copy of this software
