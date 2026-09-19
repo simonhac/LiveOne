@@ -33,6 +33,11 @@ import { and, desc, eq, gte, lt, lte, sql } from "drizzle-orm";
 import { planetscaleDb } from "./index";
 import { derivedIntervalProvenance, derivedIntervals } from "./schema";
 import { ReadingsDao } from "@/lib/readings";
+import {
+  classifyRunStart,
+  loadStartEvidence,
+  type RunStart,
+} from "@/lib/run-tracking/start-cause";
 import type { PointId } from "@/lib/ids";
 import { detectRunPeriods, type Sample } from "@/lib/run-tracking/detect";
 import {
@@ -290,6 +295,25 @@ export async function recomputeIntervalsForWindow(
       if (areaProvenance.length === 1) provenance = areaProvenance[0].rows;
     }
 
+    // WHY each run started — generators only, the one role with a control plane to read. Resolved
+    // here, with the rest of the row, because this pass deletes and re-inserts: a cause set any
+    // other way would not survive the next recompute of the day. On the pool, like the intensity
+    // read above, and only when there is a run to classify.
+    let starts: RunStart[] = periods.map(() => ({
+      cause: null,
+      requestedBy: null,
+    }));
+    if (det.role === "generator" && periods.length > 0) {
+      const evidence = await loadStartEvidence(
+        db,
+        det.signalPoint,
+        Math.min(...periods.map((p) => p.startMs)),
+        Math.max(...periods.map((p) => p.startMs)),
+      );
+      if (evidence)
+        starts = periods.map((p) => classifyRunStart(p.startMs, evidence));
+    }
+
     // Delete exactly the span we rebuild: [anchor, winEnd]. Bounded so later periods (relative to
     // a historical window) are never nuked.
     const deletedRows = await tx
@@ -327,6 +351,8 @@ export async function recomputeIntervalsForWindow(
         emissionsG: provenance[i].emissionsG,
         renewableKwh: provenance[i].renewableKwh,
         estimatedKwh: provenance[i].estimatedKwh,
+        startCause: starts[i].cause,
+        startRequestedBy: starts[i].requestedBy,
         maxSignal: labelled ? p.maxW : null,
         minSignal: labelled ? p.minW : null,
         avgSignal: labelled ? p.avgW : null,

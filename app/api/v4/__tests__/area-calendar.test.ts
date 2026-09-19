@@ -56,6 +56,11 @@ jest.mock("@/lib/derivations/resolve", () => ({
   listGeneratorDetectorsForArea: jest.fn(),
   derivationNames: jest.fn(),
 }));
+// The per-area overlay is a DB read; here the rows already carry the area's figures, so it is the
+// identity. What it does is pinned where it lives (the run-periods route tests).
+jest.mock("@/lib/run-tracking/area-provenance", () => ({
+  withAreaProvenance: jest.fn(async (rows: unknown) => rows),
+}));
 
 import { loadAreaForAuth, loadAreaForOwner } from "@/lib/areas/http";
 import {
@@ -347,16 +352,19 @@ describe("GET …/calendar.ics", () => {
   // feed deliberately; point values still are not, and that is the line this guards.
   it("carries no point values", async () => {
     const body = await (await feed(AREA, `?token=${TOKEN}`)).text();
-    expect(body).toContain("Run for 30 minutes");
+    expect(body).toContain("Will run for 30 minutes");
     expect(body).not.toContain(LOAD_PT_UUID);
     expect(body).not.toContain(ACT_PT_UUID);
   });
 
-  it("states the skip condition when the rule has one", async () => {
+  it("states the skip condition when the rule has one — in the FUTURE tense, on a schedule", async () => {
     const body = unfold(await (await feed(AREA, `?token=${TOKEN}`)).text());
     expect(body).toContain(
-      "Skipped if it has already run for 30 minutes or more above 1.5 kW in the previous 7 days.",
+      "Will be skipped if it has already run for 30 minutes or more above 1.5 kW in the previous 7 days.",
     );
+    expect(body).toContain("A missed start will stay due for 180 minutes.");
+    // The heading belongs to a DECIDED occurrence's terms, never to the schedule itself.
+    expect(body).not.toContain("Criteria:");
   });
 
   it("🛑 says NOTHING about skipping when the rule has no skip condition", async () => {
@@ -370,10 +378,10 @@ describe("GET …/calendar.ics", () => {
       exerciseRow({ trigger: trigger as ExerciseTrigger }),
     ]);
     const body = unfold(await (await feed(AREA, `?token=${TOKEN}`)).text());
-    expect(body).toContain("Run for 30 minutes.");
-    expect(body).not.toContain("Skipped if");
+    expect(body).toContain("Will run for 30 minutes.");
+    expect(body).not.toContain("skipped if");
     // The grace line is not part of the skip condition and must survive without it.
-    expect(body).toContain("A missed start stays due for 180 minutes.");
+    expect(body).toContain("A missed start will stay due for 180 minutes.");
   });
 
   it("🛑 marks a disabled rule in the SUMMARY and leaves it CONFIRMED, never CANCELLED", async () => {
@@ -534,10 +542,52 @@ describe("GET …/calendar.ics — what actually happened", () => {
     expect(event).toContain(`DTSTART;TZID=${TZ}:20260917T090100`);
     expect(event).toContain("Ran for 31 minutes (0.5 kWh).");
 
+    // The rule's terms follow under a heading, in the PAST tense — and without the grace line,
+    // which only ever mattered before the fact.
+    expect(event).toContain(
+      "Ran for 31 minutes (0.5 kWh).\\n\\nCriteria:\\nWas scheduled to run for 30 minutes.\\n" +
+        "Would have been skipped if it had already run for 30 minutes or more above 1.5 kW in " +
+        "the previous 7 days.",
+    );
+    expect(event).not.toContain("stay");
+    expect(event).not.toContain("Will ");
+
     // The master keeps its rule and its plain title, and stops drawing 17 Sep itself.
     expect(master(body)).toContain("SUMMARY:Generator exercise");
     expect(master(body)).toContain("RRULE:FREQ=WEEKLY;BYDAY=TH");
     expect(exdatesOf(master(body)!)).toContain("20260917T090000");
+  });
+
+  it("states a run's cost and CO₂ beside its energy", async () => {
+    afterTheSlot();
+    mockStore.intervalsOverlapping.mockResolvedValue([
+      {
+        ...runRow(SLOT_17_SEP + 60_000, 57, 4.4),
+        costC: 312,
+        emissionsG: 4100,
+        estimatedKwh: 0,
+      } as DerivedInterval,
+    ]);
+    const [event] = past(await (await feed(AREA, `?token=${TOKEN}`)).text());
+    // RFC 5545 escapes a comma in TEXT as `\\,`.
+    expect(event).toContain(
+      "Ran for 57 minutes (4.4 kWh\\, $3.12\\, 4.1 kg CO₂).",
+    );
+  });
+
+  it("🛑 omits a cost that covers only part of the run's energy, rather than understating it", async () => {
+    afterTheSlot();
+    mockStore.intervalsOverlapping.mockResolvedValue([
+      {
+        ...runRow(SLOT_17_SEP + 60_000, 57, 4.4),
+        costC: 40, // priced over 1.4 of 4.4 kWh — a confident "$0.40" would be silently wrong
+        emissionsG: 497,
+        estimatedKwh: 3.0,
+      } as DerivedInterval,
+    ]);
+    const [event] = past(await (await feed(AREA, `?token=${TOKEN}`)).text());
+    expect(event).toContain("Ran for 57 minutes (4.4 kWh\\, 497 g CO₂).");
+    expect(event).not.toContain("$");
   });
 
   it("🛑 editing the schedule does not move a run that already happened", async () => {
@@ -870,6 +920,45 @@ describe("GET …/calendar.ics — what actually happened", () => {
     expect(
       past(body).find((ve) => ve.includes("SUMMARY:✅ Generator exercise")),
     ).toBeDefined();
+  });
+
+  it("🛑 names who started a run no slot accounts for — the inverter", async () => {
+    afterTheSlot();
+    mockStore.intervalsOverlapping.mockResolvedValue([
+      {
+        ...runRow(Date.parse("2026-09-17T19:55:00+10:00"), 57, 4.4),
+        startCause: "inverter",
+      } as DerivedInterval,
+    ]);
+    const body = await (await feed(AREA, `?token=${TOKEN}`)).text();
+    const [event] = past(body);
+    expect(event).toContain("SUMMARY:✅ Generator run (started by inverter)");
+    expect(event).toContain("Started by the inverter.");
+    expect(event).not.toContain("No scheduled slot");
+  });
+
+  it("🛑 names the RULE behind a LiveOne start, never the raw requester", async () => {
+    afterTheSlot();
+    mockStore.intervalsOverlapping.mockResolvedValue([
+      {
+        ...runRow(Date.parse("2026-09-17T19:55:00+10:00"), 10, 0.7),
+        startCause: "automation",
+        startRequestedBy: `automation:${AU}`,
+      } as DerivedInterval,
+      {
+        ...runRow(Date.parse("2026-09-17T21:00:00+10:00"), 10, 0.7),
+        startCause: "user",
+        startRequestedBy: "user_simon",
+      } as DerivedInterval,
+    ]);
+    const body = unfold(await (await feed(AREA, `?token=${TOKEN}`)).text());
+    expect(body).toContain("SUMMARY:✅ Generator run (started from LiveOne)");
+    expect(body).toContain(
+      'Started from LiveOne by the automation "Generator exercise".',
+    );
+    expect(body).toContain("Started manually from LiveOne.");
+    expect(body).not.toContain("user_simon");
+    expect(body).not.toContain(AU);
   });
 
   it("🛑 a SECOND run in one grace window is published too, as its own event", async () => {

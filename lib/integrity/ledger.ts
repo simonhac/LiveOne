@@ -669,6 +669,14 @@ export const REFERENCE_LEDGER: LedgerEntry[] = [
     verdict: { protectedBy: "fk", onDelete: "cascade" },
   },
   {
+    column: derivedIntervals.startRequestedBy,
+    verdict: {
+      protectedBy: "deliberately-unprotected",
+      reason:
+        'a COPY of `point_commands.requested_by` (a Clerk user id or `automation:au_…`), carried onto the run it explains. Derived and disposable like the rest of the row: every recompute re-derives it from `point_commands`, and a reader that cannot resolve it (a deleted rule) degrades to "an automation" rather than failing.',
+    },
+  },
+  {
     column: derivedIntervalProvenance.derivationId,
     // Half of the composite FK onto `derived_intervals(derivation_id, start_time)`, which is what
     // makes a recompute's bounded delete take this table's rows with it.

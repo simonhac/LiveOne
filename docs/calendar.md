@@ -36,9 +36,9 @@ The history bound is **366 days** — a year and a day.
 | `RRULE`/`RDATE` | the stored rule, verbatim | Written by `toRecurrenceLines`; a one-off gets none of them (see below). |
 | `EXDATE` | the owner's own skips, **plus a second property listing every past occurrence** | The synthetic one is what stops the series drawing over history the feed has already published properly. Two `EXDATE` properties rather than one merged list, so the owner's skips stay legible as theirs; both are honoured (proven against `ical.js`). |
 | `SEQUENCE` | `updated_at` in epoch **seconds** | Monotonic per edit so clients pick up changes. Seconds, not ms: `SEQUENCE` is a 32-bit integer in practice. |
-| `SUMMARY` | rule name, `(disabled)` suffixed; a past event is prefixed ✅/⏭️/⛔️ and named for the rule that asked for it, or `<detector> run (unscheduled)` | See the `STATUS` trap below, and "What actually happened". |
+| `SUMMARY` | rule name, `(disabled)` suffixed; a past event is prefixed ✅/⏭️/⛔️ and named for the rule that asked for it, or `<detector> run (<who started it>)` — `started by inverter` / `started at panel` / `started from LiveOne`, else `unscheduled` | See the `STATUS` trap below, and "What actually happened". |
 | `STATUS` | always `CONFIRMED` | See the `STATUS` trap below. |
-| `DESCRIPTION` | the outcome sentence (past occurrences only) first, then run length, the unless-terms in words (omitted entirely when the rule has none), grace | Enough to answer "what is this, why might it not happen, and what did happen". The outcome leads because Calendar.app shows the start of a description in its list view. |
+| `DESCRIPTION` | **future** (the schedule): run length, the unless-terms, grace — all in the future tense ("Will run for 30 minutes."). **Past** (a decided occurrence): the outcome sentence first — a run's duration, kWh, cost and CO₂ — then a `Criteria:` heading over the terms it was held to, in the past tense ("Was scheduled to run for 30 minutes.", "Would have been skipped if…"), with NO grace line. An unscheduled run says who started it instead. | Enough to answer "what is this, why might it not happen, and what did happen". The outcome leads because Calendar.app shows the start of a description in its list view; grace is dropped from the past because how long a missed start stays due only matters before the fact. |
 
 🛑 **There is no `RECURRENCE-ID` anywhere in this feed**, deliberately — see below.
 
@@ -147,10 +147,21 @@ before the cutoff and its run a minute after are torn apart by the boundary and 
 mislabelled "unscheduled"; without the wider read, that same pre-cutoff slot can see the *later* run
 but not its own, and claims a run it never started. Nothing before the cutoff is ever published.
 
-🛑 The unscheduled description says *"No scheduled slot accounts for this run"*, **not** "not started
-by an automation". The feed knows the first and not the second: a dispatch made at the very end of a
-grace window can start a run just outside the window the slot allows, and the feed never looks at
-`point_commands` at all. Say what you checked.
+**Who started an unscheduled run** comes from `derived_intervals.start_cause`, which the recompute
+derives from stored evidence (`lib/run-tracking/start-cause.ts`): a matching `point_commands` row
+(automation or user), else DSE input 1 (`remote_start_input`, the SP PRO's run demand → *"Started
+by the inverter."*), else the hub latch, else the panel's Manual mode. A LiveOne start is named by
+its RULE; `start_requested_by` (a Clerk id or `automation:au_…`) is never published raw. The
+inverter's own *reason* (SoC, load…) is not known — it lives only in the SP PRO's event log.
+
+🛑 Where the cause is unknown the description falls back to *"No scheduled slot accounts for this
+run"*, **not** "not started by an automation". Without a cause the feed knows the first and not the
+second: a dispatch made at the very end of a grace window can start a run just outside the window
+the slot allows. Say what you checked.
+
+**Cost and CO₂** are this area's figures (`derived_interval_provenance`, via `withAreaProvenance`),
+and cost goes through `pricedTotal`: a run only partly priced shows no dollar figure rather than a
+silently low one.
 
 ## 🛑 Why the past is not part of the series
 

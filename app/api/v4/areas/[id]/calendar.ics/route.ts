@@ -17,7 +17,9 @@
  * 🛑 **Outcomes are in the feed; point VALUES still are not.** This reverses an earlier invariant
  * ("nothing about what the generator actually did"), deliberately. A schedule alone answers "when
  * was it meant to run" and leaves "did it" to somebody opening the app, which is the question a
- * subscriber actually has — and ✅/⏭️/⛔️ answers it without publishing a single reading.
+ * subscriber actually has — and ✅/⏭️/⛔️ answers it without publishing a single reading. What a
+ * run event does carry is the run's own TOTALS — duration, kWh, cost, CO₂ — which are derived
+ * figures about one run, not a series anyone could read the site from.
  *
  * Why an override rather than a retitled master: a recurring rule is ONE VEVENT with an RRULE, so
  * there is no per-occurrence component to retitle. RFC 5545's answer is a second VEVENT with the
@@ -30,7 +32,7 @@ import { NextRequest, NextResponse } from "next/server";
 import ical, { ICalEventStatus } from "ical-generator";
 import { DateTime } from "luxon";
 import { getVtimezoneComponent } from "@touch4it/ical-timezones";
-import { Area } from "@/lib/ids";
+import { Area, Automation } from "@/lib/ids";
 import { loadAreaForAuth } from "@/lib/areas/http";
 import { validateCalendarToken } from "@/lib/areas/calendar-tokens";
 import * as store from "@/lib/automations/store";
@@ -54,6 +56,12 @@ import {
   derivationNames,
   listGeneratorDetectorsForArea,
 } from "@/lib/derivations/resolve";
+import { withAreaProvenance } from "@/lib/run-tracking/area-provenance";
+import {
+  formatCarbonTotal,
+  formatDollars,
+  pricedTotal,
+} from "@/lib/provenance-format";
 import type {
   AutomationRow,
   ExerciseOutcome,
@@ -109,6 +117,16 @@ interface FeedRun {
   startMs: number;
   endMs: number | null;
   energyKwh: number | null;
+  /** THIS AREA's cost of the run, signed cents — null when unknown, never a fabricated 0. */
+  costC: number | null;
+  /** THIS AREA's emissions for the run, grams CO₂ — null when unknown. */
+  emissionsG: number | null;
+  /** kWh whose price/intensity was estimated or unknown — the coverage leg of `costC`. */
+  estimatedKwh: number | null;
+  /** Why it started (`derived_intervals.start_cause`) — null when unknown. */
+  startCause: string | null;
+  /** Who asked, for a LiveOne start — resolved to a rule NAME here, never published raw. */
+  startRequestedBy: string | null;
 }
 
 /** A run that has finished — the only kind the feed ever writes an event or a sentence about. */
@@ -198,10 +216,12 @@ export async function GET(
   const runsByDerivation = new Map<string, FeedRun[]>();
   await Promise.all(
     [...detectorNames.keys()].map(async (derivationId) => {
-      const intervals = await store.intervalsOverlapping(
+      // Priced for THIS area: a run's cost and carbon are area-relative (see `withAreaProvenance`),
+      // and the feed belongs to exactly one area.
+      const intervals = await withAreaProvenance(
+        await store.intervalsOverlapping(derivationId, historyFloorMs, nowMs),
         derivationId,
-        historyFloorMs,
-        nowMs,
+        areaUuid,
       );
       // Open runs are KEPT here and excluded only where an event is built — see `FeedRun`.
       runsByDerivation.set(
@@ -210,6 +230,11 @@ export async function GET(
           startMs: row.startTime.getTime(),
           endMs: row.endTime?.getTime() ?? null,
           energyKwh: row.energyKwh,
+          costC: row.costC,
+          emissionsG: row.emissionsG,
+          estimatedKwh: row.estimatedKwh,
+          startCause: row.startCause,
+          startRequestedBy: row.startRequestedBy,
         })),
       );
     }),
@@ -367,7 +392,7 @@ export async function GET(
         end: DateTime.fromMillis(closed.endMs, { zone: timezone }),
         summary: plan
           ? `✅ ${plan.row.name}`
-          : `✅ ${detectorName} run (unscheduled)`,
+          : `✅ ${detectorName} run (${startedLabel(closed)})`,
         description: plan
           ? describeRule(plan.row, plan.trigger, plan.minutes, {
               mark: "✅",
@@ -376,11 +401,13 @@ export async function GET(
             })
           : [
               `${describeRun(closed)}.`,
-              // 🛑 A claim about the SCHEDULE, not about causation. "No slot's window contains this
-              // start" is what the feed knows; it does not know no automation caused it, because a
-              // dispatch at the very end of a grace window can start a run just outside the window
-              // its slot allows, and the feed never looks at `point_commands`.
-              "No scheduled slot accounts for this run.",
+              describeStart(closed, rows) ??
+                // 🛑 A claim about the SCHEDULE, not about causation — the fallback for a run whose
+                // cause was never recorded. "No slot's window contains this start" is what the feed
+                // knows then; it does not know no automation caused it, because a dispatch at the
+                // very end of a grace window can start a run just outside the window its slot
+                // allows.
+                "No scheduled slot accounts for this run.",
             ].join("\n"),
         sequence: Math.floor(closed.endMs / 1000),
       });
@@ -742,7 +769,7 @@ function exerciseTrigger(row: AutomationRow): ExerciseTrigger | null {
 }
 
 /**
- * "Ran for 28 minutes (0.5 kWh)" — the kWh only when the detector actually accumulated any.
+ * "Ran for 28 minutes (0.5 kWh, $0.21, 497 g CO₂)" — each figure only when it is actually known.
  *
  * Takes a CLOSED run by type. An open one never reaches here: it cannot be an event, and it is no
  * longer evidence for a slot either, so the two callers below have both already excluded it.
@@ -750,10 +777,69 @@ function exerciseTrigger(row: AutomationRow): ExerciseTrigger | null {
 function describeRun(run: ClosedRun): string {
   const ran = `Ran for ${Math.round((run.endMs - run.startMs) / 60_000)} minutes`;
   // NULL is UNKNOWN here, never zero — an unpriceable or un-metered run says nothing rather than
-  // claiming it produced nothing.
-  return run.energyKwh === null
-    ? ran
-    : `${ran} (${run.energyKwh.toFixed(1)} kWh)`;
+  // claiming it produced nothing, or cost nothing.
+  const figures: string[] = [];
+  if (run.energyKwh != null) figures.push(`${run.energyKwh.toFixed(1)} kWh`);
+  // 🛑 Through `pricedTotal`, the shared coverage rule: a run only part of whose energy could be
+  // priced has a `cost_c` that is silently too low, and a confident "$0.40" for it is worse than
+  // no figure. Without a kWh there is nothing to judge coverage against, so the cost stands alone.
+  const cost =
+    run.costC == null
+      ? null
+      : run.energyKwh == null
+        ? run.costC
+        : pricedTotal(
+            run.costC,
+            run.energyKwh - (run.estimatedKwh ?? 0),
+            run.energyKwh,
+          );
+  if (cost !== null) figures.push(formatDollars(cost));
+  if (run.emissionsG != null)
+    figures.push(`${formatCarbonTotal(run.emissionsG)} CO₂`);
+  return figures.length === 0 ? ran : `${ran} (${figures.join(", ")})`;
+}
+
+/** The unscheduled run's title suffix — who started it, when that is known. */
+function startedLabel(run: ClosedRun): string {
+  switch (run.startCause) {
+    case "inverter":
+      return "started by inverter";
+    case "panel":
+      return "started at panel";
+    case "automation":
+    case "user":
+      return "started from LiveOne";
+    default:
+      return "unscheduled";
+  }
+}
+
+/**
+ * Who started a run no slot accounts for, in one sentence — or null when the cause is unknown.
+ *
+ * 🛑 `start_requested_by` is resolved to the rule's NAME and never published as-is: it is a Clerk
+ * user id or an automation id, and the feed is a URL anyone holding it can read. A user start says
+ * only that it was manual. A rule that is not this area's (moved, or deleted) is "an automation".
+ */
+function describeStart(run: ClosedRun, rows: AutomationRow[]): string | null {
+  switch (run.startCause) {
+    case "inverter":
+      return "Started by the inverter.";
+    case "panel":
+      return "Started from the generator panel.";
+    case "user":
+      return "Started manually from LiveOne.";
+    case "automation": {
+      const encoded = run.startRequestedBy?.replace(/^automation:/, "");
+      const uuid = encoded ? Automation.toUuidOrNull(encoded) : null;
+      const rule = uuid ? rows.find((row) => row.id === uuid) : undefined;
+      return rule
+        ? `Started from LiveOne by the automation "${rule.name}".`
+        : "Started from LiveOne by an automation.";
+    }
+    default:
+      return null;
+  }
 }
 
 /**
@@ -804,24 +890,37 @@ function describeRule(
     graceMinutes: trigger.schedule.graceMinutes,
   });
   const lines = outcome ? [outcome, ""] : [];
-  lines.push(`Run for ${minutes} minutes.`);
-  // 🛑 Only stated when there IS a skip condition. A one-off used to be forced to carry an
-  // unreachable threshold (`minMinutes: 600`), and this line published it verbatim — "Skipped if
-  // it has already run for 600 minutes or more above 1.5 kW in the previous 7 days" went out to
-  // every subscriber of the feed, describing a rule that could not be skipped by anything.
-  if (trigger.unless)
+  // The rule's terms, in the tense of the event they sit on. A master describes occurrences still
+  // to come; a decided occurrence has already happened, so its terms are what it WAS held to — set
+  // under a heading, because after the outcome line they are background rather than the news.
+  if (outcome === null) {
+    lines.push(`Will run for ${minutes} minutes.`);
+    // 🛑 Only stated when there IS a skip condition. A one-off used to be forced to carry an
+    // unreachable threshold (`minMinutes: 600`), and this line published it verbatim — "Skipped if
+    // it has already run for 600 minutes or more above 1.5 kW in the previous 7 days" went out to
+    // every subscriber of the feed, describing a rule that could not be skipped by anything.
+    if (trigger.unless)
+      lines.push(
+        `Will be skipped if it has already run for ${trigger.unless.minMinutes} minutes or more ` +
+          `above ${trigger.unless.minLoadKw} kW in the previous ${trigger.unless.withinDays} days.`,
+      );
+    // Only on the future. "Disabled" is a statement about what is to come, and on a spent one-off
+    // — which the evaluator disables in the very write that closes its last slot — it reads as a
+    // problem with an occurrence that went perfectly well.
+    if (!row.enabled) lines.push("This rule is currently DISABLED.");
     lines.push(
-      `Skipped if it has already run for ${trigger.unless.minMinutes} minutes or more above ` +
-        `${trigger.unless.minLoadKw} kW in the previous ${trigger.unless.withinDays} days.`,
+      `A missed start will stay due for ${trigger.schedule.graceMinutes} minutes.`,
     );
-  // Not on a DECIDED occurrence. "Disabled" is a statement about the future, and on a spent one-off
-  // — which the evaluator disables in the very write that closes its last slot — it reads as a
-  // problem with an occurrence that went perfectly well.
-  if (!row.enabled && outcome === null)
-    lines.push("This rule is currently DISABLED.");
-  lines.push(
-    `A missed start stays due for ${trigger.schedule.graceMinutes} minutes.`,
-  );
+  } else {
+    lines.push("Criteria:", `Was scheduled to run for ${minutes} minutes.`);
+    if (trigger.unless)
+      lines.push(
+        `Would have been skipped if it had already run for ${trigger.unless.minMinutes} minutes ` +
+          `or more above ${trigger.unless.minLoadKw} kW in the previous ` +
+          `${trigger.unless.withinDays} days.`,
+      );
+    // No grace line here: how long a missed start stays due only matters BEFORE the fact.
+  }
   return lines.join("\n");
 }
 
