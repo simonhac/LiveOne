@@ -6,7 +6,12 @@ import Value from "@/components/ui/value";
 import ProgressRing from "@/components/ui/progress-ring";
 import { ChevronRight, ChevronsRight, Settings } from "lucide-react";
 import TileSurface from "@/components/ui/tile-surface";
-import { TILE_CAPTION, TILE_CHIP } from "@/lib/tile-style";
+import {
+  TILE_CAPTION,
+  TILE_CHIP,
+  TILE_RING,
+  TILE_RING_VALUE,
+} from "@/lib/tile-style";
 import { ROLE_CHROME } from "@/lib/role-chrome";
 import { TeslaMark } from "@/lib/tesla-icons";
 import { getEvStatus, getEvStatusWords } from "@/lib/vendors/tesla/status";
@@ -285,13 +290,13 @@ export default function TeslaSmallCard({
       {/* Title slot: the Tesla mark, white, a guest in the place a title goes. The charge-control
           cog takes the top-right corner as a grey disc — owner/admin only, once there is room. */}
       <div className="flex min-h-7 items-center justify-between gap-2">
-        <TeslaMark className="hidden @[90px]:block w-4 h-4 @[180px]:w-5 @[180px]:h-5 text-white" />
+        <TeslaMark className="w-4 h-4 @[180px]:w-5 @[180px]:h-5 text-white" />
         {showControls && (
           <button
             type="button"
             onClick={() => setControlsOpen(true)}
             aria-label="Charging controls"
-            className={`${TILE_CHIP} hidden @[120px]:grid text-white/60 transition-colors hover:bg-white/15 hover:text-white`}
+            className={`${TILE_CHIP} text-white/60 transition-colors hover:bg-white/15 hover:text-white`}
           >
             <Settings className="w-4 h-4" />
           </button>
@@ -300,7 +305,7 @@ export default function TeslaSmallCard({
 
       {/* The SoC ring — fat, round-capped, over a track of its own hue. Charging, the chevrons ride
           the arc's tip (the Activity Exercise ring); the charge limit is a notch across the ring. */}
-      <div className="flex flex-1 items-center justify-center py-1">
+      <div className="flex flex-1 items-center justify-center py-2">
         <ProgressRing
           fraction={batterySoc / 100}
           color={batteryColor}
@@ -321,9 +326,9 @@ export default function TeslaSmallCard({
               )
             ) : undefined
           }
-          className="w-[64px] h-[64px] @[120px]:w-[72px] @[120px]:h-[72px] @[180px]:w-[108px] @[180px]:h-[108px]"
+          className={TILE_RING}
         >
-          <div className="font-bold leading-none text-[18px] @[180px]:text-[28px] text-white">
+          <div className={`${TILE_RING_VALUE} text-white`}>
             <Value value={Math.round(batterySoc)} unit="%" />
           </div>
         </ProgressRing>

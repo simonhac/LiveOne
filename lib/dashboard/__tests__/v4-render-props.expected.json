@@ -494,10 +494,10 @@
                   "value": "73"
                 }
               },
-              "className": "text-[17px] font-bold leading-none text-white @[200px]:text-[22px]"
+              "className": "text-[17px] @[180px]:text-[24px] font-bold leading-none text-white"
             }
           },
-          "className": "h-[76px] w-[76px] @[200px]:h-[92px] @[200px]:w-[92px] opacity-55",
+          "className": "h-[76px] w-[76px] shrink-0 @[180px]:h-[108px] @[180px]:w-[108px] opacity-55",
           "color": "rgb(74, 222, 128)",
           "fraction": 0.725,
           "gradientTo": "rgb(134, 239, 172)"
@@ -551,10 +551,10 @@
                   "value": "73"
                 }
               },
-              "className": "text-[17px] font-bold leading-none text-white @[200px]:text-[22px]"
+              "className": "text-[17px] @[180px]:text-[24px] font-bold leading-none text-white"
             }
           },
-          "className": "h-[76px] w-[76px] @[200px]:h-[92px] @[200px]:w-[92px] opacity-55",
+          "className": "h-[76px] w-[76px] shrink-0 @[180px]:h-[108px] @[180px]:w-[108px] opacity-55",
           "color": "rgb(74, 222, 128)",
           "fraction": 0.725,
           "gradientTo": "rgb(134, 239, 172)"

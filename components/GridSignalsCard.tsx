@@ -7,7 +7,7 @@ import ProgressRing from "@/components/ui/progress-ring";
 import TileSurface, { TileHeader } from "@/components/ui/tile-surface";
 import { useStaleness } from "@/components/ui/tile-stale";
 import { ROLE_CHROME } from "@/lib/role-chrome";
-import { TILE_STALE } from "@/lib/tile-style";
+import { TILE_RING, TILE_RING_VALUE, TILE_STALE } from "@/lib/tile-style";
 import type { GridLiveValues } from "@/lib/grid/latest";
 
 /** The ring runs green-400 → green-300, the Home Energy renewable ring's hue. */
@@ -20,14 +20,15 @@ export interface GridSignalsCardProps {
 }
 
 /**
- * Presentational "<region> Grid" card (e.g. "NSW Grid"). Shows four live grid signals for the
- * household's local NEM region — spot price ($/MWh), emissions intensity (g CO₂e/kWh), renewables
- * (%) and operational demand (MW). A MEDIUM tile (`span: 2`): the renewable share as a ring beside
- * the other three as Trends rows; narrower than 300px it falls back to a label-over-value 2×2. No data fetching happens here — the typed `values`
- * prop is supplied by the caller.
+ * Presentational "<region> Grid" card (e.g. "NSW Grid"). Shows three live grid signals for the
+ * household's local NEM region — spot price ($/MWh), emissions intensity (g CO₂e/kWh) and
+ * renewables (%). A small ring tile, the same skeleton as Battery and EV: the renewable share as
+ * the ring, price and emissions side by side underneath; narrower than 180px it falls back to the
+ * three as label-over-value rows. No data fetching happens here — the typed `values` prop is
+ * supplied by the caller.
  *
  * Staleness follows Tile: the newest measurementTime across the present metrics against
- * `staleThresholdSeconds`; stale values grey out and the header shows the reading's age.
+ * `staleThresholdSeconds`; stale values dim and the header shows the reading's age.
  */
 export default function GridSignalsCard({
   regionLabel,
@@ -40,14 +41,12 @@ export default function GridSignalsCard({
   const price = values?.price?.value ?? null;
   const emissions = values?.emissionsIntensity?.value ?? null;
   const renewables = values?.renewables?.value ?? null;
-  const demand = values?.demand?.value ?? null;
 
   // Newest measurement time across the present metrics (epoch ms), or null.
   const measurementTimes = [
     values?.price?.measurementTime,
     values?.emissionsIntensity?.measurementTime,
     values?.renewables?.measurementTime,
-    values?.demand?.measurementTime,
   ]
     .filter((t): t is string => typeof t === "string")
     .map((t) => new Date(t).getTime())
@@ -75,9 +74,6 @@ export default function GridSignalsCard({
       : "—";
   const renewablesText = renewables != null ? `${Math.round(renewables)}` : "—";
   const renewablesGreen = renewables != null && renewables > 50;
-  // Operational demand is stored in MW; show integer MW with a thousands separator ("7,234").
-  const demandText =
-    demand != null ? Math.round(demand).toLocaleString("en-AU") : "—";
 
   // Card title, e.g. "NSW Grid". The caller passes the short NEM label ("NSW"); strip a trailing
   // region index defensively so a raw "NSW1" still renders "NSW Grid".
@@ -90,7 +86,7 @@ export default function GridSignalsCard({
   const renewablesValue = (
     <Value value={renewablesText} unit={renewables != null ? "%" : undefined} />
   );
-  // Price and demand are the grid's magenta (they are facts about the grid); emissions stays white.
+  // Price is the grid's magenta (a fact about the grid); emissions stays white.
   const priceRow = (
     <TrendRow
       label="Price"
@@ -116,15 +112,6 @@ export default function GridSignalsCard({
       valueColor={tone("text-white")}
     />
   );
-  const demandRow = (
-    <TrendRow
-      label="Demand"
-      value={
-        <Value value={demandText} unit={demand != null ? "MW" : undefined} />
-      }
-      valueColor={tone(ROLE_CHROME.grid.value)}
-    />
-  );
 
   return (
     <TileSurface surfaceClassName="flex flex-col">
@@ -135,35 +122,29 @@ export default function GridSignalsCard({
         staleness={staleness}
         measurementTime={newestMs}
       />
-      {/* MEDIUM (the width a two-column tile has): the Activity Rings shape — the grid's
-          renewable share as a ring on the left, the other three signals as Trends rows on the
-          right, so the card fills its height the way Home Energy beside it does instead of one line
-          of numbers over an empty box. SMALL: the four as a label-over-value 2×2 (1 column when
-          very narrow). The renewables number sits inside the ring in the medium form, so it is a
-          row only in the small one. */}
-      <div className="mt-2 hidden flex-1 items-center gap-5 @[300px]:flex">
+      {/* ≥180px: the ring-tile skeleton — the grid's renewable share as the ring, centred in the
+          free height, then price and emissions as one bottom row. Narrower, the ring would leave
+          no room for the numbers, so the three become label-over-value rows. */}
+      <div className="hidden flex-1 items-center justify-center py-2 @[180px]:flex">
         <ProgressRing
           fraction={(renewables ?? 0) / 100}
           color={ROLE_CHROME.battery.rgb}
           gradientTo={RENEWABLES_LIGHT_RGB}
-          className={`h-[112px] w-[112px] shrink-0 @[440px]:h-[128px] @[440px]:w-[128px] ${
-            staleness.isStale ? TILE_STALE : ""
-          }`}
+          className={`${TILE_RING} ${staleness.isStale ? TILE_STALE : ""}`}
         >
-          <span className="text-[24px] font-bold leading-none text-white">
+          <span className={`${TILE_RING_VALUE} text-white`}>
             {renewablesValue}
           </span>
           <span className="mt-1 text-[11px] font-medium leading-none text-white/55">
             renewable
           </span>
         </ProgressRing>
-        <div className="min-w-0 flex-1 space-y-2">
-          {priceRow}
-          {emissionsRow}
-          {demandRow}
-        </div>
       </div>
-      <div className="mt-2 grid grid-cols-1 gap-x-4 gap-y-2 @[200px]:grid-cols-2 @[300px]:hidden">
+      <div className="hidden justify-between gap-2 @[180px]:flex">
+        {priceRow}
+        {emissionsRow}
+      </div>
+      <div className="mt-2 grid grid-cols-1 gap-y-2 @[180px]:hidden">
         {priceRow}
         {emissionsRow}
         <TrendRow
@@ -173,7 +154,6 @@ export default function GridSignalsCard({
             renewablesGreen ? ROLE_CHROME.battery.value : "text-white",
           )}
         />
-        {demandRow}
       </div>
     </TileSurface>
   );

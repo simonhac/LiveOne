@@ -96,12 +96,8 @@ export function TileHeader({
           measurementTime={measurementTime}
         />
       )}
-      {/* Below 120px the title needs every pixel; the accessory (a chip, a cog) gives way, as
-          TeslaSmallCard's cog always has. */}
       {accessory && (
-        <div className="hidden shrink-0 items-center gap-1.5 @[120px]:flex">
-          {accessory}
-        </div>
+        <div className="flex shrink-0 items-center gap-1.5">{accessory}</div>
       )}
     </div>
   );

@@ -173,7 +173,20 @@ function PresetCell({
   );
 }
 
-/** A drag-to-resize box (both axes). Uses display:grid so the single child fills it. */
+/**
+ * A drag-to-resize box. Uses display:grid so the single child fills it.
+ *
+ * 🛑 IT CAN BE STRETCHED BUT NOT SQUASHED, because that is what the dashboard does. The tile grid is
+ * `auto-rows-fr` (`minmax(0, 1fr)`) and the surface is `h-full`, so every tile in a section is the
+ * SAME height — the tallest content in the grid decides it, and the others stretch to match
+ * (measured on Kinkora: all eight tiles exactly 222px, both rows). So a tile TALLER than its
+ * content is an everyday shape, and one SHORTER than its content is not one the grid can make.
+ * `minHeight: fit-content` is that asymmetry. Width gets the same treatment at the ~150px floor
+ * (`TILE_WIDTHS`): the grid can hand a tile any width in its band, but never less than that.
+ *
+ * The free-squash version of this box is why Amber's compact form looked fine here for months while
+ * being untested in the app.
+ */
 function Resizable({
   initialW,
   initialH,
@@ -211,6 +224,8 @@ function Resizable({
         style={{
           width: initialW,
           height: initialH,
+          minWidth: TILE_WIDTHS[0],
+          minHeight: "fit-content",
           resize: "both",
           overflow: "hidden",
           display: "grid",
@@ -278,7 +293,10 @@ function CardSection({
       <h3 className="text-xs uppercase tracking-wide text-gray-500 mb-2">
         Preset widths
       </h3>
-      <div className="flex flex-wrap items-end gap-4 mb-8">
+      {/* Scrolls rather than wraps-and-overflows: a card preset is 1264px wide (the page's cap),
+          which is wider than the window this gallery is usually read in, and a cell that shrank to
+          fit would be lying about the width printed above it. */}
+      <div className="flex flex-wrap items-end gap-4 mb-8 overflow-x-auto">
         {presetWidths.map((w) => (
           <PresetCell key={w} width={w}>
             {render(scenario, stale)}
@@ -296,11 +314,35 @@ function CardSection({
   );
 }
 
-// Container-query cards re-layout at their own width: 66 / 90 / 120 / 180 / 300.
-const CQ_WIDTHS = [66, 80, 90, 110, 120, 150, 180, 220, 300, 380];
-// Tile / GridSignals key off the md: (768px) VIEWPORT width, not container width.
-const POWER_WIDTHS = [80, 110, 150, 180, 220, 300];
-const GRID_WIDTHS = [180, 260, 340, 440, 560];
+/**
+ * The widths the layout can actually hand a card. Measured, not guessed — see
+ * `lib/dashboard/tile-grid.ts` for the policy and docs/architecture/tile-style.md rule 6.
+ *
+ * A tile in a MULTI-TILE row: the grid never drops below 2 columns and never lets a column fall
+ * under 176px, so ~150px (two columns on a 320px phone) to ~280px. Narrower presets used to sit
+ * here (66 / 80 / 90 / 110 / 120), testing forms no dashboard can produce — which is how Tesla's
+ * ring came to overflow at 66px with nobody noticing.
+ */
+const TILE_WIDTHS = [150, 180, 220, 280];
+
+/**
+ * …plus the wide case, for the plain `Tile` only: `tileGridClass` keeps ONE column for a group of
+ * one and TWO for a group of two at every tier, so such a group just splits the section. 626px is
+ * the widest a two-tile row gets (the page caps at 1280px); a lone tile goes to the section's full
+ * width. `DeviceMetricsCard` hits this today without anyone authoring it — it calls
+ * `tileGridClass(rows.length)`, so a device with one or two metrics gets a tile ~800px wide.
+ *
+ * The container-query tiles (Amber, Tesla, GridSignals) can only reach it if someone AUTHORS a
+ * one- or two-tile row group, and no dashboard has one, so they stay on the band above.
+ */
+const TILE_WIDTHS_WIDE = [...TILE_WIDTHS, 626];
+
+/**
+ * A CARD is not a tile: it sits in a column group and takes the section's whole width, which is
+ * 1264px at the page's 1280px cap and shrinks with the window. Measured: Home Energy renders at
+ * ~1000px on a laptop. 626 is the narrow end — a card in a section beside another.
+ */
+const CARD_WIDTHS = [626, 820, 1264];
 const AMBERNOW_WIDTHS = [220, 280, 340, 420];
 
 // ---------------------------------------------------------------------------
@@ -410,7 +452,7 @@ export default function CardGallery() {
           note="Tile. Hero in solar yellow (grey below 50 W); 'local + remote' adds the breakdown caption. The period bars need a subject, so they do not draw here."
           scenarios={Object.keys(SOLAR_SCENARIOS)}
           defaultScenario="local + remote"
-          presetWidths={POWER_WIDTHS}
+          presetWidths={TILE_WIDTHS_WIDE}
           playground={{ w: 200, h: 140 }}
           render={(s, st) => (
             <TileCell latest={pick(SOLAR_SCENARIOS, s, st)} id="solar" />
@@ -422,7 +464,7 @@ export default function CardGallery() {
           note="Tile. 'with children' shows top-2 child loads + synthesized rest-of-house."
           scenarios={Object.keys(LOAD_SCENARIOS)}
           defaultScenario="with children"
-          presetWidths={POWER_WIDTHS}
+          presetWidths={TILE_WIDTHS_WIDE}
           playground={{ w: 200, h: 140 }}
           render={(s, st) => (
             <TileCell latest={pick(LOAD_SCENARIOS, s, st)} id="load" />
@@ -434,7 +476,7 @@ export default function CardGallery() {
           note="Tile. SoC ring in battery green (red under 20%); the direction chip is up for discharge, down for charge, a dash when idle. Stale greys the values and shows the age."
           scenarios={Object.keys(BATTERY_SCENARIOS)}
           defaultScenario="charging"
-          presetWidths={POWER_WIDTHS}
+          presetWidths={TILE_WIDTHS_WIDE}
           playground={{ w: 200, h: 140 }}
           render={(s, st) => (
             <TileCell latest={pick(BATTERY_SCENARIOS, s, st)} id="battery" />
@@ -446,7 +488,7 @@ export default function CardGallery() {
           note="Tile. Hero in grid magenta, grey when idle; the header chip is down for import, up for export, doubled above 5 kW."
           scenarios={Object.keys(GRID_SCENARIOS)}
           defaultScenario="importing"
-          presetWidths={POWER_WIDTHS}
+          presetWidths={TILE_WIDTHS_WIDE}
           playground={{ w: 200, h: 140 }}
           render={(s, st) => (
             <TileCell latest={pick(GRID_SCENARIOS, s, st)} id="house-to-grid" />
@@ -464,7 +506,7 @@ export default function CardGallery() {
             // run-periods answer depends on the pick but its query KEY does not.
             queryClient.removeQueries();
           }}
-          presetWidths={POWER_WIDTHS}
+          presetWidths={TILE_WIDTHS}
           playground={{ w: 200, h: 140 }}
           render={(s, st) => (
             <TileCell
@@ -487,7 +529,7 @@ export default function CardGallery() {
             // scenario and show "This period" over a hero that says the engine is running.
             queryClient.removeQueries();
           }}
-          presetWidths={POWER_WIDTHS}
+          presetWidths={TILE_WIDTHS}
           playground={{ w: 200, h: 140 }}
           render={(sc, st) => (
             <TileCell
@@ -506,7 +548,7 @@ export default function CardGallery() {
           note="HwsSmallCard (a Tile). The only card with a TIGHT unit — '62.4°C' must read fused and UNMUTED, unlike '5.0 kW'. See docs/architecture/number-typography.md."
           scenarios={Object.keys(HWS_SCENARIOS)}
           defaultScenario="hot"
-          presetWidths={POWER_WIDTHS}
+          presetWidths={TILE_WIDTHS_WIDE}
           playground={{ w: 200, h: 140 }}
           render={(s, st) => (
             <HwsSmallCard
@@ -518,10 +560,10 @@ export default function CardGallery() {
 
         <CardSection
           title="Amber — small card"
-          note="Container-query layout: 66 / 90 / 120 / 180 / 300 width breakpoints. Returns null if no import rate."
+          note="Two forms, switching at 180px of TILE width. Returns null if no import rate."
           scenarios={Object.keys(AMBER_SCENARIOS)}
           defaultScenario="low"
-          presetWidths={CQ_WIDTHS}
+          presetWidths={TILE_WIDTHS}
           playground={{ w: 200, h: 180 }}
           render={(s, st) => (
             <AmberSmallCard latest={pick(AMBER_SCENARIOS, s, st)} />
@@ -530,10 +572,10 @@ export default function CardGallery() {
 
         <CardSection
           title="Tesla — small card"
-          note="One container-query layout: 66 / 90 / 120 / 180 width breakpoints. Fat SoC ring in the EV theme red, with the charge-limit notch and, while charging, chevrons on the arc's tip. Returns null if no SoC. Has NO staleness treatment — the stale box visibly does nothing here."
+          note="One container-query layout, stepping up at 180px of TILE width. Fat SoC ring in the EV theme red, with the charge-limit notch and, while charging, chevrons on the arc's tip. Returns null if no SoC. Has NO staleness treatment — the stale box visibly does nothing here."
           scenarios={Object.keys(TESLA_SCENARIOS)}
           defaultScenario="charging (high power)"
-          presetWidths={CQ_WIDTHS}
+          presetWidths={TILE_WIDTHS}
           playground={{ w: 200, h: 180 }}
           render={(s, st) => (
             <TeslaSmallCard latest={pick(TESLA_SCENARIOS, s, st)} />
@@ -544,11 +586,11 @@ export default function CardGallery() {
 
         <CardSection
           title="Local Grid (NEM) signals"
-          note="GridSignalsCard (a medium tile). From 300px: the renewable share as a ring beside Price/Emissions/Demand rows; narrower, a label-over-value 2×2 (1 column under 200px). 'missing metric' shows an em-dash; stale greys the values."
+          note="GridSignalsCard (a small tile). From 180px: the renewable share as the shared 108px ring, Price and Emissions side by side underneath; narrower, the three as label-over-value rows. 'missing metric' shows an em-dash; stale dims the values."
           scenarios={Object.keys(GRID_SIGNALS_SCENARIOS)}
           defaultScenario="high renewables"
-          presetWidths={GRID_WIDTHS}
-          playground={{ w: 360, h: 130 }}
+          presetWidths={TILE_WIDTHS}
+          playground={{ w: 200, h: 200 }}
           render={(s, st) => {
             const f = pick(GRID_SIGNALS_SCENARIOS, s, st);
             return (
@@ -572,7 +614,7 @@ export default function CardGallery() {
           note="BatteryContentsCard. Labelled stat grid (2→3→4 cols). 'warm-up' shows em-dash totals; 'no tariff' hides the export/opportunity split; 'empty battery' reads 0.0 kWh; stale shows the age in the header."
           scenarios={Object.keys(BATTERY_CONTENTS_SCENARIOS)}
           defaultScenario="typical"
-          presetWidths={CQ_WIDTHS}
+          presetWidths={CARD_WIDTHS}
           playground={{ w: 380, h: 150 }}
           render={(s, st) => (
             <BatteryContentsCard
@@ -586,7 +628,7 @@ export default function CardGallery() {
           note="HomeEnergyCard. Same shape as Battery Contents, over the navigator's period. 'grid only' reads Self-use '—'; 'partial self-renewable' em-dashes BOTH ratios; 'no intensities' em-dashes the rate/emissions stats; 'no data' is the empty state."
           scenarios={Object.keys(HOME_ENERGY_SCENARIOS)}
           defaultScenario="typical"
-          presetWidths={CQ_WIDTHS}
+          presetWidths={CARD_WIDTHS}
           playground={{ w: 380, h: 200 }}
           // HomeEnergyCard takes its instant as a PROP rather than inside the summary, so the
           // checkbox has to age that argument rather than the fixture.
