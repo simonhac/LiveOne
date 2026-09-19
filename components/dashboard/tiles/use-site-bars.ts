@@ -21,6 +21,11 @@ import type { ProcessedSiteData } from "@/lib/site-data-processor";
  * without a host `systemId` (the prop-driven card gallery), where it returns no bars.
  *
  * `pick` chooses and sums the series; it must be stable (module-level), since it keys the memo.
+ *
+ * Returns `pending` as well as the bars, and the two are NOT the same question. `bars: []` covers
+ * both "the fetch hasn't landed" and "this area has no such series at all" — a tile that reserved
+ * the bars' height for the second case would carry permanent dead space, and one that reserved it
+ * for neither grows under the reader when the fetch lands. `pending` is the first case alone.
  */
 export function useSiteBars(
   systemId: number | undefined,
@@ -28,7 +33,7 @@ export function useSiteBars(
     timestamps: Date[];
     values: (number | null)[];
   } | null,
-): TileBar[] {
+): { bars: TileBar[]; pending: boolean } {
   const { datum, paused } = useAreaDatum(systemId ?? 0, {
     enabled: systemId != null,
   });
@@ -48,7 +53,7 @@ export function useSiteBars(
     }),
   );
 
-  return useMemo(() => {
+  const bars = useMemo(() => {
     if (!site) return [];
     const series = pick(site);
     if (!series) return [];
@@ -61,6 +66,8 @@ export function useSiteBars(
       period === "D" ? tz : dayOffset,
     );
   }, [site, pick, period, tz, dayOffset]);
+
+  return { bars, pending: systemId != null && !site };
 }
 
 /** Solar generation: every generation-side series that maps to a `source.solar*` flow node. */

@@ -2,7 +2,7 @@
 
 import { Sun } from "lucide-react";
 import Tile from "@/components/Tile";
-import MiniBars from "@/components/ui/mini-bars";
+import MiniBars, { MiniBarsSkeleton } from "@/components/ui/mini-bars";
 import { IDLE_CHROME, ROLE_CHROME } from "@/lib/role-chrome";
 import type { LatestPointValues } from "@/lib/types/api";
 import type { TilePlugin, TileRenderProps } from "./types";
@@ -61,7 +61,7 @@ function SolarTile({
 }: TileRenderProps) {
   const { solarValue, solarLocal, solarRemote, showBreakdown } =
     solarValueFrom(latest);
-  const bars = useSiteBars(systemId, pickSolar);
+  const { bars, pending: barsPending } = useSiteBars(systemId, pickSolar);
   const generating = (solarValue ?? 0) >= GENERATING_W;
   return (
     <Tile
@@ -100,6 +100,8 @@ function SolarTile({
             className="h-10"
             ariaLabel="Solar generation over the period"
           />
+        ) : barsPending ? (
+          <MiniBarsSkeleton className="h-10" />
         ) : undefined
       }
     />

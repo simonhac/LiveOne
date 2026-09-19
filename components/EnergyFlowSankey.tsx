@@ -429,7 +429,7 @@ export default function EnergyFlowSankey({
   unit = "kWh",
   layout = "columns",
   width = 600,
-  height = 680,
+  height = 640,
   nodeTooltip,
   linkTooltip,
 }: EnergyFlowSankeyProps) {

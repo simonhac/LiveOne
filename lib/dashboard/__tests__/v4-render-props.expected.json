@@ -759,7 +759,18 @@
                     "className": "space-y-0.5"
                   }
                 },
-                false
+                {
+                  "$element": "div",
+                  "$props": {
+                    "children": {
+                      "$element": "MiniBarsSkeleton",
+                      "$props": {
+                        "className": "h-8"
+                      }
+                    },
+                    "className": "mt-2 flex flex-1 flex-col"
+                  }
+                }
               ]
             }
           },
@@ -852,6 +863,12 @@
       {
         "component": "Tile",
         "props": {
+          "extra": {
+            "$element": "MiniBarsSkeleton",
+            "$props": {
+              "className": "h-10"
+            }
+          },
           "extraInfo": {
             "$element": "Fragment",
             "$props": {
