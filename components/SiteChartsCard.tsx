@@ -375,18 +375,24 @@ function StackedChart({
   // `touchstart`/`mousedown` rather than `click` so it lands BEFORE the band's own toggle; the
   // `closest` checks are what stop a press ON a band being read as a press outside one, leaving the
   // band's `onClick` to toggle as it should. Mirrors EnergyFlowSankey's dismissal effect.
+  //
+  // On touch the chart's own plot is excluded too: the chart hit-tests taps there itself, with a
+  // widened target round thin runs, and reports a miss through `onTapOutsideRun`. Closing here first
+  // would make a tap in a thin run's padding close its pinned panel only for the chart to reopen it.
   useEffect(() => {
     if (!hoveredRun) return;
+    const touch = isTouchDevice();
     const handleOutside = (e: Event) => {
       const target = e.target as HTMLElement;
       if (
         !target.closest("[data-run]") &&
-        !target.closest('[data-testid="run-tooltip"]')
+        !target.closest('[data-testid="run-tooltip"]') &&
+        !(touch && target.closest('[data-testid^="dashboard-chart"]'))
       ) {
         closeRun();
       }
     };
-    const type = isTouchDevice() ? "touchstart" : "mousedown";
+    const type = touch ? "touchstart" : "mousedown";
     document.addEventListener(type, handleOutside);
     return () => document.removeEventListener(type, handleOutside);
   }, [hoveredRun, closeRun]);
@@ -437,6 +443,7 @@ function StackedChart({
           hoveredRunId={hoveredRun?.band.id ?? null}
           onHoverRun={handleHoverRun}
           onToggleRun={handleToggleRun}
+          onTapOutsideRun={closeRun}
           // 🛑 `absolute inset-0`, NOT `h-full w-full`. The chart measures its own root and draws
           // nothing at zero height, and a percentage height here resolves to `auto` on MOBILE: this
           // box's parent gets its 375px from flex growth, so its *specified* height stays `auto`

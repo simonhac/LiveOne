@@ -1,5 +1,6 @@
 import { describe, expect, it } from "@jest/globals";
 import {
+  hitTestRuns,
   renewablePct,
   runBandsForSeries,
   seriesForRole,
@@ -214,5 +215,52 @@ describe("renewablePct", () => {
     expect(
       renewablePct({ ...run("", null), energyKwh: 0, renewableKwh: 0 }),
     ).toBeNull();
+  });
+});
+
+describe("hitTestRuns", () => {
+  // An EV band sitting at y 150..200 (plot px), under a solar band above it.
+  const box = (id: string, x0: number, x1: number) => ({
+    id,
+    x0,
+    x1,
+    yTop: 150,
+    yBottom: 200,
+  });
+
+  it("hits inside a wide run", () => {
+    expect(hitTestRuns([box("a", 100, 200)], 150, 175)).toBe("a");
+  });
+
+  it("does not widen a run that is already wider than the minimum", () => {
+    expect(hitTestRuns([box("a", 100, 200)], 95, 175)).toBeNull();
+  });
+
+  it("widens a two-pixel run to a fingertip-sized target", () => {
+    // Centre 101, min width 32 → 85..117.
+    expect(hitTestRuns([box("a", 100, 102)], 115, 175)).toBe("a");
+    expect(hitTestRuns([box("a", 100, 102)], 86, 175)).toBe("a");
+    expect(hitTestRuns([box("a", 100, 102)], 120, 175)).toBeNull();
+  });
+
+  it("pads vertically, but a tap on the band stacked above misses", () => {
+    expect(hitTestRuns([box("a", 100, 200)], 150, 145)).toBe("a");
+    expect(hitTestRuns([box("a", 100, 200)], 150, 205)).toBe("a");
+    expect(hitTestRuns([box("a", 100, 200)], 150, 120)).toBeNull();
+  });
+
+  it("gives an overlapped tap to the nearer of two thin runs", () => {
+    const runs = [box("a", 100, 102), box("b", 110, 112)];
+    expect(hitTestRuns(runs, 104, 175)).toBe("a");
+    expect(hitTestRuns(runs, 108, 175)).toBe("b");
+  });
+
+  it("lets a tap inside a real run beat a neighbour's padding", () => {
+    const runs = [box("thin", 100, 102), box("wide", 105, 300)];
+    expect(hitTestRuns(runs, 106, 175)).toBe("wide");
+  });
+
+  it("returns null with no runs", () => {
+    expect(hitTestRuns([], 0, 0)).toBeNull();
   });
 });
