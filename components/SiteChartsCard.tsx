@@ -1,6 +1,13 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import {
+  useState,
+  useEffect,
+  useCallback,
+  useMemo,
+  useRef,
+  type ReactNode,
+} from "react";
 import { useQueries, useQuery } from "@tanstack/react-query";
 import { useModalContext } from "@/contexts/ModalContext";
 import { siteDataQuery } from "@/lib/queries";
@@ -53,6 +60,7 @@ import {
   reduceSourceProvenance,
   reduceEdgeProvenance,
   type DailyFlowMatrices,
+  type EnergyFlowMatrix,
 } from "@/lib/energy-flow-matrix";
 import {
   formatKwh,
@@ -144,6 +152,76 @@ function SankeyBlockPlaceholder({ anchor }: { anchor: string }) {
         />
       </div>
       <div className="mt-1 text-center text-xs text-gray-500">&nbsp;</div>
+    </div>
+  );
+}
+
+/**
+ * What the flows settings menu may offer, from a matrix's RAW node set — computed BEFORE the
+ * combine-solar transform, so an enabled toggle does not read as "disabled".
+ *
+ * Takes a nullable matrix so the empty-bucket block can ask the same question of the window's nodes
+ * and keep its menu identical to the one beside the real diagram.
+ */
+function sankeyCapabilitiesOf(
+  matrix: EnergyFlowMatrix | null,
+): SankeyCapabilities {
+  if (!matrix) return { canCombineSolar: false, hasBattery: false };
+  const solarCount = matrix.sources.filter(
+    (s) => s.id === "source.solar" || s.id.startsWith("source.solar."),
+  ).length;
+  return {
+    canCombineSolar: solarCount >= 2,
+    hasBattery:
+      matrix.sources.some((s) => s.id === "source.battery") ||
+      matrix.loads.some((l) => l.id === "load.battery"),
+  };
+}
+
+/**
+ * The flows block with NOTHING in it: the hovered bucket is real, but the attributed payload holds
+ * no days for it — a month before the area's provenance begins, or a day the rollup never produced.
+ *
+ * 🛑 This used to fall back to the WINDOW's flows, which answers a question the reader did not ask.
+ * They pointed at one month and got the year, in a diagram that carries no dates of its own, so the
+ * only tell was the caption underneath. Showing nothing is the honest answer to "what flowed here".
+ *
+ * 🛑 And it is a BLOCK, not an absence. Returning null would collapse the largest element on the
+ * page — the same layout hazard {@link SankeyBlockPlaceholder} exists to prevent — except on HOVER,
+ * so the page would jump out from under the pointer and back as it moved between buckets.
+ *
+ * Distinct from that placeholder, which shimmers because it means "coming". "There is nothing here"
+ * is a settled answer and must not be dressed as a pending one. The label line still names the
+ * bucket, so the reader can see WHICH month or day is empty.
+ */
+function SankeyBlockEmpty({
+  anchor,
+  label,
+  menu,
+}: {
+  anchor: string;
+  label: string | null;
+  menu: ReactNode;
+}) {
+  return (
+    <div className={CHART_BODY_PAD} data-scroll-anchor={anchor}>
+      <div className="mb-2 flex items-center justify-between px-2 sm:px-0">
+        <h3 className="text-base font-semibold text-gray-300">Flows</h3>
+        {menu}
+      </div>
+      <div className="flex justify-center">
+        <div
+          style={{ width: SANKEY_W, height: SANKEY_H }}
+          className="flex max-w-full items-center justify-center"
+          data-testid="sankey-empty"
+        >
+          <p className="text-sm text-gray-500">No flows recorded</p>
+        </div>
+      </div>
+      {/* Same unconditional 16px line as the real block, so nothing shifts on hover. */}
+      <div className="mt-1 text-center text-xs text-gray-500">
+        {label || " "}
+      </div>
     </div>
   );
 }
@@ -1197,9 +1275,14 @@ export default function SiteChartsCard({
 
               let matrix;
               let focused = false;
+              /**
+               * Hovering a bucket the attributed payload has no days for — the case
+               * {@link SankeyBlockEmpty} draws. Distinct from `!focused`, which is also true when
+               * nothing is hovered at all (and that case DOES show the window).
+               */
+              let emptyBucket = false;
               if (isDateOnlyPeriod(period) && hasAttributed) {
-                // M picks the one hovered day; Y sums the hovered month's days. Both fall back to
-                // the whole window when nothing is hovered.
+                // M picks the one hovered day; Y sums the hovered month's days.
                 const bucketMatrix =
                   period === "Y"
                     ? bucketSlice && sumDailyFlowMatrices(bucketSlice)
@@ -1207,7 +1290,14 @@ export default function SiteChartsCard({
                       ? pickDailyFlowMatrix(attributedFlow!, hoveredYMD)
                       : null;
                 focused = bucketMatrix !== null;
-                matrix = bucketMatrix ?? sumDailyFlowMatrices(attributedFlow!);
+                // 🛑 The window is what you get when you are NOT pointing at anything — never a
+                // stand-in for a bucket that turned out to be empty. Pointing at one month and
+                // being shown the year is the wrong answer, not a degraded one.
+                const hoveringBucket = focusedTime !== null;
+                emptyBucket = hoveringBucket && bucketMatrix === null;
+                matrix = hoveringBucket
+                  ? bucketMatrix
+                  : sumDailyFlowMatrices(attributedFlow!);
               } else {
                 const instant =
                   !isDateOnlyPeriod(period) && hoveredIndex !== null
@@ -1223,23 +1313,6 @@ export default function SiteChartsCard({
                     ? sumDailyFlowMatrices(attributedFlow!)
                     : selectFlowMatrix(processedHistoryData));
               }
-              if (!matrix) return null;
-              // Capabilities from the RAW matrix node set (hover-invariant; computed BEFORE the
-              // combine-solar transform so an enabled toggle doesn't read as "disabled").
-              const solarCount = matrix.sources.filter(
-                (s) =>
-                  s.id === "source.solar" || s.id.startsWith("source.solar."),
-              ).length;
-              const sankeyCapabilities: SankeyCapabilities = {
-                canCombineSolar: solarCount >= 2,
-                hasBattery:
-                  matrix.sources.some((s) => s.id === "source.battery") ||
-                  matrix.loads.some((l) => l.id === "load.battery"),
-              };
-              const displayMatrix = sankeyOptions.combineSolar
-                ? combineSolarSources(matrix)
-                : matrix;
-              const unit = focused && !isDateOnlyPeriod(period) ? "kW" : "kWh";
               const tz = device?.timezoneOffsetMin;
               // Label: the focused instant when hovering, else the window the sankey integrates over
               // (a TIME range for D/W, a DATE range for M/Y).
@@ -1289,6 +1362,35 @@ export default function SiteChartsCard({
                       !isDateOnlyPeriod(period),
                     )
                   : null;
+
+              if (!matrix) {
+                // Nothing to diagram at all (no complete flow) — the pre-existing null case.
+                if (!emptyBucket) return null;
+                // A hovered bucket with no data: the block stays, empty. Its capabilities come from
+                // the WINDOW's node set rather than the (absent) bucket's, so the settings menu
+                // offers the same choices whether or not the pointer is over an empty month.
+                return (
+                  <SankeyBlockEmpty
+                    anchor={`${systemId}:sankey`}
+                    label={label}
+                    menu={
+                      <FlowsSettingsMenu
+                        options={sankeyOptions}
+                        capabilities={sankeyCapabilitiesOf(
+                          sumDailyFlowMatrices(attributedFlow!),
+                        )}
+                        onChange={persistSankeyOptions}
+                      />
+                    }
+                  />
+                );
+              }
+
+              const sankeyCapabilities = sankeyCapabilitiesOf(matrix);
+              const displayMatrix = sankeyOptions.combineSolar
+                ? combineSolarSources(matrix)
+                : matrix;
+              const unit = focused && !isDateOnlyPeriod(period) ? "kW" : "kWh";
 
               // The attributed slice the tooltip reduces over — the SAME data the boxes above were
               // built from (date-only hovered day → just that day; otherwise the whole payload —
