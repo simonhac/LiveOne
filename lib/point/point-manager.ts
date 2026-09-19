@@ -843,7 +843,12 @@ export class PointManager {
       const inputs = valuesToInsert.map((v) => ({
         sessionId: session.id,
         point: Object.values(pointMap).find((p) => p.index === v.pointId)!,
-        value: v.value,
+        // 🛑 `?? valueStr`, or a TEXT point reaches `point_readings` as NULL/NULL. The observation
+        // carries one `value: number | string`, and the receiver splits it back into value/value_str
+        // by type — so passing only the numeric half published every text reading as a null. It
+        // did so silently for months: the KV cache below takes the full row, so the dashboard showed
+        // the hub's state while the table holding its history recorded nothing.
+        value: v.value ?? v.valueStr,
         measurementTimeMs: v.measurementTimeMs,
         receivedTimeMs: v.receivedTimeMs,
         interval: "raw" as const,

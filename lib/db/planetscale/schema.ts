@@ -1182,6 +1182,16 @@ export const derivedIntervals = pgTable(
     // of the run leaned on a missing intensity. A run nothing could price carries its WHOLE energy
     // here, never 0.
     estimatedKwh: doublePrecision("estimated_kwh"), // kWh — Σ sliceKwh × estimatedFraction(t)
+    // WHY the run started (lib/run-tracking/start-cause.ts): 'automation' | 'user' | 'inverter' |
+    // 'panel' | 'other'. NULL = UNKNOWN — no evidence was recorded around the start (before the hub
+    // existed, a dropout, or a device whose control points this does not know). Recomputed with the
+    // row from stored evidence, never set once and carried: the recompute deletes and re-inserts.
+    // No CHECK, deliberately — a constraint here would have to land on prod and liveone-dev in the
+    // same sitting or the prod→dev sync aborts wholesale; the vocabulary is enforced by the type.
+    startCause: text("start_cause"),
+    // The `point_commands.requested_by` of the dispatch that started it (`automation:au_…` or a
+    // Clerk user id) — set only when start_cause is 'automation' or 'user'. Never published raw.
+    startRequestedBy: text("start_requested_by"),
     sampleCount: integer("sample_count").notNull().default(0),
     detectorVersion: integer("detector_version").notNull().default(1),
     createdAt: tsMs("created_at").notNull().defaultNow(),

@@ -1,11 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireDashboardAccess } from "@/lib/api-auth";
 import { subjectDisplayTimezone } from "@/lib/dashboard/subject";
-import { and, asc, desc, eq, gte, inArray, isNull, lte, or } from "drizzle-orm";
+import { and, asc, desc, eq, gte, isNull, lte, or } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import {
   devices,
-  derivedIntervalProvenance,
   derivedIntervals,
   points,
   type DerivedInterval,
@@ -27,6 +26,7 @@ import {
 } from "@/lib/run-tracking/run-period-view";
 import { roundToThree } from "@/lib/history/format-opennem";
 import { formatInTimezone } from "@/lib/date-utils";
+import { withAreaProvenance } from "@/lib/run-tracking/area-provenance";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_PERIOD_DAYS = 30;
@@ -239,67 +239,6 @@ async function resolveShape(
     signal,
     shape: { tz, columns, signalMetricUnit: signal?.metricUnit ?? null },
   };
-}
-
-/**
- * Overlay THE VIEWING AREA'S provenance onto run rows.
- *
- * A run's cost, carbon and renewable share are area-relative — the same Kutis EV session is 17.9c
- * through High Street Kew, which binds the Amber meter, and unpriceable through the Kutis
- * area-of-one, which does not — so they live per-area in `derived_interval_provenance`. This route is
- * already keyed on the area being VIEWED (`{systemId}` is a handle, and the stacked chart passes the
- * composite's), which is exactly the area whose answer the reader wants.
- *
- * Falls back to the row's own legacy columns where the sidecar has no row. Two cases, and the
- * fallback is right for both: a run recomputed before migration 0066 has no sidecar row yet (the
- * legacy column is the only answer there is until the backfill reaches it), and an area that cannot
- * price a run has no row BY DESIGN — where the legacy column is then NULL too, because the writer
- * refuses to fill it when more than one area could answer. Either way "no row" resolves to the most
- * honest number available rather than to a fabricated zero.
- */
-async function withAreaProvenance<T extends DerivedInterval>(
-  rows: T[],
-  derivationId: string,
-  areaId: string | null,
-): Promise<T[]> {
-  if (areaId === null || rows.length === 0) return rows;
-  const db = requirePlanetscaleDb();
-  const prov = await db
-    .select({
-      startTime: derivedIntervalProvenance.startTime,
-      costC: derivedIntervalProvenance.costC,
-      emissionsG: derivedIntervalProvenance.emissionsG,
-      renewableKwh: derivedIntervalProvenance.renewableKwh,
-      estimatedKwh: derivedIntervalProvenance.estimatedKwh,
-    })
-    .from(derivedIntervalProvenance)
-    .where(
-      and(
-        eq(derivedIntervalProvenance.derivationId, derivationId),
-        eq(derivedIntervalProvenance.areaId, areaId),
-        inArray(
-          derivedIntervalProvenance.startTime,
-          rows.map((r) => r.startTime),
-        ),
-      ),
-    );
-  if (prov.length === 0) return rows;
-  const byStart = new Map(prov.map((p) => [p.startTime.getTime(), p]));
-  return rows.map((r) => {
-    const p = byStart.get(r.startTime.getTime());
-    // Whole-row substitution, never field-by-field: the four numbers are ONE verdict about one run
-    // seen from one place (`estimatedKwh` is the confidence denominator for the other three), so
-    // mixing this area's cost with another's estimate would produce a figure no area ever computed.
-    return p
-      ? {
-          ...r,
-          costC: p.costC,
-          emissionsG: p.emissionsG,
-          renewableKwh: p.renewableKwh,
-          estimatedKwh: p.estimatedKwh,
-        }
-      : r;
-  });
 }
 
 /**
