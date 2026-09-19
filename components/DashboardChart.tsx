@@ -1,6 +1,6 @@
 "use client";
 
-import { useId, useMemo } from "react";
+import { useId, useMemo, useRef } from "react";
 import {
   FocusLine,
   ShadingBands,
@@ -20,7 +20,12 @@ import {
 import { CHART_COLORS } from "@/lib/chart-colors";
 import { CHART_INK } from "@/lib/charts/style";
 import { SOC_DASH, lineSeries } from "@/lib/charts/line-series";
-import { snapToBandEdges, type RunBand } from "@/lib/charts/run-bands";
+import {
+  hitTestRuns,
+  snapToBandEdges,
+  type RunBand,
+  type RunHitBox,
+} from "@/lib/charts/run-bands";
 import type { ChartTimeRange } from "@/lib/charts/temporal";
 import type {
   ChartData,
@@ -93,6 +98,8 @@ const RUN_EDGE_HOVER = "rgba(255, 255, 255, 0.95)";
 /** Stripe pitch and duty, in px — see `patternUnits` on the pattern for why these are not fractions. */
 const RUN_STRIPE_TILE = 8;
 const RUN_STRIPE_WIDTH = 4;
+/** How far a touch may travel, in px, and still count as a TAP rather than a scrub of the crosshair. */
+const TAP_SLOP = 10;
 
 type CommonProps = {
   timeRange: ChartTimeRange;
@@ -137,6 +144,11 @@ type StackedProps = CommonProps & {
    * chart only reports that a run was clicked.
    */
   onToggleRun?: (band: RunBand, at: RunTooltipAnchor) => void;
+  /**
+   * TOUCH only: a tap on the plot that resolved to no run. The chart hit-tests touch taps itself
+   * (see the svg's `onPointerUp`), so it — not a document listener — is what knows a tap missed.
+   */
+  onTapOutsideRun?: () => void;
 };
 
 export type DashboardChartProps = LinesProps | StackedProps;
@@ -249,6 +261,9 @@ export default function DashboardChart(props: DashboardChartProps) {
     onChange: onHoverIndex,
   });
 
+  // Where a touch went down, so `pointerup` can tell a tap from a drag along the time axis.
+  const tapStartRef = useRef<{ id: number; x: number; y: number } | null>(null);
+
   // `data-unmeasured` so "the container measured zero, so the chart drew nothing" is visible in
   // devtools. Without it this is an anonymous empty div, which is what made the mobile stacked-chart
   // collapse (a `h-full` box whose parent height came from flex growth) read as missing data.
@@ -301,6 +316,104 @@ export default function DashboardChart(props: DashboardChartProps) {
       ? stackedBands(timestamps, series, geo.x, geo.y)
       : null;
 
+  // Every drawable run, laid out ONCE: the overlay draws from this list and the touch tap resolves
+  // against it, so what you see and what you can tap are the same geometry.
+  const runLayout = (() => {
+    if (!stacked || props.variant !== "stacked-areas" || !props.runBands)
+      return [];
+    const bandIndex = new Map(stacked.map((b, i) => [b.key, i]));
+    const num = (v: number | null | undefined) =>
+      v != null && Number.isFinite(v) ? v : 0;
+    return props.runBands.flatMap((run, i) => {
+      const k = bandIndex.get(run.seriesId);
+      if (k === undefined) return [];
+      const band = stacked[k];
+      if (!band.d) return [];
+      // Snap out to the foot of the band's own ramp so the outline traces the rise and fall rather
+      // than cutting across them — see `snapToBandEdges`.
+      const span = snapToBandEdges(
+        run.startMs,
+        run.endMs,
+        timestamps,
+        series[k].values,
+      );
+      const x0 = geo.x(new Date(span.startMs));
+      const x1 = geo.x(new Date(span.endMs));
+      // Sub-pixel runs are dropped rather than drawn: an invisible band that still answers the
+      // pointer reads as a phantom tooltip.
+      if (!(x1 - x0 >= 1)) return [];
+      // The band's vertical extent over the run — its stack floor and ceiling, in the same order
+      // `stackedBands` stacks them (`stackOrderNone`: series order, bottom up).
+      let lo = Infinity;
+      let hi = -Infinity;
+      timestamps.forEach((t, ti) => {
+        const ms = t.getTime();
+        if (ms < span.startMs || ms > span.endMs) return;
+        let floor = 0;
+        for (let j = 0; j < k; j++) floor += num(series[j].values[ti]);
+        const ceil = floor + num(series[k].values[ti]);
+        lo = Math.min(lo, floor, ceil);
+        hi = Math.max(hi, floor, ceil);
+      });
+      if (!Number.isFinite(lo)) return [];
+      const box: RunHitBox = {
+        id: run.id,
+        x0,
+        x1,
+        yTop: Math.min(geo.y(hi), geo.y(lo)),
+        yBottom: Math.max(geo.y(hi), geo.y(lo)),
+      };
+      // `x0`/`x1` are plot-relative (they come from the translated group), so adding the plot's own
+      // offset puts them in the chart's box — the box the panel is positioned inside. No
+      // measurement, nothing to go stale.
+      const anchor: RunTooltipAnchor = {
+        x0: geo.plot.left + x0,
+        x1: geo.plot.left + x1,
+        plot: {
+          left: geo.plot.left,
+          top: geo.plot.top,
+          width: geo.plot.width,
+          height: geo.plot.height,
+        },
+      };
+      return [{ run, index: i, d: band.d, x0, x1, box, anchor }];
+    });
+  })();
+
+  /**
+   * A TOUCH tap, resolved against the runs by geometry rather than by the slice's own `click`.
+   *
+   * 🛑 iOS Safari drops the synthetic `click` when the tap's own touch-start changed what is on
+   * screen — it reads the tap as a "hover" — and `pointerdown` here always moves the crosshair
+   * (and with it the energy table and the focused Sankey) unless it lands on the index already
+   * focused. So a run's `onClick` fired only on the rare tap that did not move the crosshair. Going
+   * through `pointerup` sidesteps the heuristic, and the geometric test is what lets a two-pixel
+   * charge session have a fingertip-sized target (`hitTestRuns`).
+   */
+  const onPointerDown = (e: React.PointerEvent<SVGSVGElement>) => {
+    pointer.onPointerDown(e);
+    tapStartRef.current =
+      e.pointerType === "touch"
+        ? { id: e.pointerId, x: e.clientX, y: e.clientY }
+        : null;
+  };
+  const onPointerUp = (e: React.PointerEvent<SVGSVGElement>) => {
+    const start = tapStartRef.current;
+    tapStartRef.current = null;
+    if (!start || start.id !== e.pointerId) return;
+    if (Math.hypot(e.clientX - start.x, e.clientY - start.y) > TAP_SLOP) return;
+    if (props.variant !== "stacked-areas") return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const id = hitTestRuns(
+      runLayout.map((r) => r.box),
+      e.clientX - rect.left - geo.plot.left,
+      e.clientY - rect.top - geo.plot.top,
+    );
+    const hit = id ? runLayout.find((r) => r.run.id === id) : undefined;
+    if (hit) props.onToggleRun?.(hit.run, hit.anchor);
+    else props.onTapOutsideRun?.();
+  };
+
   return (
     <div ref={ref} className={className}>
       <svg
@@ -313,8 +426,10 @@ export default function DashboardChart(props: DashboardChartProps) {
         // browser claims the gesture as a sideways scroll and the crosshair never moves, which reads
         // as the chart ignoring you.
         className="touch-pan-y"
-        onPointerDown={pointer.onPointerDown}
+        onPointerDown={onPointerDown}
         onPointerMove={pointer.onPointerMove}
+        onPointerUp={onPointerUp}
+        onPointerCancel={() => (tapStartRef.current = null)}
         onPointerLeave={pointer.onPointerLeave}
       >
         <g transform={`translate(${geo.plot.left}, ${geo.plot.top})`}>
@@ -434,18 +549,8 @@ export default function DashboardChart(props: DashboardChartProps) {
               This is the one place the "🛑 never stroke `d`" rule in lib/charts/svg/paths.ts does not
               apply, and for the reason that rule gives: stroking `d` draws the baseline too. Here the
               baseline IS the slice's bottom edge, which is exactly what is wanted. */}
-          {stacked &&
-          props.variant === "stacked-areas" &&
-          props.runBands?.length
+          {props.variant === "stacked-areas" && runLayout.length > 0
             ? (() => {
-                // `stacked` and `series` are index-aligned, so the band's own VALUES come along with
-                // its path — `snapToBandEdges` needs them to find the foot of the band's ramp.
-                const byKey = new Map(
-                  stacked.map((b, i) => [
-                    b.key,
-                    { ...b, values: series[i].values },
-                  ]),
-                );
                 const stripeId = `${clipPrefix}-stripe`;
                 const stripeHoverId = `${clipPrefix}-stripe-hover`;
                 return (
@@ -479,59 +584,30 @@ export default function DashboardChart(props: DashboardChartProps) {
                         </pattern>
                       ))}
                     </defs>
-                    {props.runBands.map((run, i) => {
-                      const band = byKey.get(run.seriesId);
-                      if (!band?.d) return null;
-                      // Snap out to the foot of the band's own ramp so the outline traces the rise
-                      // and fall rather than cutting across them — see `snapToBandEdges`.
-                      const span = snapToBandEdges(
-                        run.startMs,
-                        run.endMs,
-                        timestamps,
-                        band.values,
-                      );
-                      const x0 = geo.x(new Date(span.startMs));
-                      const x1 = geo.x(new Date(span.endMs));
-                      // Sub-pixel runs are dropped rather than drawn: an invisible band that still
-                      // answers the pointer reads as a phantom tooltip.
-                      if (!(x1 - x0 >= 1)) return null;
+                    {runLayout.map(({ run, index: i, d, x0, x1, anchor }) => {
                       const hovered = props.hoveredRunId === run.id;
                       // A run id is `<series>:<ISO start>`, so it carries `/`, `:` and `.` — all of
                       // which are legal in an XML id but ambiguous inside a `url(#…)` fragment.
                       // Index rather than sanitise: the ids are internal and need only be unique.
                       const rectId = `${clipPrefix}-rect-${i}`;
                       const bandId = `${clipPrefix}-band-${i}`;
-                      // `x0`/`x1` are plot-relative (they come from the translated group), so adding
-                      // the plot's own offset puts them in the chart's box — the box the panel is
-                      // positioned inside. No measurement, nothing to go stale.
-                      const anchor = {
-                        x0: geo.plot.left + x0,
-                        x1: geo.plot.left + x1,
-                        plot: {
-                          left: geo.plot.left,
-                          top: geo.plot.top,
-                          width: geo.plot.width,
-                          height: geo.plot.height,
-                        },
-                      };
                       return (
                         <g
                           key={run.id}
                           data-run={run.id}
                           style={{ cursor: "pointer" }}
-                          // CLICK PINS, on every device. On touch it is the only way in: a tap
-                          // fires `pointerenter` at touch-down and `pointerleave` at lift, so the
-                          // hover pair alone showed the panel just while the finger was held down.
+                          // MOUSE ONLY. Touch taps are resolved by the svg's `onPointerUp` instead
+                          // (see there for why a touch `click` cannot be relied on); binding the click
+                          // on touch too would toggle the run twice whenever iOS did deliver one.
                           //
-                          // The click is deliberately NOT stopped from propagating: it should move
-                          // the shared crosshair (the svg's `onPointerMove`) as well as open the
-                          // panel. A run is a region of this chart, not a thing apart from it.
-                          onClick={() => props.onToggleRun?.(run, anchor)}
-                          // Hover PREVIEWS, with a mouse only. Whether a preview is allowed to
-                          // displace what is already showing is the card's call, not this chart's.
+                          // Click PINS; hover PREVIEWS. Whether a preview is allowed to displace what
+                          // is already showing is the card's call, not this chart's. The click is
+                          // deliberately NOT stopped from propagating: a run is a region of this
+                          // chart, so the shared crosshair should follow it too.
                           {...(isTouch
                             ? {}
                             : {
+                                onClick: () => props.onToggleRun?.(run, anchor),
                                 onPointerEnter: () =>
                                   props.onHoverRun?.(run, anchor),
                                 onPointerLeave: () => props.onHoverRun?.(null),
@@ -547,17 +623,17 @@ export default function DashboardChart(props: DashboardChartProps) {
                               />
                             </clipPath>
                             <clipPath id={bandId}>
-                              <path d={band.d} />
+                              <path d={d} />
                             </clipPath>
                           </defs>
                           <path
-                            d={band.d}
+                            d={d}
                             clipPath={`url(#${rectId})`}
                             fill={`url(#${hovered ? stripeHoverId : stripeId})`}
                             stroke="none"
                           />
                           <path
-                            d={band.d}
+                            d={d}
                             clipPath={`url(#${rectId})`}
                             fill="none"
                             stroke={hovered ? RUN_EDGE_HOVER : RUN_EDGE}

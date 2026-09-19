@@ -194,3 +194,47 @@ export function renewablePct(event: RunPeriodEvent): number | null {
   if (event.renewableKwh == null || !event.energyKwh) return null;
   return (event.renewableKwh / event.energyKwh) * 100;
 }
+
+/** A run's tappable box, in plot-relative pixels. */
+export interface RunHitBox {
+  id: string;
+  x0: number;
+  x1: number;
+  /** Top of the band over the run's span (the smaller y). */
+  yTop: number;
+  /** Bottom of the band over the run's span (the larger y). */
+  yBottom: number;
+}
+
+/**
+ * Which run a TOUCH tap at plot-relative (`px`, `py`) means, or null.
+ *
+ * Geometric rather than the drawn slice's own hit-testing, for two reasons. A charge session on the
+ * week view can be two pixels wide, which a fingertip cannot find — so every box is widened to at
+ * least `minWidth` about its centre, and padded vertically by `padY`. And the drawn slice only
+ * answers through `click`, which iOS drops whenever the same tap's `pointerdown` moved the crosshair
+ * (see `DashboardChart`).
+ *
+ * Widened neighbours can overlap; the run whose REAL span is nearest in x wins, so a tap inside an
+ * actual run (distance 0) always beats another run's padding.
+ */
+export function hitTestRuns(
+  boxes: readonly RunHitBox[],
+  px: number,
+  py: number,
+  { minWidth = 32, padY = 10 }: { minWidth?: number; padY?: number } = {},
+): string | null {
+  let best: string | null = null;
+  let bestDist = Infinity;
+  for (const b of boxes) {
+    if (py < b.yTop - padY || py > b.yBottom + padY) continue;
+    const pad = Math.max(0, (minWidth - (b.x1 - b.x0)) / 2);
+    if (px < b.x0 - pad || px > b.x1 + pad) continue;
+    const dist = px < b.x0 ? b.x0 - px : px > b.x1 ? px - b.x1 : 0;
+    if (dist < bestDist) {
+      bestDist = dist;
+      best = b.id;
+    }
+  }
+  return best;
+}
