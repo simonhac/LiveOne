@@ -29,5 +29,6 @@ export const oeGridTile: TilePlugin = {
   kind: "tile",
   type: "oe-grid",
   isAvailable: ({ data }) => oeGridSelection(data) !== null,
+  span: 2,
   Render: OeGridTile,
 };

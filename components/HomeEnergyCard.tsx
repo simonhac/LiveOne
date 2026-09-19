@@ -1,10 +1,12 @@
 "use client";
 
-import { Leaf } from "lucide-react";
-import Stat from "@/components/ui/stat";
+import type React from "react";
 import Value from "@/components/ui/value";
 import StatCardShell from "@/components/ui/stat-card-shell";
-import { StatGridSkeleton } from "@/components/ui/skeleton";
+import TrendRow from "@/components/ui/trend-row";
+import { ConcentricRings } from "@/components/ui/progress-ring";
+import { CHART_COLORS } from "@/lib/chart-colors";
+import { TILE_CAPTION } from "@/lib/tile-style";
 import type { RenewablesSummary } from "@/lib/renewables/summary";
 import {
   formatCarbonTotal,
@@ -12,7 +14,6 @@ import {
   formatDollars,
   formatGramsPerKwh,
   formatKwh,
-  formatRenewablePctBare,
 } from "@/lib/provenance-format";
 
 export interface HomeEnergyCardProps {
@@ -40,18 +41,29 @@ const RATE_TIP =
   "not a bill: export revenue is counted elsewhere and forgone feed-in isn't counted at all.";
 
 /**
- * The "Home Energy" card — what the whole site CONSUMED over the dashboard's selected period: energy,
- * the blended rate and emissions intensity it came at, and how renewable it was; then the absolute
- * totals and the two own-generation ratios beneath a divider.
+ * The three ratios, as rings, outermost first — each ring's hue is its row's hue. Literal classes
+ * (Tailwind's scanner) beside the rgb the SVG needs; the pair is the same colour.
+ */
+const RINGS = {
+  renewable: { text: "text-green-400", rgb: CHART_COLORS.battery.main },
+  selfUse: { text: "text-yellow-200", rgb: CHART_COLORS.solar.primary },
+  autarky: { text: "text-cyan-400", rgb: CHART_COLORS.pool },
+} as const;
+
+/**
+ * The "Home Energy" card — what the whole site CONSUMED over the dashboard's selected period, as the
+ * Activity Rings card: three concentric rings on the left and their three values on the right, in
+ * matching hues —
+ *   - **Renewable** (outer): renewable share of everything consumed (own renewables + the grid's mix),
+ *   - **Self-use** (middle): of the renewable WE generated, the share consumed on site,
+ *   - **Autarky** (inner): consumption covered by our OWN renewable generation —
+ * then the period's unit economics (energy, blended rate, emissions intensity) and absolute totals
+ * (cost, carbon) as one caption line beneath.
  *
- * The same shape as {@link BatteryContentsCard} (shared {@link StatCardShell} + `Stat` grid) because it
- * answers the same question one level up: that card values the energy sitting in the battery, this one
- * values the energy the house actually used. Purely presentational — the caller reduces
- * {@link RenewablesSummary} client-side from the attributed-flow payload the Sankey already fetched.
- *
- * The renewable stat is `metrics.renewableShare` (denominator = total consumption), the same number the
- * "Renewable" row used to show, so it can't disagree with the Autarky/Self-use rows below it. The rate
- * and emissions intensity use FILTERED denominators (known-intensity energy only) — see the reducer.
+ * Purely presentational — the caller reduces {@link RenewablesSummary} client-side from the
+ * attributed-flow payload the Sankey already fetched. The renewable ring is `metrics.renewableShare`
+ * (denominator = total consumption); the rate and emissions intensity use FILTERED denominators
+ * (known-intensity energy only) — see the reducer.
  */
 export default function HomeEnergyCard({
   summary,
@@ -60,109 +72,155 @@ export default function HomeEnergyCard({
   staleThresholdSeconds,
   loading = false,
 }: HomeEnergyCardProps) {
-  const shell = (children: React.ReactNode) => (
+  const shell = (body: React.ReactNode) => (
     <StatCardShell
-      icon={<Leaf size={16} />}
       title="Home Energy"
       titleSuffix={periodLabel}
       measurementTime={measurementTime}
       staleThresholdSeconds={staleThresholdSeconds}
     >
-      {children}
+      {body}
     </StatCardShell>
   );
 
   if (loading) {
-    // Mirrors the settled body — the 4-stat headline grid AND the secondary totals/ratios block —
-    // rather than a flat bar. The old `h-16` stub was 60px short of the real content, so this card
-    // grew every time its attributed-flow query landed (measured 125px → 185px on Kinkora).
-    // 🛑 The secondary block's placeholder rows are TRANSPARENT TEXT in the real classes, not bars
-    // of a guessed height. `text-[11px]` is an arbitrary font-size, so Tailwind sets no
-    // line-height and the real line box is `normal` — a FRACTIONAL 13.5px that no `h-*` can name.
-    // A hard `h-[14px]` here left the card half a pixel short and it grew on arrival; letting real
-    // glyphs generate the line box makes the placeholder exactly the size of what replaces it, and
-    // keeps it that way if the typography changes.
+    // Mirrors the settled body box for box — the ring's square and three rows of REAL text in the
+    // real classes, made transparent — so the card is the same size before and after its query
+    // lands. Text rather than bars of a guessed height: an arbitrary font-size leaves the line box
+    // at a fractional `normal` height that no `h-*` can name.
     return shell(
-      <>
-        <StatGridSkeleton cells={4} />
-        <div className="mt-3 border-t border-gray-700/60 pt-2" aria-hidden>
-          <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-[11px] text-transparent">
-            <span className="animate-pulse rounded bg-gray-700/30">
-              $0.00 financial cost
+      <div data-skeleton="" aria-hidden>
+        <RingsLayout
+          rings={
+            <div className="h-full w-full animate-pulse rounded-full border-[12px] border-white/[0.06]" />
+          }
+          rows={["Renewable", "Self-use", "Autarky"].map((label) => (
+            <div
+              key={label}
+              className="animate-pulse rounded bg-white/[0.04] [&_*]:!text-transparent"
+            >
+              <TrendRow label={label} value="00%" />
+            </div>
+          ))}
+          caption={
+            <span className="animate-pulse rounded bg-white/[0.06] text-transparent">
+              000 kWh · 00¢/kWh · 000 g/kWh · $00.00 · 00 kg CO₂
             </span>
-            <span className="animate-pulse rounded bg-gray-700/30">
-              0.0 kg CO₂
-            </span>
-          </div>
-          <div className="mt-2 space-y-0.5 text-xs text-transparent">
-            <div className="animate-pulse rounded bg-gray-700/30">Autarky</div>
-            <div className="animate-pulse rounded bg-gray-700/30">Self-use</div>
-          </div>
-        </div>
-      </>,
+          }
+        />
+      </div>,
     );
   }
   if (!summary || summary.consumptionKwh <= 0) {
     return shell(
-      <p className="py-3 text-sm text-gray-500">
+      <p className="py-3 text-sm text-white/55">
         No attributed energy for this period yet.
       </p>,
     );
   }
 
   const { metrics } = summary;
-  const renewablePct =
-    metrics.renewableShare != null ? 100 * metrics.renewableShare : null;
-  const renewableGreen = renewablePct != null && renewablePct > 50;
+  const ratios = [
+    {
+      key: "renewable",
+      label: "Renewable",
+      value: metrics.renewableShare,
+      tip: SHARE_TIP,
+      ...RINGS.renewable,
+    },
+    {
+      key: "self-use",
+      label: "Self-use",
+      value: metrics.ownRenewableSelfConsumption,
+      tip: SELF_CONSUMPTION_TIP,
+      ...RINGS.selfUse,
+    },
+    {
+      key: "autarky",
+      label: "Autarky",
+      value: metrics.renewableAutarky,
+      tip: AUTARKY_TIP,
+      ...RINGS.autarky,
+    },
+  ];
 
+  // 🛑 Never greyed when stale. Every number here is a TOTAL over the navigator's period, and a
+  // total does not go wrong because the newest live reading is old — greying it (the tile rule for a
+  // live value) turned the whole card to grey whenever the feed lagged. The header's stale badge
+  // still says the feed is behind.
   return shell(
-    <>
-      {/* Headline: consumed kWh · ¢/kWh · g/kWh · renewable — the unit economics of
-          everything the house used this period. 2 → 3 → 4 columns as the card widens. */}
-      <div className="grid grid-cols-2 gap-x-4 gap-y-3 @[360px]:grid-cols-3 @[520px]:grid-cols-4">
-        <Stat
-          value={formatKwh(summary.consumptionKwh)}
-          unit="kWh"
-          caption="consumed"
+    <RingsLayout
+      rings={
+        <ConcentricRings
+          className="h-full w-full"
+          rings={ratios.map((r) => ({
+            fraction: r.value ?? 0,
+            color: r.rgb,
+            label: r.label,
+          }))}
         />
-        <Stat
-          value={formatCentsPerKwh(summary.avgCentsPerKwh)}
-          unit={summary.avgCentsPerKwh != null ? "¢/kWh" : undefined}
-          caption={<span title={RATE_TIP}>rate</span>}
+      }
+      rows={ratios.map((r) => (
+        <TrendRow
+          key={r.key}
+          label={r.label}
+          title={r.tip}
+          value={
+            <Value
+              value={fmtPctValue(r.value)}
+              unit={r.value != null ? "%" : undefined}
+            />
+          }
+          valueColor={r.text}
         />
-        <Stat
-          value={formatGramsPerKwh(summary.avgGramsPerKwh)}
-          unit={summary.avgGramsPerKwh != null ? "g/kWh" : undefined}
-          caption="emissions"
-        />
-        <Stat
-          value={formatRenewablePctBare(renewablePct)}
-          unit={renewablePct != null ? "%" : undefined}
-          caption={<span title={SHARE_TIP}>renewable</span>}
-          valueClassName={renewableGreen ? "text-green-400" : undefined}
-        />
-      </div>
+      ))}
+      caption={
+        <>
+          <Value value={formatKwh(summary.consumptionKwh)} unit="kWh" /> used ·{" "}
+          <span title={RATE_TIP} className="cursor-help">
+            <Value
+              value={formatCentsPerKwh(summary.avgCentsPerKwh)}
+              unit={summary.avgCentsPerKwh != null ? "¢/kWh" : undefined}
+            />
+          </span>{" "}
+          ·{" "}
+          <Value
+            value={formatGramsPerKwh(summary.avgGramsPerKwh)}
+            unit={summary.avgGramsPerKwh != null ? "g/kWh" : undefined}
+          />{" "}
+          · {formatDollars(summary.costC)} ·{" "}
+          {formatCarbonTotal(summary.emissionsG)} CO₂
+        </>
+      }
+    />,
+  );
+}
 
-      {/* Secondary: the absolute totals, then the two own-generation ratios. */}
-      <div className="mt-3 border-t border-gray-700/60 pt-2">
-        <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-[11px] text-gray-400">
-          <span>{formatDollars(summary.costC)} financial cost</span>
-          <span>{formatCarbonTotal(summary.emissionsG)} CO₂</span>
+/**
+ * Rings left, rows right; stacked when the card is too narrow for both side by side. Shared by the
+ * settled card and its skeleton so the two cannot measure differently.
+ */
+function RingsLayout({
+  rings,
+  rows,
+  caption,
+}: {
+  rings: React.ReactNode;
+  rows: React.ReactNode;
+  caption: React.ReactNode;
+}) {
+  return (
+    <>
+      <div className="flex flex-col items-center gap-4 @[300px]:flex-row @[300px]:items-center @[300px]:gap-6">
+        <div className="aspect-square w-full max-w-[120px] shrink-0 @[300px]:w-[120px] @[520px]:w-[140px] @[520px]:max-w-[140px]">
+          {rings}
         </div>
-        <div className="mt-2 space-y-0.5 text-xs">
-          <MetricRow
-            label="Autarky"
-            value={fmtPctValue(metrics.renewableAutarky)}
-            tip={AUTARKY_TIP}
-          />
-          <MetricRow
-            label="Self-use"
-            value={fmtPctValue(metrics.ownRenewableSelfConsumption)}
-            tip={SELF_CONSUMPTION_TIP}
-          />
+        <div className="w-full min-w-0 space-y-2 @[300px]:w-auto @[300px]:flex-1">
+          {rows}
         </div>
       </div>
-    </>,
+      <p className={`mt-3 ${TILE_CAPTION}`}>{caption}</p>
+    </>
   );
 }
 
@@ -170,26 +228,4 @@ export default function HomeEnergyCard({
  *  so it is sized and bound per docs/architecture/number-typography.md. */
 function fmtPctValue(x: number | null | undefined): string {
   return x == null ? "—" : `${Math.round(x * 100)}`;
-}
-
-function MetricRow({
-  label,
-  value,
-  tip,
-}: {
-  label: string;
-  value: string;
-  tip: string;
-}) {
-  return (
-    <div
-      className="flex items-baseline justify-between gap-2 cursor-help"
-      title={tip}
-    >
-      <span className="text-gray-400 truncate">{label}</span>
-      <span className="text-gray-200 font-semibold">
-        <Value value={value} unit={/\d/.test(value) ? "%" : undefined} />
-      </span>
-    </div>
-  );
 }

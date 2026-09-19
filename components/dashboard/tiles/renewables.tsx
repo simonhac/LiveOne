@@ -89,5 +89,6 @@ export const renewablesTile: TilePlugin = {
   kind: "tile",
   type: "renewables",
   isAvailable: ({ latest, showGrid }) => renewablesAvailable(latest, showGrid),
+  span: 2,
   Render: RenewablesTile,
 };

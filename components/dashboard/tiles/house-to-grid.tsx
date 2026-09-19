@@ -4,6 +4,11 @@ import { useQuery } from "@tanstack/react-query";
 import { Zap } from "lucide-react";
 import Tile from "@/components/Tile";
 import Value from "@/components/ui/value";
+import TrendRow from "@/components/ui/trend-row";
+import DirectionChip, {
+  FLOW_DOUBLE_W,
+  flowDirection,
+} from "@/components/ui/direction-chip";
 import { subjectOf, useAreaDatum } from "@/components/dashboard/cards/shared";
 import { useTemporalRange } from "@/lib/charts/useTemporalRange";
 import {
@@ -14,43 +19,38 @@ import { formatDollars, formatKwh, pricedTotal } from "@/lib/provenance-format";
 import { siteDataQuery } from "@/lib/queries";
 import { IDLE_CHROME, ROLE_CHROME } from "@/lib/role-chrome";
 import type { TilePlugin, TileRenderProps } from "./types";
-import {
-  formatPowerValue,
-  getFlowChevron,
-  getPointValue,
-  getMeasurementTime,
-} from "./shared";
+import { formatPowerValue, getPointValue, getMeasurementTime } from "./shared";
 
-/** One sub-line: label, energy, money — the three grid cells that make both rows line up. */
+/**
+ * One period row: the Trends-card shape — chip, label, energy in the grid's colour, and what it cost
+ * or earned as the caption beside it.
+ */
 function PeriodRow({
-  short,
-  long,
+  direction,
+  label,
   energyKwh,
   cents,
 }: {
-  short: string;
-  long: string;
+  direction: "up" | "down";
+  label: string;
   energyKwh: number;
   cents: number | null;
 }) {
   return (
-    <>
-      <span>
-        <span className="md:hidden">{short}</span>
-        <span className="hidden md:inline">{long}</span>
-      </span>
-      <span className="text-right">
-        <Value value={formatKwh(energyKwh)} unit="kWh" />
-      </span>
-      {/* "—" = no export tariff / no grid price / not fully priced — never a misleading $0. */}
-      <span className="text-right">
-        {cents != null ? formatDollars(cents) : "—"}
-      </span>
-    </>
+    <TrendRow
+      chip={
+        <DirectionChip direction={direction} color={ROLE_CHROME.grid.rgb} />
+      }
+      label={label}
+      value={<Value value={formatKwh(energyKwh)} unit="kWh" />}
+      valueColor={ROLE_CHROME.grid.value}
+      // "—" = no export tariff / no grid price / not fully priced — never a misleading $0.
+      caption={cents != null ? formatDollars(cents) : "—"}
+    />
   );
 }
 
-/** Grid import/export tile — import (red) / export (green) / idle under 100 W. */
+/** Grid import/export tile — live flow as the hero, the period's import and export under it. */
 function HouseToGridTile({
   latest,
   systemId,
@@ -86,53 +86,42 @@ function HouseToGridTile({
   const imported = flow ? reduceSourceProvenance(flow, "source.grid") : null;
   const exported = flow ? reduceLoadProvenance(flow, "load.grid") : null;
 
-  // Chrome is the grid's IDENTITY colour (magenta, matching `CHART_COLORS.grid`) whenever there is
-  // flow. It used to be red for import / green for export, which collided with `ev` red-600 and the
-  // red crosshair, and made green mean "exporting" here while it meant "charging" on the Battery
-  // tile. Direction rides on the chevron and the Importing/Exporting label. See lib/role-chrome.ts.
-  const chrome = Math.abs(gridPower) >= 100 ? ROLE_CHROME.grid : IDLE_CHROME;
+  // The grid's IDENTITY colour (magenta, matching `CHART_COLORS.grid`) whenever there is flow; grey
+  // inside the dead band. Direction rides on the chip — positive grid power is IMPORT, energy
+  // arriving, so "down" — never on the colour. See lib/role-chrome.ts.
+  const direction = flowDirection(gridPower, false);
+  const idle = direction === "idle";
 
   return (
     <Tile
       title="Grid"
-      value={
-        Math.abs(gridPower) < 100
-          ? "Idle"
-          : formatPowerValue(Math.abs(gridPower))
+      icon={<Zap />}
+      tone={ROLE_CHROME.grid.value}
+      label={idle ? "Now" : direction === "down" ? "Importing" : "Exporting"}
+      value={idle ? "Idle" : formatPowerValue(Math.abs(gridPower))}
+      unit={idle ? undefined : "kW"}
+      valueColor={idle ? IDLE_CHROME.value : ROLE_CHROME.grid.value}
+      accessory={
+        <DirectionChip
+          direction={direction}
+          color={ROLE_CHROME.grid.rgb}
+          double={Math.abs(gridPower) > FLOW_DOUBLE_W}
+          label={
+            idle ? "Idle" : direction === "down" ? "Importing" : "Exporting"
+          }
+        />
       }
-      unit={Math.abs(gridPower) < 100 ? undefined : "kW"}
-      icon={
-        <span className="inline-flex items-center h-6 flex-row-reverse md:flex-row">
-          {getFlowChevron(
-            gridPower,
-            gridPower < 0, // negative = exporting = into grid
-            chrome.icon,
-          )}
-          <Zap className="w-6 h-6" />
-        </span>
-      }
-      iconColor={chrome.icon}
-      bgColor={chrome.tint}
-      borderColor={chrome.border}
       staleThresholdSeconds={staleThresholdSeconds}
       measurementTime={
         getMeasurementTime(latest, "bidi.grid/power") || undefined
       }
-      extraInfo={
-        gridPower >= 100
-          ? "Importing"
-          : gridPower <= -100
-            ? "Exporting"
-            : undefined
-      }
       extra={
         imported || exported ? (
-          // Three columns, both numeric ones right-aligned, so the kWh and $ line up across rows.
-          <div className="grid grid-cols-[auto_1fr_auto] gap-x-1.5 text-[10px] md:text-xs text-gray-400 tabular-nums">
+          <div className="mt-auto space-y-2">
             {imported && (
               <PeriodRow
-                short="Imp"
-                long="Imported"
+                direction="down"
+                label="Imported"
                 energyKwh={imported.energyKwh}
                 // `costC` is a plain number that stays 0 when nothing was priced — `costKnownKwh` is
                 // the flag that separates "no grid price" from "genuinely cost $0".
@@ -145,8 +134,8 @@ function HouseToGridTile({
             )}
             {exported && (
               <PeriodRow
-                short="Exp"
-                long="Exported"
+                direction="up"
+                label="Exported"
                 energyKwh={exported.energyKwh}
                 cents={pricedTotal(
                   exported.revenueC,

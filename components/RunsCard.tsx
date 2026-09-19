@@ -5,7 +5,7 @@ import { runPeriodsQuery } from "@/lib/queries";
 import { useTemporalRange } from "@/lib/charts/useTemporalRange";
 import { getPeriodDuration, toInstantRange } from "@/lib/charts/temporal";
 import { formatSecondsAsDuration } from "@/lib/fe-date-format";
-import { formatRunWhen } from "@/lib/run-tracking/run-period-view";
+import { formatRunWhenLines } from "@/lib/run-tracking/run-period-view";
 import { formatDollars, formatKgCo2 } from "@/lib/provenance-format";
 import { CHART_HAIRLINE } from "@/lib/charts/style";
 
@@ -157,19 +157,28 @@ export default function RunsCard({
     null,
   );
 
-  const th = "px-4 py-2 text-xs font-medium text-gray-200";
-  const td = "px-4 py-2 text-sm";
-  /** A header's unit, carried alongside the label rather than parenthesised inside it, and muted so
-   *  the scanned word is the quantity ("Energy") and not its unit. */
+  // `align-top`: a header with a stacked unit is two lines, and every label — stacked or not — sits
+  // on the first, so the header row reads as one line of words with the units hanging below.
+  //
+  // Cell padding is 8px a side until the CARD (not the viewport — see `@container` below) has room
+  // for 16: five columns at 32px of padding each is ~160px of a ~330px phone-width card. The outer
+  // edges keep 16px so the first column still lines up with the title.
+  const cellPad = "px-2 first:pl-4 last:pr-4 @[480px]:px-4";
+  const th = `${cellPad} py-2 align-top text-xs font-medium text-gray-200`;
+  const td = `${cellPad} py-2 text-sm`;
+  /** A header's unit, muted so the scanned word is the quantity ("Energy") and not its unit, and
+   *  STACKED under the label rather than beside it: a numeric column is only as wide as its widest
+   *  cell, and "Energy kWh" on one line made the header, not the numbers, the widest cell — enough,
+   *  across Energy/Avg/CO₂, to push Cost out of a phone-width card. */
   const unit = (u: string) => (
-    <span className="ml-1 font-normal text-gray-400">{u}</span>
+    <span className="block font-normal text-gray-400">{u}</span>
   );
 
   // A hairline, not a filled card. A chart delimits itself with its axes; a table does not, so this
   // is the one card shape allowed an outline of its own — around the content, with no fill. See
   // docs/architecture/chart-style.md.
   return (
-    <div className={`${CHART_HAIRLINE} overflow-hidden`}>
+    <div className={`${CHART_HAIRLINE} @container overflow-hidden`}>
       <div className="flex items-center justify-between px-4 py-3 border-b border-gray-700/70">
         <h2 className="text-sm font-semibold text-gray-100 flex items-center gap-2">
           {title}
@@ -228,10 +237,7 @@ export default function RunsCard({
                         "Mon 27 Jul, 23:40 – Tue 28 Jul, 01:15" would set a min-content width that
                         pushes the rightmost column out of the card's `overflow-hidden` box. */}
                     <td className={td}>
-                      {formatRunWhen(e)}
-                      {spansOutside && (
-                        <sup className="text-amber-400 font-semibold">*</sup>
-                      )}
+                      <RunWhenCell e={e} spansOutside={spansOutside} />
                     </td>
                     <td className={`${td} text-right tabular-nums`}>
                       {durationSec != null
@@ -307,5 +313,71 @@ export default function RunsCard({
         </>
       )}
     </div>
+  );
+}
+
+/** The date half of a run's "when": a touch heavier, since it is what the eye scans the column by. */
+const WHEN_DATE = "font-medium text-gray-100";
+/** The time half: a touch dimmer, subordinate to the date it belongs to. */
+const WHEN_TIME = "text-gray-400";
+
+/**
+ * "10:05am–3:09pm" that stays on one line when it fits and, when a row's numbers are wide enough
+ * that it cannot, breaks AFTER the dash — never inside a time ("10:0" / "5am"). Each time is
+ * `nowrap`; the only break opportunity is the `<wbr>`.
+ */
+function TimeRange({ text }: { text: string }) {
+  const dash = text.indexOf("–");
+  if (dash === -1) return <span className="whitespace-nowrap">{text}</span>;
+  return (
+    <>
+      <span className="whitespace-nowrap">{text.slice(0, dash + 1)}</span>
+      <wbr />
+      <span className="whitespace-nowrap">{text.slice(dash + 1)}</span>
+    </>
+  );
+}
+
+/**
+ * A run's "when" cell. A run inside ONE day is the date, then its time range — on one line when the
+ * card has room, else on the next line; the range breaks only after its dash, never inside a time. A midnight-crossing run keeps each date with its own time and
+ * wraps as prose; there is no clean two-line split for it (see `formatRunWhenLines`).
+ */
+function RunWhenCell({
+  e,
+  spansOutside,
+}: {
+  e: Parameters<typeof formatRunWhenLines>[0];
+  spansOutside: boolean;
+}) {
+  const marker = spansOutside && (
+    <sup className="font-semibold text-amber-400">*</sup>
+  );
+  const lines = formatRunWhenLines(e);
+  if (lines.length === 2) {
+    return (
+      <>
+        {/* Stacked only while the card is narrow; from 480px there is room for one line. */}
+        <span className={`block @[480px]:inline ${WHEN_DATE}`}>{lines[0]}</span>
+        <span
+          // A size down while stacked, which is what lets the range stay on one line at phone width.
+          className={`block text-[13px] @[480px]:ml-1.5 @[480px]:inline @[480px]:text-sm ${WHEN_TIME}`}
+        >
+          <TimeRange text={lines[1]} />
+          {marker}
+        </span>
+      </>
+    );
+  }
+  // Midnight-crossing: "Mon 27 Jul, 11:40pm – Tue 28 Jul, 1:15am", the same words as
+  // `formatRunWhenLines`, with each part in its own weight.
+  return (
+    <>
+      <span className={WHEN_DATE}>{e.date}</span>
+      <span className={WHEN_TIME}>, {e.startTime} – </span>
+      <span className={WHEN_DATE}>{e.endDate}</span>
+      <span className={WHEN_TIME}>, {e.endTime}</span>
+      {marker}
+    </>
   );
 }

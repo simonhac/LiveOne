@@ -100,6 +100,14 @@ Both are baked into `<Value>` — you get them by using it.
 | Caption    | `text-[10px] uppercase tracking-wide text-gray-500 md:text-xs` |
 | Card title | `text-xs md:text-sm text-gray-400`                             |
 
+### Inside a tile
+
+A tile (`.tile-scope`, see [tile-style.md](tile-style.md)) overrides two of the above, in CSS:
+units take the **value's colour** rather than muting (the tile's colour lives in its data, and a
+grey `kW` beside a yellow number splits one fact into two tones), and **word units render in caps**
+(`3.2KW`, `/KWH`) — `classifyUnit`'s `headWord`/`tailWord` decide which. Glyph units are untouched.
+Binding and gaps are exactly as above.
+
 ## Using it
 
 `<Value>` is deliberately size-agnostic — the caller owns font-size, weight and

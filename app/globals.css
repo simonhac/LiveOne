@@ -131,6 +131,48 @@
   }
 }
 
+/* Tile scope — the "silent card, loud data" tile language (lib/tile-style.ts,
+   docs/architecture/tile-style.md).
+
+   The face: SF Pro Rounded on every Apple device via the `ui-rounded` generic, with the TT
+   Interphases face the tiles already used as the fallback everywhere else. No font file shipped.
+   `--font-tt-interphases` is set by `ttInterphases.variable` on the same element.
+
+   Units (`<Value>` marks its unit spans with `data-unit`): inside a tile a unit is set in the
+   VALUE's colour — the tile's colour lives in its data, so a grey `kW` beside a yellow number would
+   split one fact into two tones — and a word unit renders in caps (`3.2KW`, `16.3KWH`), the way the
+   Activity app sets `3.20KM`. Glyph units (`%`, `°C`, `¢`, `$`) carry no `data-unit-case` and are
+   left alone. This is plain CSS rather than a prop on `<Value>` so that every Value nested anywhere
+   in a tile follows it without being told, and it is unlayered so it outranks the `text-gray-400`
+   utility the same span carries everywhere else. */
+.tile-scope {
+  font-family:
+    ui-rounded, "SF Pro Rounded", var(--font-tt-interphases), system-ui,
+    -apple-system, "Segoe UI", sans-serif;
+}
+
+.tile-scope [data-unit] {
+  color: inherit;
+}
+
+.tile-scope [data-unit-case="word"] {
+  text-transform: uppercase;
+}
+
+/* Rings and bars ease between values; nothing moves for a reader who asked for less motion. */
+.tile-ease {
+  transition:
+    stroke-dashoffset 400ms ease-out,
+    height 400ms ease-out,
+    y 400ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tile-ease {
+    transition: none;
+  }
+}
+
 /* Hide scrollbar but keep scroll functionality */
 .scrollbar-hide {
   -ms-overflow-style: none; /* IE and Edge */

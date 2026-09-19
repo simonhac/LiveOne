@@ -374,7 +374,7 @@ export default function CardGallery() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-900 text-gray-200 p-6">
+    <div className="min-h-screen bg-black text-gray-200 p-6">
       <div className="max-w-6xl mx-auto">
         <header className="mb-8">
           <h1 className="text-2xl font-bold text-white">Card Gallery</h1>
@@ -407,7 +407,7 @@ export default function CardGallery() {
 
         <CardSection
           title="Power — Solar"
-          note="Tile. Viewport (md:) breakpoint layout. 'local + remote' shows the breakdown rows."
+          note="Tile. Hero in solar yellow (grey below 50 W); 'local + remote' adds the breakdown caption. The period bars need a subject, so they do not draw here."
           scenarios={Object.keys(SOLAR_SCENARIOS)}
           defaultScenario="local + remote"
           presetWidths={POWER_WIDTHS}
@@ -431,7 +431,7 @@ export default function CardGallery() {
 
         <CardSection
           title="Power — Battery"
-          note="Tile. Color + flow chevrons follow charge/discharge sign; the stale box dims + hatches."
+          note="Tile. SoC ring in battery green (red under 20%); the direction chip is up for discharge, down for charge, a dash when idle. Stale greys the values and shows the age."
           scenarios={Object.keys(BATTERY_SCENARIOS)}
           defaultScenario="charging"
           presetWidths={POWER_WIDTHS}
@@ -443,7 +443,7 @@ export default function CardGallery() {
 
         <CardSection
           title="Power — Grid"
-          note="Tile. Import (red) / export (green) / idle; double chevron above 5kW."
+          note="Tile. Hero in grid magenta, grey when idle; the header chip is down for import, up for export, doubled above 5 kW."
           scenarios={Object.keys(GRID_SCENARIOS)}
           defaultScenario="importing"
           presetWidths={POWER_WIDTHS}
@@ -455,7 +455,7 @@ export default function CardGallery() {
 
         <CardSection
           title="Generator"
-          note="Tile as a viewer who canNOT control it: no cog, so the Gauge keeps the top-right corner. Status copy comes from the hub's own vocabulary, except idle, which splits on the panel mode: Auto means ARMED, anything else means LOCKED OUT, and an unread panel says neither. The time row prefers OUR run's remaining minutes and falls back to elapsed. The Generated row reads 'Since h:mma' with THIS RUN's energy while a run is open, 'This period' between runs, and NOTHING at all while the engine turns but the detector has not opened a period yet — pick 'starting (ours)' to see that window."
+          note="Tile as a viewer who canNOT control it: no cog in the top-right corner. Status copy comes from the hub's own vocabulary, except idle, which splits on the panel mode: Auto means ARMED, anything else means LOCKED OUT, and an unread panel says neither. The time row prefers OUR run's remaining minutes and falls back to elapsed. The Generated row reads 'Since h:mma' with THIS RUN's energy while a run is open, 'This period' between runs, and NOTHING at all while the engine turns but the detector has not opened a period yet — pick 'starting (ours)' to see that window."
           scenarios={Object.keys(GENERATOR_SCENARIOS)}
           defaultScenario="running (ours)"
           onScenarioChange={(sc) => {
@@ -477,7 +477,7 @@ export default function CardGallery() {
 
         <CardSection
           title="Generator — with controls"
-          note="The same tile as a viewer who OWNS the generator: the cog moves into the top-right corner (where TeslaSmallCard puts its own, and where the Gauge used to sit) and opens the run controls. Same faked run-periods as the section above, on its own device handle so the two sections' pickers do not overwrite each other."
+          note="The same tile as a viewer who OWNS the generator: the cog moves into the top-right corner (where TeslaSmallCard puts its own) and opens the run controls. Same faked run-periods as the section above, on its own device handle so the two sections' pickers do not overwrite each other."
           scenarios={Object.keys(GENERATOR_CONTROL_SCENARIOS)}
           defaultScenario="auto (armed)"
           onScenarioChange={(sc) => {
@@ -530,7 +530,7 @@ export default function CardGallery() {
 
         <CardSection
           title="Tesla — small card"
-          note="One container-query layout: 66 / 90 / 120 / 180 width breakpoints. SoC donut matches Amber's disc at every step. Returns null if no SoC. Has NO staleness treatment — the stale box visibly does nothing here."
+          note="One container-query layout: 66 / 90 / 120 / 180 width breakpoints. Fat SoC ring in the EV theme red, with the charge-limit notch and, while charging, chevrons on the arc's tip. Returns null if no SoC. Has NO staleness treatment — the stale box visibly does nothing here."
           scenarios={Object.keys(TESLA_SCENARIOS)}
           defaultScenario="charging (high power)"
           presetWidths={CQ_WIDTHS}
@@ -544,7 +544,7 @@ export default function CardGallery() {
 
         <CardSection
           title="Local Grid (NEM) signals"
-          note="GridSignalsCard. 3-up stat grid; needs width. 'missing metric' shows an em-dash; the stale box dims."
+          note="GridSignalsCard (a medium tile). From 300px: the renewable share as a ring beside Price/Emissions/Demand rows; narrower, a label-over-value 2×2 (1 column under 200px). 'missing metric' shows an em-dash; stale greys the values."
           scenarios={Object.keys(GRID_SIGNALS_SCENARIOS)}
           defaultScenario="high renewables"
           presetWidths={GRID_WIDTHS}
@@ -569,7 +569,7 @@ export default function CardGallery() {
 
         <CardSection
           title="Battery Contents"
-          note="BatteryContentsCard. Labelled stat grid (2→3→4 cols). 'warm-up' shows em-dash totals; 'no tariff' hides the export/opportunity split; 'empty battery' reads 0.0 kWh; the stale box dims."
+          note="BatteryContentsCard. Labelled stat grid (2→3→4 cols). 'warm-up' shows em-dash totals; 'no tariff' hides the export/opportunity split; 'empty battery' reads 0.0 kWh; stale shows the age in the header."
           scenarios={Object.keys(BATTERY_CONTENTS_SCENARIOS)}
           defaultScenario="typical"
           presetWidths={CQ_WIDTHS}

@@ -18,7 +18,11 @@ import { isTouchDevice, useIsTouchDevice } from "@/lib/charts/svg";
 import { runProvenancePanels } from "@/lib/charts/tooltip-metrics";
 import { formatRunWhenLines } from "@/lib/run-tracking/run-period-view";
 import { ROLES, TRACKABLE_ROLE_IDS, type RoleId } from "@/lib/roles/registry";
-import NodeTooltip, { PANEL_WIDTH } from "@/components/NodeTooltip";
+import NodeTooltip, {
+  BEAK_CORNER_INSET,
+  PANEL_WIDTH,
+} from "@/components/NodeTooltip";
+import { panelTop } from "@/lib/charts/sankey-panel-placement";
 import { CHART_COLORS } from "@/lib/chart-colors";
 import { CHART_BODY_PAD, CHART_HAIRLINE } from "@/lib/charts/style";
 import DashboardChart, {
@@ -546,51 +550,70 @@ function RunTooltip({
 
   // BESIDE the run, never over it — the outlined region is the subject, and a 140px panel centred on
   // a charge session hides exactly the shape it is explaining. Prefer the right; fall back to the
-  // left when the run sits close enough to the window's end that the panel would not fit; only if
-  // neither side fits does it overlap, clamped into the plot.
-  const { plot } = at;
-  const fitsRight =
-    at.x1 + RUN_TOOLTIP_GAP + PANEL_WIDTH <= plot.left + plot.width;
-  const fitsLeft = at.x0 - RUN_TOOLTIP_GAP - PANEL_WIDTH >= plot.left;
+  // left when the run sits close enough to the window's end that the panel would not fit.
+  //
+  // "Fits" is measured against the whole CHART box, not the plot: the panel may cover the axis
+  // gutters (tick labels) while it is up. On a phone the plot is so narrow that a run in the middle
+  // of the day had ~140px beside it inside the plot — a few px short of panel + gap. The y-axis
+  // gutter is exactly those few px.
+  const { plot, boxWidth } = at;
+  const fitsRight = at.x1 + RUN_TOOLTIP_GAP + PANEL_WIDTH <= boxWidth;
+  const fitsLeft = at.x0 - RUN_TOOLTIP_GAP - PANEL_WIDTH >= 0;
+  // Neither side fitting (a long run on a narrow phone) means the panel has to cover part of the run.
+  // It then goes hard against the chart edge on whichever side has MORE room, so it covers as little
+  // of the run as it can and leaves the rest of the stripes visible beside it — rather than being
+  // clamped to wherever it fell, which could park it in the run's middle.
+  const side: "left" | "right" = fitsRight
+    ? "right"
+    : fitsLeft
+      ? "left"
+      : boxWidth - at.x1 >= at.x0
+        ? "right"
+        : "left";
   const left = fitsRight
     ? at.x1 + RUN_TOOLTIP_GAP
     : fitsLeft
       ? at.x0 - RUN_TOOLTIP_GAP - PANEL_WIDTH
-      : Math.max(
-          plot.left,
-          Math.min(
-            at.x1 + RUN_TOOLTIP_GAP,
-            plot.left + plot.width - PANEL_WIDTH,
-          ),
-        );
+      : side === "right"
+        ? Math.max(0, boxWidth - PANEL_WIDTH)
+        : 0;
   // The beak, in `NodeTooltip`'s vocabulary: `side` is the side of the SUBJECT the panel sits on, and
-  // the beak is drawn on the opposite edge — so a panel placed to the run's right (`fitsRight`) is
-  // `side="right"` and beaks from its LEFT edge, back toward the band.
+  // the beak is drawn on the opposite edge — so a panel placed to the run's right is `side="right"`
+  // and beaks from its LEFT edge, back toward the band.
   //
   // Without it the panel was a card floating over the plot with nothing tying it to the striped
   // region it describes; on a chart with two runs in view, which one it belonged to was a guess.
-  const side = fitsRight ? "right" : "left";
-  // Neither side fitting means the panel is overlapping the run (the clamp above), and a beak
-  // pointing at something the card is sitting on top of reads as a rendering glitch — the same rule
-  // the Sankey applies via `panelOverlapsNode`.
-  const overlapsRun = !fitsRight && !fitsLeft;
-  // Vertically CENTRED ON THE PLOT, not on the pointer and not on the SVG. Following the pointer
-  // made the panel drift up and down while scrubbing across a session, which reads as instability
-  // rather than as feedback; centring on the svg instead would include the time-axis gutter and pull
-  // the panel visibly low against the data it describes.
-  const top = Math.max(plot.top, plot.top + (plot.height - height) / 2);
+  // The beak stays even when the panel overlaps the run (unlike the Sankey's `panelOverlapsNode`):
+  // pinned to an edge, the panel's inner edge still lies over the run's stripes, so the beak points
+  // into the part of the run left uncovered — which is what ties an overlapping panel to its run.
+  // Vertically AIMED AT THE MIDDLE OF THE RUN'S OWN BAND — the striped region, not the whole plot.
+  // A charge session is usually a short band at the foot of the stack, and a plot-centred panel left
+  // its beak pointing at empty chart well above it. The target is fixed per run (not the pointer:
+  // following that made the panel drift while scrubbing), and the panel centres on it as far as the
+  // plot allows — the same clamp the Sankey applies to its node panels.
+  const targetY = (at.yTop + at.yBottom) / 2;
+  const top = panelTop({
+    desiredTop: targetY - height / 2,
+    band: { top: plot.top, bottom: plot.top + plot.height },
+    panelHeight: height,
+  });
+  // Where the clamp stopped the panel short, the beak slides along its edge to keep aiming at the
+  // run's middle — held clear of the rounded corners, as `EnergyFlowSankey` does.
+  const beakTop = Math.max(
+    BEAK_CORNER_INSET,
+    Math.min(
+      targetY - top,
+      Math.max(height - BEAK_CORNER_INSET, BEAK_CORNER_INSET),
+    ),
+  );
   return (
     <div data-testid="run-tooltip">
       <NodeTooltip
         data={data}
         nodeColor={colour}
-        beakVariant={overlapsRun ? "none" : "diamond"}
+        beakVariant="diamond"
         side={side}
-        // Halfway down the panel. A run is a tall region rather than a point — it spans its band for
-        // the whole session — so there is no single y on it to aim at, and the panel's own centre is
-        // the only honest answer. It is also where the eye goes: the panel is centred on the plot,
-        // so the beak lands level with the middle of the run it points at.
-        beakTop={height / 2}
+        beakTop={beakTop}
         showHeading
         positioning="absolute"
         left={left}

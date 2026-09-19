@@ -1,7 +1,6 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { Gauge } from "lucide-react";
 import Tile from "@/components/Tile";
 import {
   formatValueWithUnit,
@@ -169,10 +168,6 @@ export default function DeviceMetricsCard({
               }
               title={row.pointName}
               value={value}
-              icon={<Gauge className="w-6 h-6" />}
-              iconColor="text-slate-400"
-              bgColor="bg-slate-800/40"
-              borderColor="border-slate-700"
               staleThresholdSeconds={staleThresholdSeconds}
               measurementTime={
                 row.measurementTime ? new Date(row.measurementTime) : undefined

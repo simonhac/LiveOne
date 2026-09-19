@@ -15,6 +15,7 @@
  * magic number can only be right at the one width it was measured at.
  */
 import React from "react";
+import { TILE_SKELETON_RADIUS } from "@/lib/tile-style";
 
 /**
  * The class every placeholder wears.
@@ -25,8 +26,7 @@ import React from "react";
  * (See the recipe in docs/performance/dashboard-layout-stability.md.) Every placeholder in the
  * dashboard tree — host-drawn, or drawn by a leaf component's own loading branch — should carry it.
  */
-export const SKELETON_CLASS =
-  "animate-pulse rounded-lg border border-gray-700/50 bg-gray-800/30";
+export const SKELETON_CLASS = "animate-pulse rounded-lg bg-[#1C1C1E]/60";
 
 /**
  * The shimmer treatment — a sweeping highlight, on trial against `SKELETON_CLASS`'s breathing
@@ -48,21 +48,23 @@ export function ShimmerBar({ className }: { className?: string }) {
 /**
  * A tile-shaped placeholder, shown while a tile cell's `/api/data` is in flight.
  *
- * The sizing MIRRORS the real tiles rather than picking a round number: `Tile` is
- * `min-h-[110px] md:min-h-0` (content-sized once there is room), and the two container-query tiles
- * (AmberSmallCard / TeslaSmallCard) step up at `@[180px]`. A tile row is `auto-rows-fr`, so a
- * placeholder TALLER than the real tile drags the whole row down and then snaps back — which is
- * exactly how the old flat `min-h-[120px]` shifted the row it was meant to stabilise. `className`
- * carries the plugin's own `TilePlugin.skeletonClass`, for the tiles that size themselves.
+ * The sizing MIRRORS the real tiles rather than picking a round number: a `Tile` with a label and a
+ * hero measures 104px with nothing under it, and the two container-query tiles
+ * (AmberSmallCard / TeslaSmallCard) step up at `@[180px]` via their plugin's `skeletonClass`. A tile
+ * row is `auto-rows-fr`, so a placeholder TALLER than the real tile drags the whole row down and then
+ * snaps back — which is exactly how the old flat `min-h-[120px]` shifted the row it was meant to
+ * stabilise.
+ *
+ * Same colour and radius as the settled surface (lib/tile-style.ts), at 60%: a tile-shaped
+ * absence, not a box of its own. Its own classes rather than `SKELETON_CLASS`, whose `rounded-lg`
+ * would fight the tile radius (two `rounded-*` utilities resolve by stylesheet order, not by
+ * which one is written last).
  */
 export function TileSkeleton({ className }: { className?: string }) {
   return (
     <div
       data-skeleton=""
-      // 110 is `Tile`'s own mobile floor. 91 is what a `Tile` MEASURES from `md:` up, where it drops
-      // that floor (`md:min-h-0`) and sizes to its content — a skeleton left on 110 there would sit
-      // 19px taller than the tiles it stands in for and shrink the row on arrival.
-      className={`min-h-[110px] md:min-h-[91px] ${className ?? ""} ${SKELETON_CLASS}`}
+      className={`min-h-[104px] ${className ?? ""} animate-pulse bg-[#1C1C1E]/60 ${TILE_SKELETON_RADIUS}`}
     />
   );
 }

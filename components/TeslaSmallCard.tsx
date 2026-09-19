@@ -4,14 +4,10 @@ import { useRef, useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import Value from "@/components/ui/value";
 import ProgressRing from "@/components/ui/progress-ring";
-import {
-  Battery,
-  BatteryCharging,
-  ChevronLeft,
-  ChevronsLeft,
-  Settings,
-} from "lucide-react";
-import { ttInterphases } from "@/lib/fonts/amber";
+import { ChevronRight, ChevronsRight, Settings } from "lucide-react";
+import TileSurface from "@/components/ui/tile-surface";
+import { TILE_CAPTION, TILE_CHIP } from "@/lib/tile-style";
+import { ROLE_CHROME } from "@/lib/role-chrome";
 import { TeslaMark } from "@/lib/tesla-icons";
 import { getEvStatus, getEvStatusWords } from "@/lib/vendors/tesla/status";
 import TeslaControlDialog from "@/components/TeslaControlDialog";
@@ -113,32 +109,31 @@ function formatTimeRemaining(hours: number): string {
 }
 
 /**
- * Get battery fill color based on SoC level
+ * The ring is the EV's THEME colour — `CHART_COLORS.ev`, the colour EV charging has in every chart
+ * and the Sankey — running to a lighter red at its tip, like the battery tile's green. It used to be a
+ * red→orange→yellow→green SoC ramp, which made this the one tile whose colour said "how full"
+ * rather than "what this is"; the number inside the ring already says how full.
  */
-function getBatteryColor(soc: number): string {
-  if (soc <= 20) return "#ef4444"; // red-500
-  if (soc <= 40) return "#f97316"; // orange-500
-  if (soc <= 60) return "#eab308"; // yellow-500
-  return "#22c55e"; // green-500
-}
+const EV_LIGHT_RGB = "rgb(248, 113, 113)"; // red-400
 
 /**
- * Compact Tesla card - SoC donut plus the car's state.
+ * Compact Tesla card — the SoC as a fat Activity-style ring, plus the car's state.
  *
- * One layout throughout; container queries (card width, never the viewport) do
- * all the scaling. The donut diameters match AmberSmallCard's disc at every
- * step so the two tiles line up side by side.
+ * Drawn on the shared tile surface (docs/architecture/tile-style.md): the Tesla mark sits in the
+ * title slot, the cog is a grey disc top-right, the ring is centred, and the state reads as a caption
+ * under it. The ring carries two extras: chevrons riding its tip while charging (doubled over
+ * 10 kW), and a notch across it at the car's charge limit.
  *
- * | Width    | Height | Padding | Donut D | Mark   | Chevron | Status Text        |
- * |----------|--------|---------|---------|--------|---------|--------------------|
- * | 66px min | 110px  | 8px     | 75      | Hidden | Hidden  | 9px, state only    |
- * | 90px+    | 110px  | 8px     | 75      | 16px   | 16px    | 9px, state only    |
- * | 120px+   | 110px  | 8px     | 85      | 16px   | 16px    | 10px, state only   |
- * | 180px+   | 180px  | 12px    | 140     | 20px   | 20px    | 12px, state only   |
- * | 260px+   | 180px  | 12px    | 140     | 20px   | 20px    | 12px + 10px detail |
+ * One layout throughout; container queries (the tile's width, never the viewport) do the scaling.
  *
- * The charging detail (kW, ETA) waits for 260px because below that it cannot
- * clear the 140px donut in the corner it shares with it.
+ * | Width    | Height | Ring D | Mark   | Cog    | Caption                          |
+ * |----------|--------|--------|--------|--------|----------------------------------|
+ * | 66px min | 110px  | 64     | Hidden | Hidden | state                            |
+ * | 90px+    | 110px  | 64     | 16px   | Hidden | state                            |
+ * | 120px+   | 110px  | 72     | 16px   | 28px   | state                            |
+ * | 180px+   | 180px  | 108    | 20px   | 28px   | state · armed limit (compact)    |
+ * | 220px+   | 180px  | 108    | 20px   | 28px   | state · kW, then the ETA         |
+ * | 260px+   | 180px  | 108    | 20px   | 28px   | … and the armed limit in full    |
  */
 export default function TeslaSmallCard({
   latest,
@@ -218,7 +213,8 @@ export default function TeslaSmallCard({
   const status = getEvStatus({ shift, chargingState, pluggedIn });
   const statusWords = getEvStatusWords(status);
   const isCharging = status === "charging";
-  const batteryColor = getBatteryColor(batterySoc);
+  const batteryColor = ROLE_CHROME.ev.rgb;
+  const batteryLight = EV_LIGHT_RGB;
 
   // Charging detail: power fuses onto the state line, the ETA gets its own.
   const powerText =
@@ -263,9 +259,21 @@ export default function TeslaSmallCard({
   const isHighPower = chargePower !== null && chargePower > 10;
 
   return (
-    <div
-      ref={containerRef}
-      className={`@container relative bg-gray-800/50 border border-gray-700 rounded-lg p-2 @[180px]:p-3 min-h-[110px] @[180px]:min-h-[180px] min-w-[66px] self-stretch ${ttInterphases.className}`}
+    <TileSurface
+      rootRef={containerRef}
+      className="min-w-[66px] self-stretch"
+      surfaceClassName="flex flex-col min-h-[110px] @[180px]:min-h-[180px]"
+      overlay={
+        showControls ? (
+          <TeslaControlDialog
+            systemId={systemId as number}
+            open={controlsOpen}
+            onOpenChange={setControlsOpen}
+            latest={latest}
+            areaId={areaId}
+          />
+        ) : undefined
+      }
     >
       {/* DEBUG: Container size indicator */}
       {showDebug && (
@@ -274,103 +282,77 @@ export default function TeslaSmallCard({
         </div>
       )}
 
-      {/* Charge-control cog — owner/admin only, shown once the card is wide enough */}
-      {showControls && (
-        <button
-          type="button"
-          onClick={() => setControlsOpen(true)}
-          aria-label="Charging controls"
-          className="hidden @[120px]:flex absolute top-2 right-2 z-40 items-center justify-center text-gray-500 hover:text-gray-200 transition-colors"
-        >
-          <Settings className="w-4 h-4 @[180px]:w-[18px] @[180px]:h-[18px]" />
-        </button>
-      )}
-
-      {showControls && (
-        <TeslaControlDialog
-          systemId={systemId as number}
-          open={controlsOpen}
-          onOpenChange={setControlsOpen}
-          latest={latest}
-          areaId={areaId}
-        />
-      )}
-
-      {/* Tesla mark with charging chevrons - absolute positioned top left */}
-      <div className="absolute top-2 left-2 @[180px]:top-3 @[180px]:left-3 hidden @[90px]:flex items-center">
-        <TeslaMark className="w-4 h-4 @[180px]:w-5 @[180px]:h-5 text-white" />
-        {isCharging && (
-          <span style={{ color: batteryColor }}>
-            {isHighPower ? (
-              <ChevronsLeft className="w-4 h-4 @[180px]:w-5 @[180px]:h-5" />
-            ) : (
-              <ChevronLeft className="w-4 h-4 @[180px]:w-5 @[180px]:h-5" />
-            )}
-          </span>
+      {/* Title slot: the Tesla mark, white, a guest in the place a title goes. The charge-control
+          cog takes the top-right corner as a grey disc — owner/admin only, once there is room. */}
+      <div className="flex min-h-7 items-center justify-between gap-2">
+        <TeslaMark className="hidden @[90px]:block w-4 h-4 @[180px]:w-5 @[180px]:h-5 text-white" />
+        {showControls && (
+          <button
+            type="button"
+            onClick={() => setControlsOpen(true)}
+            aria-label="Charging controls"
+            className={`${TILE_CHIP} hidden @[120px]:grid text-white/60 transition-colors hover:bg-white/15 hover:text-white`}
+          >
+            <Settings className="w-4 h-4" />
+          </button>
         )}
       </div>
 
-      {/* SoC donut - centred in the full card height */}
-      <div className="h-full flex items-center justify-center">
+      {/* The SoC ring — fat, round-capped, over a track of its own hue. Charging, the chevrons ride
+          the arc's tip (the Activity Exercise ring); the charge limit is a notch across the ring. */}
+      <div className="flex flex-1 items-center justify-center py-1">
         <ProgressRing
           fraction={batterySoc / 100}
           color={batteryColor}
-          className="w-[75px] h-[75px] @[120px]:w-[85px] @[120px]:h-[85px] @[180px]:w-[140px] @[180px]:h-[140px] rounded-full bg-gray-700/50"
+          gradientTo={batteryLight}
+          notch={chargeLimit != null ? chargeLimit / 100 : null}
+          tip={
+            isCharging ? (
+              isHighPower ? (
+                <ChevronsRight
+                  className="w-3 h-3 @[180px]:w-4 @[180px]:h-4 text-white"
+                  strokeWidth={3}
+                />
+              ) : (
+                <ChevronRight
+                  className="w-3 h-3 @[180px]:w-4 @[180px]:h-4 text-white"
+                  strokeWidth={3}
+                />
+              )
+            ) : undefined
+          }
+          className="w-[64px] h-[64px] @[120px]:w-[72px] @[120px]:h-[72px] @[180px]:w-[108px] @[180px]:h-[108px]"
         >
-          {isCharging ? (
-            <BatteryCharging
-              className="w-4 h-4 @[180px]:w-6 @[180px]:h-6 mb-1"
-              style={{ color: batteryColor }}
-            />
-          ) : (
-            <Battery
-              className="w-4 h-4 @[180px]:w-6 @[180px]:h-6 mb-1"
-              style={{ color: batteryColor }}
-            />
-          )}
-          <div className="font-bold leading-none text-[22px] @[180px]:text-[36px] text-white">
+          <div className="font-bold leading-none text-[18px] @[180px]:text-[28px] text-white">
             <Value value={Math.round(batterySoc)} unit="%" />
-          </div>
-          <div className="hidden @[180px]:block text-gray-400 text-xs mt-1">
-            Battery
           </div>
         </ProgressRing>
       </div>
 
-      {/* Status - bottom right, one word per line so the donut keeps the height.
-          It sits in the corner the donut leaves free, so it hugs the very edge
-          and the charging detail waits for a card wide enough to hold it. */}
-      <div className="absolute bottom-1.5 right-1.5 @[180px]:bottom-2 @[180px]:right-2 text-right leading-tight text-gray-400 text-[9px] @[120px]:text-[10px] @[180px]:text-xs">
-        {statusWords.map((word, i) => (
-          <div key={word}>
-            {word}
-            {/* Power fuses onto the last state word, a size down so the pair
-                still clears the donut on the narrowest card that shows it */}
-            {powerText && i === statusWords.length - 1 && (
-              <span className="hidden @[260px]:inline text-[10px]">
-                {" "}
-                {powerText}
-              </span>
-            )}
-          </div>
-        ))}
+      {/* Status in the caption slot under the ring. The charging detail (kW, ETA) waits for a card
+          wide enough to hold it on one line. */}
+      <div className={`mt-1 text-center ${TILE_CAPTION}`}>
+        <div className="truncate">
+          {statusWords.join(" ")}
+          {powerText && (
+            <span className="hidden @[220px]:inline"> · {powerText}</span>
+          )}
+        </div>
         {etaText && (
-          <div className="hidden @[260px]:block text-[10px] text-gray-500">
-            {etaText}
-          </div>
+          <div className="hidden @[220px]:block truncate">{etaText}</div>
         )}
         {/* The armed limit: compact from 180px, the full sentence from 260px like `etaText`. */}
         {limitCompact && (
-          <div className="hidden @[180px]:block @[260px]:hidden text-[10px] text-amber-400/80">
+          <div className="hidden @[180px]:block @[260px]:hidden truncate text-white/80">
             {limitCompact}
           </div>
         )}
         {limitText && (
-          <div className="hidden @[260px]:block text-[10px] text-amber-400/80">
+          <div className="hidden @[260px]:block truncate text-white/80">
             {limitText}
           </div>
         )}
       </div>
-    </div>
+    </TileSurface>
   );
 }

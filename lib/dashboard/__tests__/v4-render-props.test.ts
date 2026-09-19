@@ -146,6 +146,11 @@ const LEAF_MODULES: Record<string, string> = {
   "@/components/HwsSmallCard": "HwsSmallCard",
   "@/components/GridSignalsCard": "GridSignalsCard",
   "@/components/HomeEnergyCard": "HomeEnergyCard",
+  // The battery tile draws its body straight from these two primitives rather than through `Tile`
+  // (its hero is INSIDE the ring), so without them its entry would record no leaves at all and the
+  // gate would pass on anything. Every other user of them is itself a leaf above.
+  "@/components/ui/progress-ring": "ProgressRing",
+  "@/components/ui/trend-row": "TrendRow",
   // CAPTURED as a leaf, not stubbed away like `DailyStripes` below — of the two reasons for
   // stubbing given there, only one applies here:
   //   1. Date.now()-derived props: NO. `HeatmapPanel`'s props are `systemId`/`timezone`/the two pins

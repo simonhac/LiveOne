@@ -159,8 +159,8 @@ export default function DashboardClient({
 
   return (
     <ChartFocusProvider>
-      <div className="min-h-screen bg-gray-900">
-        <header className="sticky top-0 z-30 border-b border-gray-800 bg-gray-900/80 px-4 py-3 backdrop-blur">
+      <div className="min-h-screen bg-black">
+        <header className="sticky top-0 z-30 border-b border-white/10 bg-black/80 px-4 py-3 backdrop-blur">
           <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-3">
             <div className="relative min-w-0">
               {sharedAreas ? (

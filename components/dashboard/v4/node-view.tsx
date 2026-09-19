@@ -19,7 +19,6 @@
  */
 import type React from "react";
 import type { ReactNode } from "react";
-import { Layers } from "lucide-react";
 import { Area } from "@/lib/ids";
 import { ErrorPanel } from "@/components/ErrorPanel";
 import Panel from "@/components/ui/panel";
@@ -125,33 +124,104 @@ function V4TileCell({
 }) {
   const { data, datum, isLoading } = useAreaDatum(systemId);
   const latest = datum?.latest ?? {};
-  if (isLoading) return <TileSkeleton className={plugin.skeletonClass} />;
+  if (isLoading)
+    return (
+      <SpanCell plugin={plugin}>
+        <TileSkeleton className={plugin.skeletonClass} />
+      </SpanCell>
+    );
   const showGrid = !!latest["bidi.grid/power"];
   if (!plugin.isAvailable({ latest, data, showGrid })) return null;
   return (
-    <plugin.Render
-      latest={latest}
-      data={data}
-      systemId={systemId}
-      staleThresholdSeconds={staleThreshold(
-        datum?.device?.vendorType ?? "",
-        datum?.device?.config?.updateCadenceSeconds,
-      )}
-      showGrid={showGrid}
-      // Does the viewer own the DEVICE THIS TILE WOULD COMMAND — not the subject it fetched
-      // under. For an ev tile inside a multi-device area section those differ (the subject is the
-      // AREA, whose owner need not own the car), and the old subject-level answer rendered a cog
-      // that 403ed on press. `datumCanControlPoint` reads the producing device off the payload's
-      // own latest entries, so client and server now agree without a second authorization path.
-      // A tile that declares no control paths keeps the subject-level answer. Absent (SSR seed), a
-      // share-token viewer, or an ADMIN who does not own the device → false.
-      canControl={
-        plugin.controlPaths
-          ? datumCanControlPoint(datum, plugin.controlPaths)
-          : datumCanControl(datum)
-      }
-    />
+    <SpanCell plugin={plugin}>
+      <plugin.Render
+        latest={latest}
+        data={data}
+        systemId={systemId}
+        staleThresholdSeconds={staleThreshold(
+          datum?.device?.vendorType ?? "",
+          datum?.device?.config?.updateCadenceSeconds,
+        )}
+        showGrid={showGrid}
+        // Does the viewer own the DEVICE THIS TILE WOULD COMMAND — not the subject it fetched
+        // under. For an ev tile inside a multi-device area section those differ (the subject is the
+        // AREA, whose owner need not own the car), and the old subject-level answer rendered a cog
+        // that 403ed on press. `datumCanControlPoint` reads the producing device off the payload's
+        // own latest entries, so client and server now agree without a second authorization path.
+        // A tile that declares no control paths keeps the subject-level answer. Absent (SSR seed), a
+        // share-token viewer, or an ADMIN who does not own the device → false.
+        canControl={
+          plugin.controlPaths
+            ? datumCanControlPoint(datum, plugin.controlPaths)
+            : datumCanControl(datum)
+        }
+      />
+    </SpanCell>
   );
+}
+
+/**
+ * A medium (two-column) tile's grid cell — `TilePlugin.span`. The wrapper is itself a one-cell grid
+ * so the tile inside is stretched to the row height exactly as a bare grid item would be (see the
+ * `overlay` note in components/ui/tile-surface.tsx for why a plain wrapper div would not be).
+ *
+ * Only ever wraps something that RENDERS: an unavailable tile returns null above this, so a span
+ * never leaves an empty two-column hole in the row.
+ */
+function SpanCell({
+  plugin,
+  children,
+}: {
+  plugin: TilePlugin;
+  children: React.ReactNode;
+}) {
+  if ((plugin.span ?? 1) === 1) return <>{children}</>;
+  return <div className="col-span-2 grid">{children}</div>;
+}
+
+/**
+ * Does this node draw its own surface — a tile, or a row group of them — rather than relying on a
+ * frame around it? Decides which of a heading section's children get the section's chart `Panel`.
+ */
+function isSelfSurfaced(node: DashboardNode): boolean {
+  if (node.kind === "group") return node.direction === "row";
+  return RENDERERS[node.type]?.kind === "tile";
+}
+
+/**
+ * Group a section's children into runs: self-surfaced elements (tile rows) stand bare, and each
+ * consecutive run of the rest shares one `Panel` — exactly the frame the whole section used to be,
+ * so a chart stack reads as it always did.
+ */
+function framedRuns(body: ReactNode[], selfSurfaced: boolean[]): ReactNode[] {
+  const out: ReactNode[] = [];
+  let run: ReactNode[] = [];
+  const flush = () => {
+    if (run.length === 0) return;
+    out.push(
+      <Panel key={`panel-${out.length}`} bleed>
+        <div className="flex flex-col gap-4">{run}</div>
+      </Panel>,
+    );
+    run = [];
+  };
+  body.forEach((el, i) => {
+    if (selfSurfaced[i]) {
+      flush();
+      out.push(el);
+    } else {
+      run.push(el);
+    }
+  });
+  flush();
+  return out;
+}
+
+/** How many grid columns a node occupies in a row group — a medium tile takes two. */
+function gridUnitsOf(node: DashboardNode): number {
+  if (node.kind !== "card") return 1;
+  const plugin = RENDERERS[node.type];
+  return plugin?.kind === "tile" ? (plugin.span ?? 1) : 1;
 }
 
 function CardNodeView({
@@ -199,7 +269,11 @@ function CardNodeView({
   // Tile plugin → a self-fetching tile cell.
   if (plugin.kind === "tile") {
     if (systemId == null)
-      return <TileSkeleton className={plugin.skeletonClass} />;
+      return (
+        <SpanCell plugin={plugin}>
+          <TileSkeleton className={plugin.skeletonClass} />
+        </SpanCell>
+      );
     return <V4TileCell plugin={plugin} systemId={systemId} />;
   }
 
@@ -305,14 +379,21 @@ function GroupNodeView({
       ? `${sankeyChild?.id ?? "sankey"}:${areaUuid}:${dashboardId}`
       : undefined;
 
-  // Collapse pass 2 + render.
+  // Collapse pass 2 + render. `gridUnits` counts COLUMNS, not children: a medium tile takes two, and
+  // the column policy (lib/dashboard/tile-grid.ts) balances the row on what it actually has to fit.
   let chartsEmitted = false;
+  let gridUnits = 0;
+  // Parallel to `body`: does this element draw its OWN surfaces (tiles), or does it rely on a
+  // frame around it (charts, tables)? Only a heading section reads it — see below.
+  const selfSurfaced: boolean[] = [];
   const body: ReactNode[] = node.children
     .map((child, i) => {
       if (child.hidden) return null;
       if (collapseKeyOf(child) != null) {
         if (chartsEmitted) return null;
         chartsEmitted = true;
+        gridUnits += 1;
+        selfSurfaced.push(false);
         // The block's height is additive in the very keys the collapse pass just gathered, so the
         // reservation is exact rather than approximate — and it must NOT collapse once areas
         // resolve. This is the single biggest thing on a dashboard (Kinkora: 1570px).
@@ -336,6 +417,8 @@ function GroupNodeView({
           />
         );
       }
+      gridUnits += gridUnitsOf(child);
+      selfSurfaced.push(isSelfSurfaced(child));
       return (
         <NodeView
           key={nodeKey(child, i)}
@@ -359,7 +442,7 @@ function GroupNodeView({
       <div className={TILE_GRID_CONTAINER}>
         <div
           className={
-            node.wrap === false ? tileRowClass() : tileGridClass(body.length)
+            node.wrap === false ? tileRowClass() : tileGridClass(gridUnits)
           }
         >
           {body}
@@ -371,15 +454,27 @@ function GroupNodeView({
 
   if (node.heading && area) {
     return (
-      // `bleed`: below `sm` the section runs to the screen edge — no frame, no side padding — so the
-      // Sankey and the tiles get the ~20px a side the chrome was taking. See CHART_PANEL_BLEED.
-      <Panel as="section" bleed>
-        <div className="flex items-center gap-1.5 px-2 pb-2 text-xs font-medium uppercase tracking-wide text-gray-400 sm:px-1">
-          <Layers className="h-3.5 w-3.5" />
-          <span>{area.displayName}</span>
-        </div>
-        {inner}
-      </Panel>
+      // A section is a bold header on the black page, the way the Activity app separates its
+      // cards — no longer a bordered panel around everything. The tiles are their own surfaces now
+      // (docs/architecture/tile-style.md), and a frame around them was a box around boxes.
+      //
+      // 🛑 The CHARTS are not. They draw no frame of their own by design (chart-style.md rule 1:
+      // one frame per nesting level, and for a chart that level was the section), so each run of
+      // non-tile children keeps a `Panel` — the same frame, bleed and all, just no longer
+      // stretched around the tile rows too. Moving that panel onto the tile surface is the
+      // chart-side follow-up.
+      <section>
+        <h2 className="px-1 pb-2.5 text-[20px] font-bold leading-tight text-white">
+          {area.displayName}
+        </h2>
+        {node.direction === "row" ? (
+          inner
+        ) : (
+          <div className="flex flex-col gap-4">
+            {framedRuns(body, selfSurfaced)}
+          </div>
+        )}
+      </section>
     );
   }
   return inner;
