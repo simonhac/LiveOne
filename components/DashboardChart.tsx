@@ -475,7 +475,7 @@ export default function DashboardChart(props: DashboardChartProps) {
         // scrubbing the crosshair along the time axis is exactly a horizontal drag. Without this the
         // browser claims the gesture as a sideways scroll and the crosshair never moves, which reads
         // as the chart ignoring you.
-        className="touch-pan-y"
+        className="max-w-full touch-pan-y"
         onPointerDown={onPointerDown}
         onPointerMove={pointer.onPointerMove}
         onPointerUp={onPointerUp}

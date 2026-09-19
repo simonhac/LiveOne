@@ -496,6 +496,7 @@ export default function HeatmapChart({
               width={width}
               height={plotH + MARGIN.top + MARGIN.bottom}
               data-testid="heatmap-chart"
+              className="max-w-full"
               onPointerLeave={() => setHover(null)}
             >
               <g transform={`translate(${MARGIN.left}, ${MARGIN.top})`}>
