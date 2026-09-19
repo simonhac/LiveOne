@@ -81,29 +81,6 @@ describe("classifyUnit", () => {
   });
 });
 
-describe("word units (capitalised inside a tile)", () => {
-  it("marks alphabetic heads as words and leaves glyphs alone", () => {
-    for (const unit of ["kW", "kWh", "MW", "rpm", "Hz", "g"]) {
-      expect(classifyUnit(unit).headWord).toBe(true);
-    }
-    for (const unit of ["%", "°C", "°", "¢", "$", "c", ""]) {
-      expect(classifyUnit(unit).headWord).toBe(false);
-    }
-  });
-
-  it("judges the denominator on its own", () => {
-    expect(classifyUnit("¢/kWh")).toMatchObject({
-      headWord: false,
-      tailWord: true,
-    });
-    expect(classifyUnit("g/kWh")).toMatchObject({
-      headWord: true,
-      tailWord: true,
-    });
-    expect(classifyUnit("kW")).toMatchObject({ tailWord: false });
-  });
-});
-
 describe("isTightUnit", () => {
   it("is true for glyph modifiers and false for word symbols", () => {
     expect(isTightUnit("%")).toBe(true);

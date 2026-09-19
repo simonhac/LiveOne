@@ -8,11 +8,18 @@
  *
  * Class strings must stay LITERAL for Tailwind's scanner to see them — never build one by
  * interpolation.
+ *
+ * 🛑 THE NARROWEST TILE IS ~150px, so a `@[...]` tier below that renders for nobody. `tile-grid.ts`
+ * never drops under 2 columns and never lets a column fall under 176px: a tile in a multi-tile row
+ * runs ~150px (two columns on a 320px phone) to ~280px, and a tile ALONE in its row is as wide as
+ * the section (~1000px) — the only two cases worth designing for. Amber and Tesla each carried two
+ * dead tiers (`@[90px]`, `@[120px]`) from before that policy existed, which is how Tesla's ring came
+ * to overflow at 66px with nobody noticing.
  */
 
 /**
  * The tile's outer element: the `@container` every `@[…]` variant inside the tile resolves against,
- * and the `tile-scope` hook app/globals.css uses to set the rounded face and unit case.
+ * and the `tile-scope` hook app/globals.css uses to set the rounded face and unit colour.
  *
  * 🛑 THE CONTAINER AND THE SURFACE ARE TWO ELEMENTS ON PURPOSE. A container query never matches the
  * container itself — `@[180px]:p-4` on the `@container` element would measure the GRID around it —
@@ -50,14 +57,28 @@ export const TILE_CAPTION =
 export const TILE_TICK = "text-[10px] leading-none font-medium text-white/55";
 
 /**
- * The one hero number per tile. Colour is the caller's — it is the DATA's colour. A size down in
- * the narrowest tiles, where "12.3KW" at 28px would run off the card.
+ * The one hero number per tile. Colour is the caller's — it is the DATA's colour.
+ *
+ * Two steps, not three: the old 22px base was gated at `@[130px]`, under the ~150px floor
+ * above, so nothing ever rendered it.
  */
 export const TILE_HERO =
-  "text-[22px] @[130px]:text-[28px] @[220px]:text-[34px] font-bold leading-none tabular-nums";
+  "text-[28px] @[220px]:text-[34px] font-bold leading-none tabular-nums";
 
 /** A supporting value (a Trends row's number). */
 export const TILE_VALUE_2 = "text-[17px] leading-tight font-bold tabular-nums";
+
+/**
+ * The one ring size. Every tile whose data is a circle — Battery and EV's SoC rings, Amber's price
+ * disc, the NEM grid's renewables ring — sizes it with this, so a row of them reads as one set
+ * rather than four near-miss diameters. 76px until the tile is 180px wide, then 108px.
+ */
+export const TILE_RING =
+  "h-[76px] w-[76px] shrink-0 @[180px]:h-[108px] @[180px]:w-[108px]";
+
+/** The number in the middle of a {@link TILE_RING}. Colour is the caller's. */
+export const TILE_RING_VALUE =
+  "text-[17px] @[180px]:text-[24px] font-bold leading-none";
 
 /** The grey disc a direction chevron or a control glyph sits in. */
 export const TILE_CHIP =

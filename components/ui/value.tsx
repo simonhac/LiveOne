@@ -23,19 +23,15 @@ function UnitSpan({
   gap,
   muted,
   smallCaps,
-  word,
 }: {
   children: React.ReactNode;
   gap: UnitGap;
   muted: boolean;
   smallCaps?: boolean;
-  /** A word unit — capitalised inside a tile (see `.tile-scope` in app/globals.css). */
-  word?: boolean;
 }) {
   return (
     <span
       data-unit=""
-      data-unit-case={word ? "word" : undefined}
       className={`${UNIT_CLASS} ${GAP_CLASS[gap]} ${muted ? UNIT_MUTED_CLASS : ""} ${
         smallCaps ? UNIT_SMALL_CAPS_CLASS : ""
       }`}
@@ -75,18 +71,17 @@ export default function Value({
           gap={parts.headGap}
           muted={parts.headMuted}
           smallCaps={parts.headSmallCaps}
-          word={parts.headWord}
         >
           {parts.head}
         </UnitSpan>
       )}
       {parts?.tail && (
-        <UnitSpan gap="none" muted word={parts.tailWord}>
+        <UnitSpan gap="none" muted>
           {parts.tail}
         </UnitSpan>
       )}
       {qualifier && (
-        <UnitSpan gap="word" muted word>
+        <UnitSpan gap="word" muted>
           {qualifier}
         </UnitSpan>
       )}

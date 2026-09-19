@@ -11,7 +11,7 @@ import DirectionChip, {
 import TrendRow from "@/components/ui/trend-row";
 import Value from "@/components/ui/value";
 import { IDLE_CHROME, ROLE_CHROME } from "@/lib/role-chrome";
-import { TILE_STALE } from "@/lib/tile-style";
+import { TILE_RING, TILE_RING_VALUE, TILE_STALE } from "@/lib/tile-style";
 import type { TilePlugin, TileRenderProps } from "./types";
 import { formatPowerValue, getPointValue, getMeasurementTime } from "./shared";
 
@@ -58,9 +58,9 @@ function BatteryTile({ latest, staleThresholdSeconds }: TileRenderProps) {
           fraction={batterySoc / 100}
           color={ringColor}
           gradientTo={low ? undefined : BATTERY_LIGHT_RGB}
-          className={`h-[76px] w-[76px] @[200px]:h-[92px] @[200px]:w-[92px] ${staleClass}`}
+          className={`${TILE_RING} ${staleClass}`}
         >
-          <span className="text-[17px] font-bold leading-none text-white @[200px]:text-[22px]">
+          <span className={`${TILE_RING_VALUE} text-white`}>
             <Value value={String(Math.round(batterySoc))} unit="%" />
           </span>
         </ProgressRing>

@@ -102,11 +102,10 @@ Both are baked into `<Value>` — you get them by using it.
 
 ### Inside a tile
 
-A tile (`.tile-scope`, see [tile-style.md](tile-style.md)) overrides two of the above, in CSS:
+A tile (`.tile-scope`, see [tile-style.md](tile-style.md)) overrides one of the above, in CSS:
 units take the **value's colour** rather than muting (the tile's colour lives in its data, and a
-grey `kW` beside a yellow number splits one fact into two tones), and **word units render in caps**
-(`3.2KW`, `/KWH`) — `classifyUnit`'s `headWord`/`tailWord` decide which. Glyph units are untouched.
-Binding and gaps are exactly as above.
+grey `kW` beside a yellow number splits one fact into two tones). Units keep their case — `kW`,
+never `KW`. Binding and gaps are exactly as above.
 
 ## Using it
 

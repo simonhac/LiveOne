@@ -38,21 +38,7 @@ export interface UnitParts {
   headMuted: boolean;
   /** Set the head in small caps — see `SMALL_CAPS_UNITS`. */
   headSmallCaps: boolean;
-  /**
-   * The head is a WORD unit (alphabetic: `kW`, `kWh`, `MW`, `rpm`), as opposed to a glyph (`%`,
-   * `°C`, `¢`, `$`). Inside a tile a word unit is set in caps — `3.2KW`, the way the Activity app
-   * sets `3.20KM` — while a glyph is left as written. See docs/architecture/tile-style.md.
-   *
-   * ⚠️ Caps are display-only (`text-transform`), so the source text keeps its case. It does erase
-   * the `mW`/`MW` distinction on screen, which is acceptable only because no tile shows a milli-
-   * unit; a surface that does must not sit inside `.tile-scope`.
-   */
-  headWord: boolean;
-  /** Same question for the denominator: `/kWh` is a word, a bare `/` is not. */
-  tailWord: boolean;
 }
-
-const HAS_LETTER = /\p{L}/u;
 
 export function isTightUnit(unit: string): boolean {
   return TIGHT_UNITS.has(unit);
@@ -77,8 +63,6 @@ export function classifyUnit(unit: string): UnitParts {
     headGap: tight ? "none" : "hair",
     headMuted: !tight && head !== "",
     headSmallCaps: SMALL_CAPS_UNITS.has(head),
-    headWord: !tight && HAS_LETTER.test(head),
-    tailWord: HAS_LETTER.test(tail),
   };
 }
 
