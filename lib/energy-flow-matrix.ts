@@ -643,7 +643,13 @@ function prepareFlowInputs(data: ProcessedSiteData): PreparedFlowInputs | null {
     return null;
   }
 
-  const { generation, load } = data;
+  // 🛑 POWER, not the charts' energy view. `computeFlowAccounting` integrates its inputs over their
+  // own timestamps, so it needs kW per sample — which at the 1d interval is exactly what
+  // `ProcessedSiteData.flowInput` preserves (see there). Reading `load`/`generation` instead would
+  // integrate kWh/day as though it were kW (24× high), and on Y would integrate across month-long
+  // "intervals" besides. D/W carry no `flowInput`, so they fall through to the same objects as before.
+  const generation = data.flowInput?.generation ?? data.generation;
+  const load = data.flowInput?.load ?? data.load;
 
   // Filter out SoC series (only use power/energy series)
   const generationPowerSeries = generation.series.filter(
@@ -789,6 +795,10 @@ export function calculateEnergyFlowMatrix(
  * {@link computeInstantFlowMatrix}. Returns null when there's no complete flow or the index is out
  * of range. The 30D hover instead indexes a real per-day energy matrix from `flow_attr_1d` (see
  * {@link pickDailyFlowMatrix}); it does NOT use this power snapshot.
+ *
+ * 🛑 Sub-daily ONLY, and the call site enforces it (`!isDateOnlyPeriod(period)`). `index` addresses
+ * the CHART's array, while `prepareFlowInputs` hands back the pre-roll-up daily copy at the 1d
+ * interval — on Y the two have different lengths, so an index into one does not address the other.
  */
 export function calculateInstantFlowMatrix(
   data: ProcessedSiteData,

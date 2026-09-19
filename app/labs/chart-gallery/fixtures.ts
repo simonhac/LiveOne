@@ -22,6 +22,12 @@ import {
   getPeriodIntervalMinutes,
 } from "@/lib/charts/temporal";
 import { CHART_COLORS } from "@/lib/chart-colors";
+import {
+  monthBuckets,
+  rollUp,
+  type MonthBucket,
+  type RollUpHow,
+} from "@/lib/charts/month-buckets";
 import type { RunBand } from "@/lib/charts/run-bands";
 import type { ProvenanceChartDef } from "@/lib/battery-provenance/field-registry";
 import type { ProvenanceBand } from "@/components/battery-provenance/ProvenanceChart";
@@ -61,6 +67,33 @@ function buildTimestamps(range: ChartTimeRange): {
     timestamps.push(new Date(t));
   }
   return { timestamps, windowStart, windowEnd: now };
+}
+
+/**
+ * The Y period's month buckets for a daily fixture grid — mirroring what the real builders do
+ * (`rollUpYearToMonths` in lib/charts/lines-data.ts, `rollUpToMonths` in lib/site-data-processor.ts).
+ *
+ * Y draws ONE BAR PER CALENDAR MONTH, not 365 daily ones, so a fixture that skipped this would be
+ * baselining a rendering the app no longer produces. The clamped first/last buckets are what give
+ * the harness its partial-month (narrower bar) coverage.
+ */
+function yearMonthBuckets(range: ChartTimeRange, timestamps: Date[]) {
+  if (range !== "Y" || timestamps.length === 0) return null;
+  const stepMs = getPeriodIntervalMinutes(range) * 60_000;
+  return monthBuckets(
+    timestamps,
+    timestamps[0],
+    new Date(timestamps[timestamps.length - 1].getTime() + stepMs),
+  );
+}
+
+/** `rollUp`, but tolerant of the optional series the line fixture may omit entirely. */
+function rollUpMaybe(
+  values: (number | null)[] | undefined,
+  buckets: MonthBucket[],
+  how: RollUpHow,
+): (number | null)[] | undefined {
+  return values ? rollUp(values, buckets, how) : undefined;
 }
 
 /** Fraction of a solar day at `d`, 0 outside ~07:00–17:00 local (a winter arc). */
@@ -177,6 +210,9 @@ export function linesFixture(opts: LinesCaseOpts): LinesFixture {
     return round(soc, 1);
   });
 
+  const socMin = batterySOC.map((v) => round(Math.max(20, v - 11), 1));
+  const socMax = batterySOC.map((v) => round(Math.min(100, v + 9), 1));
+
   const chartData: LineChartData = {
     timestamps,
     solar,
@@ -190,14 +226,32 @@ export function linesFixture(opts: LinesCaseOpts): LinesFixture {
 
   // The SoC min/max band only exists in energy (daily) mode.
   const paddedSOCData: PaddedSOCData | null = isEnergy
-    ? {
-        timestamps,
-        min: batterySOC.map((v) => round(Math.max(20, v - 11), 1)),
-        max: batterySOC.map((v) => round(Math.min(100, v + 9), 1)),
-      }
+    ? { timestamps, min: socMin, max: socMax }
     : null;
 
-  return { chartData, paddedSOCData, windowStart, windowEnd };
+  const buckets = yearMonthBuckets(range, timestamps);
+  if (!buckets) return { chartData, paddedSOCData, windowStart, windowEnd };
+
+  const monthly: LineChartData = {
+    ...chartData,
+    timestamps: buckets.map((b) => b.start),
+    solar: rollUp(solar, buckets, "sum"),
+    load: rollUp(load, buckets, "sum"),
+    batteryW: noBattery ? undefined : rollUpMaybe(batteryW, buckets, "sum"),
+    batterySOC: rollUp(batterySOC, buckets, "mean"),
+    grid: noGrid ? undefined : rollUpMaybe(grid, buckets, "sum"),
+    barSpans: buckets.map((b) => ({ start: b.start, end: b.end })),
+  };
+  return {
+    chartData: monthly,
+    // No SoC band at Y — `LinesChartCard` withholds it there, because a month's min and max are
+    // both hit by any battery that cycles daily, so every band would run the full height of the
+    // axis. The mean line still draws. (Faithful to the card: this fixture's job is to match it.)
+    paddedSOCData: null,
+    // The axis domain now comes from the spans, not the last bucket's START — see `BarSpan`.
+    windowStart: buckets[0].start,
+    windowEnd: buckets[buckets.length - 1].end,
+  };
 }
 
 export type StackedCaseOpts = {
@@ -309,11 +363,33 @@ export function stackedFixture(opts: StackedCaseOpts): StackedFixture {
     }),
   });
 
+  const visibleSeries = new Set(series.map((s) => s.id));
+  const chartMode = isEnergy ? "energy" : "power";
+
+  const buckets = yearMonthBuckets(range, timestamps);
+  if (!buckets) {
+    return {
+      chartData: { timestamps, series, mode: chartMode },
+      visibleSeries,
+      windowStart,
+      windowEnd,
+    };
+  }
   return {
-    chartData: { timestamps, series, mode: isEnergy ? "energy" : "power" },
-    visibleSeries: new Set(series.map((s) => s.id)),
-    windowStart,
-    windowEnd,
+    chartData: {
+      timestamps: buckets.map((b) => b.start),
+      series: series.map((s) => ({
+        ...s,
+        // Energy adds up across a month; the SoC overlay averages. (The site processor picks min/max
+        // off the metric suffix too, but this fixture carries only the one bare SoC series.)
+        data: rollUp(s.data, buckets, s.seriesType === "soc" ? "mean" : "sum"),
+      })),
+      mode: chartMode,
+      barSpans: buckets.map((b) => ({ start: b.start, end: b.end })),
+    },
+    visibleSeries,
+    windowStart: buckets[0].start,
+    windowEnd: buckets[buckets.length - 1].end,
   };
 }
 

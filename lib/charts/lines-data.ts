@@ -1,6 +1,7 @@
 import micromatch from "micromatch";
 import type { LineChartData as ChartData } from "@/lib/charts/types";
 import type { ChartTimeRange } from "@/lib/charts/temporal";
+import { monthBuckets, rollUp } from "@/lib/charts/month-buckets";
 
 // Series patterns to request for a given period (energy mode = M/Y/1d, else power mode).
 export function buildSeriesParam(isEnergyMode: boolean): string {
@@ -135,7 +136,7 @@ export function buildChartData(
     return value;
   };
 
-  return {
+  const built: ChartData = {
     timestamps: selectedIndices.map((i) => timestamps[i]),
     solar: solarData
       ? selectedIndices.map((i) =>
@@ -170,5 +171,48 @@ export function buildChartData(
         )
       : undefined,
     mode: isEnergyMode ? "energy" : "power",
+  };
+
+  return timeRange === "Y" ? rollUpYearToMonths(built, intervalMs) : built;
+}
+
+/**
+ * Y: fold the ~365 daily bars into one per calendar month.
+ *
+ * The energy series are already true kWh (`energy.delta`, not a power average), so a month's bar is
+ * a plain SUM of its days — no unit fix is needed here, unlike the stacked site charts. SoC avg
+ * averages and SoC min/max keep the extreme, so a month's band still spans what the battery
+ * actually did rather than the mildest version of it.
+ *
+ * `barSpans` is what makes the result drawable: months are 28–31 days long, so the renderer places
+ * the bars on the time scale instead of giving each an equal slice of the plot (see `BarSpan`).
+ */
+function rollUpYearToMonths(cd: ChartData, intervalMs: number): ChartData {
+  if (cd.timestamps.length === 0) return cd;
+  const buckets = monthBuckets(
+    cd.timestamps,
+    cd.timestamps[0],
+    // Exclusive: a day marker names the START of its day, so the last bar has to cover it.
+    new Date(cd.timestamps[cd.timestamps.length - 1].getTime() + intervalMs),
+  );
+  const sum = (v: (number | null)[] | undefined) =>
+    v ? rollUp(v, buckets, "sum") : undefined;
+  return {
+    ...cd,
+    timestamps: buckets.map((b) => b.start),
+    solar: rollUp(cd.solar, buckets, "sum"),
+    load: rollUp(cd.load, buckets, "sum"),
+    // `undefined` stays `undefined` — an absent series must not become an all-nulls ARRAY, which is
+    // truthy and would put a phantom dataset back in the legend. See LineChartData.batteryW.
+    batteryW: sum(cd.batteryW),
+    batterySOC: rollUp(cd.batterySOC, buckets, "mean"),
+    batterySOCMin: cd.batterySOCMin
+      ? rollUp(cd.batterySOCMin, buckets, "min")
+      : undefined,
+    batterySOCMax: cd.batterySOCMax
+      ? rollUp(cd.batterySOCMax, buckets, "max")
+      : undefined,
+    grid: sum(cd.grid),
+    barSpans: buckets.map((b) => ({ start: b.start, end: b.end })),
   };
 }

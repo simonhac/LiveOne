@@ -234,6 +234,16 @@ export default function LinesChartCard({
   const { windowEnd, windowStart } = useMemo(() => {
     if (chartData && chartData.timestamps.length > 0) {
       const ts = chartData.timestamps;
+      // 🛑 With `barSpans` the last timestamp is the START of the last bucket (on Y, the 1st of the
+      // final month), so using it would truncate the domain by up to a month. The spans carry the
+      // real edges.
+      const spans = chartData.barSpans;
+      if (spans && spans.length === ts.length) {
+        return {
+          windowStart: spans[0].start,
+          windowEnd: spans[spans.length - 1].end,
+        };
+      }
       return { windowStart: ts[0], windowEnd: ts[ts.length - 1] };
     }
     if (start && end) {
@@ -265,8 +275,14 @@ export default function LinesChartCard({
   // For energy mode, pad the SOC data to extend the fill to chart edges. Guard on a non-empty
   // timestamps array: empty SoC arrays are still truthy, so without this a data-less window (new
   // device) would run the IIFE and crash on `timestamps[0].getTime()` (undefined).
+  //
+  // 🛑 NOT on Y, where a bucket is a calendar month. The band is the bucket's min and max, and over
+  // a month a battery that cycles daily hits both ends of its range almost every time — so every
+  // bucket's band runs the full height of the axis and the "band" becomes a wash that says only
+  // "there is a battery". The monthly MEAN line still draws; it is the part that carries a trend.
   const paddedSOCData =
     chartData?.mode === "energy" &&
+    period !== "Y" &&
     chartData.timestamps.length > 0 &&
     chartData.batterySOCMin?.length &&
     chartData.batterySOCMax?.length

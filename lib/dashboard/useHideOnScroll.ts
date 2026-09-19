@@ -41,11 +41,29 @@ export function scrollStep(
 }
 
 /**
+ * Below Tailwind's `sm`, where the header's two rows are a real fraction of the screen. Written as
+ * a max-width query so the boundary is the same 640px `sm:` uses, with no chance of the two
+ * disagreeing by a pixel at exactly 640.
+ */
+const NARROW_SCREEN = "(max-width: 639.98px)";
+
+/**
  * `true` while the page is being scrolled DOWN past the header; flips back on any scroll up. Scroll
  * container is the window. Scrolls made by `holdScrollAnchor` (lib/charts/scroll-hold.ts) are
  * compensation, not the reader, so they only resync the baseline — and for the whole of a temporal
  * change the header is held SHOWN, because the D|W|M|Y buttons the reader is aiming at live in it.
  * `pinned` forces it shown too (e.g. while a menu hanging off the header is open).
+ *
+ * 🛑 **Narrow viewports only** — always `false` from `sm` up. The whole justification for taking
+ * the header away is that on a phone its two rows permanently eat a chunk of a short screen; on a
+ * desktop they cost a sliver of a tall one, and moving them buys nothing while costing the reader
+ * the D|W|M|Y buttons and the dashboard switcher every time they scroll down a page. This is a
+ * viewport-WIDTH question, not a touch one: a touch laptop has the room, and a phone does not stop
+ * being cramped when a mouse is paired to it.
+ *
+ * Reports `false` on the server and on the first client render, adopting the real answer in a mount
+ * effect, so the two renders agree and hydration cannot mismatch — the same shape as
+ * `useIsTouchDevice`. Erring "shown" for one frame is the safe direction.
  */
 export function useHideOnScroll(
   headerRef: React.RefObject<HTMLElement | null>,
@@ -55,6 +73,15 @@ export function useHideOnScroll(
   const hiddenRef = useRef(false);
   const [held, setHeld] = useState(false);
   const heldRef = useRef(false);
+  const [narrow, setNarrow] = useState(false);
+
+  useEffect(() => {
+    const mq = window.matchMedia(NARROW_SCREEN);
+    const apply = () => setNarrow(mq.matches);
+    apply();
+    mq.addEventListener("change", apply);
+    return () => mq.removeEventListener("change", apply);
+  }, []);
 
   useEffect(
     () =>
@@ -109,5 +136,5 @@ export function useHideOnScroll(
     };
   }, [headerRef]);
 
-  return hidden && !pinned && !held;
+  return narrow && hidden && !pinned && !held;
 }

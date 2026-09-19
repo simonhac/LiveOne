@@ -1,5 +1,11 @@
 import { ChartData, SeriesData } from "@/lib/charts/types";
 import type { ChartTimeRange } from "@/lib/charts/temporal";
+import {
+  monthBuckets,
+  rollUp,
+  type MonthBucket,
+  type RollUpHow,
+} from "@/lib/charts/month-buckets";
 import { generateSeriesConfig } from "@/lib/charts/series-config";
 import { getColorForPath } from "@/lib/chart-colors";
 import { flowPathForSeries } from "@/lib/aggregation/flow-node-meta";
@@ -12,6 +18,19 @@ import { fetchJson } from "@/lib/queries/fetcher";
 export interface ProcessedSiteData {
   load: ChartData | null;
   generation: ChartData | null;
+  /**
+   * `load`/`generation` as they were BEFORE the 1d energy conversion and the Y month roll-up — i.e.
+   * still one point per day, still carrying the vendor's daily AVERAGE POWER in kW. Set only when
+   * those transforms actually ran (the 1d interval); absent for D/W, where the two are identical.
+   *
+   * It exists for exactly one consumer: {@link calculateEnergyFlowMatrix}'s client-side fallback,
+   * which INTEGRATES its inputs over their timestamps and so is the one reader that needs power
+   * rather than energy. Everything else downstream (the charts, the legend tables, the tile bars)
+   * wants the energy view and reads `load`/`generation`. Splitting them keeps the Sankey fallback's
+   * numbers bit-for-bit what they were before the unit fix, rather than 24× — or, on Y, integrated
+   * across month-long "intervals", which would be nonsense.
+   */
+  flowInput?: { load: ChartData; generation: ChartData } | null;
   requestStart?: string;
   requestEnd?: string;
   /** Server-computed ATTRIBUTED flow matrix (energy + emissions/renewable/cost/estimated legs) —
@@ -151,6 +170,8 @@ interface FetchedSiteData {
   selectedIndices: number[];
   filteredTimestamps: Date[];
   requestInterval: string;
+  /** The navigator period this fetch was made for — Y is the one that rolls its days up to months. */
+  period: ChartTimeRange;
   requestStart?: string;
   requestEnd?: string;
   /** Server-computed attributed flow matrix (when ?include=sankey is served), else null. */
@@ -442,6 +463,7 @@ async function fetchSiteData(
       selectedIndices,
       filteredTimestamps,
       requestInterval,
+      period,
       requestStart,
       requestEnd,
       attributedFlow,
@@ -839,6 +861,63 @@ function buildGridRates(
   return { import: imp ?? empty, export: exp ?? empty };
 }
 
+const DAY_MS = 24 * 60 * 60_000;
+/** Hours a `1d` sample's average power covers — the kW→kWh/day factor. */
+const HOURS_PER_DAY = 24;
+
+/**
+ * A `1d` half, re-expressed as the ENERGY it always claimed to be.
+ *
+ * At the 1d interval every power series is `power.avg` — the day's MEAN kW — while the chart's left
+ * axis, the legend table's column head and `ProcessedSiteData.mode` have all said `kWh` for as long
+ * as the M view has existed. Only `lib/energy-calculator.ts` ever applied the ×24, and only for its
+ * own window total, so the bars and the total they were supposed to sum to were 24× apart. This is
+ * the one place that conversion now happens; everything downstream reads kWh and says kWh.
+ *
+ * SoC series are left alone: a percentage is not an energy.
+ */
+function toDailyEnergy(cd: ChartData): ChartData {
+  return {
+    ...cd,
+    series: cd.series.map((s) =>
+      s.seriesType === "soc"
+        ? s
+        : {
+            ...s,
+            data: s.data.map((v) => (v === null ? null : v * HOURS_PER_DAY)),
+          },
+    ),
+  };
+}
+
+/**
+ * Which reduction a series wants across a month.
+ *
+ * Mirrors `lib/aggregation/point-aggregates.ts`: an energy adds up, a SoC average averages, and a
+ * SoC min/max keeps the extreme rather than averaging the daily extremes into a milder one. The SoC
+ * series are addressed by their metric suffix (`…/soc.min`), which is the id `addSocSeries` builds
+ * them with.
+ */
+function rollUpRuleFor(s: SeriesData): RollUpHow {
+  if (s.seriesType !== "soc") return "sum";
+  if (s.id.endsWith("soc.min")) return "min";
+  if (s.id.endsWith("soc.max")) return "max";
+  return "mean";
+}
+
+/** One half's series and timestamps, reduced onto `buckets` and tagged with their spans. */
+function rollUpToMonths(cd: ChartData, buckets: MonthBucket[]): ChartData {
+  return {
+    ...cd,
+    timestamps: buckets.map((b) => b.start),
+    series: cd.series.map((s) => ({
+      ...s,
+      data: rollUp(s.data, buckets, rollUpRuleFor(s)),
+    })),
+    barSpans: buckets.map((b) => ({ start: b.start, end: b.end })),
+  };
+}
+
 /**
  * Process site data for both load and generation charts
  */
@@ -854,6 +933,7 @@ function processSiteData(
     selectedIndices,
     filteredTimestamps,
     requestInterval,
+    period,
     requestStart,
     requestEnd,
     attributedFlow,
@@ -906,6 +986,42 @@ function processSiteData(
     series: loadResult.seriesData,
     mode: requestInterval === "1d" ? "energy" : "power",
   };
+
+  // 1d (M and Y): the halves above still carry the vendor's daily AVERAGE POWER. Keep that copy for
+  // the Sankey's integrating fallback, and hand everything else the energy view — then, on Y, fold
+  // the ~365 days into one bar per calendar month.
+  if (requestInterval === "1d") {
+    processedData.flowInput = {
+      load: processedData.load,
+      generation: processedData.generation,
+    };
+    processedData.load = toDailyEnergy(processedData.load);
+    processedData.generation = toDailyEnergy(processedData.generation);
+
+    if (period === "Y" && filteredTimestamps.length > 0) {
+      // Exclusive end: a day marker is the START of its day, so the last bar has to cover it.
+      const buckets = monthBuckets(
+        filteredTimestamps,
+        filteredTimestamps[0],
+        new Date(
+          filteredTimestamps[filteredTimestamps.length - 1].getTime() + DAY_MS,
+        ),
+      );
+      processedData.load = rollUpToMonths(processedData.load, buckets);
+      processedData.generation = rollUpToMonths(
+        processedData.generation,
+        buckets,
+      );
+      if (processedData.gridRates) {
+        // Display-only (the legend tables' hovered price). A month's price is the MEAN of its days'
+        // means — never a sum. The window's dollar totals come from the attributed flow matrix.
+        processedData.gridRates = {
+          import: rollUp(processedData.gridRates.import, buckets, "mean"),
+          export: rollUp(processedData.gridRates.export, buckets, "mean"),
+        };
+      }
+    }
+  }
 
   console.log("[Site Processor] === PROCESSED DATA ===", processedData);
 

@@ -101,8 +101,10 @@ export default function DashboardClient({
   const [createAreaOpen, setCreateAreaOpen] = useState(false);
   const [switcherOpen, setSwitcherOpen] = useState(false);
   const [actionsOpen, setActionsOpen] = useState(false);
-  // The header slides away while scrolling down and returns on any scroll up — on a phone its two
-  // rows otherwise permanently eat the screen. Held shown while a menu hanging off it is open.
+  // On a NARROW screen the header slides away while scrolling down and returns on any scroll up —
+  // its two rows otherwise permanently eat a phone's screen. From `sm` up it never moves: the room
+  // is there, and taking the D|W|M|Y buttons away would be a cost with nothing bought. Held shown
+  // while a menu hanging off it is open.
   const headerRef = useRef<HTMLElement>(null);
   const headerHidden = useHideOnScroll(headerRef, switcherOpen || actionsOpen);
 

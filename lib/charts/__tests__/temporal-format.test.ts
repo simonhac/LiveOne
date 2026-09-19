@@ -35,13 +35,12 @@ describe("formatHoverTimestamp", () => {
     expect(formatHoverTimestamp(d, "M", true)).not.toMatch(/2024/);
   });
 
-  it("Y formats date-only, same as M", () => {
-    expect(formatHoverTimestamp(d, "Y", false)).toBe(
-      formatHoverTimestamp(d, "M", false),
-    );
-    expect(formatHoverTimestamp(d, "Y", true)).toBe(
-      formatHoverTimestamp(d, "M", true),
-    );
+  // Y buckets a whole calendar month into one bar, so the hovered thing is a MONTH — naming the day
+  // its bucket starts on would label a month's total with one of its 30 days.
+  it("Y names the month, not the day", () => {
+    expect(formatHoverTimestamp(d, "Y", false)).toBe("Aug 2024");
+    // The year stays on mobile: "Aug" alone is ambiguous across a window that crosses a new year.
+    expect(formatHoverTimestamp(d, "Y", true)).toBe("Aug 2024");
   });
 });
 

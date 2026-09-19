@@ -71,7 +71,12 @@ export function formatHoverTimestamp(
     minute: date.getMinutes(),
   });
 
-  if (timeRange === "M" || timeRange === "Y") {
+  if (timeRange === "Y") {
+    // Y buckets a whole calendar MONTH into one bar, so the hovered thing is a month, not the day
+    // its bucket happens to start on. (A partial end bucket is spelled as its date range by the
+    // caller, which is the only place that knows the clamped span.)
+    return format(date, "MMM yyyy");
+  } else if (timeRange === "M") {
     // Mobile: "Fri, 22 Aug" / Desktop: "Fri, 22 Aug 2024"
     return format(date, isMobile ? "EEE, d MMM" : "EEE, d MMM yyyy");
   } else if (timeRange === "W") {

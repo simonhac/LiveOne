@@ -146,6 +146,7 @@ function StackedCase({ c }: { c: Extract<ChartCase, { kind: "stacked" }> }) {
         variant="stacked-areas"
         chartData={chartData}
         effectiveVisibleSeries={visibleSeries}
+        socVisible={!c.socHidden}
         mode={c.mode}
         timeRange={c.range}
         windowEnd={windowEnd}

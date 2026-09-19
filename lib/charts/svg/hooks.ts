@@ -131,8 +131,51 @@ export function nearestIndexForTime(
   return dHi < dLo ? hi : lo;
 }
 
+/**
+ * Index of the span CONTAINING `targetMs`, or the nearest one when it falls outside every span.
+ *
+ * For unevenly-spaced bars (the Y period's calendar months), "nearest bucket START" is the wrong
+ * question: a 31-day month's start is further from the pointer than the next month's for the whole
+ * back half of the bar, so `nearestIndexForTime` would hand back the bucket the pointer is not over.
+ * Containment is what the reader means when they put the pointer on a bar.
+ *
+ * Spans are assumed ascending and contiguous (`monthBuckets` builds them that way), so the search is
+ * the same binary search as above, over `start`, with an end check to catch a hole.
+ */
+export function indexForSpan(
+  spans: readonly { start: Date; end: Date }[],
+  targetMs: number,
+): number | null {
+  const n = spans.length;
+  if (n === 0) return null;
+  if (targetMs < spans[0].start.getTime()) return 0;
+
+  let lo = 0;
+  let hi = n - 1;
+  while (hi - lo > 1) {
+    const mid = (lo + hi) >> 1;
+    if (spans[mid].start.getTime() <= targetMs) lo = mid;
+    else hi = mid;
+  }
+  const at = spans[hi].start.getTime() <= targetMs ? hi : lo;
+  if (targetMs < spans[at].end.getTime()) return at;
+  // Past this span's end: either the window's right edge, or a hole between two spans. Take
+  // whichever neighbour's edge is closer, so the pointer never resolves to nothing mid-plot.
+  const next = at + 1;
+  if (next >= n) return at;
+  return targetMs - spans[at].end.getTime() <
+    spans[next].start.getTime() - targetMs
+    ? at
+    : next;
+}
+
 export interface PointerIndexOptions {
   timestamps: readonly Date[];
+  /**
+   * The span each `timestamps` entry covers, when the categories are unevenly spaced. Given these,
+   * the pointer resolves by CONTAINMENT rather than by nearest timestamp — see {@link indexForSpan}.
+   */
+  spans?: readonly { start: Date; end: Date }[];
   /** Inverts a pixel x (relative to the plot area) back to an instant. */
   invert: (px: number) => Date;
   /** Left inset of the plot area within the svg. */
@@ -157,6 +200,7 @@ export interface PointerIndexOptions {
  */
 export function usePointerIndex({
   timestamps,
+  spans,
   invert,
   plotLeft,
   onChange,
@@ -176,9 +220,12 @@ export function usePointerIndex({
     (e: React.PointerEvent<SVGSVGElement>) => {
       const rect = e.currentTarget.getBoundingClientRect();
       const px = e.clientX - rect.left - plotLeft;
-      report(nearestIndexForTime(timestamps, invert(px).getTime()));
+      const at = invert(px).getTime();
+      report(
+        spans ? indexForSpan(spans, at) : nearestIndexForTime(timestamps, at),
+      );
     },
-    [timestamps, invert, plotLeft, report],
+    [timestamps, spans, invert, plotLeft, report],
   );
 
   /**
