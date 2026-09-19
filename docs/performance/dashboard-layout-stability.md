@@ -81,12 +81,16 @@ Measured off the settled cards at a 1960px viewport (1247px section container).
 | -------------------------------------- | ----- | --------------------------------- |
 | `chart` (lines)                        | 360   | prod Daylesford / Kutis           |
 | site-charts, one stacked chart + table | 403   | prod Kinkora (806 for two)        |
-| site-charts, sankey block              | 764   | prod Daylesford (sankey alone)    |
+| site-charts, sankey block              | 724   | prod Daylesford (sankey alone)¹   |
 | `battery-contents`                     | 143   | prod Daylesford + Kinkora         |
 | `renewables` (Home Energy)             | 185.5 | prod Daylesford + Kinkora + Kutis |
 | `runs` (empty)                         | 115   | dev Daylesford                    |
 | `device-metrics` (grid, one row)       | 92    | dev Daylesford (DeepSea)          |
 | `device-metrics` (table)               | 192   | matched the existing `h-48` stub  |
+
+¹ Measured 764 with the original 680px SVG; the SVG was shortened to 640px in 2026-09 so the
+block fits a phone screen, making it 724 (header, label and padding unchanged). The before/after
+tables below are historical measurements and keep the 764/1570 they were taken with.
 
 `amber-now`, `amber-timeline`, `heatmap`, `ev-provenance` and `battery-provenance-history` are
 **not placed on any dashboard**, so there was nothing settled to measure; their footprints are

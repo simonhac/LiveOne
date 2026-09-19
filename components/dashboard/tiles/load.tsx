@@ -3,7 +3,7 @@
 import React from "react";
 import { Home } from "lucide-react";
 import Tile from "@/components/Tile";
-import MiniBars from "@/components/ui/mini-bars";
+import MiniBars, { MiniBarsSkeleton } from "@/components/ui/mini-bars";
 import { CHART_COLORS, getColorForPath } from "@/lib/chart-colors";
 import { REST_OF_HOUSE_PATH } from "@/lib/areas/derived-display-paths";
 import { ROLE_CHROME } from "@/lib/role-chrome";
@@ -28,7 +28,7 @@ function LoadTile({
   systemId,
   staleThresholdSeconds,
 }: TileRenderProps) {
-  const bars = useSiteBars(systemId, pickLoad);
+  const { bars, pending: barsPending } = useSiteBars(systemId, pickLoad);
   // Synthesize master load and rest of house if needed
   const enrichedLatest = React.useMemo(() => enrichLatest(latest), [latest]);
 
@@ -93,7 +93,7 @@ function LoadTile({
       staleThresholdSeconds={staleThresholdSeconds}
       measurementTime={loadMeasurementTime || undefined}
       extra={
-        top2Loads.length > 0 || bars.length > 0 ? (
+        top2Loads.length > 0 || bars.length > 0 || barsPending ? (
           <>
             {/* The two biggest sub-loads, each value in ITS OWN series colour — the same colour
                 its band has in the stacked chart, so the tile names the band. */}
@@ -117,7 +117,7 @@ function LoadTile({
                 ))}
               </div>
             )}
-            {bars.length > 0 && (
+            {bars.length > 0 ? (
               <div className="mt-2 flex flex-1 flex-col">
                 <MiniBars
                   bars={bars}
@@ -126,7 +126,11 @@ function LoadTile({
                   ariaLabel="Household load over the period"
                 />
               </div>
-            )}
+            ) : barsPending ? (
+              <div className="mt-2 flex flex-1 flex-col">
+                <MiniBarsSkeleton className="h-8" />
+              </div>
+            ) : null}
           </>
         ) : undefined
       }
