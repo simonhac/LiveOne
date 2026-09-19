@@ -35,6 +35,42 @@ export const DEFAULT_MARGIN: ChartMargin = {
   left: 44,
 };
 
+/**
+ * px per character, the same conservative estimate `time-ticks.ts` uses (and for the same reason:
+ * this module is pure, so it cannot measure text).
+ */
+const CHAR_PX = 6;
+/** `ValueAxis` insets its labels this far from the plot edge. */
+const LABEL_INSET_PX = 6;
+
+/**
+ * Widen the left gutter when the y labels will not fit in it.
+ *
+ * The topmost tick carries the unit (`1200 kWh`), and `DEFAULT_MARGIN.left` was sized for the two-
+ * or three-digit powers the charts used to plot. Once the M/Y charts started plotting real ENERGY —
+ * a month's total is four digits for any ordinary house — that label ran off the left edge of the
+ * svg and was clipped to `00 kWh`, which is worse than unlabelled because it still looks like a
+ * number.
+ *
+ * It only ever GROWS the gutter: a chart whose labels already fit keeps the shared 44 px and is
+ * pixel-identical to before. Erring wide costs a few pixels of plot; erring narrow loses the label.
+ */
+function fitLeftMargin(
+  yDomain: [number, number],
+  unit: string | undefined,
+  fallback: number,
+): number {
+  const digits = (v: number) =>
+    // Ticks are round numbers, so the integer part is what sets the width; one decimal is allowed
+    // for the sub-unit domains (a 0–1 kW axis ticks at 0.2).
+    Math.abs(v) >= 1
+      ? String(Math.round(Math.abs(v))).length + (v < 0 ? 1 : 0)
+      : 3;
+  const widest = Math.max(digits(yDomain[0]), digits(yDomain[1]));
+  const chars = widest + (unit ? unit.length + 1 : 0);
+  return Math.max(fallback, chars * CHAR_PX + LABEL_INSET_PX);
+}
+
 interface PlotBox {
   /** Inner drawing area, excluding the margins. */
   width: number;
@@ -64,6 +100,11 @@ export interface GeometryInput {
   yDomain: [number, number];
   y1Domain?: [number, number];
   margin?: Partial<ChartMargin>;
+  /**
+   * The unit the left axis will print on its top tick, if any. Only used to SIZE the left gutter —
+   * see {@link fitLeftMargin}. Pass whatever you pass `ValueAxis`; an explicit `margin.left` wins.
+   */
+  yUnit?: string;
 }
 
 /**
@@ -75,6 +116,15 @@ export interface GeometryInput {
  */
 export function buildGeometry(input: GeometryInput): ChartGeometry {
   const margin = { ...DEFAULT_MARGIN, ...input.margin };
+  // `.nice()` below can round the domain OUT, so size the gutter against the nicened bounds rather
+  // than the raw ones — otherwise a domain of [0, 1180] is measured at four digits and drawn at five.
+  const niced = scaleLinear().domain(input.yDomain).nice().domain() as [
+    number,
+    number,
+  ];
+  if (input.margin?.left === undefined) {
+    margin.left = fitLeftMargin(niced, input.yUnit, margin.left);
+  }
   const width = Math.max(0, input.width - margin.left - margin.right);
   const height = Math.max(0, input.height - margin.top - margin.bottom);
 

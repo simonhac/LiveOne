@@ -131,6 +131,19 @@ interface EnergyTableProps {
    * table flips it for display (see `moneyValue` below). Nothing upstream normalises this series.
    */
   gridRate?: (number | null)[] | null;
+  /**
+   * Whether the chart beside this table is currently drawing its Battery SoC overlay (the dashed
+   * line and, in energy mode, the min/max band). Drives the SoC row's swatch and value exactly like
+   * `visibleSeries` drives a series row's.
+   *
+   * SoC is kept OUT of `visibleSeries` on purpose: that set is the stack's own membership (the rows
+   * that sum to the Total, and whose "never hide the last one" rule only makes sense for a stack),
+   * while SoC is an overlay on a second axis that contributes nothing to any total. One flag is also
+   * what lets the card remember it separately per period — see `socVisible` in `SiteChartsCard`.
+   */
+  socVisible?: boolean;
+  /** Toggle the SoC overlay. Absent ⇒ the SoC row renders, but is not interactive. */
+  onSocToggle?: () => void;
 }
 
 /** The label-column bar widths, cycled down the rows so the block reads as a list of differing
@@ -235,6 +248,8 @@ export default function EnergyTable({
   metric = "pct",
   onCycleMetric,
   gridRate,
+  socVisible = true,
+  onSocToggle,
 }: EnergyTableProps) {
   const longPressTimerRef = useRef<NodeJS.Timeout | null>(null);
   const isPressedRef = useRef(false);
@@ -247,7 +262,11 @@ export default function EnergyTable({
     const powerSeries = chartData.series.filter(
       (s) => !s.seriesType || s.seriesType === "power",
     );
-    return calculateSeriesEnergy(powerSeries, chartData.timestamps);
+    return calculateSeriesEnergy(
+      powerSeries,
+      chartData.timestamps,
+      chartData.mode,
+    );
   }, [chartData]);
 
   /**
@@ -365,7 +384,12 @@ export default function EnergyTable({
 
   // Decide which values to show based on hover state
   const displayValue = isHovering ? "power" : "energy";
-  const columnHeader = isHovering ? "Power (kW)" : "Energy (kWh)";
+  // Hovering shows the value AT the focused bucket, which is an instantaneous kW only on the
+  // sub-daily charts. In energy mode the bucket is a day (M) or a calendar month (Y) and its value
+  // is that bucket's kWh — so the head says so. It used to read "Power (kW)" over a daily average,
+  // which was at least self-consistent; over the corrected kWh/day it would simply be wrong.
+  const columnHeader =
+    isHovering && chartData.mode !== "energy" ? "Power (kW)" : "Energy (kWh)";
   const total = isHovering ? powerTotal : energyTotal;
 
   // Cost/emissions are WINDOW aggregates — there is no per-instant equivalent — so while the middle
@@ -653,17 +677,40 @@ export default function EnergyTable({
           >
             {socSeries.length > 0 && (
               <div className={LEGEND_ROW}>
-                <div className="flex items-center gap-2 flex-1">
+                {/* Clickable like every series row above it — a legend entry you can see but not
+                    switch off is the odd one out. No shift/long-press variant: "show only SoC"
+                    would mean emptying a stack it was never part of. */}
+                <div
+                  className={`flex items-center gap-2 flex-1 ${
+                    onSocToggle ? "cursor-pointer select-none" : ""
+                  }`}
+                  onClick={onSocToggle}
+                  role={onSocToggle ? "button" : undefined}
+                  tabIndex={onSocToggle ? 0 : undefined}
+                  onKeyDown={(e) => {
+                    if (!onSocToggle) return;
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      onSocToggle();
+                    }
+                  }}
+                  title={onSocToggle ? "Click to toggle visibility" : undefined}
+                >
                   <div
                     className={LEGEND_SWATCH}
-                    style={legendSwatchStyle(CHART_COLORS.battery.soc)}
+                    style={legendSwatchStyle(
+                      CHART_COLORS.battery.soc,
+                      socVisible,
+                    )}
                   />
                   <span className={LEGEND_LABEL}>Battery SoC</span>
                 </div>
                 <span className={`${LEGEND_VALUE} w-20`}>
-                  {socValue !== null && socValue !== undefined
-                    ? `${formatPercent(socValue)}%`
-                    : "—"}
+                  {!socVisible
+                    ? ""
+                    : socValue !== null && socValue !== undefined
+                      ? `${formatPercent(socValue)}%`
+                      : "—"}
                 </span>
                 <span
                   className={`${LEGEND_HEADER} ${metricCellClass}`}

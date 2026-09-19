@@ -1,5 +1,5 @@
 import { describe, it, expect } from "@jest/globals";
-import { nearestIndexForTime } from "../hooks";
+import { indexForSpan, nearestIndexForTime } from "../hooks";
 
 /**
  * Only the pure half is covered here. The hooks themselves need a DOM and this repo has no jsdom or
@@ -64,5 +64,56 @@ describe("nearestIndexForTime", () => {
         expect(nearestIndexForTime(many, t)).toBe(linear(t));
       }
     }
+  });
+});
+
+describe("indexForSpan", () => {
+  // Three uneven buckets, contiguous — a clamped half-June, a whole July, a clamped half-August,
+  // which is exactly the shape a trailing Y window produces.
+  const span = (from: string, to: string) => ({
+    start: new Date(`${from}T00:00:00Z`),
+    end: new Date(`${to}T00:00:00Z`),
+  });
+  const spans = [
+    span("2026-06-15", "2026-07-01"),
+    span("2026-07-01", "2026-08-01"),
+    span("2026-08-01", "2026-08-14"),
+  ];
+  const ms = (ymd: string) => new Date(`${ymd}T00:00:00Z`).getTime();
+
+  it("returns null for no spans", () => {
+    expect(indexForSpan([], ms("2026-07-04"))).toBeNull();
+  });
+
+  it("resolves by CONTAINMENT, not by nearest start", () => {
+    // 29 July is inside July but closer to August's start than to July's — the whole reason
+    // `nearestIndexForTime` is the wrong function for uneven buckets.
+    expect(indexForSpan(spans, ms("2026-07-29"))).toBe(1);
+    expect(
+      nearestIndexForTime(
+        spans.map((s) => s.start),
+        ms("2026-07-29"),
+      ),
+    ).toBe(2);
+  });
+
+  it("includes a span's start and excludes its end", () => {
+    expect(indexForSpan(spans, ms("2026-07-01"))).toBe(1);
+    expect(indexForSpan(spans, ms("2026-08-01"))).toBe(2);
+    expect(indexForSpan(spans, ms("2026-06-15"))).toBe(0);
+  });
+
+  it("clamps outside the window to the nearest end bucket", () => {
+    expect(indexForSpan(spans, ms("2026-01-01"))).toBe(0);
+    expect(indexForSpan(spans, ms("2026-12-01"))).toBe(2);
+  });
+
+  it("picks the closer neighbour across a hole", () => {
+    const gapped = [
+      span("2026-06-01", "2026-07-01"),
+      span("2026-09-01", "2026-10-01"),
+    ];
+    expect(indexForSpan(gapped, ms("2026-07-10"))).toBe(0);
+    expect(indexForSpan(gapped, ms("2026-08-20"))).toBe(1);
   });
 });

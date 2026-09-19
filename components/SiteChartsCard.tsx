@@ -107,6 +107,9 @@ interface SiteChartsCardProps {
 
 const SANKEY_OPTIONS_STORAGE_PREFIX = "sankey.options:";
 
+/** One day, in ms — for stepping a bucket's EXCLUSIVE end back to the last day it covers. */
+const DAY_MS = 24 * 60 * 60_000;
+
 /**
  * The sankey SVG's fixed size. Hand-rolled d3-sankey drawing into a fixed-size SVG (no viewBox — see
  * EnergyFlowSankey), so these are real pixels, and `SankeyBlockPlaceholder` below must hold exactly
@@ -167,6 +170,8 @@ interface StackedChartProps {
   onHoverIndexChange?: (index: number | null) => void;
   /** Control which series are visible. */
   visibleSeries?: Set<string>;
+  /** Draw the Battery SoC overlay? Owned by the parent, which remembers it per period. */
+  socVisible?: boolean;
   className?: string;
 }
 
@@ -184,6 +189,7 @@ function StackedChart({
   hoveredIndex: externalHoveredIndex,
   onHoverIndexChange,
   visibleSeries,
+  socVisible,
   className = "",
 }: StackedChartProps) {
   // Derived, not mirrored: the chart is "loading" exactly when the parent has nothing for it yet
@@ -238,6 +244,16 @@ function StackedChart({
     // This ensures historical data is displayed correctly
     if (data && data.timestamps && data.timestamps.length > 0) {
       const timestamps = data.timestamps;
+      // 🛑 With `barSpans` the last timestamp is the START of the last bucket, not the end of the
+      // window: on Y that is the 1st of the final month, which would truncate the domain by up to a
+      // month and leave the last bar hanging off the axis. The spans carry the real edges.
+      const spans = data.barSpans;
+      if (spans && spans.length === timestamps.length) {
+        return {
+          windowStart: spans[0].start,
+          windowEnd: spans[spans.length - 1].end,
+        };
+      }
       return {
         windowStart: timestamps[0],
         windowEnd: timestamps[timestamps.length - 1],
@@ -437,6 +453,7 @@ function StackedChart({
           variant="stacked-areas"
           chartData={data}
           effectiveVisibleSeries={effectiveVisibleSeries}
+          socVisible={socVisible}
           mode={mode}
           hoveredTimestamp={hoveredTimestamp}
           timeRange={period}
@@ -690,6 +707,32 @@ export default function SiteChartsCard({
     () => setEnergyMetric(nextEnergyTableMetric),
     [],
   );
+  /**
+   * Whether the Battery SoC overlay is drawn — remembered SEPARATELY for the sub-daily periods and
+   * for Y, which is why this is a pair and not a boolean.
+   *
+   * Y is one bar per calendar month, and a month's SoC is a MEAN of daily means: a line that says
+   * the battery averaged 61 % in June says nothing a reader can act on, and it sits across bars that
+   * do. So Y starts with it off. The D/W/M answer is kept untouched underneath, so flicking Y → M
+   * brings back exactly what was on screen before — the alternative (clearing the flag on entry)
+   * would silently spend the reader's setting.
+   *
+   * Session state, like `energyMetric` above: not persisted, and shared by both halves so the two
+   * tables agree. (Only the generation half actually draws SoC — `addSocSeries` is generation-only —
+   * but wiring both keeps that a fact about the data rather than about this component.)
+   */
+  const [socVisible, setSocVisible] = useState({ subDaily: true, year: false });
+  const socShown = period === "Y" ? socVisible.year : socVisible.subDaily;
+  const toggleSoc = useCallback(
+    () =>
+      setSocVisible((prev) =>
+        period === "Y"
+          ? { ...prev, year: !prev.year }
+          : { ...prev, subDaily: !prev.subDaily },
+      ),
+    [period],
+  );
+
   const [activeChart, setActiveChart] = useState<"load" | "generation" | null>(
     null,
   ); // Track which chart was last touched
@@ -994,6 +1037,7 @@ export default function SiteChartsCard({
                     visibleSeries={
                       loadVisibleSeries.size > 0 ? loadVisibleSeries : undefined
                     }
+                    socVisible={socShown}
                     data={processedHistoryData.load}
                     isLoading={historyLoading}
                   />
@@ -1015,6 +1059,8 @@ export default function SiteChartsCard({
                     metric={energyMetric}
                     onCycleMetric={cycleEnergyMetric}
                     gridRate={tableGridRates?.export ?? null}
+                    socVisible={socShown}
+                    onSocToggle={toggleSoc}
                   />
                 </div>
               </div>
@@ -1038,6 +1084,7 @@ export default function SiteChartsCard({
                         ? generationVisibleSeries
                         : undefined
                     }
+                    socVisible={socShown}
                     data={processedHistoryData.generation}
                     isLoading={historyLoading}
                   />
@@ -1061,6 +1108,8 @@ export default function SiteChartsCard({
                     metric={energyMetric}
                     onCycleMetric={cycleEnergyMetric}
                     gridRate={tableGridRates?.import ?? null}
+                    socVisible={socShown}
+                    onSocToggle={toggleSoc}
                   />
                 </div>
               </div>
@@ -1090,6 +1139,11 @@ export default function SiteChartsCard({
               const hasAttributed =
                 !!attributedFlow && attributedFlow.days.length > 0;
 
+              // The chart half whose buckets the hover is addressing (either half will do — both are
+              // built on the same timestamps and, on Y, the same month buckets).
+              const cd =
+                processedHistoryData.load ?? processedHistoryData.generation;
+
               // Date-only (M/Y) hovered day (also the key into `attributedFlow.days`, which is keyed by
               // local YMD for every period — the sub-daily builder shapes its window as a single day too).
               const hoveredYMD =
@@ -1097,14 +1151,50 @@ export default function SiteChartsCard({
                   ? toLocalYMD(focusedTime.toISOString())
                   : null;
 
+              // On Y a bar is a whole calendar MONTH, so the hovered thing is a RANGE of days, not
+              // one. `barSpans` carries the bucket's clamped edges (the first and last buckets of a
+              // trailing window are short) and they are already local-day markers, so their YMD is
+              // a plain ISO slice — no offset, the same reason `month-buckets.ts` reads them with
+              // the UTC getters. Null when nothing is hovered, or on any other period.
+              const hoveredMonth =
+                period === "Y" && focusedTime && cd?.barSpans
+                  ? (cd.barSpans.find(
+                      (s) =>
+                        focusedTime.getTime() >= s.start.getTime() &&
+                        focusedTime.getTime() < s.end.getTime(),
+                    ) ?? null)
+                  : null;
+              const ymdOf = (d: Date) => d.toISOString().slice(0, 10);
+              /** The hovered bucket's days, as a slice of the attributed payload (null = not hovered). */
+              const bucketSlice: DailyFlowMatrices | null = (() => {
+                if (!hasAttributed || !hoveredMonth) return null;
+                const from = ymdOf(hoveredMonth.start);
+                const to = ymdOf(hoveredMonth.end); // exclusive
+                const days = attributedFlow!.days.filter(
+                  (d) => d.day >= from && d.day < to,
+                );
+                return days.length
+                  ? {
+                      sources: attributedFlow!.sources,
+                      loads: attributedFlow!.loads,
+                      days,
+                    }
+                  : null;
+              })();
+
               let matrix;
               let focused = false;
               if (isDateOnlyPeriod(period) && hasAttributed) {
-                const dayMatrix = hoveredYMD
-                  ? pickDailyFlowMatrix(attributedFlow!, hoveredYMD)
-                  : null;
-                focused = dayMatrix !== null;
-                matrix = dayMatrix ?? sumDailyFlowMatrices(attributedFlow!);
+                // M picks the one hovered day; Y sums the hovered month's days. Both fall back to
+                // the whole window when nothing is hovered.
+                const bucketMatrix =
+                  period === "Y"
+                    ? bucketSlice && sumDailyFlowMatrices(bucketSlice)
+                    : hoveredYMD
+                      ? pickDailyFlowMatrix(attributedFlow!, hoveredYMD)
+                      : null;
+                focused = bucketMatrix !== null;
+                matrix = bucketMatrix ?? sumDailyFlowMatrices(attributedFlow!);
               } else {
                 const instant =
                   !isDateOnlyPeriod(period) && hoveredIndex !== null
@@ -1140,18 +1230,49 @@ export default function SiteChartsCard({
               const tz = device?.timezoneOffsetMin;
               // Label: the focused instant when hovering, else the window the sankey integrates over
               // (a TIME range for D/W, a DATE range for M/Y).
-              const cd =
-                processedHistoryData.load ?? processedHistoryData.generation;
+              //
+              // A hovered Y bucket normally reads "Jun 2026", but the first and last buckets of a
+              // trailing window are CLAMPED to part of a month — and calling three weeks "Jun 2026"
+              // over a total that is not June's would be a lie the reader has no way to catch. Those
+              // spell out their own date range instead.
+              const partialMonthLabel =
+                hoveredMonth && tz != null
+                  ? (() => {
+                      const from = hoveredMonth.start;
+                      // Back to the last day the bucket COVERS: `end` is exclusive.
+                      const to = new Date(hoveredMonth.end.getTime() - DAY_MS);
+                      const whole =
+                        from.getUTCDate() === 1 &&
+                        to.getUTCMonth() !== hoveredMonth.end.getUTCMonth();
+                      return whole
+                        ? null
+                        : formatDateTimeRange(
+                            fromUnixTimestamp(from.getTime() / 1000, tz),
+                            fromUnixTimestamp(to.getTime() / 1000, tz),
+                            false,
+                          );
+                    })()
+                  : null;
+              // 🛑 The window's last INCLUSIVE instant. A timestamp is the start of its bucket, so
+              // on Y — where a bucket is a month — the last timestamp is the 1st of the final month
+              // and the window would read "20 Sep 2025 – 1 Sep 2026" for a window that actually ends
+              // on the 19th. The spans carry the real edge; step back a day off the exclusive end.
+              const lastSpan = cd?.barSpans?.[cd.barSpans.length - 1];
+              const windowLastMs = lastSpan
+                ? lastSpan.end.getTime() - DAY_MS
+                : cd && cd.timestamps.length > 0
+                  ? cd.timestamps[cd.timestamps.length - 1].getTime()
+                  : null;
               const label = focusedTime
-                ? formatHoverTimestamp(focusedTime, period, false)
-                : cd && cd.timestamps.length > 0 && tz != null
+                ? (partialMonthLabel ??
+                  formatHoverTimestamp(focusedTime, period, false))
+                : cd &&
+                    cd.timestamps.length > 0 &&
+                    windowLastMs !== null &&
+                    tz != null
                   ? formatDateTimeRange(
                       fromUnixTimestamp(cd.timestamps[0].getTime() / 1000, tz),
-                      fromUnixTimestamp(
-                        cd.timestamps[cd.timestamps.length - 1].getTime() /
-                          1000,
-                        tz,
-                      ),
+                      fromUnixTimestamp(windowLastMs / 1000, tz),
                       !isDateOnlyPeriod(period),
                     )
                   : null;
@@ -1162,26 +1283,32 @@ export default function SiteChartsCard({
               const daySlice: DailyFlowMatrices | null =
                 unit === "kW" || !hasAttributed
                   ? null
-                  : isDateOnlyPeriod(period) && hoveredYMD
-                    ? (() => {
-                        const d = attributedFlow!.days.find(
-                          (x) => x.day === hoveredYMD,
-                        );
-                        return d
-                          ? {
-                              sources: attributedFlow!.sources,
-                              loads: attributedFlow!.loads,
-                              days: [d],
-                            }
-                          : null;
-                      })()
-                    : attributedFlow!;
+                  : period === "Y"
+                    ? (bucketSlice ?? attributedFlow!)
+                    : isDateOnlyPeriod(period) && hoveredYMD
+                      ? (() => {
+                          const d = attributedFlow!.days.find(
+                            (x) => x.day === hoveredYMD,
+                          );
+                          return d
+                            ? {
+                                sources: attributedFlow!.sources,
+                                loads: attributedFlow!.loads,
+                                days: [d],
+                              }
+                            : null;
+                        })()
+                      : attributedFlow!;
 
               // Hours the tooltip's "energy" leg is averaged over, for the avg-kW secondary spelling.
+              // A hovered Y bucket is a MONTH, so it is that bucket's own day count — 28 to 31, and
+              // fewer for the clamped buckets at either end of a trailing window.
               const windowHours = isDateOnlyPeriod(period)
-                ? hoveredYMD
-                  ? 24
-                  : (attributedFlow?.days.length ?? 30) * 24
+                ? bucketSlice
+                  ? bucketSlice.days.length * 24
+                  : hoveredYMD && period !== "Y"
+                    ? 24
+                    : (attributedFlow?.days.length ?? 30) * 24
                 : cd && cd.timestamps.length > 1
                   ? (cd.timestamps[cd.timestamps.length - 1].getTime() -
                       cd.timestamps[0].getTime()) /

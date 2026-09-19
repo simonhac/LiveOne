@@ -133,6 +133,16 @@ type StackedProps = CommonProps & {
   effectiveVisibleSeries: Set<string>;
   mode: "load" | "generation";
   /**
+   * Draw the Battery SoC overlay (the dashed line, and its min/max band in energy mode)?
+   *
+   * Separate from `effectiveVisibleSeries` because SoC is not part of the stack: it rides the right
+   * axis and contributes to no total, so the stack's membership rules do not apply to it. Toggled
+   * from the legend table's SoC row. Defaults to true — a caller that says nothing gets what the
+   * chart always drew. The right axis itself is NOT hidden with it, so the plot does not resize
+   * under the reader when they flick it off.
+   */
+  socVisible?: boolean;
+  /**
    * Persisted run periods to bracket on their own series' band (EV charge sessions, generator runs).
    * Window-clamped by `runBandsForSeries`; the card owns the fetch and the hover state.
    */
@@ -168,6 +178,12 @@ export type DashboardChartProps = LinesProps | StackedProps;
  * category gets a slice of the axis, the group takes `categoryPct` of it, and each bar takes `barPct`
  * of its share of the group. Kept local — this is the only chart with bars, so lifting it into the
  * primitives would be a shared abstraction with one consumer.
+ *
+ * `span` overrides where a category sits and how wide it is: given one, category `i` occupies
+ * `[span(i).x0, span(i).x1]` on the TIME scale rather than the `i`-th equal slice of the plot. That
+ * is the Y period's one-bar-per-month case — see {@link BarSpan} for why equal slices are wrong
+ * there. The insets are computed from whatever width the category turns out to have, so a partial
+ * month draws proportionally narrower rather than being padded out to a full one.
  */
 function barLayout(
   plotWidth: number,
@@ -175,18 +191,26 @@ function barLayout(
   seriesCount: number,
   categoryPct: number,
   barPct: number,
+  span?: (i: number) => { x0: number; x1: number },
 ) {
-  const categoryW = categories > 0 ? plotWidth / categories : 0;
-  const groupW = categoryW * categoryPct;
-  const slotW = seriesCount > 0 ? groupW / seriesCount : 0;
+  const evenW = categories > 0 ? plotWidth / categories : 0;
+  const slot = (i: number) => {
+    const left = span ? span(i).x0 : i * evenW;
+    const categoryW = span ? span(i).x1 - span(i).x0 : evenW;
+    const groupW = categoryW * categoryPct;
+    const slotW = seriesCount > 0 ? groupW / seriesCount : 0;
+    return { left, categoryW, groupW, slotW };
+  };
   return {
-    width: Math.max(0.5, slotW * barPct),
+    /** Width of one bar in category `i` — a function, since categories may differ in width. */
+    width: (i: number) => Math.max(0.5, slot(i).slotW * barPct),
     /** Left edge of series `s`'s bar within category `i`. */
-    x: (i: number, s: number) =>
-      i * categoryW +
-      (categoryW - groupW) / 2 +
-      s * slotW +
-      (slotW * (1 - barPct)) / 2,
+    x: (i: number, s: number) => {
+      const { left, categoryW, groupW, slotW } = slot(i);
+      return (
+        left + (categoryW - groupW) / 2 + s * slotW + (slotW * (1 - barPct)) / 2
+      );
+    },
   };
 }
 
@@ -208,6 +232,12 @@ export default function DashboardChart(props: DashboardChartProps) {
   const isTouch = useIsTouchDevice();
   const isEnergy = props.chartData.mode === "energy";
   const timestamps = props.chartData.timestamps;
+  // Uneven bars (the Y period's calendar months). Only trusted when it matches the timestamps
+  // one-for-one — a mismatched pair would place bars against the wrong months in silence.
+  const barSpans =
+    props.chartData.barSpans?.length === timestamps.length
+      ? props.chartData.barSpans
+      : undefined;
 
   const series = useMemo(
     () =>
@@ -249,6 +279,9 @@ export default function DashboardChart(props: DashboardChartProps) {
             ? props.maxPowerHint
             : undefined,
       }),
+      // Sizes the left gutter; must match the `unit` the left ValueAxis is given below. A month's
+      // energy total is four digits, which does not fit the default 44 px.
+      yUnit: isEnergy ? "kWh" : "kW",
       y1Domain: SOC_DOMAIN,
     });
   }, [
@@ -264,6 +297,7 @@ export default function DashboardChart(props: DashboardChartProps) {
 
   const pointer = usePointerIndex({
     timestamps,
+    spans: barSpans,
     invert: (px) => (geo ? geo.x.invert(px) : new Date(0)),
     plotLeft: geo?.plot.left ?? 0,
     onChange: onHoverIndex,
@@ -279,7 +313,7 @@ export default function DashboardChart(props: DashboardChartProps) {
     return <div ref={ref} className={className} data-unmeasured="" />;
 
   const socSeries =
-    props.variant === "stacked-areas"
+    props.variant === "stacked-areas" && props.socVisible !== false
       ? props.chartData.series.filter((s) => s.seriesType === "soc")
       : [];
   const socLine =
@@ -308,6 +342,11 @@ export default function DashboardChart(props: DashboardChartProps) {
         props.variant === "lines" ? series.length : 1,
         props.variant === "lines" ? 0.8 : 0.95,
         props.variant === "lines" ? 0.9 : 0.95,
+        barSpans &&
+          ((i) => ({
+            x0: geo.x(barSpans[i].start),
+            x1: geo.x(barSpans[i].end),
+          })),
       )
     : null;
 
@@ -507,7 +546,7 @@ export default function DashboardChart(props: DashboardChartProps) {
                       key={`${s.key}-${i}`}
                       x={bars.x(i, props.variant === "lines" ? si : 0)}
                       y={Math.min(y0, y1)}
-                      width={bars.width}
+                      width={bars.width(i)}
                       height={Math.abs(y1 - y0)}
                       fill={s.colour}
                       data-series={s.key}

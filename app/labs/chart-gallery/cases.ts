@@ -33,6 +33,11 @@ export type ChartCase = {
       mode: "load" | "generation";
       withGap?: boolean;
       focusAt?: number;
+      /**
+       * Hide the Battery SoC overlay — the legend table's SoC chip switched off. SoC is gated on its
+       * own flag rather than on `visibleSeries`, because it is not part of the stack.
+       */
+      socHidden?: boolean;
       /** Outline a run period (a charge session) on the EV band — `runBandsFixture`. */
       withRuns?: boolean;
       /** …and render it in its hovered state (deeper fill, brighter outline). */
@@ -142,7 +147,7 @@ export const CHART_CASES: ChartCase[] = [
     id: "lines-y-energy",
     kind: "lines",
     range: "Y",
-    note: "365d energy bars; month ticks with the year on January; no shading at year scale",
+    note: "one GROUPED bar per calendar MONTH (the days rolled up client-side), placed on the time scale so they sit on their month ticks; the clamped first/last buckets draw narrower; year on January",
     width: W,
     height: H,
   },
@@ -265,7 +270,29 @@ export const CHART_CASES: ChartCase[] = [
     kind: "stacked",
     range: "Y",
     mode: "load",
-    note: "stacked BARS at year scale — the energy-mode branch of the stacked builder",
+    note: "stacked BARS at year scale — the energy-mode branch of the stacked builder, one bar per calendar MONTH with narrower partial buckets at each end",
+    width: W,
+    height: H,
+  },
+  {
+    id: "stacked-generation-d-soc-hidden",
+    kind: "stacked",
+    range: "D",
+    mode: "generation",
+    socHidden: true,
+    note: "SoC overlay switched off from the legend's SoC chip — the dashed line and its band go, the right-hand axis stays so the plot does not resize",
+    width: W,
+    height: H,
+  },
+  {
+    id: "stacked-load-y-focused",
+    kind: "stacked",
+    range: "Y",
+    mode: "load",
+    focusAt: 0.62,
+    // The crosshair lands on a MONTH-wide bucket here, not a day: with uneven bars the pointer has
+    // to resolve by containment, and the focus line has to land on the bucket's own left edge.
+    note: "crosshair on a monthly bucket — the uneven-bar hover path",
     width: W,
     height: H,
   },

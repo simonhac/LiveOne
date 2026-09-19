@@ -125,3 +125,45 @@ describe("buildGeometry — nice() domains", () => {
     expect(g.y.domain()[0]).toBeLessThanOrEqual(-4);
   });
 });
+
+describe("buildGeometry — the left gutter fits the y labels", () => {
+  const box = { width: 900, height: 340, xDomain: base.xDomain };
+
+  it("keeps the shared default when the labels fit", () => {
+    // Two digits plus "kW" — the powers these charts were sized for.
+    expect(
+      buildGeometry({ ...box, yDomain: [0, 12], yUnit: "kW" }).plot.left,
+    ).toBe(44);
+    expect(buildGeometry({ ...box, yDomain: [0, 12] }).plot.left).toBe(44);
+  });
+
+  it("widens for a four-digit energy label, which is an ordinary month's total", () => {
+    // "1200 kWh" ran off the left edge of the svg and was clipped to "00 kWh" at 44 px.
+    const left = buildGeometry({ ...box, yDomain: [0, 1200], yUnit: "kWh" })
+      .plot.left;
+    expect(left).toBeGreaterThan(44);
+    // Wide enough for the string it has to print, inset and all.
+    expect(left).toBeGreaterThanOrEqual("1200 kWh".length * 6);
+  });
+
+  it("measures the NICENED domain, not the raw one", () => {
+    // [0, 1180] nices out to [0, 1200] — four digits either way, but the rounding must not be able
+    // to add a digit behind the gutter's back.
+    expect(
+      buildGeometry({ ...box, yDomain: [0, 9990], yUnit: "kWh" }).plot.left,
+    ).toBe(
+      buildGeometry({ ...box, yDomain: [0, 10000], yUnit: "kWh" }).plot.left,
+    );
+  });
+
+  it("an explicit margin.left still wins", () => {
+    expect(
+      buildGeometry({
+        ...box,
+        yDomain: [0, 12000],
+        yUnit: "kWh",
+        margin: { left: 20 },
+      }).plot.left,
+    ).toBe(20);
+  });
+});

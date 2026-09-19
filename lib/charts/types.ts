@@ -20,10 +20,32 @@ export interface SeriesData {
   flowPath?: string;
 }
 
+/**
+ * The time span one bar covers, when the bars are NOT evenly spaced.
+ *
+ * Present only on rolled-up data (today: the Y period's one-bar-per-month view). With it the chart
+ * places each bar on the TIME SCALE — `geo.x(start)`…`geo.x(end)` — instead of giving every category
+ * an equal `plotWidth / n` slice. That matters because the Y axis' ticks are already month-aligned
+ * (`lib/charts/svg/time-ticks.ts`), and calendar months are 28–31 days long: equal-width positional
+ * bars would drift up to ~3 weeks away from the tick they belong to by the far end of the year.
+ *
+ * It also makes a PARTIAL month (the clamped first and last buckets of a trailing window) draw
+ * narrower than a whole one, which is the honest cue that its total covers fewer days.
+ *
+ * Absent ⇒ the positional layout, which is what every evenly-spaced series still wants.
+ */
+interface BarSpan {
+  start: Date;
+  /** Exclusive. */
+  end: Date;
+}
+
 export interface ChartData {
   timestamps: Date[];
   series: SeriesData[];
   mode: "power" | "energy";
+  /** One per `timestamps` entry when the bars are unevenly spaced — see {@link BarSpan}. */
+  barSpans?: BarSpan[];
 }
 
 /**
@@ -51,6 +73,8 @@ export interface LineChartData {
   batterySOCMax?: (number | null)[]; // Max SOC for daily data
   grid?: (number | null)[]; // Grid power/energy (optional - not all devices have grid data)
   mode: "power" | "energy"; // Mode based on interval: power (≤30m) or energy (≥1d)
+  /** One per `timestamps` entry when the bars are unevenly spaced — see {@link BarSpan}. */
+  barSpans?: BarSpan[];
 }
 
 /**
