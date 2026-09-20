@@ -240,6 +240,9 @@
 
   /* tw amber-400 */
   --color-brand-amber: oklch(82.8% 0.189 84.429);
+  /* Amber's own deep blue-grey, off-palette on purpose — the "now" card is a slab of the
+     retailer's chrome rather than one of ours. */
+  --color-brand-amber-panel: rgb(40, 49, 66);
 }
 /* ── design tokens ────────────────────────────────────────────────── end ── */
 

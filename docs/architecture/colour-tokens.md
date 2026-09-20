@@ -144,6 +144,27 @@ Out of scope and still on literals: the admin and device-only screens (`app/admi
 settings and poll modals, `DeviceViewer` and its chrome). They render identically either way,
 because every token equals the literal it replaced.
 
+## The gate
+
+`npm run check:colours` (`scripts/check-colour-tokens.mjs`), wired into `prebuild` and
+`prebuild:local` beside its sibling boundary guards. It fails the build on any raw palette class in
+a scoped path.
+
+🛑 **Why a gate rather than code review.** A reintroduced `text-gray-400` still *renders* — `@theme`
+adds to the default palette rather than replacing it, which is exactly what let the sweep land file
+by file. So a literal ships silently and the vocabulary decays one dialog at a time back to the 728
+it started from. The gate is the only thing that makes "done" a stable state rather than a
+high-water mark.
+
+It checks two things, and the second earned its keep on first run: a **palette class**
+(`text-gray-400`, `bg-black/50`) and a **hard-coded colour in an arbitrary value**
+(`bg-[#1C1C1E]`). Three surfaces were still hard-coded — the skeleton, the stale badge and Amber's
+panel — and no palette-class grep could ever have seen them.
+
+`SCOPE` is an allow-list of paths, so the admin screens stay out; extending it is how a future
+slice ratchets forward. `EXEMPTIONS` is the list below, and
+`scripts/__tests__/check-colour-tokens.test.ts` pins its size so it can only shrink.
+
 ## Deliberately left literal
 
 Not every colour should become a token, and these say so where they sit rather than silently:

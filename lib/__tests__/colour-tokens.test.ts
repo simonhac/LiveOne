@@ -141,6 +141,7 @@ describe("colour tokens", () => {
   it("pins the tokens that are NOT Tailwind aliases", () => {
     // Apple's secondary system background (dark) — the tile slab. Not a Tailwind grey.
     expect(OURS.get("--color-surface")).toBe("#1c1c1e");
+    expect(OURS.get("--color-brand-amber-panel")).toBe("rgb(40, 49, 66)");
     expect(OURS.get("--color-surface-raised")).toBe("#2c2c2e");
     // The white-alpha tile ramp. These ARE the magic numbers the token names replace, so they are
     // written down exactly once — here.

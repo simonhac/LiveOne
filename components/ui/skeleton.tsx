@@ -26,7 +26,7 @@ import { TILE_SKELETON_RADIUS } from "@/lib/tile-style";
  * (See the recipe in docs/performance/dashboard-layout-stability.md.) Every placeholder in the
  * dashboard tree — host-drawn, or drawn by a leaf component's own loading branch — should carry it.
  */
-export const SKELETON_CLASS = "animate-pulse rounded-lg bg-[#1C1C1E]/60";
+export const SKELETON_CLASS = "animate-pulse rounded-lg bg-surface/60";
 
 /**
  * The shimmer treatment — a sweeping highlight, on trial against `SKELETON_CLASS`'s breathing
@@ -64,7 +64,7 @@ export function TileSkeleton({ className }: { className?: string }) {
   return (
     <div
       data-skeleton=""
-      className={`min-h-[104px] ${className ?? ""} animate-pulse bg-[#1C1C1E]/60 ${TILE_SKELETON_RADIUS}`}
+      className={`min-h-[104px] ${className ?? ""} animate-pulse bg-surface/60 ${TILE_SKELETON_RADIUS}`}
     />
   );
 }

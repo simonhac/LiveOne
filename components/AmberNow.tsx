@@ -58,7 +58,7 @@ export default function AmberNow({ latest }: AmberNowProps) {
 
   return (
     <div
-      className={`w-full max-w-md mx-auto p-4 md:p-6 bg-[rgb(40,49,66)] border border-line ${ttInterphases.className}`}
+      className={`w-full max-w-md mx-auto p-4 md:p-6 bg-brand-amber-panel border border-line ${ttInterphases.className}`}
     >
       <h2 className="text-sm font-semibold text-ink-muted mb-6 tracking-wide">
         LIVE PRICE
