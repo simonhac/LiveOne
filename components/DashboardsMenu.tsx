@@ -46,8 +46,8 @@ export default function DashboardsMenu({
   onNavigate,
   onNew,
   className = "",
-  itemClassName = "block px-4 py-2 text-sm font-medium text-white hover:bg-gray-700 transition-colors",
-  activeItemClassName = "bg-gray-700",
+  itemClassName = "block px-4 py-2 text-sm font-medium text-ink hover:bg-surface-control transition-colors",
+  activeItemClassName = "bg-surface-control",
   isMobile = false,
 }: DashboardsMenuProps) {
   const { data, isLoading } = useQuery(myDashboardsQuery(enabled));
@@ -63,7 +63,9 @@ export default function DashboardsMenu({
   return (
     <div className={className}>
       {dashboards.length === 0 && !isLoading && (
-        <div className="px-4 py-2 text-sm text-gray-500">No dashboards yet</div>
+        <div className="px-4 py-2 text-sm text-ink-faint">
+          No dashboards yet
+        </div>
       )}
 
       {dashboards.map((d) => {
@@ -83,11 +85,11 @@ export default function DashboardsMenu({
           >
             <span className="truncate">{d.name ?? "Untitled"}</span>
             {isDefault && (
-              <Star className="h-3.5 w-3.5 flex-shrink-0 fill-yellow-400 text-yellow-400" />
+              <Star className="h-3.5 w-3.5 flex-shrink-0 fill-star text-star" />
             )}
             {isShared && (
               <Users
-                className="h-3.5 w-3.5 flex-shrink-0 text-gray-400"
+                className="h-3.5 w-3.5 flex-shrink-0 text-ink-muted"
                 aria-label="Shared with you"
               />
             )}
@@ -95,16 +97,14 @@ export default function DashboardsMenu({
         );
       })}
 
-      {dashboards.length > 0 && (
-        <div className="my-1 border-t border-gray-700" />
-      )}
+      {dashboards.length > 0 && <div className="my-1 border-t border-line" />}
 
       <button
         onClick={() => {
           onNew();
           onNavigate?.();
         }}
-        className={`${itemClassName} flex w-full items-center gap-2 text-left text-gray-300 hover:text-white ${
+        className={`${itemClassName} flex w-full items-center gap-2 text-left text-ink-secondary hover:text-ink ${
           isMobile ? "first:rounded-t-lg last:rounded-b-lg" : ""
         }`}
       >
@@ -113,11 +113,11 @@ export default function DashboardsMenu({
       </button>
 
       {/* Manage the owner's Areas/sites (the /areas list — browse, edit, create). */}
-      <div className="my-1 border-t border-gray-700" />
+      <div className="my-1 border-t border-line" />
       <Link
         href="/areas"
         onClick={onNavigate}
-        className={`${itemClassName} flex items-center gap-2 text-gray-300 hover:text-white ${
+        className={`${itemClassName} flex items-center gap-2 text-ink-secondary hover:text-ink ${
           isMobile ? "first:rounded-t-lg last:rounded-b-lg" : ""
         }`}
       >
@@ -127,11 +127,11 @@ export default function DashboardsMenu({
 
       {/* Cross-nav to the systems/devices world — `/device` redirects to the first visible device,
           whose header dropdown is the symmetric DevicesMenu (with "Go to Dashboards"). */}
-      <div className="my-1 border-t border-gray-700" />
+      <div className="my-1 border-t border-line" />
       <Link
         href="/device"
         onClick={onNavigate}
-        className={`${itemClassName} flex items-center gap-2 text-gray-300 hover:text-white ${
+        className={`${itemClassName} flex items-center gap-2 text-ink-secondary hover:text-ink ${
           isMobile ? "first:rounded-t-lg last:rounded-b-lg" : ""
         }`}
       >

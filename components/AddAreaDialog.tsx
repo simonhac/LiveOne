@@ -182,29 +182,29 @@ export default function AddAreaDialog({
   return createPortal(
     <>
       <div
-        className="fixed inset-0 z-[10000] bg-black/50 backdrop-blur-sm"
+        className="fixed inset-0 z-[10000] bg-scrim backdrop-blur-sm"
         onClick={onClose}
       />
       <div className="pointer-events-none fixed inset-0 z-[10001] flex items-center justify-center px-4">
-        <div className="pointer-events-auto w-full max-w-[460px] rounded-lg border border-gray-700 bg-gray-800 shadow-xl">
-          <div className="flex items-center justify-between border-b border-gray-700 px-6 py-4">
-            <h2 className="text-lg font-semibold text-white">Add area</h2>
+        <div className="pointer-events-auto w-full max-w-[460px] rounded-lg border border-line bg-surface-overlay shadow-xl">
+          <div className="flex items-center justify-between border-b border-line px-6 py-4">
+            <h2 className="text-lg font-semibold text-ink">Add area</h2>
             <button
               onClick={onClose}
-              className="rounded p-1 transition-colors hover:bg-gray-700"
+              className="rounded p-1 transition-colors hover:bg-surface-control"
             >
-              <X className="h-5 w-5 text-gray-400" />
+              <X className="h-5 w-5 text-ink-muted" />
             </button>
           </div>
 
           <div className="space-y-4 px-6 py-4">
             <label className="block">
-              <span className="mb-1 flex items-center gap-1.5 text-xs uppercase tracking-wide text-gray-500">
+              <span className="mb-1 flex items-center gap-1.5 text-xs uppercase tracking-wide text-ink-faint">
                 <Layers className="h-3.5 w-3.5" />
                 Area
               </span>
               {eligible.length === 0 ? (
-                <p className="text-sm text-gray-400">
+                <p className="text-sm text-ink-muted">
                   All your areas are already on this dashboard.
                 </p>
               ) : (
@@ -213,7 +213,7 @@ export default function AddAreaDialog({
                     autoFocus
                     value={selectedAreaId}
                     onChange={(e) => setSelectedAreaId(e.target.value)}
-                    className="w-full rounded-md border border-gray-600 bg-gray-900 px-3 py-2 text-sm text-gray-100"
+                    className="w-full rounded-md border border-line-strong bg-surface-sunken px-3 py-2 text-sm text-ink-strong"
                   >
                     <option value="">Select an area…</option>
                     {eligible.map((a) => (
@@ -222,7 +222,7 @@ export default function AddAreaDialog({
                       </option>
                     ))}
                   </select>
-                  <span className="mt-1 block text-xs text-gray-600">
+                  <span className="mt-1 block text-xs text-ink-disabled">
                     Adds the area with its default cards. You can hide or tweak
                     them afterwards.
                   </span>
@@ -230,21 +230,21 @@ export default function AddAreaDialog({
               )}
             </label>
 
-            {error && <p className="text-sm text-red-400">{error}</p>}
+            {error && <p className="text-sm text-danger">{error}</p>}
           </div>
 
-          <div className="flex justify-end gap-3 border-t border-gray-700 px-6 py-4">
+          <div className="flex justify-end gap-3 border-t border-line px-6 py-4">
             <button
               onClick={onClose}
               disabled={busy}
-              className="rounded-md border border-gray-600 px-4 py-2 text-gray-300 transition-colors hover:text-white disabled:opacity-50"
+              className="rounded-md border border-line-strong px-4 py-2 text-ink-secondary transition-colors hover:text-ink disabled:opacity-50"
             >
               Cancel
             </button>
             <button
               onClick={add}
               disabled={busy || !selectedAreaId || eligible.length === 0}
-              className="min-w-[100px] rounded-md bg-blue-600 px-6 py-2 text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+              className="min-w-[100px] rounded-md bg-accent px-6 py-2 text-ink transition-colors hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-50"
             >
               {busy ? "Adding…" : "Add"}
             </button>

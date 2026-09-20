@@ -369,12 +369,12 @@ export default function AreaBuilderDialog({
     (detail?.members ?? []).map((m) => m.id);
 
   const inputCls =
-    "w-full rounded-md border border-gray-600 bg-gray-900 px-3 py-2 text-sm text-gray-100 placeholder:text-gray-600";
+    "w-full rounded-md border border-line-strong bg-surface-sunken px-3 py-2 text-sm text-ink-strong placeholder:text-ink-disabled";
 
   return createPortal(
     <>
       <div
-        className="fixed inset-0 z-[10000] bg-black/50 backdrop-blur-sm"
+        className="fixed inset-0 z-[10000] bg-scrim backdrop-blur-sm"
         onClick={() => {
           if (!busy) onClose();
         }}
@@ -384,11 +384,11 @@ export default function AreaBuilderDialog({
           role="dialog"
           aria-modal="true"
           aria-label={isEdit ? "Area settings" : "New site"}
-          className="pointer-events-auto flex max-h-[85vh] w-full max-w-[520px] flex-col rounded-lg border border-gray-700 bg-gray-800 shadow-xl"
+          className="pointer-events-auto flex max-h-[85vh] w-full max-w-[520px] flex-col rounded-lg border border-line bg-surface-overlay shadow-xl"
         >
-          <div className="flex items-center justify-between border-b border-gray-700 px-6 py-4">
-            <h2 className="flex items-center gap-2 text-lg font-semibold text-white">
-              <Layers className="h-5 w-5 text-purple-400" />
+          <div className="flex items-center justify-between border-b border-line px-6 py-4">
+            <h2 className="flex items-center gap-2 text-lg font-semibold text-ink">
+              <Layers className="h-5 w-5 text-assist" />
               {isEdit ? "Area settings" : "New site"}
             </h2>
             <button
@@ -397,14 +397,14 @@ export default function AreaBuilderDialog({
               onClick={() => {
                 if (!busy) onClose();
               }}
-              className="rounded p-1 transition-colors hover:bg-gray-700"
+              className="rounded p-1 transition-colors hover:bg-surface-control"
             >
-              <X className="h-5 w-5 text-gray-400" />
+              <X className="h-5 w-5 text-ink-muted" />
             </button>
           </div>
 
           {isEdit && (
-            <div className="flex shrink-0 gap-1 overflow-x-auto border-b border-gray-700 px-4 pt-2">
+            <div className="flex shrink-0 gap-1 overflow-x-auto border-b border-line px-4 pt-2">
               {(
                 ["general", "location", "members", "bindings"] as EditTab[]
               ).map((t) => (
@@ -413,8 +413,8 @@ export default function AreaBuilderDialog({
                   onClick={() => setTab(t)}
                   className={`shrink-0 rounded-t px-3 py-2 text-sm capitalize transition-colors ${
                     tab === t
-                      ? "bg-gray-900 text-white"
-                      : "text-gray-400 hover:text-gray-200"
+                      ? "bg-surface-sunken text-ink"
+                      : "text-ink-muted hover:text-ink-control"
                   }`}
                 >
                   {t}
@@ -428,7 +428,7 @@ export default function AreaBuilderDialog({
               <p role="status">Loading area settings…</p>
             )}
             {isEdit && detailError && (
-              <p role="alert" className="text-sm text-red-400">
+              <p role="alert" className="text-sm text-danger">
                 {detailError.message}
               </p>
             )}
@@ -440,7 +440,7 @@ export default function AreaBuilderDialog({
               {!isEdit && (
                 <>
                   <label className="block">
-                    <span className="mb-1 block text-xs uppercase tracking-wide text-gray-500">
+                    <span className="mb-1 block text-xs uppercase tracking-wide text-ink-faint">
                       Name
                     </span>
                     <input
@@ -452,7 +452,7 @@ export default function AreaBuilderDialog({
                     />
                   </label>
                   <label className="block">
-                    <span className="mb-1 block text-xs uppercase tracking-wide text-gray-500">
+                    <span className="mb-1 block text-xs uppercase tracking-wide text-ink-faint">
                       Shortname (optional)
                     </span>
                     <input
@@ -463,7 +463,7 @@ export default function AreaBuilderDialog({
                       className={inputCls}
                     />
                     {!aliasValid && (
-                      <span className="mt-1 block text-xs text-amber-400">
+                      <span className="mt-1 block text-xs text-warn">
                         Lowercase letters, numbers and hyphens only
                       </span>
                     )}
@@ -484,7 +484,7 @@ export default function AreaBuilderDialog({
               {isEdit && tab === "general" && (
                 <>
                   <label className="block">
-                    <span className="mb-1 block text-xs uppercase tracking-wide text-gray-500">
+                    <span className="mb-1 block text-xs uppercase tracking-wide text-ink-faint">
                       Name
                     </span>
                     <input
@@ -494,7 +494,7 @@ export default function AreaBuilderDialog({
                     />
                   </label>
                   <label className="block">
-                    <span className="mb-1 block text-xs uppercase tracking-wide text-gray-500">
+                    <span className="mb-1 block text-xs uppercase tracking-wide text-ink-faint">
                       Shortname
                     </span>
                     <input
@@ -505,7 +505,7 @@ export default function AreaBuilderDialog({
                     />
                   </label>
                   <label className="block">
-                    <span className="mb-1 block text-xs uppercase tracking-wide text-gray-500">
+                    <span className="mb-1 block text-xs uppercase tracking-wide text-ink-faint">
                       Display timezone
                     </span>
                     <select
@@ -530,21 +530,21 @@ export default function AreaBuilderDialog({
                         </optgroup>
                       ))}
                     </select>
-                    <span className="mt-2 block text-xs text-gray-400">
+                    <span className="mt-2 block text-xs text-ink-muted">
                       Used for displayed times and local-time schedules in this
                       area.
                     </span>
                   </label>
-                  <div className="flex items-center justify-between border-t border-gray-700 pt-3">
+                  <div className="flex items-center justify-between border-t border-line pt-3">
                     {confirmDelete ? (
                       <div className="flex items-center gap-2">
-                        <span className="text-sm text-gray-300">
+                        <span className="text-sm text-ink-secondary">
                           Archive this site?
                         </span>
                         <button
                           onClick={() => del(blockedBy != null)}
                           disabled={busy}
-                          className="rounded-md bg-red-600 px-3 py-1.5 text-sm text-white hover:bg-red-700 disabled:opacity-50"
+                          className="rounded-md bg-danger-solid px-3 py-1.5 text-sm text-ink hover:bg-danger-solid-hover disabled:opacity-50"
                         >
                           {blockedBy ? "Archive anyway" : "Archive"}
                         </button>
@@ -556,7 +556,7 @@ export default function AreaBuilderDialog({
                             setBlockedBy(null);
                             setError(null);
                           }}
-                          className="text-sm text-gray-400 hover:text-white"
+                          className="text-sm text-ink-muted hover:text-ink"
                         >
                           Cancel
                         </button>
@@ -564,7 +564,7 @@ export default function AreaBuilderDialog({
                     ) : (
                       <button
                         onClick={() => setConfirmDelete(true)}
-                        className="flex items-center gap-1.5 text-sm text-red-400 hover:text-red-300"
+                        className="flex items-center gap-1.5 text-sm text-danger hover:text-danger-ink"
                       >
                         <Trash2 className="h-4 w-4" />
                         Archive site
@@ -587,7 +587,7 @@ export default function AreaBuilderDialog({
                         !editAliasValid ||
                         !isValidTimezone(editTimezone)
                       }
-                      className="rounded-md bg-blue-600 px-5 py-2 text-sm text-white hover:bg-blue-700 disabled:opacity-50"
+                      className="rounded-md bg-accent px-5 py-2 text-sm text-ink hover:bg-accent-hover disabled:opacity-50"
                     >
                       Save
                     </button>
@@ -598,12 +598,12 @@ export default function AreaBuilderDialog({
               {/* EDIT: LOCATION */}
               {isEdit && tab === "location" && (
                 <>
-                  <p className="text-xs text-gray-500">
+                  <p className="text-xs text-ink-faint">
                     A site&apos;s location derives its NEM grid region (for the
                     Local Grid card).
                   </p>
                   <label className="block">
-                    <span className="mb-1 block text-xs uppercase tracking-wide text-gray-500">
+                    <span className="mb-1 block text-xs uppercase tracking-wide text-ink-faint">
                       State / territory
                     </span>
                     {!isAustralian ? (
@@ -628,7 +628,7 @@ export default function AreaBuilderDialog({
                     )}
                   </label>
                   <label className="block">
-                    <span className="mb-1 block text-xs uppercase tracking-wide text-gray-500">
+                    <span className="mb-1 block text-xs uppercase tracking-wide text-ink-faint">
                       Postcode (optional)
                     </span>
                     <input
@@ -640,18 +640,18 @@ export default function AreaBuilderDialog({
                       className={inputCls}
                     />
                   </label>
-                  <div className="flex items-center gap-1.5 text-xs text-gray-400">
+                  <div className="flex items-center gap-1.5 text-xs text-ink-muted">
                     <MapPin className="h-3.5 w-3.5" />
                     {region
                       ? `NEM region: ${nemRegionShortLabel(region)}`
                       : "Off-NEM / no region derived"}
                   </div>
                   {locationError && (
-                    <p role="alert" className="text-sm text-red-400">
+                    <p role="alert" className="text-sm text-danger">
                       {locationError}
                     </p>
                   )}
-                  <div className="flex justify-end border-t border-gray-700 pt-3">
+                  <div className="flex justify-end border-t border-line pt-3">
                     <button
                       onClick={() =>
                         patchArea(
@@ -665,7 +665,7 @@ export default function AreaBuilderDialog({
                         )
                       }
                       disabled={busy || !!locationError}
-                      className="rounded-md bg-blue-600 px-5 py-2 text-sm text-white hover:bg-blue-700 disabled:opacity-50"
+                      className="rounded-md bg-accent px-5 py-2 text-sm text-ink hover:bg-accent-hover disabled:opacity-50"
                     >
                       Save location
                     </button>
@@ -702,7 +702,7 @@ export default function AreaBuilderDialog({
               {error && (
                 <p
                   role="alert"
-                  className="whitespace-pre-line text-sm text-red-400"
+                  className="whitespace-pre-line text-sm text-danger"
                 >
                   {error}
                 </p>
@@ -712,32 +712,32 @@ export default function AreaBuilderDialog({
 
           {/* CREATE footer */}
           {!isEdit && (
-            <div className="flex justify-end gap-3 border-t border-gray-700 px-6 py-4">
+            <div className="flex justify-end gap-3 border-t border-line px-6 py-4">
               <button
                 onClick={() => {
                   if (!busy) onClose();
                 }}
                 disabled={busy}
-                className="rounded-md border border-gray-600 px-4 py-2 text-gray-300 hover:text-white disabled:opacity-50"
+                className="rounded-md border border-line-strong px-4 py-2 text-ink-secondary hover:text-ink disabled:opacity-50"
               >
                 Cancel
               </button>
               <button
                 onClick={create}
                 disabled={busy || !name.trim() || !aliasValid}
-                className="min-w-[100px] rounded-md bg-blue-600 px-6 py-2 text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+                className="min-w-[100px] rounded-md bg-accent px-6 py-2 text-ink hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {busy ? "Creating…" : "Create site"}
               </button>
             </div>
           )}
           {isEdit && (
-            <div className="flex justify-end border-t border-gray-700 px-6 py-3">
+            <div className="flex justify-end border-t border-line px-6 py-3">
               <button
                 onClick={() => {
                   if (!busy) onClose();
                 }}
-                className="rounded-md border border-gray-600 px-4 py-2 text-sm text-gray-300 hover:text-white"
+                className="rounded-md border border-line-strong px-4 py-2 text-sm text-ink-secondary hover:text-ink"
               >
                 Close
               </button>

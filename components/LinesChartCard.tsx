@@ -339,7 +339,7 @@ export default function LinesChartCard({
     if (loading) {
       return (
         <div className="flex-1 flex items-center justify-center min-h-0">
-          <div className="text-gray-500">Loading chart...</div>
+          <div className="text-ink-faint">Loading chart...</div>
         </div>
       );
     }
@@ -347,7 +347,7 @@ export default function LinesChartCard({
     if (error) {
       return (
         <div className="flex-1 flex items-center justify-center min-h-0">
-          <div className="text-red-400">Error: {error}</div>
+          <div className="text-danger">Error: {error}</div>
         </div>
       );
     }
@@ -355,7 +355,7 @@ export default function LinesChartCard({
     if (!chartData) {
       return (
         <div className="flex-1 flex items-center justify-center min-h-0">
-          <div className="text-gray-500">No chart data available</div>
+          <div className="text-ink-faint">No chart data available</div>
         </div>
       );
     }
@@ -398,7 +398,7 @@ export default function LinesChartCard({
 
   // No frame of its own: the section this mounts into already draws one, and a filled card inside
   // it is the nested roundrect docs/architecture/chart-style.md exists to remove. This used to be
-  // `md:bg-gray-800 md:border md:border-gray-700 md:rounded md:p-4` — breakpoint-gated, so the lines
+  // `md:bg-surface-overlay md:border md:border-line md:rounded md:p-4` — breakpoint-gated, so the lines
   // chart and the stacked chart (which never had a frame) matched on a phone and diverged on a
   // laptop.
   return (

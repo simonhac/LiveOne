@@ -53,7 +53,7 @@ export default function MiniBars({
             <div
               key={i}
               className={`relative flex-1 border-l ${
-                bar.tick ? "border-white/25" : "border-white/[0.07]"
+                bar.tick ? "border-line-hairline" : "border-line-faint"
               }`}
             >
               {bar.value != null && bar.value > 0 && (
@@ -76,7 +76,7 @@ export default function MiniBars({
           {bars.map((bar, i) => (
             <div
               key={i}
-              className={`relative h-3.5 flex-1 ${bar.tick ? "border-l border-white/25" : ""}`}
+              className={`relative h-3.5 flex-1 ${bar.tick ? "border-l border-line-hairline" : ""}`}
             >
               {bar.tick && (
                 <span

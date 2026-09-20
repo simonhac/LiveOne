@@ -1,4 +1,6 @@
 import { describe, it, expect } from "@jest/globals";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { CHART_COLORS } from "../chart-colors";
 import { IDLE_CHROME, ROLE_CHROME } from "../role-chrome";
 
@@ -8,19 +10,31 @@ import { IDLE_CHROME, ROLE_CHROME } from "../role-chrome";
  *
  * A comment used to assert this and it did not hold. Load and Hot Water matched their series exactly;
  * Solar's sun quietly sat on yellow-400 while the solar series was yellow-200, and nothing failed.
- * The mapping below is a deliberate second copy of the Tailwind values — if it agreed with the source
- * by construction it would prove nothing.
+ *
+ * 🛑 THE SECOND COPY IS NOW THE SHIPPED CSS, AND THAT MATTERS. This file used to carry a hand-written
+ * `class -> rgb` table, on the reasoning that a mapping derived from the source would prove nothing.
+ * True, but the table was a Tailwind **v3** table, and v4's palette is `oklch` — so while the roles
+ * sat on `text-green-400` the test compared a stale table against itself and passed, and the tile's
+ * number rendered a visibly different green from its own ring on every P3 display. Reading
+ * `app/globals.css` keeps the property the table was for (two independently-authored files must
+ * agree) while making the thing it compares the thing that actually renders.
  */
-const TAILWIND: Record<string, string> = {
-  "text-yellow-200": "rgb(254, 240, 138)",
-  "text-blue-400": "rgb(96, 165, 250)",
-  "text-orange-400": "rgb(251, 146, 60)",
-  "text-green-400": "rgb(74, 222, 128)",
-  "text-pink-500": "rgb(236, 72, 153)",
-  "text-cyan-400": "rgb(34, 211, 238)",
-  "text-violet-400": "rgb(167, 139, 250)",
-  "text-red-600": "rgb(220, 38, 38)",
-};
+const TOKENS = new Map<string, string>(
+  [
+    ...readFileSync(
+      path.join(__dirname, "..", "..", "app", "globals.css"),
+      "utf8",
+    ).matchAll(/^\s*--color-([a-z0-9-]+):\s*([^;]+);/gm),
+  ].map((m) => [
+    `text-${m[1]}`,
+    // Prettier may reflow a long declaration across lines — compare the value, not its formatting.
+    m[2]
+      .replace(/\s+/g, " ")
+      .replace(/\(\s+/g, "(")
+      .replace(/\s+\)/g, ")")
+      .trim(),
+  ]),
+);
 
 const ROLES = [
   ["solar", CHART_COLORS.solar.primary],
@@ -35,16 +49,26 @@ const ROLES = [
 
 describe("tile value colour is the exact series colour", () => {
   it.each(ROLES)("%s", (role, seriesColour) => {
-    expect(TAILWIND[ROLE_CHROME[role].value]).toBe(seriesColour);
+    expect(TOKENS.get(ROLE_CHROME[role].value)).toBe(seriesColour);
     expect(ROLE_CHROME[role].rgb).toBe(seriesColour);
   });
 
   it("neutral has no series and no colour", () => {
-    expect(ROLE_CHROME.neutral.value).toBe("text-white");
+    expect(ROLE_CHROME.neutral.value).toBe("text-ink");
+    expect(TOKENS.get("text-ink")).toBe("#fff");
   });
 
   it("idle is a dimmed white — an absence signal, not a direction", () => {
-    expect(IDLE_CHROME.value).toBe("text-white/40");
+    expect(IDLE_CHROME.value).toBe("text-tile-ink-idle");
+    // The class and the `rgb` are the same 40% white, spelled for CSS and for SVG.
+    expect(TOKENS.get("text-tile-ink-idle")).toBe("rgb(255 255 255 / 0.4)");
+    expect(IDLE_CHROME.rgb).toBe("rgba(255, 255, 255, 0.4)");
+  });
+
+  it("every role class is a token this stylesheet actually defines", () => {
+    for (const chrome of [...Object.values(ROLE_CHROME), IDLE_CHROME]) {
+      expect(TOKENS.has(chrome.value)).toBe(true);
+    }
   });
 });
 
@@ -61,7 +85,7 @@ describe("class strings stay literal", () => {
     // Interpolation would silently drop the class from the built CSS and the tile would render
     // unstyled. Guard the shape rather than trusting review.
     for (const chrome of [...Object.values(ROLE_CHROME), IDLE_CHROME]) {
-      expect(chrome.value).toMatch(/^text-[a-z]+(-\d+)?(\/\d+)?$/);
+      expect(chrome.value).toMatch(/^text-[a-z][a-z0-9-]*$/);
     }
   });
 });

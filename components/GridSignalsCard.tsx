@@ -109,7 +109,7 @@ export default function GridSignalsCard({
           unit={emissionsText !== "—" ? "g/kWh" : undefined}
         />
       }
-      valueColor={tone("text-white")}
+      valueColor={tone("text-ink")}
     />
   );
 
@@ -132,10 +132,10 @@ export default function GridSignalsCard({
           gradientTo={RENEWABLES_LIGHT_RGB}
           className={`${TILE_RING} ${staleness.isStale ? TILE_STALE : ""}`}
         >
-          <span className={`${TILE_RING_VALUE} text-white`}>
+          <span className={`${TILE_RING_VALUE} text-ink`}>
             {renewablesValue}
           </span>
-          <span className="mt-1 text-[11px] font-medium leading-none text-white/55">
+          <span className="mt-1 text-[11px] font-medium leading-none text-tile-ink-muted">
             renewable
           </span>
         </ProgressRing>
@@ -151,7 +151,7 @@ export default function GridSignalsCard({
           label="Renewables"
           value={renewablesValue}
           valueColor={tone(
-            renewablesGreen ? ROLE_CHROME.battery.value : "text-white",
+            renewablesGreen ? ROLE_CHROME.battery.value : "text-ink",
           )}
         />
       </div>

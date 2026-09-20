@@ -82,10 +82,10 @@ export default function CommandActivityLog({
           history behind it — and without this the row was 20px in both cases and 28px otherwise,
           so the button's arrival shoved the dialog. */}
       <div className="mb-1 flex min-h-7 items-center justify-between gap-2">
-        <div className="flex items-center gap-1 text-sm text-gray-400">
+        <div className="flex items-center gap-1 text-sm text-ink-muted">
           Last activity
           {log.isLoading && (
-            <Loader2 className="h-3 w-3 animate-spin text-gray-500" />
+            <Loader2 className="h-3 w-3 animate-spin text-ink-faint" />
           )}
         </div>
         {!log.isLoading && log.data?.hasMore && (
@@ -146,7 +146,7 @@ function AllActivityDialog({
             already looking. */}
         <div className="max-h-[60vh] overflow-y-auto pr-1">
           {pages.isLoading ? (
-            <p className="py-6 text-center text-xs text-gray-500">
+            <p className="py-6 text-center text-xs text-ink-faint">
               <Loader2 className="mx-auto h-4 w-4 animate-spin" />
             </p>
           ) : (
@@ -197,8 +197,8 @@ function PeekSkeleton() {
       className="mt-2 space-y-1.5 text-xs"
     >
       <li className="flex h-4 items-center gap-2">
-        <span className="block h-3 w-12 shrink-0 animate-pulse rounded bg-gray-700/70" />
-        <span className="block h-3 w-40 animate-pulse rounded bg-gray-700/70" />
+        <span className="block h-3 w-12 shrink-0 animate-pulse rounded bg-skeleton-strong" />
+        <span className="block h-3 w-40 animate-pulse rounded bg-skeleton-strong" />
       </li>
     </ul>
   );
@@ -208,22 +208,22 @@ function PeekSkeleton() {
 function EntryList({ entries }: { entries: CommandLogEntryJson[] }) {
   const lines = entries.map((entry) => formatCommandEntry(entry, Date.now()));
   if (lines.length === 0) {
-    return <p className="mt-2 text-xs text-gray-500">Nothing yet.</p>;
+    return <p className="mt-2 text-xs text-ink-faint">Nothing yet.</p>;
   }
   return (
     <ul className="mt-2 space-y-1.5 text-xs">
       {lines.map((line, i) => (
         <li key={`${line.timeMs}-${i}`} className="flex gap-2">
-          <span className="shrink-0 tabular-nums text-gray-500">
+          <span className="shrink-0 tabular-nums text-ink-faint">
             {timeWords(line.timeMs)}
           </span>
           <span
             className={
               line.tone === "error"
-                ? "text-red-400/90"
+                ? "text-danger"
                 : line.tone === "pending"
-                  ? "text-gray-400 italic"
-                  : "text-gray-300"
+                  ? "text-ink-muted italic"
+                  : "text-ink-secondary"
             }
           >
             {/* A vendor sentence can carry an instant the hub had no clock to spell. */}

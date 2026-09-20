@@ -8,7 +8,8 @@ product.
 
 Source of truth for the _what_: `lib/charts/style.ts` (surface classes, ink, legend classes) and
 `components/ui/panel.tsx` (`<Panel>`). This document holds the _why_. Series **colours** are a
-different question and live in `lib/chart-colors.ts` — that module is about identity (which hue
+different question and live in `lib/chart-colors.ts` + the `series-*` tokens
+([colour-tokens.md](colour-tokens.md)) — that module is about identity (which hue
 means Solar); this one is about furniture.
 
 ## The problem this replaces
@@ -93,10 +94,10 @@ table's gutters, and leans on its sticky header/footer rules instead of an outli
 
 | Role       | Token                                             |
 | ---------- | ------------------------------------------------- |
-| Frame      | `CHART_PANEL` — `rounded-lg border-gray-700/70 bg-gray-900/30` |
+| Frame      | `CHART_PANEL` — `rounded-lg border-line-soft bg-surface-panel` |
 | Frame pad  | `CHART_PANEL_PAD` — `p-2 sm:p-3`                  |
 | Body pad   | `CHART_BODY_PAD` — `p-2 sm:p-4`                   |
-| Hairline   | `CHART_HAIRLINE` — `rounded-lg border-gray-700/70`, no fill |
+| Hairline   | `CHART_HAIRLINE` — `rounded-lg border-line-soft`, no fill |
 
 `rounded` (4px), `border-gray-700`, `border-gray-700/50`, `bg-gray-800`, `bg-gray-800/50` and
 `bg-gray-900` are retired as chart-surface values.
@@ -140,10 +141,17 @@ from the hero-value rule.
 
 - **The stat-card family** — `Tile.tsx`, `ui/stat-card-shell.tsx`, and the cards built on them
   (`BatteryContentsCard`, `HomeEnergyCard`, `LoadProvenanceCard`, `GridSignalsCard`, the Amber and
-  Tesla small cards). A stat card _is_ a filled chip; the fill is its whole shape, and it carries a
-  role colour (`bg-gray-800/50` plus a tinted border) that says what the card is about. Note the
-  membership test is the shape, not the node kind: `battery-contents` and `ev-provenance` are full
-  card plugins, not tile views, and are still in this family.
+  Tesla small cards). A stat card _is_ a filled chip; the fill is its whole shape. It no longer
+  carries a role colour there: [tile-style.md](tile-style.md) made every one of them the same
+  neutral `surface` slab with no border and no tint, and put the role on the DATA instead — the
+  `bg-gray-800/50`-plus-tinted-border this line used to describe is gone. Note the membership test
+  is the shape, not the node kind: `battery-contents` and `ev-provenance` are full card plugins,
+  not tile views, and are still in this family.
+
+  🛑 A stat card is also **self-surfaced**, which is a layout fact and not just a visual one: it
+  states its own extent, so a section must not wrap it in `SECTION_RUN_PAD`. Card plugins say so
+  with `CardPlugin.selfSurfaced` — `battery-contents` lacked it and rendered 12px narrower per side
+  than the Home Energy card beside it at `sm` and up.
 - **Modals, menus and popovers** — `bg-gray-800` on a shadow is a floating surface, a different
   problem from an in-page panel.
 - **The Sankey** — its own layout and ink, out of scope here.

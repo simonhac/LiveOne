@@ -85,6 +85,6 @@ export const UNIT_CLASS = "text-[0.72em] font-semibold";
  * the unit inherits the value's colour — a tile's colour lives in its data, and a grey `kW` beside a
  * yellow number would split one fact into two tones.
  */
-export const UNIT_MUTED_CLASS = "text-gray-400";
+export const UNIT_MUTED_CLASS = "text-ink-muted";
 /** `all-small-caps` so the already-lowercase source text needs no transform to render as caps. */
 export const UNIT_SMALL_CAPS_CLASS = "[font-variant-caps:all-small-caps]";

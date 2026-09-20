@@ -62,7 +62,7 @@ const COPY: Record<
 
 function ConfigNotice() {
   return (
-    <Panel className="px-4 py-3 text-sm text-gray-400" padded={false}>
+    <Panel className="px-4 py-3 text-sm text-ink-muted" padded={false}>
       This runs card is misconfigured.
     </Panel>
   );

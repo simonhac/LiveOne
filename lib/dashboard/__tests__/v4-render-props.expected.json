@@ -494,7 +494,7 @@
                   "value": "73"
                 }
               },
-              "className": "text-[17px] @[180px]:text-[24px] font-bold leading-none text-white"
+              "className": "text-[17px] @[180px]:text-[24px] font-bold leading-none text-ink"
             }
           },
           "className": "h-[76px] w-[76px] shrink-0 @[180px]:h-[108px] @[180px]:w-[108px] opacity-55",
@@ -522,7 +522,7 @@
               "value": "1.5"
             }
           },
-          "valueColor": "text-green-400"
+          "valueColor": "text-series-battery"
         }
       }
     ]
@@ -551,7 +551,7 @@
                   "value": "73"
                 }
               },
-              "className": "text-[17px] @[180px]:text-[24px] font-bold leading-none text-white"
+              "className": "text-[17px] @[180px]:text-[24px] font-bold leading-none text-ink"
             }
           },
           "className": "h-[76px] w-[76px] shrink-0 @[180px]:h-[108px] @[180px]:w-[108px] opacity-55",
@@ -579,7 +579,7 @@
               "value": "1.5"
             }
           },
-          "valueColor": "text-green-400"
+          "valueColor": "text-series-battery"
         }
       }
     ]
@@ -634,7 +634,7 @@
           "staleThresholdSeconds": 60,
           "title": "Generator",
           "value": "Auto",
-          "valueColor": "text-white/40"
+          "valueColor": "text-tile-ink-idle"
         }
       }
     ]
@@ -693,10 +693,10 @@
           "measurementTime": "<Date 2026-07-30T04:05:00.000Z>",
           "staleThresholdSeconds": 60,
           "title": "Grid",
-          "tone": "text-pink-500",
+          "tone": "text-series-grid",
           "unit": "kW",
           "value": "0.8",
-          "valueColor": "text-pink-500"
+          "valueColor": "text-series-grid"
         }
       }
     ]
@@ -732,7 +732,7 @@
                               "$element": "span",
                               "$props": {
                                 "children": "HWS",
-                                "className": "truncate text-[13px] leading-tight text-white"
+                                "className": "truncate text-[13px] leading-tight text-ink"
                               }
                             },
                             {
@@ -781,10 +781,10 @@
           "measurementTime": "<Date 2026-07-30T04:05:00.000Z>",
           "staleThresholdSeconds": 60,
           "title": "Load",
-          "tone": "text-blue-400",
+          "tone": "text-series-load",
           "unit": "kW",
           "value": "3.5",
-          "valueColor": "text-blue-400"
+          "valueColor": "text-series-load"
         }
       }
     ]
@@ -914,10 +914,10 @@
           "measurementTime": "<Date 2026-07-30T04:05:00.000Z>",
           "staleThresholdSeconds": 60,
           "title": "Solar",
-          "tone": "text-yellow-200",
+          "tone": "text-series-solar",
           "unit": "kW",
           "value": "4.2",
-          "valueColor": "text-yellow-200"
+          "valueColor": "text-series-solar"
         }
       }
     ]

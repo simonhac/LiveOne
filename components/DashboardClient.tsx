@@ -32,7 +32,7 @@ import type { ResolvedDevice } from "@/lib/dashboard/resolve-shell";
 // Shared styling for the header cog menu's action items (mirrors FlowsSettingsMenu's ITEM_CLASS).
 const MENU_ITEM_CLASS =
   "flex items-center gap-2 px-3 py-2 text-sm rounded outline-none cursor-pointer " +
-  "text-gray-300 hover:bg-gray-700 data-[highlighted]:bg-gray-700";
+  "text-ink-secondary hover:bg-surface-control data-[highlighted]:bg-surface-control";
 
 interface DashboardClientProps {
   dashboard: {
@@ -176,7 +176,7 @@ export default function DashboardClient({
       {/* `overflow-x: clip` sits HERE rather than on html/body, which the pages that paint through
           Safari's top bar leave alone. `clip`, not `hidden`, so this does not become a scroll
           container and the header still sticks. */}
-      <div className="min-h-screen overflow-x-clip bg-black">
+      <div className="min-h-screen overflow-x-clip bg-canvas">
         {/* Two hosts, and `useHideOnScroll` moves the <header> node between them: this sticky one
             while it is shown and while it LEAVES, the `relative` one below once it is out of sight
             and while it returns. Both carry `header-scroll-host`: a scroll-driven `translateY` the
@@ -190,24 +190,24 @@ export default function DashboardClient({
           <header ref={headerRef} className="relative px-4 py-3">
             <div
               aria-hidden
-              className="pointer-events-none absolute inset-0 -z-10 border-b border-white/10 bg-black/80 backdrop-blur"
+              className="pointer-events-none absolute inset-0 -z-10 border-b border-tile-line bg-scrim-strong backdrop-blur"
             />
             <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-3">
               <div className="relative min-w-0">
                 {sharedAreas ? (
-                  <h1 className="truncate text-lg font-semibold text-white">
+                  <h1 className="truncate text-lg font-semibold text-ink">
                     {dashboard.displayName ?? "Dashboard"}
                   </h1>
                 ) : (
                   <button
                     onClick={() => setSwitcherOpen((o) => !o)}
-                    className="flex min-w-0 items-center gap-2 rounded-lg px-2 py-1 transition-colors hover:bg-gray-800"
+                    className="flex min-w-0 items-center gap-2 rounded-lg px-2 py-1 transition-colors hover:bg-surface-overlay"
                   >
-                    <h1 className="truncate text-lg font-semibold text-white">
+                    <h1 className="truncate text-lg font-semibold text-ink">
                       {dashboard.displayName ?? "Dashboard"}
                     </h1>
                     <ChevronDown
-                      className={`h-4 w-4 flex-shrink-0 text-gray-400 transition-transform ${switcherOpen ? "rotate-180" : ""}`}
+                      className={`h-4 w-4 flex-shrink-0 text-ink-muted transition-transform ${switcherOpen ? "rotate-180" : ""}`}
                     />
                   </button>
                 )}
@@ -217,7 +217,7 @@ export default function DashboardClient({
                       className="fixed inset-0 z-40"
                       onClick={() => setSwitcherOpen(false)}
                     />
-                    <div className="absolute left-0 top-full z-50 mt-2 w-64 rounded-lg border border-gray-700 bg-gray-800 shadow-lg">
+                    <div className="absolute left-0 top-full z-50 mt-2 w-64 rounded-lg border border-line bg-surface-overlay shadow-lg">
                       <DashboardsMenu
                         currentDashboardId={dashboard.id}
                         enabled={!sharedAreas}
@@ -249,7 +249,7 @@ export default function DashboardClient({
                         type="button"
                         title="Dashboard actions"
                         aria-label="Dashboard actions"
-                        className="inline-flex items-center gap-1.5 rounded-md border border-gray-700 px-2.5 py-1.5 text-sm text-gray-300 outline-none transition-colors hover:bg-gray-800 hover:text-white data-[state=open]:bg-gray-800 data-[state=open]:text-white"
+                        className="inline-flex items-center gap-1.5 rounded-md border border-line px-2.5 py-1.5 text-sm text-ink-secondary outline-none transition-colors hover:bg-surface-overlay hover:text-ink data-[state=open]:bg-surface-overlay data-[state=open]:text-ink"
                       >
                         <Settings className="h-4 w-4" />
                       </button>
@@ -258,36 +258,36 @@ export default function DashboardClient({
                       <DropdownMenu.Content
                         align="end"
                         sideOffset={5}
-                        className="min-w-[200px] rounded-lg border border-gray-700 bg-gray-800 p-1 shadow-xl"
+                        className="min-w-[200px] rounded-lg border border-line bg-surface-overlay p-1 shadow-xl"
                         style={{ zIndex: 9999 }}
                       >
                         <DropdownMenu.Item
                           className={MENU_ITEM_CLASS}
                           onSelect={() => setNewOpen(true)}
                         >
-                          <Plus className="h-4 w-4 text-gray-400" />
+                          <Plus className="h-4 w-4 text-ink-muted" />
                           New dashboard
                         </DropdownMenu.Item>
                         <DropdownMenu.Item
                           className={MENU_ITEM_CLASS}
                           onSelect={() => setAddAreaOpen(true)}
                         >
-                          <Layers className="h-4 w-4 text-gray-400" />
+                          <Layers className="h-4 w-4 text-ink-muted" />
                           Add existing area…
                         </DropdownMenu.Item>
                         <DropdownMenu.Item
                           className={MENU_ITEM_CLASS}
                           onSelect={() => setCreateAreaOpen(true)}
                         >
-                          <Plus className="h-4 w-4 text-gray-400" />
+                          <Plus className="h-4 w-4 text-ink-muted" />
                           Create new area…
                         </DropdownMenu.Item>
-                        <DropdownMenu.Separator className="my-1 h-px bg-gray-700" />
+                        <DropdownMenu.Separator className="my-1 h-px bg-surface-control" />
                         <DropdownMenu.Item
                           className={MENU_ITEM_CLASS}
                           onSelect={() => setRenameOpen(true)}
                         >
-                          <Settings className="h-4 w-4 text-gray-400" />
+                          <Settings className="h-4 w-4 text-ink-muted" />
                           Settings…
                         </DropdownMenu.Item>
                       </DropdownMenu.Content>
@@ -326,8 +326,8 @@ export default function DashboardClient({
             // A brand-new dashboard has an empty document, and `DashboardV4View` renders literally
             // nothing for it. The shell owns the empty case, because the shell owns the dialog it
             // opens.
-            <div className="mx-auto max-w-md px-4 py-16 text-center text-gray-400">
-              <Layers className="mx-auto mb-3 h-10 w-10 text-gray-600" />
+            <div className="mx-auto max-w-md px-4 py-16 text-center text-ink-muted">
+              <Layers className="mx-auto mb-3 h-10 w-10 text-ink-disabled" />
               <p className="text-sm">
                 This dashboard has no cards yet.
                 {canEdit ? " Add an area to get started." : ""}
@@ -335,7 +335,7 @@ export default function DashboardClient({
               {canEdit && (
                 <button
                   onClick={() => setAddAreaOpen(true)}
-                  className="mt-4 inline-flex items-center gap-1.5 rounded-md border border-gray-700 px-3 py-1.5 text-sm text-gray-300 transition-colors hover:bg-gray-800 hover:text-white"
+                  className="mt-4 inline-flex items-center gap-1.5 rounded-md border border-line px-3 py-1.5 text-sm text-ink-secondary transition-colors hover:bg-surface-overlay hover:text-ink"
                 >
                   <Layers className="h-4 w-4" />
                   Add area

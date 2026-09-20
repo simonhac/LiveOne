@@ -55,11 +55,11 @@ export default function MembersTab({
   return (
     <div className="space-y-4">
       <div>
-        <span className="mb-2 block text-xs uppercase tracking-wide text-gray-500">
+        <span className="mb-2 block text-xs uppercase tracking-wide text-ink-faint">
           Member devices ({members.length})
         </span>
         {members.length === 0 ? (
-          <p className="text-sm text-gray-500">
+          <p className="text-sm text-ink-faint">
             No devices. A site with no devices is allowed — it simply has no
             data of its own until you add one.
           </p>
@@ -71,16 +71,16 @@ export default function MembersTab({
               return (
                 <li
                   key={m.id}
-                  className="flex items-center justify-between rounded-md border border-gray-700 bg-gray-900 px-3 py-2"
+                  className="flex items-center justify-between rounded-md border border-line bg-surface-sunken px-3 py-2"
                 >
-                  <span className="flex items-center gap-2 text-sm text-gray-100">
+                  <span className="flex items-center gap-2 text-sm text-ink-strong">
                     {isHelper ? (
-                      <Wand2 className="h-4 w-4 text-purple-400" />
+                      <Wand2 className="h-4 w-4 text-assist" />
                     ) : (
-                      <Cpu className="h-4 w-4 text-gray-500" />
+                      <Cpu className="h-4 w-4 text-ink-faint" />
                     )}
                     {m.name}
-                    <span className="text-xs text-gray-600">
+                    <span className="text-xs text-ink-disabled">
                       ID: {m.legacySystemId}
                     </span>
                   </span>
@@ -95,7 +95,7 @@ export default function MembersTab({
                           ? "The device this site was created from"
                           : "Move out of this site — the device is kept, with no area"
                     }
-                    className="rounded p-1 text-gray-500 transition-colors hover:bg-gray-700 hover:text-red-400 disabled:cursor-not-allowed disabled:opacity-30"
+                    className="rounded p-1 text-ink-faint transition-colors hover:bg-surface-control hover:text-danger disabled:cursor-not-allowed disabled:opacity-30"
                   >
                     <X className="h-4 w-4" />
                   </button>
@@ -107,7 +107,7 @@ export default function MembersTab({
       </div>
 
       <label className="block">
-        <span className="mb-1 flex items-center gap-1.5 text-xs uppercase tracking-wide text-gray-500">
+        <span className="mb-1 flex items-center gap-1.5 text-xs uppercase tracking-wide text-ink-faint">
           <Plus className="h-3.5 w-3.5" />
           Move a device here
         </span>
@@ -117,7 +117,7 @@ export default function MembersTab({
           onChange={(e) => {
             if (e.target.value) onAdd(e.target.value as DeviceId);
           }}
-          className="w-full rounded-md border border-gray-600 bg-gray-900 px-3 py-2 text-sm text-gray-100 disabled:opacity-50"
+          className="w-full rounded-md border border-line-strong bg-surface-sunken px-3 py-2 text-sm text-ink-strong disabled:opacity-50"
         >
           <option value="">
             {addable.length === 0
@@ -131,7 +131,7 @@ export default function MembersTab({
             </option>
           ))}
         </select>
-        <span className="mt-1 block text-xs text-gray-500">
+        <span className="mt-1 block text-xs text-ink-faint">
           A device belongs to one site. Choosing one here moves it out of the
           site it is in now, along with that site&rsquo;s bindings onto its
           points.

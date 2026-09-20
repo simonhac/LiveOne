@@ -147,12 +147,12 @@ export default function BindingsTab({
   };
 
   if (isPending && members.length > 0) {
-    return <p className="text-sm text-gray-500">Loading points…</p>;
+    return <p className="text-sm text-ink-faint">Loading points…</p>;
   }
 
   return (
     <div className="space-y-4">
-      <p className="text-xs text-gray-500">
+      <p className="text-xs text-ink-faint">
         Bindings select which points a role reads. Leave empty to default to the
         union of every member device&apos;s own points.
       </p>
@@ -164,12 +164,12 @@ export default function BindingsTab({
             return (
               <li
                 key={i}
-                className="flex items-center gap-2 rounded-md border border-gray-700 bg-gray-900 px-2 py-2"
+                className="flex items-center gap-2 rounded-md border border-line bg-surface-sunken px-2 py-2"
               >
                 <select
                   value={r.role}
                   onChange={(e) => setRow(i, { role: e.target.value })}
-                  className="rounded-md border border-gray-600 bg-gray-800 px-2 py-1.5 text-sm text-gray-100"
+                  className="rounded-md border border-line-strong bg-surface-overlay px-2 py-1.5 text-sm text-ink-strong"
                 >
                   {ROLE_IDS.map((id) => (
                     <option key={id} value={id}>
@@ -177,11 +177,11 @@ export default function BindingsTab({
                     </option>
                   ))}
                 </select>
-                <span className="text-gray-600">→</span>
+                <span className="text-ink-disabled">→</span>
                 <select
                   value={selectedPointId}
                   onChange={(e) => onPickPoint(i, e.target.value)}
-                  className="min-w-0 flex-1 rounded-md border border-gray-600 bg-gray-800 px-2 py-1.5 text-sm text-gray-100"
+                  className="min-w-0 flex-1 rounded-md border border-line-strong bg-surface-overlay px-2 py-1.5 text-sm text-ink-strong"
                 >
                   <option value="">Select a point…</option>
                   {members.map((m) => {
@@ -210,7 +210,7 @@ export default function BindingsTab({
                     type="button"
                     onClick={() => move(i, -1)}
                     disabled={i === 0}
-                    className="text-gray-500 hover:text-gray-200 disabled:opacity-20"
+                    className="text-ink-faint hover:text-ink-control disabled:opacity-20"
                   >
                     <ArrowUp className="h-3.5 w-3.5" />
                   </button>
@@ -218,7 +218,7 @@ export default function BindingsTab({
                     type="button"
                     onClick={() => move(i, 1)}
                     disabled={i === rows.length - 1}
-                    className="text-gray-500 hover:text-gray-200 disabled:opacity-20"
+                    className="text-ink-faint hover:text-ink-control disabled:opacity-20"
                   >
                     <ArrowDown className="h-3.5 w-3.5" />
                   </button>
@@ -226,7 +226,7 @@ export default function BindingsTab({
                 <button
                   type="button"
                   onClick={() => removeRow(i)}
-                  className="rounded p-1 text-gray-500 hover:bg-gray-700 hover:text-red-400"
+                  className="rounded p-1 text-ink-faint hover:bg-surface-control hover:text-danger"
                 >
                   <X className="h-4 w-4" />
                 </button>
@@ -239,20 +239,20 @@ export default function BindingsTab({
       <button
         type="button"
         onClick={addRow}
-        className="flex items-center gap-1.5 text-sm text-blue-400 hover:text-blue-300"
+        className="flex items-center gap-1.5 text-sm text-accent-ink hover:text-accent-ink-hover"
       >
         <Plus className="h-4 w-4" />
         Add binding
       </button>
 
-      {error && <p className="text-sm text-red-400">{error}</p>}
+      {error && <p className="text-sm text-danger">{error}</p>}
 
-      <div className="flex justify-end border-t border-gray-700 pt-3">
+      <div className="flex justify-end border-t border-line pt-3">
         <button
           type="button"
           onClick={save}
           disabled={saving}
-          className="rounded-md bg-blue-600 px-5 py-2 text-sm text-white transition-colors hover:bg-blue-700 disabled:opacity-50"
+          className="rounded-md bg-accent px-5 py-2 text-sm text-ink transition-colors hover:bg-accent-hover disabled:opacity-50"
         >
           {saving ? "Saving…" : "Save bindings"}
         </button>

@@ -436,7 +436,7 @@ export default function HeatmapChart({
             className="flex items-center justify-center"
             style={{ height: HEATMAP_CHART_H }}
           >
-            <div className="h-16 w-16 animate-spin rounded-full border-4 border-blue-500 border-t-transparent" />
+            <div className="h-16 w-16 animate-spin rounded-full border-4 border-focus border-t-transparent" />
           </div>
         </div>
       </div>
@@ -446,7 +446,7 @@ export default function HeatmapChart({
   if (error) {
     return (
       <div className={`flex items-center justify-center ${className}`}>
-        <div className="text-red-400">Error: {error}</div>
+        <div className="text-danger">Error: {error}</div>
         <ServerErrorModal
           isOpen={isErrorModalOpen}
           onClose={() => setIsErrorModalOpen(false)}
@@ -460,7 +460,7 @@ export default function HeatmapChart({
   if (!heatmapData) {
     return (
       <div className={`flex items-center justify-center ${className}`}>
-        <div className="text-gray-400">No data available</div>
+        <div className="text-ink-muted">No data available</div>
       </div>
     );
   }
@@ -487,7 +487,7 @@ export default function HeatmapChart({
   return (
     <div className={className}>
       {/* No frame: the section (or the standalone page's <Panel>) owns the only box. This drew its
-          own `rounded-lg border-gray-700 bg-gray-900` card, which put an opaque gray-900 panel
+          own `rounded-lg border-line bg-surface-sunken` card, which put an opaque gray-900 panel
           inside the section's translucent one. See docs/architecture/chart-style.md. */}
       <div className={`relative ${CHART_BODY_PAD}`}>
         <div ref={containerRef}>
@@ -593,7 +593,7 @@ export default function HeatmapChart({
               node by hand, and hide it again on refetch and unmount. */}
           {hovered && hover && (
             <div
-              className="pointer-events-none absolute z-20 rounded-md border border-gray-600 bg-gray-900 p-3 text-xs shadow-lg"
+              className="pointer-events-none absolute z-20 rounded-md border border-line-strong bg-surface-sunken p-3 text-xs shadow-lg"
               style={{
                 left: Math.min(
                   MARGIN.left + hover.col * cellW + cellW + 10,
@@ -602,16 +602,16 @@ export default function HeatmapChart({
                 top: MARGIN.top + rowY(hover.row) + cellH + 10,
               }}
             >
-              <div className="mb-1 font-bold text-white">
+              <div className="mb-1 font-bold text-ink">
                 {formatTime(new Date(`${hovered.y}T${hovered.x}:00`), false)},{" "}
                 {formatDate(new Date(`${hovered.y}T${hovered.x}:00`))}
               </div>
               <div className="flex items-center gap-2">
                 <span
-                  className="inline-block h-3 w-3 flex-shrink-0 rounded-sm border border-white/20"
+                  className="inline-block h-3 w-3 flex-shrink-0 rounded-sm border border-line-hairline"
                   style={{ backgroundColor: cellColour(hovered.v) }}
                 />
-                <span className="text-white">
+                <span className="text-ink">
                   {(() => {
                     const { value, unit } = formatValue(hovered.v);
                     if (!unit) return value;
@@ -627,7 +627,7 @@ export default function HeatmapChart({
 
         {/* Colour legend. Truthful since Stage 3e: the ramp spans the real min..max. */}
         <div className="mt-4 flex items-center justify-center gap-2">
-          <span className="text-xs text-gray-400">
+          <span className="text-xs text-ink-muted">
             {(domain!.min / axisScale).toFixed(axisDecimals)}
             {axisUnit}
           </span>
@@ -635,25 +635,25 @@ export default function HeatmapChart({
             className="h-4 rounded"
             style={{ width: 200, background: legendGradient }}
           />
-          <span className="text-xs text-gray-400">
+          <span className="text-xs text-ink-muted">
             {(domain!.max / axisScale).toFixed(axisDecimals)}
             {axisUnit}
           </span>
         </div>
 
         {heatmapData.offFrameDays.size > 0 && (
-          <p className="mt-2 text-center text-[11px] text-gray-500">
+          <p className="mt-2 text-center text-[11px] text-ink-faint">
             Times are {formatUtcOffset(heatmapData.frameOffsetMin)} for every
             day, so a routine lines up across the whole chart.{" "}
-            <span className="text-gray-400">*</span> marks days the site was on
+            <span className="text-ink-muted">*</span> marks days the site was on
             a different offset (daylight saving) — the local clock read an hour
             later than the column says.
           </p>
         )}
 
         {loading && (
-          <div className="absolute inset-0 flex items-center justify-center rounded bg-gray-900/80">
-            <div className="h-16 w-16 animate-spin rounded-full border-4 border-blue-500 border-t-transparent" />
+          <div className="absolute inset-0 flex items-center justify-center rounded bg-veil">
+            <div className="h-16 w-16 animate-spin rounded-full border-4 border-focus border-t-transparent" />
           </div>
         )}
       </div>

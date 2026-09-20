@@ -119,8 +119,9 @@ export default function AmberSmallCard({ latest }: AmberSmallCardProps) {
       surfaceClassName="min-h-[110px] @[180px]:min-h-[180px]"
     >
       {/* DEBUG: Container size indicator - only shown when ?debug is in URL */}
+      {/* `bg-red-500` stays literal: a ?debug-only badge, not a `danger` state. */}
       {showDebug && (
-        <div className="absolute top-0 right-0 bg-red-500 text-white text-[10px] px-1 rounded-bl z-50">
+        <div className="absolute top-0 right-0 bg-red-500 text-ink text-[10px] px-1 rounded-bl z-50">
           {containerSize.width}w {containerSize.height}h
         </div>
       )}
@@ -166,9 +167,7 @@ export default function AmberSmallCard({ latest }: AmberSmallCardProps) {
           <span className={`${TILE_CHIP} !size-5`}>
             <SunIcon className="w-3 h-3" />
           </span>
-          <span className="text-white text-[11px] font-bold">
-            {feedInValue}
-          </span>
+          <span className="text-ink text-[11px] font-bold">{feedInValue}</span>
         </div>
       )}
 

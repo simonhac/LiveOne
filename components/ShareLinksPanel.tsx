@@ -205,19 +205,19 @@ export default function ShareLinksPanel({
 
   return (
     <div className="space-y-5">
-      <p className="text-sm leading-relaxed text-gray-400">
+      <p className="text-sm leading-relaxed text-ink-muted">
         Anyone with a link can view this dashboard read-only — no sign-in
         required. Give each link a name so you can tell them apart, and revoke
         any of them at any time.
       </p>
 
       {/* Create composer — subtly elevated panel */}
-      <div className="rounded-lg bg-gray-900/70 p-4 ring-1 ring-gray-700/80">
+      <div className="rounded-lg bg-surface-panel-strong p-4 ring-1 ring-line">
         <label
           htmlFor="share-link-name"
-          className="mb-1.5 block text-xs font-medium uppercase tracking-wide text-gray-400"
+          className="mb-1.5 block text-xs font-medium uppercase tracking-wide text-ink-muted"
         >
-          Link name <span className="text-red-400">*</span>
+          Link name <span className="text-danger">*</span>
         </label>
         <input
           id="share-link-name"
@@ -233,8 +233,8 @@ export default function ShareLinksPanel({
           placeholder="e.g. Investor demo, Mum's iPad"
           aria-invalid={nameError ? true : undefined}
           aria-describedby={nameError ? "share-link-name-error" : undefined}
-          className={`w-full rounded-md border bg-gray-800 px-3 py-2 text-sm text-white placeholder-gray-500 outline-none transition-colors focus:border-blue-500 focus:ring-1 focus:ring-blue-500 ${
-            nameError ? "border-red-500/70" : "border-gray-600"
+          className={`w-full rounded-md border bg-surface-overlay px-3 py-2 text-sm text-ink placeholder-ink-faint outline-none transition-colors focus:border-focus focus:ring-1 focus:ring-focus ${
+            nameError ? "border-danger-line" : "border-line-strong"
           }`}
         />
 
@@ -242,25 +242,25 @@ export default function ShareLinksPanel({
           {nameError ? (
             <p
               id="share-link-name-error"
-              className="flex items-center gap-1.5 text-xs text-red-400"
+              className="flex items-center gap-1.5 text-xs text-danger"
             >
               <AlertCircle className="h-3.5 w-3.5 shrink-0" />
               {nameError}
             </p>
           ) : (
-            <span aria-hidden className="select-none text-xs text-gray-600">
+            <span aria-hidden className="select-none text-xs text-ink-disabled">
               &nbsp;
             </span>
           )}
-          <span className="shrink-0 text-xs tabular-nums text-gray-500">
+          <span className="shrink-0 text-xs tabular-nums text-ink-faint">
             {trimmedName.length}/{MAX_LABEL_LEN}
           </span>
         </div>
 
         <div className="mt-3 flex items-center gap-3">
-          <label className="flex items-center gap-2 text-sm text-gray-300">
-            <Clock className="h-4 w-4 text-gray-500" />
-            <span className="text-gray-400">Expires</span>
+          <label className="flex items-center gap-2 text-sm text-ink-secondary">
+            <Clock className="h-4 w-4 text-ink-faint" />
+            <span className="text-ink-muted">Expires</span>
             <select
               value={expiresInDays ?? ""}
               onChange={(e) =>
@@ -268,7 +268,7 @@ export default function ShareLinksPanel({
                   e.target.value === "" ? null : Number(e.target.value),
                 )
               }
-              className="rounded-md border border-gray-600 bg-gray-800 px-2 py-1 text-sm text-white outline-none transition-colors focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+              className="rounded-md border border-line-strong bg-surface-overlay px-2 py-1 text-sm text-ink outline-none transition-colors focus:border-focus focus:ring-1 focus:ring-focus"
             >
               {EXPIRY_OPTIONS.map((o) => (
                 <option key={o.label} value={o.days ?? ""}>
@@ -284,7 +284,7 @@ export default function ShareLinksPanel({
             title={
               trimmedName.length === 0 ? "Enter a name first" : "Create link"
             }
-            className="ml-auto inline-flex items-center gap-1.5 rounded-md bg-blue-600 px-3.5 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-40"
+            className="ml-auto inline-flex items-center gap-1.5 rounded-md bg-accent px-3.5 py-2 text-sm font-medium text-ink shadow-sm transition-colors hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-40"
           >
             {minting ? (
               "Creating…"
@@ -299,7 +299,7 @@ export default function ShareLinksPanel({
       </div>
 
       {error && (
-        <p className="flex items-center gap-1.5 text-sm text-red-400">
+        <p className="flex items-center gap-1.5 text-sm text-danger">
           <AlertCircle className="h-4 w-4 shrink-0" />
           {error}
         </p>
@@ -307,35 +307,35 @@ export default function ShareLinksPanel({
 
       {/* Active links */}
       <div>
-        <h3 className="mb-2 flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-gray-500">
+        <h3 className="mb-2 flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-ink-faint">
           Active links
           {active.length > 0 && (
-            <span className="rounded-full bg-gray-700 px-1.5 py-0.5 text-[11px] font-semibold leading-none text-gray-300">
+            <span className="rounded-full bg-surface-control px-1.5 py-0.5 text-[11px] font-semibold leading-none text-ink-secondary">
               {active.length}
             </span>
           )}
         </h3>
 
         {loading && active.length === 0 ? (
-          <p className="py-6 text-center text-sm text-gray-500">Loading…</p>
+          <p className="py-6 text-center text-sm text-ink-faint">Loading…</p>
         ) : active.length === 0 ? (
-          <div className="flex flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-gray-700 bg-gray-900/40 px-4 py-8 text-center">
-            <span className="flex h-10 w-10 items-center justify-center rounded-full bg-gray-800 text-gray-500 ring-1 ring-gray-700">
+          <div className="flex flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-line bg-surface-panel px-4 py-8 text-center">
+            <span className="flex h-10 w-10 items-center justify-center rounded-full bg-surface-overlay text-ink-faint ring-1 ring-line">
               <Globe className="h-5 w-5" />
             </span>
-            <p className="text-sm font-medium text-gray-300">
+            <p className="text-sm font-medium text-ink-secondary">
               No active links yet
             </p>
-            <p className="max-w-xs text-xs leading-relaxed text-gray-500">
+            <p className="max-w-xs text-xs leading-relaxed text-ink-faint">
               Name a link above and create it to share a read-only view of this
               dashboard.
             </p>
           </div>
         ) : (
-          <div className="overflow-hidden rounded-lg border border-gray-700">
+          <div className="overflow-hidden rounded-lg border border-line">
             <table className="w-full text-sm">
               <thead>
-                <tr className="border-b border-gray-700 bg-gray-900/60 text-left text-[11px] uppercase tracking-wide text-gray-500">
+                <tr className="border-b border-line bg-surface-panel-strong text-left text-[11px] uppercase tracking-wide text-ink-faint">
                   <th className="py-2 pl-3 pr-2 font-medium">Name</th>
                   <th className="hidden px-2 py-2 font-medium sm:table-cell">
                     Expires
@@ -348,7 +348,7 @@ export default function ShareLinksPanel({
                   </th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-800">
+              <tbody className="divide-y divide-line">
                 {active.map((t) => {
                   const isCopied = copied === t.token;
                   const isEditing = editingToken === t.token;
@@ -359,7 +359,7 @@ export default function ShareLinksPanel({
                   const expired =
                     t.expiresAtMs != null && t.expiresAtMs <= Date.now();
                   return (
-                    <tr key={t.token} className="bg-gray-900/30">
+                    <tr key={t.token} className="bg-surface-panel">
                       {isEditing ? (
                         <td colSpan={4} className="px-3 py-2">
                           <div className="flex items-center gap-2">
@@ -372,18 +372,18 @@ export default function ShareLinksPanel({
                               onKeyDown={(e) => onEditKeyDown(e, t.token)}
                               placeholder="Link name"
                               aria-label="Rename link"
-                              className="min-w-0 flex-1 rounded-md border border-gray-600 bg-gray-800 px-2.5 py-1.5 text-sm text-white placeholder-gray-500 outline-none transition-colors focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                              className="min-w-0 flex-1 rounded-md border border-line-strong bg-surface-overlay px-2.5 py-1.5 text-sm text-ink placeholder-ink-faint outline-none transition-colors focus:border-focus focus:ring-1 focus:ring-focus"
                             />
                             <button
                               onClick={() => editName(t.token)}
                               disabled={!canSaveEdit}
-                              className="shrink-0 rounded-md bg-blue-600 px-2.5 py-1.5 text-xs font-medium text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-40"
+                              className="shrink-0 rounded-md bg-accent px-2.5 py-1.5 text-xs font-medium text-ink transition-colors hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-40"
                             >
                               {savingEdit ? "Saving…" : "Save"}
                             </button>
                             <button
                               onClick={() => setEditingToken(null)}
-                              className="shrink-0 rounded-md px-2.5 py-1.5 text-xs font-medium text-gray-400 transition-colors hover:bg-gray-700 hover:text-white"
+                              className="shrink-0 rounded-md px-2.5 py-1.5 text-xs font-medium text-ink-muted transition-colors hover:bg-surface-control hover:text-ink"
                             >
                               Cancel
                             </button>
@@ -394,7 +394,7 @@ export default function ShareLinksPanel({
                           <td className="max-w-0 py-2 pl-3 pr-2">
                             <span
                               className={`block truncate font-medium ${
-                                hasName ? "text-white" : "italic text-gray-500"
+                                hasName ? "text-ink" : "italic text-ink-faint"
                               }`}
                               title={`${displayName} — ${shareUrl(t.token)}`}
                             >
@@ -403,7 +403,7 @@ export default function ShareLinksPanel({
                           </td>
                           <td
                             className={`hidden whitespace-nowrap px-2 py-2 text-xs sm:table-cell ${
-                              expired ? "text-red-400" : "text-gray-400"
+                              expired ? "text-danger" : "text-ink-muted"
                             }`}
                           >
                             {t.expiresAtMs == null
@@ -412,7 +412,7 @@ export default function ShareLinksPanel({
                                 ? "Expired"
                                 : formatDate(new Date(t.expiresAtMs))}
                           </td>
-                          <td className="hidden whitespace-nowrap px-2 py-2 text-xs text-gray-500 sm:table-cell">
+                          <td className="hidden whitespace-nowrap px-2 py-2 text-xs text-ink-faint sm:table-cell">
                             {t.lastUsedAtMs
                               ? formatRelativeTime(new Date(t.lastUsedAtMs))
                               : "Never"}
@@ -423,8 +423,8 @@ export default function ShareLinksPanel({
                                 onClick={() => copyToken(t.token)}
                                 className={`rounded-md p-1.5 transition-colors ${
                                   isCopied
-                                    ? "text-green-400"
-                                    : "text-gray-400 hover:bg-gray-700 hover:text-white"
+                                    ? "text-ok"
+                                    : "text-ink-muted hover:bg-surface-control hover:text-ink"
                                 }`}
                                 aria-label={`Copy link for ${displayName}`}
                                 title="Copy link"
@@ -437,7 +437,7 @@ export default function ShareLinksPanel({
                               </button>
                               <button
                                 onClick={() => startEdit(t)}
-                                className="rounded-md p-1.5 text-gray-400 transition-colors hover:bg-gray-700 hover:text-white"
+                                className="rounded-md p-1.5 text-ink-muted transition-colors hover:bg-surface-control hover:text-ink"
                                 aria-label={`Rename ${displayName}`}
                                 title="Rename link"
                               >
@@ -445,7 +445,7 @@ export default function ShareLinksPanel({
                               </button>
                               <button
                                 onClick={() => revoke(t.token)}
-                                className="rounded-md p-1.5 text-gray-400 transition-colors hover:bg-red-500/10 hover:text-red-400"
+                                className="rounded-md p-1.5 text-ink-muted transition-colors hover:bg-danger-wash hover:text-danger"
                                 aria-label={`Revoke ${displayName}`}
                                 title="Revoke link"
                               >

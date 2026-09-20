@@ -199,7 +199,7 @@ function EnergyTableSkeleton({
     <div className={className} data-skeleton="" aria-hidden>
       <div className="space-y-4" style={{ paddingTop: "44px" }}>
         {/* Column headers */}
-        <div className={`${LEGEND_ROW} border-b border-gray-700 pb-1`}>
+        <div className={`${LEGEND_ROW} border-b border-line pb-1`}>
           <div className="flex h-4 flex-1 items-center">
             <ShimmerBar className="h-3 w-12" />
           </div>
@@ -219,7 +219,7 @@ function EnergyTableSkeleton({
         </div>
 
         {/* Total */}
-        <div className="border-t border-gray-700 pt-1">
+        <div className="border-t border-line pt-1">
           <SkeletonRow labelWidth="w-10" swatch={false} />
         </div>
 
@@ -298,7 +298,7 @@ export default function EnergyTable({
       return <EnergyTableSkeleton mode={mode} className={className} />;
     return (
       <div className={`${className}`}>
-        <div className="text-gray-500 text-center">No data</div>
+        <div className="text-ink-faint text-center">No data</div>
       </div>
     );
   }
@@ -575,7 +575,7 @@ export default function EnergyTable({
       {/* Match exact chart title height (text-sm = ~20px) + margin (mb-3 = 12px) + chart padding (~12px) */}
       <div className="space-y-4" style={{ paddingTop: "44px" }}>
         {/* Column Headers - aligned to top */}
-        <div className={`${LEGEND_ROW} border-b border-gray-700 pb-1`}>
+        <div className={`${LEGEND_ROW} border-b border-line pb-1`}>
           <div className={`flex-1 ${LEGEND_HEADER}`}>
             {mode === "load" ? "Load" : "Source"}
           </div>
@@ -646,7 +646,7 @@ export default function EnergyTable({
         </div>
 
         {/* Total */}
-        <div className="border-t border-gray-700 pt-1">
+        <div className="border-t border-line pt-1">
           <div className={LEGEND_ROW}>
             <span className={`${LEGEND_LABEL} font-medium flex-1`}>Total</span>
             <span className={`${LEGEND_VALUE} font-medium w-20`}>

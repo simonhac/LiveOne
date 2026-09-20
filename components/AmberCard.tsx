@@ -143,7 +143,7 @@ export default function AmberCard({
         className={`w-full p-4 md:p-6 ${ttInterphases.className}`}
         style={{ backgroundColor: "rgb(40, 49, 66)" }}
       >
-        <h2 className="text-lg font-bold text-white mb-4">
+        <h2 className="text-lg font-bold text-ink mb-4">
           30 MIN FORECAST — GENERAL USAGE
         </h2>
         {/* A body-sized block, not a line of text: the forecast strip that replaces it is ~300px
@@ -151,7 +151,7 @@ export default function AmberCard({
         <div
           data-skeleton=""
           style={{ height: AMBER_STRIP_H }}
-          className="animate-pulse rounded bg-gray-700/30"
+          className="animate-pulse rounded bg-skeleton-quiet"
           aria-hidden
         />
       </div>
@@ -164,10 +164,10 @@ export default function AmberCard({
         className={`w-full p-4 md:p-6 ${ttInterphases.className}`}
         style={{ backgroundColor: "rgb(40, 49, 66)" }}
       >
-        <h2 className="text-lg font-bold text-white mb-4">
+        <h2 className="text-lg font-bold text-ink mb-4">
           30 MIN FORECAST — GENERAL USAGE
         </h2>
-        <div className="text-red-400">Error: {errorMessage}</div>
+        <div className="text-danger">Error: {errorMessage}</div>
       </div>
     );
   }
@@ -177,7 +177,7 @@ export default function AmberCard({
       className={`w-full p-4 md:p-6 ${ttInterphases.className}`}
       style={{ backgroundColor: "rgb(40, 49, 66)" }}
     >
-      <h2 className="text-lg font-bold text-white mb-4">
+      <h2 className="text-lg font-bold text-ink mb-4">
         30 MIN FORECAST — GENERAL USAGE
       </h2>
 

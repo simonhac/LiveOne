@@ -169,7 +169,7 @@ export default function GrantsPanel({
 
   return (
     <div className="space-y-4">
-      <p className="text-sm text-gray-400">
+      <p className="text-sm text-ink-muted">
         Invite people to view this dashboard. They sign in and see it read-only,
         scoped to exactly what it shows.
       </p>
@@ -181,41 +181,41 @@ export default function GrantsPanel({
             if (e.key === "Enter") void add();
           }}
           placeholder="email or username"
-          className="w-full rounded-md border border-gray-600 bg-gray-900 px-3 py-2 text-sm text-gray-100 placeholder:text-gray-600"
+          className="w-full rounded-md border border-line-strong bg-surface-sunken px-3 py-2 text-sm text-ink-strong placeholder:text-ink-disabled"
         />
         <button
           onClick={add}
           disabled={busy || !invitee.trim()}
-          className="inline-flex items-center gap-1.5 rounded-md bg-blue-600 px-4 py-2 text-sm text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+          className="inline-flex items-center gap-1.5 rounded-md bg-accent px-4 py-2 text-sm text-ink transition-colors hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-50"
         >
           <UserPlus className="h-4 w-4" />
           Add
         </button>
       </div>
-      {error && <p className="text-sm text-red-400">{error}</p>}
+      {error && <p className="text-sm text-danger">{error}</p>}
 
       {loading ? (
-        <p className="text-sm text-gray-500">Loading…</p>
+        <p className="text-sm text-ink-faint">Loading…</p>
       ) : members.length === 0 ? (
-        <p className="text-sm text-gray-500">No members yet.</p>
+        <p className="text-sm text-ink-faint">No members yet.</p>
       ) : (
-        <ul className="divide-y divide-gray-700/60 rounded-md border border-gray-700/60">
+        <ul className="divide-y divide-line-soft rounded-md border border-line-soft">
           {members.map((m) => (
             <li
               key={m.clerkUserId}
               className="flex items-center justify-between gap-3 px-3 py-2"
             >
               <div className="min-w-0">
-                <div className="truncate text-sm text-gray-100">
+                <div className="truncate text-sm text-ink-strong">
                   {m.email ?? m.name ?? m.clerkUserId}
                 </div>
-                <div className="text-xs text-gray-500">{m.role}</div>
+                <div className="text-xs text-ink-faint">{m.role}</div>
               </div>
               <button
                 onClick={() => remove(m.clerkUserId)}
                 disabled={busy}
                 title="Remove member"
-                className="rounded p-1.5 text-gray-400 transition-colors hover:bg-red-950/40 hover:text-red-400 disabled:opacity-50"
+                className="rounded p-1.5 text-ink-muted transition-colors hover:bg-danger-panel hover:text-danger disabled:opacity-50"
               >
                 <Trash2 className="h-4 w-4" />
               </button>

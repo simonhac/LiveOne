@@ -85,7 +85,7 @@ function Sparkline({
         {ticks.map((t) => (
           <span
             key={t.at}
-            className="absolute inset-y-0 border-l border-white/25"
+            className="absolute inset-y-0 border-l border-line-hairline"
             style={{ left: `${t.at * 100}%` }}
           />
         ))}
@@ -129,7 +129,7 @@ function Sparkline({
           {ticks.map((t) => (
             <span
               key={t.at}
-              className={`absolute top-0 h-full whitespace-nowrap border-l border-white/25 pl-[3px] pt-px ${TILE_TICK}`}
+              className={`absolute top-0 h-full whitespace-nowrap border-l border-line-hairline pl-[3px] pt-px ${TILE_TICK}`}
               style={{ left: `${t.at * 100}%` }}
             >
               {t.label}

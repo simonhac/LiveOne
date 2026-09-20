@@ -26,7 +26,7 @@ import { TILE_SKELETON_RADIUS } from "@/lib/tile-style";
  * (See the recipe in docs/performance/dashboard-layout-stability.md.) Every placeholder in the
  * dashboard tree — host-drawn, or drawn by a leaf component's own loading branch — should carry it.
  */
-export const SKELETON_CLASS = "animate-pulse rounded-lg bg-[#1C1C1E]/60";
+export const SKELETON_CLASS = "animate-pulse rounded-lg bg-surface/60";
 
 /**
  * The shimmer treatment — a sweeping highlight, on trial against `SKELETON_CLASS`'s breathing
@@ -64,7 +64,7 @@ export function TileSkeleton({ className }: { className?: string }) {
   return (
     <div
       data-skeleton=""
-      className={`min-h-[104px] ${className ?? ""} animate-pulse bg-[#1C1C1E]/60 ${TILE_SKELETON_RADIUS}`}
+      className={`min-h-[104px] ${className ?? ""} animate-pulse bg-surface/60 ${TILE_SKELETON_RADIUS}`}
     />
   );
 }
@@ -110,9 +110,9 @@ export function StatGridSkeleton({
       {Array.from({ length: cells }).map((_, i) => (
         <div key={i} className="animate-pulse">
           {/* `Stat`'s hero line: text-xl leading-none md:text-2xl */}
-          <div className="h-5 rounded bg-gray-700/40 md:h-6" />
+          <div className="h-5 rounded bg-skeleton md:h-6" />
           {/* `Stat`'s caption: mt-1 text-[10px] md:text-xs */}
-          <div className="mt-1 h-3 w-2/3 rounded bg-gray-700/30 md:h-4" />
+          <div className="mt-1 h-3 w-2/3 rounded bg-skeleton-quiet md:h-4" />
         </div>
       ))}
     </div>

@@ -24,6 +24,9 @@ function AreaBatteryContents({ handle }: CardRenderProps) {
 export const batteryContentsPlugin: CardPlugin = {
   kind: "card",
   type: "battery-contents",
+  // `BatteryContentsCard` paints a `StatCardShell` → `TileSurface`, so it states its own extent and
+  // the section must not inset it — or it sits narrower than the Home Energy card beside it.
+  selfSurfaced: true,
   footprint: () => CARD_FOOTPRINTS["battery-contents"],
   Render: AreaBatteryContents,
 };

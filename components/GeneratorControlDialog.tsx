@@ -438,7 +438,7 @@ export default function GeneratorControlDialog({
           {/* The hub's own last error, if any. Above everything, because it changes how to read
               everything below it. */}
           {lastError && (
-            <div className="rounded-md border border-red-800/70 bg-red-950/30 px-3 py-2 text-xs text-red-300">
+            <div className="rounded-md border border-danger-panel-line bg-danger-panel px-3 py-2 text-xs text-danger-ink">
               {/* A text POINT value, so there is no template to carry — the instant localizer is
                   the only lever, and it is enough: it rewrites the ISO and nothing else. */}
               {renderMessageLike(lastError)}
@@ -446,9 +446,9 @@ export default function GeneratorControlDialog({
           )}
 
           {/* ── Engine check ────────────────────────────────────────────── */}
-          <section className="rounded-md border border-gray-700 bg-gray-900/40 p-3">
+          <section className="rounded-md border border-line bg-surface-panel p-3">
             <div className="mb-2 flex items-center justify-between">
-              <span className="text-sm font-medium text-gray-300">
+              <span className="text-sm font-medium text-ink-secondary">
                 Engine check
               </span>
               {/* Outline, matching the activity log's "Show more" — the dialog's two small utility
@@ -475,13 +475,13 @@ export default function GeneratorControlDialog({
               // The point exists but KV has not carried its `pt_` yet (a device that has not pushed
               // since the deploy). Self-heals on the next 15 s tick; say so rather than showing a
               // dead button.
-              <p className="text-xs text-gray-400">
+              <p className="text-xs text-ink-muted">
                 Waiting for the generator to report in.
               </p>
             ) : preflight.isLoading ? (
               <EngineCheckSkeleton />
             ) : preflight.isError ? (
-              <p className="text-xs text-red-400">
+              <p className="text-xs text-danger">
                 {preflight.error instanceof Error
                   ? preflight.error.message
                   : "Could not check the engine."}
@@ -492,16 +492,16 @@ export default function GeneratorControlDialog({
                   {(preflight.data?.checks ?? []).map((c) => (
                     <li key={c.label} className="flex items-center gap-2">
                       {c.ok === true ? (
-                        <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-green-500" />
+                        <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-ok" />
                       ) : c.ok === false ? (
-                        <XCircle className="h-3.5 w-3.5 shrink-0 text-red-400" />
+                        <XCircle className="h-3.5 w-3.5 shrink-0 text-danger" />
                       ) : (
-                        <Minus className="h-3.5 w-3.5 shrink-0 text-gray-500" />
+                        <Minus className="h-3.5 w-3.5 shrink-0 text-ink-faint" />
                       )}
-                      <span className="w-32 shrink-0 text-gray-400">
+                      <span className="w-32 shrink-0 text-ink-muted">
                         {c.label}
                       </span>
-                      <span className="text-gray-200">{c.value}</span>
+                      <span className="text-ink-control">{c.value}</span>
                     </li>
                   ))}
                 </ul>
@@ -524,10 +524,10 @@ export default function GeneratorControlDialog({
                   <p
                     className={`mt-2 flex min-h-[2rem] items-start gap-1.5 text-xs ${
                       canStart
-                        ? "text-green-500/90"
+                        ? "text-ok"
                         : runInProgress
-                          ? "text-gray-400"
-                          : "text-amber-400/90"
+                          ? "text-ink-muted"
+                          : "text-warn"
                     }`}
                   >
                     {canStart ? (
@@ -593,14 +593,14 @@ export default function GeneratorControlDialog({
               value={minutes}
               disabled={busy}
               onChange={(e) => setMinutes(parseInt(e.target.value, 10))}
-              className="w-full accent-amber-500"
+              className="w-full accent-warn"
             />
           </div>
 
           {/* ── The command ─────────────────────────────────────────────── */}
           {runInProgress ? (
             <div className="space-y-2">
-              <p className="text-sm text-amber-400/90">
+              <p className="text-sm text-warn">
                 Running
                 {stopsAtWords ? ` · stops at ${stopsAtWords}` : ""}
                 {minsLeft != null ? ` (${runWords(minsLeft)} left)` : ""}
@@ -711,17 +711,17 @@ function EngineCheckSkeleton() {
       <ul className="space-y-1 text-xs">
         {[0, 1, 2].map((i) => (
           <li key={i} className="flex h-4 items-center gap-2">
-            <span className="h-3.5 w-3.5 shrink-0 animate-pulse rounded-full bg-gray-700" />
+            <span className="h-3.5 w-3.5 shrink-0 animate-pulse rounded-full bg-surface-control" />
             <span className="w-32 shrink-0">
-              <span className="block h-3 w-20 animate-pulse rounded bg-gray-700/70" />
+              <span className="block h-3 w-20 animate-pulse rounded bg-skeleton-strong" />
             </span>
-            <span className="block h-3 w-24 animate-pulse rounded bg-gray-700/70" />
+            <span className="block h-3 w-24 animate-pulse rounded bg-skeleton-strong" />
           </li>
         ))}
       </ul>
       <p className="mt-2 flex min-h-[2rem] items-start gap-1.5 text-xs">
-        <span className="mt-0.5 h-3.5 w-3.5 shrink-0 animate-pulse rounded-full bg-gray-700" />
-        <span className="block h-3 w-48 animate-pulse rounded bg-gray-700/70" />
+        <span className="mt-0.5 h-3.5 w-3.5 shrink-0 animate-pulse rounded-full bg-surface-control" />
+        <span className="block h-3 w-48 animate-pulse rounded bg-skeleton-strong" />
       </p>
     </div>
   );

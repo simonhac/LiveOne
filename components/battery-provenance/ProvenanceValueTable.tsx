@@ -46,7 +46,7 @@ function LabelWithTooltip({
     <>
       <span
         ref={ref}
-        className={`text-gray-300 cursor-help ${onClick ? "cursor-pointer" : ""}`}
+        className={`text-ink-secondary cursor-help ${onClick ? "cursor-pointer" : ""}`}
         onMouseEnter={show}
         onMouseLeave={() => setPos(null)}
         onClick={onClick}
@@ -57,14 +57,14 @@ function LabelWithTooltip({
         typeof document !== "undefined" &&
         createPortal(
           <div
-            className="fixed z-[9999] max-w-xs whitespace-normal rounded-lg border border-gray-700 bg-black px-3 py-2 text-xs text-white shadow-xl pointer-events-none"
+            className="fixed z-[9999] max-w-xs whitespace-normal rounded-lg border border-line bg-canvas px-3 py-2 text-xs text-ink shadow-xl pointer-events-none"
             style={{ left: `${pos.x}px`, top: `${pos.y}px` }}
           >
             <div className="font-medium mb-1">
               {label}
-              {unit ? <span className="text-gray-400"> ({unit})</span> : null}
+              {unit ? <span className="text-ink-muted"> ({unit})</span> : null}
             </div>
-            <div className="text-gray-300">{description}</div>
+            <div className="text-ink-secondary">{description}</div>
           </div>,
           document.body,
         )}
@@ -113,18 +113,18 @@ export default function ProvenanceValueTable({
   return (
     <div className="text-xs">
       {/* Focused day */}
-      <div className="flex items-center border-b border-gray-700 pb-1 mb-2">
-        <div className="flex-1 text-gray-400">
+      <div className="flex items-center border-b border-line pb-1 mb-2">
+        <div className="flex-1 text-ink-muted">
           {hoveredIndex !== null ? "Day" : "Latest"}
         </div>
-        <div className="text-gray-100 font-mono">{day ?? "—"}</div>
+        <div className="text-ink-strong font-mono">{day ?? "—"}</div>
       </div>
 
       {PROVENANCE_CHARTS.map((chart) => {
         const visible = visibleByChart[chart.id] ?? new Set<string>();
         return (
           <div key={chart.id} className="mb-3">
-            <div className="text-gray-500 uppercase tracking-wide text-[10px] mb-1">
+            <div className="text-ink-faint uppercase tracking-wide text-[10px] mb-1">
               {chart.title}
             </div>
             <div className="space-y-0.5">
@@ -153,10 +153,10 @@ export default function ProvenanceValueTable({
                         }
                       />
                     </div>
-                    <span className="text-gray-100 font-mono w-16 text-right">
+                    <span className="text-ink-strong font-mono w-16 text-right">
                       {formatValue(s, seriesValues[s.id]?.[idx] ?? null)}
                     </span>
-                    <span className="text-gray-500 w-12 text-right">
+                    <span className="text-ink-faint w-12 text-right">
                       {s.unit}
                     </span>
                   </div>
@@ -168,8 +168,8 @@ export default function ProvenanceValueTable({
       })}
 
       {/* Bookkeeping — table-only rows */}
-      <div className="border-t border-gray-700 pt-2">
-        <div className="text-gray-500 uppercase tracking-wide text-[10px] mb-1">
+      <div className="border-t border-line pt-2">
+        <div className="text-ink-faint uppercase tracking-wide text-[10px] mb-1">
           Row
         </div>
         <div className="space-y-0.5">
@@ -179,7 +179,7 @@ export default function ProvenanceValueTable({
                 <div className="w-3 flex-shrink-0" />
                 <LabelWithTooltip label={r.label} description={r.description} />
               </div>
-              <span className="text-gray-100 font-mono text-right">
+              <span className="text-ink-strong font-mono text-right">
                 {r.value(view, idx) ?? "—"}
               </span>
             </div>

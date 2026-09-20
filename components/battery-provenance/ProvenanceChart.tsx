@@ -139,7 +139,7 @@ export default function ProvenanceChart({
 
   return (
     <div className={className}>
-      <div className="mb-1 text-xs text-gray-400">{def.title}</div>
+      <div className="mb-1 text-xs text-ink-muted">{def.title}</div>
       <div ref={ref} className="h-44">
         {geo && !geo.empty && (
           <svg

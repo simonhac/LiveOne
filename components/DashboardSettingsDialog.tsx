@@ -245,31 +245,31 @@ export default function DashboardSettingsDialog({
   return createPortal(
     <>
       <div
-        className="fixed inset-0 z-[10000] bg-black/50 backdrop-blur-sm"
+        className="fixed inset-0 z-[10000] bg-scrim backdrop-blur-sm"
         onClick={onClose}
       />
       <div className="pointer-events-none fixed inset-0 z-[10001] flex items-center justify-center px-4">
-        <div className="pointer-events-auto w-full max-w-[560px] rounded-lg border border-gray-700 bg-gray-800 shadow-xl">
-          <div className="flex items-center justify-between border-b border-gray-700 px-6 py-4">
-            <h2 className="text-lg font-semibold text-white">
+        <div className="pointer-events-auto w-full max-w-[560px] rounded-lg border border-line bg-surface-overlay shadow-xl">
+          <div className="flex items-center justify-between border-b border-line px-6 py-4">
+            <h2 className="text-lg font-semibold text-ink">
               Dashboard settings
             </h2>
             <button
               onClick={onClose}
-              className="rounded p-1 transition-colors hover:bg-gray-700"
+              className="rounded p-1 transition-colors hover:bg-surface-control"
             >
-              <X className="h-5 w-5 text-gray-400" />
+              <X className="h-5 w-5 text-ink-muted" />
             </button>
           </div>
           {/* Tabs */}
-          <div className="border-b border-gray-700 px-6">
+          <div className="border-b border-line px-6">
             <div className="-mb-px flex items-end">
               <button
                 onClick={() => setActiveTab("general")}
                 className={`border-b-2 px-4 py-3 text-sm font-medium transition-colors ${
                   activeTab === "general"
-                    ? "border-blue-500 bg-gray-700/50 text-white"
-                    : "border-transparent text-gray-400 hover:border-gray-600 hover:text-gray-300"
+                    ? "border-focus bg-selected text-ink"
+                    : "border-transparent text-ink-muted hover:border-line-strong hover:text-ink-secondary"
                 }`}
               >
                 General
@@ -278,8 +278,8 @@ export default function DashboardSettingsDialog({
                 onClick={() => setActiveTab("share")}
                 className={`border-b-2 px-4 py-3 text-sm font-medium transition-colors ${
                   activeTab === "share"
-                    ? "border-blue-500 bg-gray-700/50 text-white"
-                    : "border-transparent text-gray-400 hover:border-gray-600 hover:text-gray-300"
+                    ? "border-focus bg-selected text-ink"
+                    : "border-transparent text-ink-muted hover:border-line-strong hover:text-ink-secondary"
                 }`}
               >
                 Share
@@ -288,8 +288,8 @@ export default function DashboardSettingsDialog({
                 onClick={() => setActiveTab("people")}
                 className={`border-b-2 px-4 py-3 text-sm font-medium transition-colors ${
                   activeTab === "people"
-                    ? "border-blue-500 bg-gray-700/50 text-white"
-                    : "border-transparent text-gray-400 hover:border-gray-600 hover:text-gray-300"
+                    ? "border-focus bg-selected text-ink"
+                    : "border-transparent text-ink-muted hover:border-line-strong hover:text-ink-secondary"
                 }`}
               >
                 People
@@ -311,17 +311,17 @@ export default function DashboardSettingsDialog({
           ) : (
             <div className="space-y-4 px-6 py-4">
               <label className="block">
-                <span className="mb-1 block text-xs uppercase tracking-wide text-gray-500">
+                <span className="mb-1 block text-xs uppercase tracking-wide text-ink-faint">
                   Name
                 </span>
                 <input
                   value={name}
                   onChange={(e) => setName(e.target.value)}
-                  className="w-full rounded-md border border-gray-600 bg-gray-900 px-3 py-2 text-sm text-gray-100"
+                  className="w-full rounded-md border border-line-strong bg-surface-sunken px-3 py-2 text-sm text-ink-strong"
                 />
               </label>
               <label className="block">
-                <span className="mb-1 block text-xs uppercase tracking-wide text-gray-500">
+                <span className="mb-1 block text-xs uppercase tracking-wide text-ink-faint">
                   Shortname (optional)
                 </span>
                 <input
@@ -329,10 +329,10 @@ export default function DashboardSettingsDialog({
                   onChange={(e) => setAlias(e.target.value)}
                   onBlur={() => setAlias(normalizeAlias(alias))}
                   placeholder="e.g. home-farm"
-                  className="w-full rounded-md border border-gray-600 bg-gray-900 px-3 py-2 text-sm text-gray-100 placeholder:text-gray-600"
+                  className="w-full rounded-md border border-line-strong bg-surface-sunken px-3 py-2 text-sm text-ink-strong placeholder:text-ink-disabled"
                 />
                 {!aliasValid && (
-                  <span className="mt-1 block text-xs text-amber-400">
+                  <span className="mt-1 block text-xs text-warn">
                     Lowercase letters, numbers and hyphens only
                   </span>
                 )}
@@ -340,51 +340,51 @@ export default function DashboardSettingsDialog({
               <button
                 onClick={toggleDefault}
                 disabled={busy}
-                className="inline-flex items-center gap-1.5 text-sm text-blue-400 transition-colors hover:text-blue-300 disabled:opacity-60"
+                className="inline-flex items-center gap-1.5 text-sm text-accent-ink transition-colors hover:text-accent-ink-hover disabled:opacity-60"
               >
                 <Star
-                  className={`h-4 w-4 ${isDefault ? "fill-yellow-400 text-yellow-400" : ""}`}
+                  className={`h-4 w-4 ${isDefault ? "fill-star text-star" : ""}`}
                 />
                 {isDefault
                   ? "Remove as default dashboard"
                   : "Set as my default dashboard"}
               </button>
               {areaIds && areaIds.length > 0 && (
-                <div className="border-t border-gray-700/60 pt-4">
+                <div className="border-t border-line-soft pt-4">
                   <button
                     onClick={recompute}
                     disabled={recomputing || busy}
-                    className="inline-flex items-center gap-1.5 text-sm text-gray-300 transition-colors hover:text-white disabled:opacity-60"
+                    className="inline-flex items-center gap-1.5 text-sm text-ink-secondary transition-colors hover:text-ink disabled:opacity-60"
                   >
                     <RefreshCw
                       className={`h-4 w-4 ${recomputing ? "animate-spin" : ""}`}
                     />
                     {recomputing ? "Recomputing sankeys…" : "Recompute sankeys"}
                   </button>
-                  <p className="mt-1 text-xs text-gray-500">
+                  <p className="mt-1 text-xs text-ink-faint">
                     Rebuilds the energy-flow (Sankey) history for this dashboard
                     — e.g. after a point sign or role change.
                   </p>
                 </div>
               )}
               {error && (
-                <p className="whitespace-pre-line text-sm text-red-400">
+                <p className="whitespace-pre-line text-sm text-danger">
                   {error}
                 </p>
               )}
             </div>
           )}
           {activeTab === "general" ? (
-            <div className="flex items-center justify-between gap-3 border-t border-gray-700 px-6 py-4">
+            <div className="flex items-center justify-between gap-3 border-t border-line px-6 py-4">
               {confirmingDelete ? (
                 <div className="flex items-center gap-2">
-                  <span className="text-sm text-gray-400">
+                  <span className="text-sm text-ink-muted">
                     Delete permanently?
                   </span>
                   <button
                     onClick={remove}
                     disabled={busy}
-                    className="inline-flex items-center gap-1.5 rounded-md bg-red-600 px-3 py-2 text-sm text-white transition-colors hover:bg-red-700 disabled:opacity-50"
+                    className="inline-flex items-center gap-1.5 rounded-md bg-danger-solid px-3 py-2 text-sm text-ink transition-colors hover:bg-danger-solid-hover disabled:opacity-50"
                   >
                     <Trash2 className="h-4 w-4" />
                     {busy ? "Deleting…" : "Confirm"}
@@ -392,7 +392,7 @@ export default function DashboardSettingsDialog({
                   <button
                     onClick={() => setConfirmingDelete(false)}
                     disabled={busy}
-                    className="rounded-md px-2 py-2 text-sm text-gray-400 hover:text-white disabled:opacity-50"
+                    className="rounded-md px-2 py-2 text-sm text-ink-muted hover:text-ink disabled:opacity-50"
                   >
                     Cancel
                   </button>
@@ -401,7 +401,7 @@ export default function DashboardSettingsDialog({
                 <button
                   onClick={() => setConfirmingDelete(true)}
                   disabled={busy}
-                  className="inline-flex items-center gap-1.5 rounded-md px-3 py-2 text-sm text-red-400 transition-colors hover:bg-red-950/40 disabled:opacity-50"
+                  className="inline-flex items-center gap-1.5 rounded-md px-3 py-2 text-sm text-danger transition-colors hover:bg-danger-panel disabled:opacity-50"
                 >
                   <Trash2 className="h-4 w-4" />
                   Delete
@@ -411,24 +411,24 @@ export default function DashboardSettingsDialog({
                 <button
                   onClick={onClose}
                   disabled={busy}
-                  className="rounded-md border border-gray-600 px-4 py-2 text-gray-300 transition-colors hover:text-white disabled:opacity-50"
+                  className="rounded-md border border-line-strong px-4 py-2 text-ink-secondary transition-colors hover:text-ink disabled:opacity-50"
                 >
                   Cancel
                 </button>
                 <button
                   onClick={save}
                   disabled={busy || !name.trim() || !aliasValid}
-                  className="min-w-[90px] rounded-md bg-blue-600 px-5 py-2 text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="min-w-[90px] rounded-md bg-accent px-5 py-2 text-ink transition-colors hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {busy ? "Saving…" : "Save"}
                 </button>
               </div>
             </div>
           ) : (
-            <div className="flex items-center justify-end gap-3 border-t border-gray-700 px-6 py-4">
+            <div className="flex items-center justify-end gap-3 border-t border-line px-6 py-4">
               <button
                 onClick={onClose}
-                className="rounded-md border border-gray-600 px-4 py-2 text-gray-300 transition-colors hover:text-white"
+                className="rounded-md border border-line-strong px-4 py-2 text-ink-secondary transition-colors hover:text-ink"
               >
                 Close
               </button>

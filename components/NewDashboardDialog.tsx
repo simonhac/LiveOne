@@ -102,24 +102,24 @@ export default function NewDashboardDialog({
   return createPortal(
     <>
       <div
-        className="fixed inset-0 z-[10000] bg-black/50 backdrop-blur-sm"
+        className="fixed inset-0 z-[10000] bg-scrim backdrop-blur-sm"
         onClick={onClose}
       />
       <div className="pointer-events-none fixed inset-0 z-[10001] flex items-center justify-center px-4">
-        <div className="pointer-events-auto w-full max-w-[460px] rounded-lg border border-gray-700 bg-gray-800 shadow-xl">
-          <div className="flex items-center justify-between border-b border-gray-700 px-6 py-4">
-            <h2 className="text-lg font-semibold text-white">New dashboard</h2>
+        <div className="pointer-events-auto w-full max-w-[460px] rounded-lg border border-line bg-surface-overlay shadow-xl">
+          <div className="flex items-center justify-between border-b border-line px-6 py-4">
+            <h2 className="text-lg font-semibold text-ink">New dashboard</h2>
             <button
               onClick={onClose}
-              className="rounded p-1 transition-colors hover:bg-gray-700"
+              className="rounded p-1 transition-colors hover:bg-surface-control"
             >
-              <X className="h-5 w-5 text-gray-400" />
+              <X className="h-5 w-5 text-ink-muted" />
             </button>
           </div>
 
           <div className="space-y-4 px-6 py-4">
             <label className="block">
-              <span className="mb-1 block text-xs uppercase tracking-wide text-gray-500">
+              <span className="mb-1 block text-xs uppercase tracking-wide text-ink-faint">
                 Name
               </span>
               <input
@@ -127,12 +127,12 @@ export default function NewDashboardDialog({
                 value={displayName}
                 onChange={(e) => setDisplayName(e.target.value)}
                 placeholder="e.g. Home &amp; Farm"
-                className="w-full rounded-md border border-gray-600 bg-gray-900 px-3 py-2 text-sm text-gray-100 placeholder:text-gray-600"
+                className="w-full rounded-md border border-line-strong bg-surface-sunken px-3 py-2 text-sm text-ink-strong placeholder:text-ink-disabled"
               />
             </label>
 
             <label className="block">
-              <span className="mb-1 block text-xs uppercase tracking-wide text-gray-500">
+              <span className="mb-1 block text-xs uppercase tracking-wide text-ink-faint">
                 Shortname (optional)
               </span>
               <input
@@ -140,28 +140,28 @@ export default function NewDashboardDialog({
                 onChange={(e) => setAlias(e.target.value)}
                 onBlur={() => setAlias(normalizeAlias(alias))}
                 placeholder="e.g. home-farm"
-                className="w-full rounded-md border border-gray-600 bg-gray-900 px-3 py-2 text-sm text-gray-100 placeholder:text-gray-600"
+                className="w-full rounded-md border border-line-strong bg-surface-sunken px-3 py-2 text-sm text-ink-strong placeholder:text-ink-disabled"
               />
               {!aliasValid ? (
-                <span className="mt-1 block text-xs text-amber-400">
+                <span className="mt-1 block text-xs text-warn">
                   Lowercase letters, numbers and hyphens only
                 </span>
               ) : (
-                <span className="mt-1 block text-xs text-gray-600">
+                <span className="mt-1 block text-xs text-ink-disabled">
                   Enables a tidy URL like /dashboard/you/home-farm.
                 </span>
               )}
             </label>
 
             <label className="block">
-              <span className="mb-1 flex items-center gap-1.5 text-xs uppercase tracking-wide text-gray-500">
+              <span className="mb-1 flex items-center gap-1.5 text-xs uppercase tracking-wide text-ink-faint">
                 <Layers className="h-3.5 w-3.5" />
                 Start from an area (optional)
               </span>
               <select
                 value={seedAreaId}
                 onChange={(e) => setSeedAreaId(e.target.value)}
-                className="w-full rounded-md border border-gray-600 bg-gray-900 px-3 py-2 text-sm text-gray-100"
+                className="w-full rounded-md border border-line-strong bg-surface-sunken px-3 py-2 text-sm text-ink-strong"
               >
                 <option value="">Empty dashboard</option>
                 {areas.map((a) => (
@@ -170,27 +170,27 @@ export default function NewDashboardDialog({
                   </option>
                 ))}
               </select>
-              <span className="mt-1 block text-xs text-gray-600">
+              <span className="mt-1 block text-xs text-ink-disabled">
                 Prefills that area&apos;s default cards. You can add cards from
                 any area afterwards.
               </span>
             </label>
 
-            {error && <p className="text-sm text-red-400">{error}</p>}
+            {error && <p className="text-sm text-danger">{error}</p>}
           </div>
 
-          <div className="flex justify-end gap-3 border-t border-gray-700 px-6 py-4">
+          <div className="flex justify-end gap-3 border-t border-line px-6 py-4">
             <button
               onClick={onClose}
               disabled={busy}
-              className="rounded-md border border-gray-600 px-4 py-2 text-gray-300 transition-colors hover:text-white disabled:opacity-50"
+              className="rounded-md border border-line-strong px-4 py-2 text-ink-secondary transition-colors hover:text-ink disabled:opacity-50"
             >
               Cancel
             </button>
             <button
               onClick={create}
               disabled={busy || !displayName.trim() || !aliasValid}
-              className="min-w-[100px] rounded-md bg-blue-600 px-6 py-2 text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+              className="min-w-[100px] rounded-md bg-accent px-6 py-2 text-ink transition-colors hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-50"
             >
               {busy ? "Creating…" : "Create"}
             </button>

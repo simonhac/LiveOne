@@ -107,21 +107,21 @@ export default function BatteryContentsCard({
           }
           unit={renewableFraction != null ? "%" : undefined}
           caption="renewable"
-          valueClassName={renewableGreen ? "text-green-400" : "text-white"}
+          valueClassName={renewableGreen ? "text-ok" : "text-ink"}
         />
       </div>
 
       {/* Secondary: the absolute totals — financial (out-of-pocket) cost, total
           emissions, export value, and the forgone feed-in revenue (when > $0). */}
       {hasSecondary && (
-        <div className="mt-3 flex flex-wrap items-baseline gap-x-3 gap-y-1 border-t border-white/10 pt-2 text-[11px] font-medium text-white/55">
+        <div className="mt-3 flex flex-wrap items-baseline gap-x-3 gap-y-1 border-t border-tile-line pt-2 text-[11px] font-medium text-tile-ink-muted">
           {totalCostActualC != null && (
             <span>{dollars(totalCostActualC)} financial cost</span>
           )}
           {carbonTotalText != null && <span>{carbonTotalText} CO₂</span>}
           {hasExport && <span>{dollars(exportValueC!)} export value</span>}
           {showForgone && (
-            <span className="ml-auto text-amber-300">
+            <span className="ml-auto text-warn-ink">
               {dollars(totalCostOpportunityC!)} forgone FiT
               {priceOpportunity != null && ` · ${cents(priceOpportunity)}¢/kWh`}
             </span>

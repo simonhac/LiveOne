@@ -42,16 +42,24 @@ export default function LoadProvenanceCard({
 
   const shell = (children: React.ReactNode) => (
     <div
-      className={`bg-gray-800/50 border border-gray-700 rounded-lg p-3 md:p-4 ${ttInterphases.className}`}
+      // 🛑 NOT tokenised, deliberately. `gray-800/50` and the `gray-700/60` rules below are this
+      // card's own pre-tile-style surface — a fill and two hairlines a step off every other card's
+      // (`surface-overlay`, `line-soft`). Minting a token per accident is how a colour vocabulary
+      // becomes unnavigable, and re-toning them is a decision, not a rename. They go when this card
+      // moves onto `TileSurface` like the rest (docs/architecture/tile-style.md).
+      className={`bg-gray-800/50 border border-line rounded-lg p-3 md:p-4 ${ttInterphases.className}`}
     >
       <div className="mb-3 flex items-center gap-1.5">
+        {/* 🛑 NOT tokenised: cyan is the POOL series, and this is the EV card's icon. Calling it
+            `text-series-pool` would encode a lie, and `text-series-ev` is a re-tone (cyan → red),
+            which pass 1 does not do. Left literal so the question stays visible. */}
         <span className="flex-shrink-0 text-cyan-400">
           <Car size={16} />
         </span>
-        <span className="truncate text-xs text-gray-300 md:text-sm">
+        <span className="truncate text-xs text-ink-secondary md:text-sm">
           {heading}
         </span>
-        <span className="ml-auto text-[10px] uppercase tracking-wide text-gray-500 md:text-xs">
+        <span className="ml-auto text-[10px] uppercase tracking-wide text-ink-faint md:text-xs">
           {periodLabel}
         </span>
       </div>
@@ -73,10 +81,10 @@ export default function LoadProvenanceCard({
             (fractional) line box exactly. */}
         <div className="mt-3 border-t border-gray-700/60 pt-2" aria-hidden>
           <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-transparent">
-            <span className="animate-pulse rounded bg-gray-700/30">
+            <span className="animate-pulse rounded bg-skeleton-quiet">
               00% solar
             </span>
-            <span className="animate-pulse rounded bg-gray-700/30">
+            <span className="animate-pulse rounded bg-skeleton-quiet">
               00% grid
             </span>
           </div>
@@ -85,7 +93,7 @@ export default function LoadProvenanceCard({
           className="mt-2 flex items-center gap-2 text-[11px] text-transparent"
           aria-hidden
         >
-          <span className="animate-pulse rounded bg-gray-700/30">
+          <span className="animate-pulse rounded bg-skeleton-quiet">
             avg 00.0¢/kWh
           </span>
         </div>
@@ -94,7 +102,7 @@ export default function LoadProvenanceCard({
   }
   if (!summary || summary.energyKwh <= 0) {
     return shell(
-      <p className="py-3 text-sm text-gray-500">
+      <p className="py-3 text-sm text-ink-faint">
         No attributed energy for this period yet.
       </p>,
     );
@@ -128,7 +136,7 @@ export default function LoadProvenanceCard({
           value={renewableText}
           unit="%"
           caption="renewable"
-          valueClassName={renewableGreen ? "text-green-400" : undefined}
+          valueClassName={renewableGreen ? "text-ok" : undefined}
         />
         <Stat value={emissionsText} unit="g" caption="CO₂ / kWh" />
         <Stat value={energyText} unit="kWh" caption="energy" />
@@ -137,10 +145,10 @@ export default function LoadProvenanceCard({
       {/* Source split (solar / battery / grid) */}
       {splitPct.length > 0 && (
         <div className="mt-3 border-t border-gray-700/60 pt-2">
-          <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-gray-400">
+          <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-ink-muted">
             {splitPct.map((s) => (
               <span key={s.label}>
-                <span className="font-semibold text-gray-200">
+                <span className="font-semibold text-ink-control">
                   {Math.round(s.pct)}%
                 </span>{" "}
                 {s.label}
@@ -153,12 +161,12 @@ export default function LoadProvenanceCard({
       {/* Confidence chip */}
       <div className="mt-2 flex items-center gap-2 text-[11px]">
         {summary.avgCentsPerKwh != null && (
-          <span className="text-gray-500">
+          <span className="text-ink-faint">
             avg {formatCentsPerKwh(summary.avgCentsPerKwh)}¢/kWh
           </span>
         )}
         {estimated > 0 && (
-          <span className="ml-auto rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-amber-300">
+          <span className="ml-auto rounded-full border border-warn-line bg-warn-wash px-2 py-0.5 text-warn-ink">
             {estimated}% estimated
           </span>
         )}

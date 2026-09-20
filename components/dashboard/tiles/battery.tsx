@@ -60,7 +60,7 @@ function BatteryTile({ latest, staleThresholdSeconds }: TileRenderProps) {
           gradientTo={low ? undefined : BATTERY_LIGHT_RGB}
           className={`${TILE_RING} ${staleClass}`}
         >
-          <span className={`${TILE_RING_VALUE} text-white`}>
+          <span className={`${TILE_RING_VALUE} text-ink`}>
             <Value value={String(Math.round(batterySoc))} unit="%" />
           </span>
         </ProgressRing>

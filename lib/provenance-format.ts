@@ -60,12 +60,30 @@ export function formatKgCo2(kg: number): string {
   return kg.toFixed(1);
 }
 
-/** An absolute carbon total WITH its unit, switching g → kg at 1 kg: "497 g" / "7.2 kg". Unlike the
- *  bare formatters above this one carries the unit, because the unit is what changes. */
-export function formatCarbonTotal(grams: number): string {
+/**
+ * An absolute carbon total split into its number and its unit, switching g → kg at 1 kg.
+ *
+ * Unlike the bare formatters above, the unit is not a constant the caller can hard-code — it is
+ * what CHANGES with the magnitude — which is why this returns the pair rather than a bare string.
+ * A caller rendering through `<Value>` needs the two apart so the unit is sized and bound per
+ * docs/architecture/number-typography.md; {@link formatCarbonTotal} rejoins them for inline text.
+ */
+export function carbonTotalParts(grams: number): {
+  value: string;
+  unit: "kg CO₂" | "g CO₂";
+} {
   return grams >= 1000
-    ? `${(grams / 1000).toFixed(1)} kg`
-    : `${Math.round(grams)} g`;
+    ? { value: (grams / 1000).toFixed(1), unit: "kg CO₂" }
+    : { value: `${Math.round(grams)}`, unit: "g CO₂" };
+}
+
+/** An absolute carbon total WITH its unit, switching g → kg at 1 kg: "497 g" / "7.2 kg". Unlike the
+ *  bare formatters above this one carries the unit, because the unit is what changes.
+ *  🛑 The "CO₂" of {@link carbonTotalParts} is dropped here — every caller of this spelling appends
+ *  its own, and returning it would double the word. */
+export function formatCarbonTotal(grams: number): string {
+  const { value, unit } = carbonTotalParts(grams);
+  return `${value} ${unit.replace(" CO₂", "")}`;
 }
 
 /**
