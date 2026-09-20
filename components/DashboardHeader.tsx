@@ -84,7 +84,12 @@ export interface DashboardHeaderProps {
   shiftKeyDown?: boolean;
 
   /** Header temporal navigator config (handle + tz), computed server-side; null ⇒ none shown. */
-  temporalNav?: { handle: number; timezoneOffsetMin: number } | null;
+  temporalNav?: {
+    handle: number;
+    timezoneOffsetMin: number;
+    /** `mayHaveAxisTapChart(doc)` — hides the navigator's prev/next pill on touch. */
+    axisNavExpected?: boolean;
+  } | null;
 }
 
 export default function DashboardHeader({
@@ -310,6 +315,7 @@ export default function DashboardHeader({
               <HeaderTemporalNav
                 handle={temporalNav.handle}
                 timezoneOffsetMin={temporalNav.timezoneOffsetMin}
+                axisNavExpected={temporalNav.axisNavExpected}
               />
             </div>
           )}
@@ -374,6 +380,7 @@ export default function DashboardHeader({
               <HeaderTemporalNav
                 handle={temporalNav.handle}
                 timezoneOffsetMin={temporalNav.timezoneOffsetMin}
+                axisNavExpected={temporalNav.axisNavExpected}
               />
             )}
             <LastUpdateTime lastUpdate={lastUpdate} />

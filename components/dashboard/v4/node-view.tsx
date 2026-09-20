@@ -22,7 +22,7 @@ import type { ReactNode } from "react";
 import { Area } from "@/lib/ids";
 import { ErrorPanel } from "@/components/ErrorPanel";
 import Panel from "@/components/ui/panel";
-import { CHART_PANEL } from "@/lib/charts/style";
+import { CHART_PANEL, SECTION_RUN_PAD } from "@/lib/charts/style";
 import { datumCanControl, datumCanControlPoint } from "@/lib/control/ownership";
 import type { AreaId } from "@/lib/ids";
 import {
@@ -190,8 +190,11 @@ function isSelfSurfaced(node: DashboardNode): boolean {
 
 /**
  * Group a section's children into runs: self-surfaced elements (tile rows) stand bare, and each
- * consecutive run of the rest shares one `Panel` — exactly the frame the whole section used to be,
- * so a chart stack reads as it always did.
+ * consecutive run of the rest shares one padded block.
+ *
+ * The block used to be a framed `Panel`. It draws no border, fill or radius at any width now — the
+ * charts and tables inside it state their own extent, so the outline was a box around boxes. All
+ * that is left is `SECTION_RUN_PAD`, which holds the run off the page edge and off its neighbours.
  */
 function framedRuns(body: ReactNode[], selfSurfaced: boolean[]): ReactNode[] {
   const out: ReactNode[] = [];
@@ -199,9 +202,9 @@ function framedRuns(body: ReactNode[], selfSurfaced: boolean[]): ReactNode[] {
   const flush = () => {
     if (run.length === 0) return;
     out.push(
-      <Panel key={`panel-${out.length}`} bleed>
+      <div key={`panel-${out.length}`} className={SECTION_RUN_PAD}>
         <div className="flex flex-col gap-4">{run}</div>
-      </Panel>,
+      </div>,
     );
     run = [];
   };
@@ -476,11 +479,10 @@ function GroupNodeView({
       // cards — no longer a bordered panel around everything. The tiles are their own surfaces now
       // (docs/architecture/tile-style.md), and a frame around them was a box around boxes.
       //
-      // 🛑 The CHARTS are not. They draw no frame of their own by design (chart-style.md rule 1:
-      // one frame per nesting level, and for a chart that level was the section), so each run of
-      // non-tile children keeps a `Panel` — the same frame, bleed and all, just no longer
-      // stretched around the tile rows too. Moving that panel onto the tile surface is the
-      // chart-side follow-up.
+      // The charts no longer get one either: each run of non-tile children keeps only the
+      // PADDING that panel carried (`SECTION_RUN_PAD`). A chart states its extent with its axes
+      // and a table with its columns, so the frame was an outline around things that already have
+      // an edge — invisible on a phone (it bled) and a second box inside the page on a laptop.
       <section>
         <h2 className="px-1 pb-2.5 text-[20px] font-bold leading-tight text-white">
           {area.displayName}

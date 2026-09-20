@@ -86,7 +86,7 @@ const STEP_MIN = 5;
  *
  * Labelled explicitly rather than derived, because the spoken form of a preset is not the spoken
  * form of a duration: 90 minutes is offered as "1.5h" (one chip, one glance) where the sentences
- * below call the same run "1h 30m" via `formatSecondsAsDuration`. Every value is a multiple of
+ * below call the same run "1h30m" via `formatSecondsAsDuration`. Every value is a multiple of
  * `STEP_MIN` so a chip always lands exactly on a slider stop.
  */
 const PRESETS: { min: number; label: string }[] = [
@@ -102,7 +102,7 @@ const PRESETS: { min: number; label: string }[] = [
 ];
 const DEFAULT_MIN = 30;
 
-/** "30m", "1h 30m", "6h" — the house duration spelling, for the sentences around the slider. */
+/** "30m", "1h30m", "6h" — the house duration spelling, for the sentences around the slider. */
 function runWords(minutes: number): string {
   return formatSecondsAsDuration(minutes * 60);
 }

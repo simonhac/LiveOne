@@ -189,19 +189,23 @@ export function formatDuration(ms: number): string {
 }
 
 /**
- * Format a duration given in SECONDS as "2h 30m" / "45m" / "3h" — the run-periods spelling.
+ * Format a duration given in SECONDS as "2h30m" / "45m" / "3h" — the run-periods spelling.
  *
  * NOTE the input unit, which is the only thing separating the three duration formatters here:
- * `formatDuration` takes MILLISECONDS and spells things differently ("2m 15s", NBSP-joined), and
- * `formatHoursAsDuration` takes HOURS and omits the space ("1h5m"). Hence the explicit name.
+ * `formatDuration` takes MILLISECONDS and spells things differently ("2m 15s", NBSP-joined), while
+ * `formatHoursAsDuration` takes HOURS and agrees with this one on the spelling. Hence the explicit
+ * name.
  *
- * From 100 hours the minutes are DROPPED and the hours rounded ("509h 43m" -> "510h"). That figure
+ * No space between the hours and the minutes. A duration is ONE quantity, not two, and the space
+ * was inviting a line break in the middle of it in the run tables' narrow Duration column.
+ *
+ * From 100 hours the minutes are DROPPED and the hours rounded ("509h43m" -> "510h"). That figure
  * is a total — a year of generator runs — and at that size the minutes are noise that makes the
  * widest cell in the column, so they cost the table a column's worth of width to say nothing. Below
- * the threshold nothing changes: an individual run is still "2h 30m".
+ * the threshold nothing changes: an individual run is still "2h30m".
  *
  * Examples:
- * - 9000 -> "2h 30m"
+ * - 9000 -> "2h30m"
  * - 2700 -> "45m"
  * - 10800 -> "3h"
  * - 1834980 -> "510h"
@@ -218,12 +222,12 @@ export function formatSecondsAsDuration(seconds: number): string {
   }
   const h = Math.floor(totalMin / 60);
   const m = totalMin % 60;
-  if (h > 0) return m > 0 ? `${h}h ${m}m` : `${h}h`;
+  if (h > 0) return m > 0 ? `${h}h${m}m` : `${h}h`;
   return `${m}m`;
 }
 
 /**
- * Format a duration given in hours as a compact "Xh Ym" / "Xd Yh" string (no spaces).
+ * Format a duration given in hours as a compact "XhYm" / "XdYh" string (no spaces).
  *
  * Examples:
  * - 0 -> "0h"

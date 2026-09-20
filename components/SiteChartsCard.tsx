@@ -31,7 +31,11 @@ import NodeTooltip, {
 } from "@/components/NodeTooltip";
 import { panelTop } from "@/lib/charts/sankey-panel-placement";
 import { CHART_COLORS } from "@/lib/chart-colors";
-import { CHART_BODY_PAD, CHART_HAIRLINE } from "@/lib/charts/style";
+import {
+  CHART_BODY_PAD,
+  CHART_HAIRLINE,
+  TABLE_GUTTER,
+} from "@/lib/charts/style";
 import DashboardChart, {
   type RunTooltipAnchor,
 } from "@/components/DashboardChart";
@@ -588,17 +592,6 @@ function StackedChart({
     </div>
   );
 }
-
-/**
- * The energy table's own mobile gutter, ON TOP OF the 2px its `CHART_BODY_PAD` parent already gives
- * it — 4px from the screen edge in total.
- *
- * The chart beside it needs none: it is ink that states its own extent, and the axis labels sit well
- * inside the plot. The table is TEXT in edge-aligned columns — "Load" hard against the left bezel and
- * "%" against the right read as clipped, however many pixels are technically there. Mobile only;
- * above `sm` the section's own `p-3`/`p-4` is already generous.
- */
-const TABLE_GUTTER = "px-0.5 sm:px-0";
 
 /** Clearance between the outlined run and the panel describing it. */
 const RUN_TOOLTIP_GAP = 10;

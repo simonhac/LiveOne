@@ -99,6 +99,35 @@ export function mayHaveTimeTravelingCard(doc: DashboardV4): boolean {
 }
 
 /**
+ * Will this document put a chart on the page whose AXIS STRIP steps the window on touch?
+ *
+ * The navigator hides its own `‹ ›` pill at `(pointer: coarse)` because a phone steps the window by
+ * tapping a chart's axis instead — but a dashboard of runs / hot-water / renewables cards has no
+ * axis to tap, and hiding the buttons there leaves no way at all to reach yesterday.
+ *
+ * 🛑 Asked of the DOCUMENT, synchronously, not of the mounted charts. It used to be a runtime
+ * declaration (`AxisNavContext`: each chart retained the capability while it was drawing), which
+ * could not answer until hydration, a measured container and landed history had all happened — so
+ * the pill painted, sat there for a second and then vanished, reshaping the header on every single
+ * load. The document knows at first paint, and a card either renders a chart or it doesn't.
+ *
+ * Both `chart` variants qualify: the lines variant renders `LinesChartCard` and the stacked-areas
+ * variant folds into `SiteChartsGroup`, and both wire `onAxisTap` into the same `DashboardChart`.
+ * Optimistic about `chartCapable` for the same reason {@link mayHaveTimeTravelingCard} is — the
+ * answer is needed before `/api/v4/areas` lands.
+ *
+ * The residual: on a dashboard that HAS a chart card, a phone has no prev/next while that chart is
+ * loading, errored or empty. That is the price of deciding early, and it is the cheaper half — the
+ * chartless dashboards, which are the ones that would otherwise be stranded, still keep theirs.
+ */
+export function mayHaveAxisTapChart(doc: DashboardV4): boolean {
+  return walkVisible(
+    doc,
+    (node) => node.kind === "card" && node.type === "chart",
+  );
+}
+
+/**
  * The handle whose timezone the header navigator formats its label in — the first visible node that
  * binds an area, resolved to that area's handle. Undefined while the areas are still resolving (the
  * navigator holds until then), or when the document binds no area at all (a `/device` doc, which

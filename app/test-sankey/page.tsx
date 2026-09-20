@@ -44,7 +44,7 @@ export default function TestSankeyPage() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-screen">
+      <div className="flex items-center justify-center min-h-screen bg-gray-900">
         <div className="text-lg">Loading energy flow data...</div>
       </div>
     );
@@ -52,7 +52,7 @@ export default function TestSankeyPage() {
 
   if (error) {
     return (
-      <div className="flex items-center justify-center min-h-screen">
+      <div className="flex items-center justify-center min-h-screen bg-gray-900">
         <div className="text-lg text-red-600">Error: {error}</div>
       </div>
     );
@@ -60,7 +60,7 @@ export default function TestSankeyPage() {
 
   if (!matrix) {
     return (
-      <div className="flex items-center justify-center min-h-screen">
+      <div className="flex items-center justify-center min-h-screen bg-gray-900">
         <div className="text-lg">No data available</div>
       </div>
     );

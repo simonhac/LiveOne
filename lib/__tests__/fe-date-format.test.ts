@@ -69,7 +69,7 @@ describe("formatHoursAsDuration", () => {
 
 describe("formatSecondsAsDuration", () => {
   it("shows hours and minutes together", () => {
-    expect(formatSecondsAsDuration(9000)).toBe("2h 30m");
+    expect(formatSecondsAsDuration(9000)).toBe("2h30m");
   });
 
   it("shows minutes alone under an hour", () => {
@@ -88,7 +88,7 @@ describe("formatSecondsAsDuration", () => {
 
   it("drops the minutes from 100h up, rounding the hours", () => {
     // The last "h m" reading, and the first rounded one.
-    expect(formatSecondsAsDuration(99 * 3600 + 59 * 60)).toBe("99h 59m");
+    expect(formatSecondsAsDuration(99 * 3600 + 59 * 60)).toBe("99h59m");
     expect(formatSecondsAsDuration(100 * 3600)).toBe("100h");
     expect(formatSecondsAsDuration(100 * 3600 + 29 * 60)).toBe("100h");
     expect(formatSecondsAsDuration(100 * 3600 + 31 * 60)).toBe("101h");

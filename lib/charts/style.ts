@@ -29,8 +29,9 @@
  * Never breakpoint-gate this PER SURFACE. The lines chart carried `md:bg-gray-800 md:border
  * md:rounded` and the daily-stripe card `sm:bg-gray-800 sm:rounded`, so both grew a frame at a width
  * the charts beside them did not — the drift was invisible on a phone and glaring on a laptop. What
- * the rule forbids is one card disagreeing with its neighbours; see {@link CHART_PANEL_BLEED} for
- * the one gate that applies to every surface at once and so cannot drift.
+ * the rule forbids is one card disagreeing with its neighbours. There is no longer any exception:
+ * the section's own frame (once `CHART_PANEL_BLEED`, present from `sm` up) is gone too — see
+ * {@link SECTION_RUN_PAD}.
  */
 export const CHART_PANEL =
   "rounded-lg border border-gray-700/70 bg-gray-900/30";
@@ -39,29 +40,26 @@ export const CHART_PANEL =
 export const CHART_PANEL_PAD = "p-2 sm:p-3";
 
 /**
- * {@link CHART_PANEL} for a section that runs to the SCREEN EDGE below `sm`.
+ * Padding for one run of framed cards inside a dashboard section.
  *
- * On a phone the frame costs more than it earns: the chrome is ~20px a side by the time the page
- * inset, the section padding and the card body padding have each taken their cut, and a 600px Sankey
- * has to fit in what is left. Sections stack vertically and are separated by `gap-4` regardless, so
- * the border was never what told them apart — it was just an outline around the whole viewport width.
+ * 🛑 There is no frame any more. This used to be `CHART_PANEL_PAD_BLEED`, the padding half of a
+ * `CHART_PANEL` that appeared at `sm` and bled to the screen edge below it; the border, radius and
+ * fill are gone at EVERY width. A section is a bold heading on the black page and the cards under
+ * it stack — the outline around the chart run was a box around things that already delimit
+ * themselves (a chart by its axes, a table by its columns), and on a laptop it read as a second
+ * frame inside the page.
  *
- * This IS a breakpoint-gated frame, and it is allowed where the per-card ones were not, because it
- * gates every framed surface together: there is no width at which one card has a frame and the card
- * beside it does not. Above `sm` it is byte-for-byte {@link CHART_PANEL}.
+ * Vertical padding at every width, horizontal only from `sm`: what is left of the token is what it
+ * was always really for — holding the charts off each other, and off the page edge on a laptop.
  */
-export const CHART_PANEL_BLEED =
-  "sm:rounded-lg sm:border sm:border-gray-700/70 sm:bg-gray-900/30";
-
-/** {@link CHART_PANEL_PAD} for a bleeding section: vertical only, so the content reaches the edge. */
-export const CHART_PANEL_PAD_BLEED = "py-2 sm:p-3";
+export const SECTION_RUN_PAD = "py-2 sm:p-3";
 
 /**
  * Padding for a card body inside a panel. The body's only contribution to the surface — it holds
  * the chart off the section's edge and off its neighbours.
  *
- * All but zero horizontally below `sm`, to match {@link CHART_PANEL_BLEED}: bleeding the section but
- * keeping this inset would just move the same gutter inwards. The vertical padding stays at every
+ * All but zero horizontally below `sm`, to match {@link SECTION_RUN_PAD}: the section already runs
+ * to the screen edge there, and keeping this inset would just move the same gutter inwards. The vertical padding stays at every
  * width — it is what keeps stacked charts off each other, which has nothing to do with screen width.
  *
  * 🛑 `px-0.5` (2px), NOT `px-0`. A chart is happy flush against the edge, but the energy table beside
@@ -70,6 +68,20 @@ export const CHART_PANEL_PAD_BLEED = "py-2 sm:p-3";
  * above the one where it looks like a mistake.
  */
 export const CHART_BODY_PAD = "px-0.5 py-2 sm:p-4";
+
+/**
+ * A TABLE's own mobile gutter, ON TOP OF the 2px its {@link CHART_BODY_PAD} parent already gives it
+ * — 4px from the screen edge in total.
+ *
+ * The chart beside it needs none: it is ink that states its own extent, and the axis labels sit well
+ * inside the plot. A table is TEXT in edge-aligned columns — "Load" hard against the left bezel and
+ * "%" against the right read as clipped, however many pixels are technically there. Mobile only;
+ * above `sm` the section's own padding is already generous.
+ *
+ * Shared by the energy table beside the stacked charts and the run tables, which is the point: the
+ * two are the same object at two widths and must start at the same pixel.
+ */
+export const TABLE_GUTTER = "px-0.5 sm:px-0";
 
 /**
  * A hairline around content that has no shape of its own — no fill.
