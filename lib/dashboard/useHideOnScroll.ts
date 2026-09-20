@@ -6,11 +6,11 @@ import { isScrollHeld, subscribeScrollHold } from "@/lib/charts/scroll-hold";
 /**
  * Where the header is. Two states, and the second is the whole trick:
  *
- * - `stuck` — `position: sticky; top: 0`, pinned to the top of the viewport.
- * - `free` — `position: relative; top: <top>px`: an ordinary part of the DOCUMENT, parked at page
- *   offset `top`. It is not moved on scroll at all; the page scrolls and it goes with it, so it
- *   leaves and re-enters the viewport pixel for pixel with the reader's finger, on the compositor,
- *   with no per-frame JS and no transition to lag behind.
+ * - `stuck` — inside the sticky host (`position: sticky; top: 0`), pinned to the top of the viewport.
+ * - `free` — inside the free host (`position: relative; top: <top>px`): an ordinary part of the
+ *   DOCUMENT, parked at page offset `top`. It is not moved on scroll at all; the page scrolls and it
+ *   goes with it, so it leaves and re-enters the viewport pixel for pixel with the reader's finger,
+ *   on the compositor, with no per-frame JS and no transition to lag behind.
  */
 export interface HeaderPlacement {
   mode: "stuck" | "free";
@@ -73,18 +73,28 @@ const SLIDE_IN_MS = 200;
 /**
  * Lets the header scroll away with the page on the way DOWN and scroll back in on any scroll UP,
  * tracking the reader pixel for pixel (see `HeaderPlacement`). Scroll container is the window. The
- * header must be `position: sticky; top: 0` by class; this writes `position`/`top` inline over it
- * and clears them to hand control back.
+ * header must be the ONLY child of a `position: sticky; top: 0` host, and `freeHostRef` an empty
+ * `position: relative` sibling straight after that host; this moves the header node between the
+ * two and hides whichever host is empty.
  *
  * Scrolls made by `holdScrollAnchor` (lib/charts/scroll-hold.ts) are compensation, not the reader,
  * so they only resync the baseline — and for the whole of a temporal change the header is held
  * STUCK, because the D|W|M|Y buttons the reader is aiming at live in it. `pinned` forces it stuck
  * too (e.g. while a menu hanging off the header is open).
  *
- * 🛑 While it is away the header is NOT a sticky element, and that is deliberate. Safari 26 paints
+ * 🛑 While it is away the header is NOT in a sticky element, and that is deliberate. Safari 26 paints
  * a solid band behind its status bar and URL pill whenever a viewport-constrained (fixed/sticky)
  * element sits at the top edge — `visibility: hidden` and a translate do not exempt one — and lets
  * the page show through otherwise. A `relative` header parked up the page is just content.
+ *
+ * 🛑 And the sticky element's `position` is NEVER rewritten, which is why there are two hosts and
+ * not one header with an inline `position`. Measured in the iOS 26.3 simulator: an element that
+ * goes sticky → `relative`/`static` while it is rendered leaves Safari's band ORPHANED — it stays
+ * for good, and even a later `display: none` does not clear it (#551 shipped exactly that). A
+ * sticky element that goes `display: none` while still sticky does clear it. So the sticky host
+ * stays sticky and is switched off; the header rides in a sibling that was never sticky at all.
+ * Moving the node under React is safe only because the header is never unmounted or reordered on
+ * its own — React removes a deleted subtree by its root, which is the host.
  *
  * 🛑 **Narrow viewports only** — from `sm` up it never lets go. The whole justification for taking
  * the header away is that on a phone its two rows permanently eat a chunk of a short screen; on a
@@ -98,6 +108,7 @@ const SLIDE_IN_MS = 200;
  */
 export function useHideOnScroll(
   headerRef: React.RefObject<HTMLElement | null>,
+  freeHostRef: React.RefObject<HTMLElement | null>,
   pinned = false,
 ): void {
   const pinnedRef = useRef(pinned);
@@ -123,15 +134,20 @@ export function useHideOnScroll(
       lastHeight: pageHeight(),
     };
 
+    const stickyHost = headerRef.current?.parentElement ?? null;
+
     const apply = () => {
       const header = headerRef.current;
-      if (!header) return;
+      const freeHost = freeHostRef.current;
+      if (!header || !freeHost || !stickyHost) return;
       if (state.mode === "free") {
-        header.style.position = "relative";
-        header.style.top = `${state.top}px`;
+        if (header.parentElement !== freeHost) freeHost.appendChild(header);
+        freeHost.style.top = `${state.top}px`;
+        stickyHost.style.display = "none";
       } else {
-        header.style.position = "";
-        header.style.top = "";
+        stickyHost.style.display = "";
+        if (header.parentElement !== stickyHost) stickyHost.appendChild(header);
+        freeHost.style.top = "";
       }
     };
 
@@ -198,6 +214,9 @@ export function useHideOnScroll(
       unsubscribe();
       if (raf) cancelAnimationFrame(raf);
       forceStuckRef.current = () => {};
+      // Hand React back the tree it rendered.
+      state = { ...state, mode: "stuck", top: 0 };
+      apply();
     };
-  }, [headerRef]);
+  }, [headerRef, freeHostRef]);
 }
