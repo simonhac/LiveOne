@@ -88,7 +88,9 @@ export function useContainerSize<T extends HTMLElement = HTMLDivElement>(): [
       const r = el.getBoundingClientRect();
       // Round: sub-pixel container sizes make scales produce sub-pixel coordinates, which renders as
       // blurry gridlines and (worse) drifts between runs under the screenshot harness.
-      const next = { width: Math.round(r.width), height: Math.round(r.height) };
+      // Width FLOORS rather than rounds: a fractional container would round the svg UP past its
+      // parent, and one sub-pixel of sideways overflow is all iOS needs to let the page pan.
+      const next = { width: Math.floor(r.width), height: Math.round(r.height) };
       setSize((prev) =>
         prev.width === next.width && prev.height === next.height ? prev : next,
       );

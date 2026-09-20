@@ -167,12 +167,22 @@ export default function DashboardClient({
 
   return (
     <ChartFocusProvider>
-      <div className="min-h-screen bg-black">
-        {/* A transform, not a layout change: hiding moves nothing beneath it. */}
+      {/* `data-dashboard-root` turns the root canvas black (globals.css), so overscroll and the
+          backing of Safari's glass match the page instead of body's gray-900. */}
+      <div data-dashboard-root className="min-h-screen bg-black">
+        {/* A transform, not a layout change: hiding moves nothing beneath it.
+            The sticky element itself carries NO paint: Safari 26 tints a solid bar behind the
+            status bar from any fixed/sticky edge element that has a background-color or
+            backdrop-filter, and only an `absolute` child escapes the sampling. `invisible` while
+            hidden, because a merely translated-away sticky element still counts. */}
         <header
           ref={headerRef}
-          className={`sticky top-0 z-30 border-b border-white/10 bg-black/80 px-4 py-3 backdrop-blur transition-transform duration-200 motion-reduce:transition-none ${headerHidden ? "-translate-y-full" : ""}`}
+          className={`sticky top-0 z-30 px-4 py-3 transition-[transform,visibility] duration-200 motion-reduce:transition-none ${headerHidden ? "invisible -translate-y-full" : ""}`}
         >
+          <div
+            aria-hidden
+            className="pointer-events-none absolute inset-0 -z-10 border-b border-white/10 bg-black/80 backdrop-blur"
+          />
           <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-3">
             <div className="relative min-w-0">
               {sharedAreas ? (

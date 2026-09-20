@@ -148,7 +148,7 @@ export default function ProvenanceChart({
             data-testid="provenance-chart"
             // Horizontal drags scrub the crosshair; vertical still scrolls the page. Same reasoning
             // as `DashboardChart` — this chart shares the pointer hook, so it shares the gesture.
-            className="touch-pan-y"
+            className="max-w-full touch-pan-y"
             onPointerDown={pointer.onPointerDown}
             onPointerMove={pointer.onPointerMove}
             onPointerLeave={pointer.onPointerLeave}
