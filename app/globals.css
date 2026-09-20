@@ -35,6 +35,62 @@
 }
 
 /* Skeleton shimmer — a sweeping highlight for not-yet-known values */
+/* The dashboard header's two hosts (`useHideOnScroll`). Whichever holds the header is translated by
+   the ROOT scroller over the range the hook writes: the sticky host by the header's whole height
+   (sticky contributes no motion), the free host by whatever the page's own 1px per px leaves short
+   of HEADER_SPEED. Armed by the hook BEFORE the reader scrolls, so the leave starts on the
+   compositor with no JS in the way. Only where scroll timelines exist — elsewhere the hook releases
+   it by hand at 1px per px and these custom properties are unused.
+   🛑 `animation-timeline` must come AFTER the `animation` shorthand, which resets it. */
+@supports (animation-timeline: scroll()) {
+  @keyframes header-scroll-away {
+    to {
+      transform: translateY(var(--header-away, 0px));
+    }
+  }
+  .header-scroll-host {
+    animation: header-scroll-away linear both;
+    animation-timeline: scroll(root block);
+    animation-range: var(--header-range-start, 0px) var(--header-range-end, 1px);
+  }
+}
+
+/* The chart's axis-tap badge — `‹`, `›`, or an X for a refused step (DashboardChart). Pops in,
+   holds, fades — 700ms, the same figure as TAP_FLASH_MS, after which the element is unmounted. */
+@keyframes axis-tap-flash {
+  0% {
+    opacity: 0;
+    transform: scale(0.7);
+  }
+  20% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  60% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+.axis-tap-flash {
+  animation: axis-tap-flash 700ms ease-out both;
+}
+@media (prefers-reduced-motion: reduce) {
+  .axis-tap-flash {
+    animation-name: axis-tap-flash-fade;
+  }
+  @keyframes axis-tap-flash-fade {
+    0%,
+    60% {
+      opacity: 1;
+    }
+    100% {
+      opacity: 0;
+    }
+  }
+}
+
 @keyframes shimmer-sweep {
   0% {
     background-position: 200% 0;
@@ -146,8 +202,13 @@
    utility the same span carries everywhere else. */
 .tile-scope {
   font-family:
-    ui-rounded, "SF Pro Rounded", var(--font-tt-interphases), system-ui,
-    -apple-system, "Segoe UI", sans-serif;
+    ui-rounded,
+    "SF Pro Rounded",
+    var(--font-tt-interphases),
+    system-ui,
+    -apple-system,
+    "Segoe UI",
+    sans-serif;
 }
 
 .tile-scope [data-unit] {

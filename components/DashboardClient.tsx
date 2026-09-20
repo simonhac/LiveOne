@@ -178,14 +178,15 @@ export default function DashboardClient({
           container and the header still sticks. */}
       <div className="min-h-screen overflow-x-clip bg-black">
         {/* Two hosts, and `useHideOnScroll` moves the <header> node between them: this sticky one
-            while it is pinned, the `relative` one below while it rides away with the page — no
-            transform, no transition. Safari 26 paints a solid band behind its status bar for as
+            while it is shown and while it LEAVES, the `relative` one below once it is out of sight
+            and while it returns. Both carry `header-scroll-host`: a scroll-driven `translateY` the
+            hook arms in advance, so the 2px-per-px motion starts with no JS in the way. Safari 26 paints a solid band behind its status bar for as
             long as a fixed/sticky element sits at the top edge, and ORPHANS that band for good if
             the element's `position` is rewritten while it is rendered — so this host is never
             anything but sticky; it is switched off instead. 🛑 The header must stay its only
             child. The paint lives on an `absolute` child so that, while it IS stuck, the band
             takes the body's black rather than a sampled tint. */}
-        <div className="sticky top-0 z-30">
+        <div className="header-scroll-host sticky top-0 z-30">
           <header ref={headerRef} className="relative px-4 py-3">
             <div
               aria-hidden
@@ -310,7 +311,7 @@ export default function DashboardClient({
             </div>
           </header>
         </div>
-        <div ref={freeHostRef} className="relative z-30" />
+        <div ref={freeHostRef} className="header-scroll-host relative z-30" />
 
         <main className="mx-auto max-w-7xl px-0 py-4 sm:px-1">
           {docHasCards(dashboard.doc) ? (

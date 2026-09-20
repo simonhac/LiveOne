@@ -328,10 +328,14 @@ export function formatTime12h(
  *
  * Examples:
  * - Same point: "2 Sep 2025" or "4:30pm, 2 Sep 2025"
- * - Same day: "4:30pm – 7:35pm, 2 Sep 2025"
- * - Same month: "3 – 5 Sep 2025"
+ * - Same day: "4:30pm–7:35pm, 2 Sep 2025"
+ * - Same month: "3–5 Sep 2025"
  * - Same year: "28 Nov – 3 Dec 2025" or "4:35pm, 2 Oct – 7:10am, 11 Nov 2024"
  * - Different years: "30 Dec 2024 – 2 Jan 2025"
+ *
+ * The en dash is CLOSED UP between two single-word endpoints ("3–5", "4:30pm–7:35pm") and SPACED
+ * when either endpoint is itself several words ("28 Nov – 3 Dec") — closed up there, the dash binds
+ * "Nov–3" tighter than "28 Nov", and the range reads wrong.
  */
 export function formatDateTimeRange(
   start: import("@internationalized/date").ZonedDateTime,
@@ -367,8 +371,8 @@ export function formatDateTimeRange(
 
   if (includeTime) {
     if (sameDay) {
-      // Same day, different times: "4:30pm – 7:35pm, 2 Sep 2025"
-      return `${formatTimeInner(start)} – ${formatTimeInner(end)}, ${start.day} ${formatMonth(start.month)} ${start.year}`;
+      // Same day, different times: "4:30pm–7:35pm, 2 Sep 2025"
+      return `${formatTimeInner(start)}–${formatTimeInner(end)}, ${start.day} ${formatMonth(start.month)} ${start.year}`;
     } else if (sameYear) {
       // Different days, same year: "4:35pm, 2 Oct – 7:10am, 11 Nov 2024"
       return `${formatTimeInner(start)}, ${start.day} ${formatMonth(start.month)} – ${formatTimeInner(end)}, ${end.day} ${formatMonth(end.month)} ${end.year}`;
@@ -386,8 +390,8 @@ export function formatDateTimeRange(
     const sameMonth = start.year === end.year && start.month === end.month;
 
     if (sameMonth) {
-      // Same month and year: "3 – 5 Sep 2025"
-      return `${start.day} – ${end.day} ${formatMonth(end.month)} ${end.year}`;
+      // Same month and year: "3–5 Sep 2025"
+      return `${start.day}–${end.day} ${formatMonth(end.month)} ${end.year}`;
     } else if (sameYear) {
       // Different months, same year: "28 Nov – 3 Dec 2025"
       return `${start.day} ${formatMonth(start.month)} – ${end.day} ${formatMonth(end.month)} ${end.year}`;

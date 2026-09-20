@@ -1,6 +1,6 @@
 "use client";
 
-import { useId, useMemo, useRef } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import {
   FocusLine,
   ShadingBands,
@@ -110,6 +110,11 @@ const RUN_STRIPE_TILE = 8;
 const RUN_STRIPE_WIDTH = 4;
 /** How far a touch may travel, in px, and still count as a TAP rather than a scrub of the crosshair. */
 const TAP_SLOP = 10;
+/** How long the axis-tap badge stays up; matches `axis-tap-flash` in globals.css. */
+const TAP_FLASH_MS = 700;
+const TAP_FLASH_RADIUS = 30;
+/** Gap between the badge and the chart's edge. */
+const TAP_FLASH_INSET = 4;
 /**
  * Height of the axis strip when it is also a tap target.
  *
@@ -352,6 +357,21 @@ export default function DashboardChart(props: DashboardChartProps) {
     zone: "older" | "newer" | null;
   } | null>(null);
 
+  // Every axis tap answers with a badge: `‹` or `›` for the step it took, an X for the one it
+  // refused. The step itself can take a fetch to show, and a refusal shows nothing at all — so
+  // without this a tap that worked, a tap that was refused and a tap that missed all look alike.
+  // `key` restarts the CSS animation when a second tap lands while the first badge is still up.
+  const [tapFlash, setTapFlash] = useState<{
+    zone: "older" | "newer";
+    blocked: boolean;
+    key: number;
+  } | null>(null);
+  useEffect(() => {
+    if (!tapFlash) return;
+    const id = setTimeout(() => setTapFlash(null), TAP_FLASH_MS);
+    return () => clearTimeout(id);
+  }, [tapFlash]);
+
   // The axis tap in flight, kept alive PAST `pointerup` and past `pointercancel` for the `click`
   // that delivers it — see `onClick`. Cleared by that click, or overwritten by the next touch.
   const axisTapRef = useRef<{
@@ -509,18 +529,22 @@ export default function DashboardChart(props: DashboardChartProps) {
    */
   /**
    * Which axis-tap zone a touch is in, or null for anywhere in the plot (and for every mouse).
-   * Below the plot's baseline, left half steps older and right half newer — half the chart wide by
-   * {@link AXIS_TAP_HEIGHT} tall, which is the whole strip.
+   * Two shapes, one meaning. Below the plot's baseline, left half steps older and right half newer —
+   * half the chart wide by {@link AXIS_TAP_HEIGHT} tall, which is the whole strip. And the GUTTERS
+   * either side of the plot (the y-axis label columns), at any height: "tap to the left of the
+   * chart" is where a thumb goes first, and all a tap there used to do was snap the crosshair to
+   * the first or last sample. A DRAG that starts in a gutter is still a scrub — see `onPointerMove`.
    */
   const axisTapZone = (
     e: React.PointerEvent<SVGSVGElement>,
   ): "older" | "newer" | null => {
     if (!axisTap || e.pointerType !== "touch") return null;
     const rect = e.currentTarget.getBoundingClientRect();
+    const x = e.clientX - rect.left - geo.plot.left;
+    if (x < 0) return "older";
+    if (x > geo.plot.width) return "newer";
     if (e.clientY - rect.top - geo.plot.top < geo.plot.height) return null;
-    return e.clientX - rect.left - geo.plot.left < geo.plot.width / 2
-      ? "older"
-      : "newer";
+    return x < geo.plot.width / 2 ? "older" : "newer";
   };
 
   /**
@@ -551,9 +575,14 @@ export default function DashboardChart(props: DashboardChartProps) {
     axisTapRef.current = null;
     if (!start) return; // not a touch, or the touch began in the plot
     if (Math.hypot(e.clientX - start.x, e.clientY - start.y) > TAP_SLOP) return;
-    // Inert at the latest window, exactly as the `>` button is disabled there.
-    if (start.zone === "newer" && props.canGoNewer === false) return;
-    axisTap?.(start.zone);
+    // Inert at the latest window, exactly as the `>` button is disabled there — and says so.
+    const blocked = start.zone === "newer" && props.canGoNewer === false;
+    setTapFlash((prev) => ({
+      zone: start.zone,
+      blocked,
+      key: (prev?.key ?? 0) + 1,
+    }));
+    if (!blocked) axisTap?.(start.zone);
   };
 
   const onPointerDown = (e: React.PointerEvent<SVGSVGElement>) => {
@@ -569,7 +598,18 @@ export default function DashboardChart(props: DashboardChartProps) {
     pointer.onPointerDown(e);
   };
   const onPointerMove = (e: React.PointerEvent<SVGSVGElement>) => {
-    if (tapStartRef.current?.zone) return;
+    const start = tapStartRef.current;
+    if (start?.zone) {
+      // A finger that set off from a gutter and has travelled INTO the plot is scrubbing, and gets
+      // its crosshair; `onClick`'s slop test then declines the step. Along the strip it never does.
+      const rect = e.currentTarget.getBoundingClientRect();
+      const x = e.clientX - rect.left - geo.plot.left;
+      const y = e.clientY - rect.top - geo.plot.top;
+      const inPlot = x >= 0 && x <= geo.plot.width && y < geo.plot.height;
+      const travelled =
+        Math.hypot(e.clientX - start.x, e.clientY - start.y) > TAP_SLOP;
+      if (!(inPlot && travelled)) return;
+    }
     pointer.onPointerMove(e);
   };
   const onPointerUp = (e: React.PointerEvent<SVGSVGElement>) => {
@@ -892,6 +932,47 @@ export default function DashboardChart(props: DashboardChartProps) {
             plotHeight={geo.plot.height}
             xPx={focusPx}
           />
+          {/* The axis-tap badge: a translucent disc carrying `‹`, `›` or an X, hard against the edge
+              of the chart on the side the tap was for. The plot's own `<g>` is offset by
+              `plot.left`, hence the subtraction to get back to the svg's edges. */}
+          {tapFlash && (
+            <g
+              key={tapFlash.key}
+              data-testid="axis-tap-flash"
+              data-kind={tapFlash.blocked ? "blocked" : tapFlash.zone}
+              pointerEvents="none"
+              transform={`translate(${
+                tapFlash.zone === "newer"
+                  ? size.width -
+                    geo.plot.left -
+                    TAP_FLASH_RADIUS -
+                    TAP_FLASH_INSET
+                  : TAP_FLASH_RADIUS + TAP_FLASH_INSET - geo.plot.left
+              } ${geo.plot.height / 2})`}
+            >
+              <g className="axis-tap-flash">
+                <circle
+                  r={TAP_FLASH_RADIUS}
+                  fill="rgba(255, 255, 255, 0.16)"
+                  stroke="rgba(255, 255, 255, 0.35)"
+                />
+                <path
+                  d={
+                    tapFlash.blocked
+                      ? "M-10 -10 L10 10 M10 -10 L-10 10"
+                      : tapFlash.zone === "older"
+                        ? "M5 -12 L-7 0 L5 12"
+                        : "M-5 -12 L7 0 L-5 12"
+                  }
+                  stroke="rgba(255, 255, 255, 0.9)"
+                  strokeWidth={3}
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  fill="none"
+                />
+              </g>
+            </g>
+          )}
         </g>
       </svg>
     </div>

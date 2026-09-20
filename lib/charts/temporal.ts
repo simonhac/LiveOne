@@ -234,7 +234,7 @@ function isLocalMidnight(zdt: ZonedDateTime): boolean {
 /**
  * The name of the whole calendar period an INCLUSIVE `[start, end]` day range covers exactly, or
  * null when it covers anything else. A whole month reads as "August 2026" and a whole year as
- * "2026" — spelling out both endpoints ("1 – 31 Aug 2026") is noise once the range IS the period.
+ * "2026" — spelling out both endpoints ("1–31 Aug 2026") is noise once the range IS the period.
  *
  * The month test asks whether `end` is the last day of its month by stepping a day and watching the
  * month roll over, rather than consulting a month-length table.
@@ -267,7 +267,7 @@ function wholeCalendarLabel(
  *
  * D/W windows carry an EXCLUSIVE end, so a window running local-midnight -> local-midnight covers a
  * whole number of calendar days: collapse it to the date-only INCLUSIVE spelling ("24 Aug 2026",
- * "18 – 24 Aug 2026") instead of printing the bookend times ("12am, 24 Aug – 12am, 25 Aug 2026").
+ * "18–24 Aug 2026") instead of printing the bookend times ("12am, 24 Aug – 12am, 25 Aug 2026").
  * A live trailing D/W window ends at `now`, so it is untouched and still shows its times.
  *
  * M/Y ends are never adjusted: their window is ALREADY an inclusive `[firstDay, lastDay]`
