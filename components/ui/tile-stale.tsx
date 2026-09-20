@@ -144,7 +144,7 @@ export function StaleBadge({
         typeof document !== "undefined" &&
         createPortal(
           <div
-            className="pointer-events-none fixed z-[9999] whitespace-nowrap rounded-xl bg-[#2C2C2E] px-3 py-2 text-xs text-white shadow-xl"
+            className="pointer-events-none fixed z-[9999] whitespace-nowrap rounded-xl bg-[#2C2C2E] px-3 py-2 text-xs text-ink shadow-xl"
             style={{ left: tip.x, top: tip.y }}
           >
             Last update: {formatLastUpdate(when)}

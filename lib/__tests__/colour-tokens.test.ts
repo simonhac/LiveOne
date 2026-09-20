@@ -67,6 +67,7 @@ const ALIASES: Record<string, string> = {
   "--color-ink-muted": "--color-gray-400",
   "--color-ink-faint": "--color-gray-500",
   "--color-ink-disabled": "--color-gray-600",
+  "--color-ink-control": "--color-gray-200",
   "--color-ink-inverse": "--color-black",
   "--color-line": "--color-gray-700",
   "--color-line-strong": "--color-gray-600",
@@ -89,6 +90,8 @@ const ALIASES: Record<string, string> = {
  */
 const ALPHA_ALIASES: Record<string, [string, string]> = {
   "--color-surface-panel": ["--color-gray-900", "0.3"],
+  "--color-skeleton": ["--color-gray-700", "0.4"],
+  "--color-skeleton-quiet": ["--color-gray-700", "0.3"],
   "--color-line-soft": ["--color-gray-700", "0.7"],
   "--color-danger-line": ["--color-red-500", "0.7"],
   "--color-danger-wash": ["--color-red-500", "0.1"],
@@ -135,6 +138,7 @@ describe("colour tokens", () => {
     expect(OURS.get("--color-wash")).toBe("rgb(255 255 255 / 0.08)");
     expect(OURS.get("--color-rail")).toBe("rgb(255 255 255 / 0.1)");
     expect(OURS.get("--color-scrim")).toBe("rgb(0 0 0 / 0.5)");
+    expect(OURS.get("--color-scrim-soft")).toBe("rgb(0 0 0 / 0.4)");
   });
 
   it("names every token semantically — no hue in a token name", () => {

@@ -20,95 +20,129 @@
    is exactly the magic number this exists to delete. Keep `/NN` for a genuinely one-off
    decorative wash. Never stack `/NN` on a token that already carries alpha; the two compound. */
 @theme {
-  /* ── canvas & surface ── */
-  --color-canvas: #000; /* tw black */
-  --color-surface: #1c1c1e; /* the tile slab — Apple's secondary system background (dark) */
-  --color-surface-raised: #2c2c2e; /* one step up from the slab — the stale badge */
-  --color-surface-sunken: oklch(21% 0.034 264.665); /* tw gray-900 */
-  --color-surface-panel: oklch(
-    21% 0.034 264.665 / 0.3
-  ); /* tw gray-900/30 — chart panel fill */
-  --color-surface-overlay: oklch(
-    27.8% 0.033 256.848
-  ); /* tw gray-800 — menus, modals, popovers */
-  --color-surface-control: oklch(
-    37.3% 0.034 259.733
-  ); /* tw gray-700 — inputs, secondary buttons */
-  --color-surface-control-hover: oklch(44.6% 0.03 256.802); /* tw gray-600 */
-  --color-scrim: rgb(
-    0 0 0 / 0.5
-  ); /* tw black/50, as authored on the dialog overlay */
-  --color-wash: rgb(
-    255 255 255 / 0.08
-  ); /* tw white/[0.08] — the direction/control chip disc */
-  --color-rail: rgb(
-    255 255 255 / 0.1
-  ); /* tw white/10 — the segmented control's track
+  /* ── canvas & surface ────────────────────────────────────────────────────────────────────── */
+
+  /* tw black */
+  --color-canvas: #000;
+  /* The tile slab — Apple's secondary system background (dark). Not a Tailwind grey. */
+  --color-surface: #1c1c1e;
+  /* One step up from the slab — the stale badge. */
+  --color-surface-raised: #2c2c2e;
+  /* tw gray-900 */
+  --color-surface-sunken: oklch(21% 0.034 264.665);
+  /* tw gray-900/30 — the chart panel's fill */
+  --color-surface-panel: oklch(21% 0.034 264.665 / 0.3);
+  /* tw gray-800 — menus, modals, popovers: a floating surface, not an in-page panel */
+  --color-surface-overlay: oklch(27.8% 0.033 256.848);
+  /* tw gray-700 — a filled control: input, select trigger, secondary button */
+  --color-surface-control: oklch(37.3% 0.034 259.733);
+  /* tw gray-600 — that control, hovered or active */
+  --color-surface-control-hover: oklch(44.6% 0.03 256.802);
+  /* tw black/50 — the dialog overlay */
+  --color-scrim: rgb(0 0 0 / 0.5);
+  /* tw black/40 — a NESTED dialog's dim, and no blur with it, so the dialog underneath stays
+     legible and the stack reads as a stack rather than as the parent having vanished. See
+     `DialogContentProps.nested`. */
+  --color-scrim-soft: rgb(0 0 0 / 0.4);
+  /* tw white/[0.08] — the disc a direction chevron or control glyph sits in */
+  --color-wash: rgb(255 255 255 / 0.08);
+  /* tw white/10 — the segmented control's track.
      🛑 Two percent off `wash`, and nobody chose that: the chip and the rail were authored a year
      apart. Left as two tokens because pass 1 renames and never re-tones; unifying them is a
      one-line change here once someone decides which is right. */
+  --color-rail: rgb(255 255 255 / 0.1);
+  /* tw gray-700/40 — a placeholder standing in for a line of HERO text */
+  --color-skeleton: oklch(37.3% 0.034 259.733 / 0.4);
+  /* tw gray-700/30 — …and for a caption. Two weights, because a skeleton that does not vary reads
+     as a table rather than as text. */
+  --color-skeleton-quiet: oklch(37.3% 0.034 259.733 / 0.3);
 
-  /* ── ink: the chrome ramp (grey on a dark page) ── */
-  --color-ink: #fff; /* tw white */
-  --color-ink-strong: oklch(96.7% 0.003 264.542); /* tw gray-100 */
-  --color-ink-secondary: oklch(87.2% 0.01 258.338); /* tw gray-300 */
-  --color-ink-muted: oklch(70.7% 0.022 261.325); /* tw gray-400 */
-  --color-ink-faint: oklch(55.1% 0.027 264.364); /* tw gray-500 */
-  --color-ink-disabled: oklch(44.6% 0.03 256.802); /* tw gray-600 */
-  --color-ink-inverse: #000; /* tw black — text on a light fill */
+  /* ── ink: the chrome ramp (grey on a dark page) ──────────────────────────────────────────── */
 
-  /* ── ink: the TILE ramp (white-alpha on the slab) ──
+  /* tw white */
+  --color-ink: #fff;
+  /* tw gray-100 */
+  --color-ink-strong: oklch(96.7% 0.003 264.542);
+  /* tw gray-200 — a form label, and a menu item at rest (it goes to `ink` on hover/focus).
+     🛑 One step brighter than `ink-secondary`, and nobody chose that either; the same accident as
+     `wash` vs `rail`. Kept separate because pass 1 renames and never re-tones. */
+  --color-ink-control: oklch(92.8% 0.006 264.531);
+  /* tw gray-300 */
+  --color-ink-secondary: oklch(87.2% 0.01 258.338);
+  /* tw gray-400 */
+  --color-ink-muted: oklch(70.7% 0.022 261.325);
+  /* tw gray-500 */
+  --color-ink-faint: oklch(55.1% 0.027 264.364);
+  /* tw gray-600 */
+  --color-ink-disabled: oklch(44.6% 0.03 256.802);
+  /* tw black — text on a light fill */
+  --color-ink-inverse: #000;
+
+  /* ── ink: the TILE ramp (white-alpha on the slab) ────────────────────────────────────────────
      A second ramp doing the same job as the one above, by accident of history: `white/55` over
      `#1C1C1E` and `gray-300` over `gray-900` are both "secondary text". The `tile-` prefix is the
-     standing TODO — unifying them is a design decision, not a rename, and is deliberately NOT
-     part of the token sweep. */
-  --color-tile-ink-dim: rgb(255 255 255 / 0.8); /* tw white/80 */
-  --color-tile-ink-muted: rgb(
-    255 255 255 / 0.55
-  ); /* tw white/55 — TILE_CAPTION, TILE_TICK */
-  --color-tile-ink-idle: rgb(
-    255 255 255 / 0.4
-  ); /* tw white/40 — IDLE_CHROME: absence of flow */
+     standing TODO — unifying them is a design decision, not a rename, and is deliberately NOT part
+     of the token sweep. */
 
-  /* ── line ── */
-  --color-line: oklch(37.3% 0.034 259.733); /* tw gray-700 */
-  --color-line-strong: oklch(44.6% 0.03 256.802); /* tw gray-600 */
-  --color-line-soft: oklch(
-    37.3% 0.034 259.733 / 0.7
-  ); /* tw gray-700/70 — CHART_PANEL, hairline */
-  --color-line-hairline: rgb(
-    255 255 255 / 0.25
-  ); /* tw white/25 — MiniBars baseline */
-  --color-line-faint: rgb(
-    255 255 255 / 0.07
-  ); /* tw white/[0.07] — MiniBars trough, chart shading */
+  /* tw white/80 */
+  --color-tile-ink-dim: rgb(255 255 255 / 0.8);
+  /* tw white/55 — TILE_CAPTION, TILE_TICK */
+  --color-tile-ink-muted: rgb(255 255 255 / 0.55);
+  /* tw white/40 — IDLE_CHROME: an absence of flow, never a direction */
+  --color-tile-ink-idle: rgb(255 255 255 / 0.4);
 
-  /* ── state ──
+  /* ── line ───────────────────────────────────────────────────────────────────────────────── */
+
+  /* tw gray-700 */
+  --color-line: oklch(37.3% 0.034 259.733);
+  /* tw gray-600 — an input's or outline button's border */
+  --color-line-strong: oklch(44.6% 0.03 256.802);
+  /* tw gray-700/70 — CHART_PANEL and CHART_HAIRLINE */
+  --color-line-soft: oklch(37.3% 0.034 259.733 / 0.7);
+  /* tw white/25 — MiniBars' baseline */
+  --color-line-hairline: rgb(255 255 255 / 0.25);
+  /* tw white/[0.07] — MiniBars' trough, and the charts' daytime shading */
+  --color-line-faint: rgb(255 255 255 / 0.07);
+
+  /* ── state ───────────────────────────────────────────────────────────────────────────────────
      🛑 STATE, NOT IDENTITY. A battery series is green because it is the battery, not because
      something is OK; Amber is amber because it is Amber, not because something needs attention.
-     Reach for `series-*` or `brand-*` for those — see the doc. */
-  --color-danger: oklch(70.4% 0.191 22.216); /* tw red-400 */
-  --color-danger-solid: oklch(57.7% 0.245 27.325); /* tw red-600 */
-  --color-danger-solid-hover: oklch(50.5% 0.213 27.518); /* tw red-700 */
-  --color-danger-line: oklch(63.7% 0.237 25.331 / 0.7); /* tw red-500/70 */
-  --color-danger-wash: oklch(63.7% 0.237 25.331 / 0.1); /* tw red-500/10 */
-  --color-warn: oklch(82.8% 0.189 84.429); /* tw amber-400 */
-  --color-warn-line: oklch(47.3% 0.137 46.201 / 0.4); /* tw amber-800/40 */
-  --color-warn-wash: oklch(76.9% 0.188 70.08 / 0.1); /* tw amber-500/10 */
-  --color-ok: oklch(79.2% 0.209 151.711); /* tw green-400 */
+     Reach for `series-*` or `brand-*` for those — see docs/architecture/colour-tokens.md. */
 
-  /* ── interactive ── */
-  --color-accent: oklch(54.6% 0.245 262.881); /* tw blue-600 — primary button */
-  --color-accent-hover: oklch(48.8% 0.243 264.376); /* tw blue-700 */
-  --color-accent-ink: oklch(62.3% 0.214 259.815); /* tw blue-500 — links */
-  --color-focus: oklch(
-    62.3% 0.214 259.815
-  ); /* tw blue-500 — focus ring, selected border */
+  /* tw red-400 — error text */
+  --color-danger: oklch(70.4% 0.191 22.216);
+  /* tw red-600 — a destructive button */
+  --color-danger-solid: oklch(57.7% 0.245 27.325);
+  /* tw red-700 */
+  --color-danger-solid-hover: oklch(50.5% 0.213 27.518);
+  /* tw red-500/70 */
+  --color-danger-line: oklch(63.7% 0.237 25.331 / 0.7);
+  /* tw red-500/10 */
+  --color-danger-wash: oklch(63.7% 0.237 25.331 / 0.1);
+  /* tw amber-400 */
+  --color-warn: oklch(82.8% 0.189 84.429);
+  /* tw amber-800/40 */
+  --color-warn-line: oklch(47.3% 0.137 46.201 / 0.4);
+  /* tw amber-500/10 */
+  --color-warn-wash: oklch(76.9% 0.188 70.08 / 0.1);
+  /* tw green-400 */
+  --color-ok: oklch(79.2% 0.209 151.711);
 
-  /* ── series ──
+  /* ── interactive ─────────────────────────────────────────────────────────────────────────── */
+
+  /* tw blue-600 — the primary button */
+  --color-accent: oklch(54.6% 0.245 262.881);
+  /* tw blue-700 */
+  --color-accent-hover: oklch(48.8% 0.243 264.376);
+  /* tw blue-500 — a link */
+  --color-accent-ink: oklch(62.3% 0.214 259.815);
+  /* tw blue-500 — the focus ring, and a selected border */
+  --color-focus: oklch(62.3% 0.214 259.815);
+
+  /* ── series ──────────────────────────────────────────────────────────────────────────────────
      A tile's hero number, its ring and its chart trace are ONE fact, so they are one colour. These
      carry `lib/chart-colors.ts`'s values verbatim (`lib/__tests__/role-chrome.test.ts` pins them),
-     which is what finally makes `role-chrome.ts`'s promise true.
+     which is what finally makes `lib/role-chrome.ts`'s promise true.
 
      🛑 DELIBERATELY sRGB, NOT the Tailwind key they look like. `text-green-400` in Tailwind v4 is
      `oklch(79.2% 0.209 151.711)` — a deliberately more vivid green than `#4ADE80` on a P3 display —
@@ -119,19 +153,30 @@
 
      Roles only. A genuine scale (Tesla's SoC ramp, Amber's price levels) is state-coded and stays
      out — see lib/role-chrome.ts. */
-  --color-series-solar: rgb(254, 240, 138); /* CHART_COLORS.solar.primary */
-  --color-series-load: rgb(96, 165, 250); /* CHART_COLORS.load */
-  --color-series-hot-water: rgb(251, 146, 60); /* CHART_COLORS.hotWater */
-  --color-series-battery: rgb(74, 222, 128); /* CHART_COLORS.battery.main */
-  --color-series-grid: rgb(236, 72, 153); /* CHART_COLORS.grid.main */
-  --color-series-pool: rgb(34, 211, 238); /* CHART_COLORS.pool */
-  --color-series-hvac: rgb(167, 139, 250); /* CHART_COLORS.hvac */
-  --color-series-ev: rgb(220, 38, 38); /* CHART_COLORS.ev */
 
-  /* ── brand ──
+  /* CHART_COLORS.solar.primary */
+  --color-series-solar: rgb(254, 240, 138);
+  /* CHART_COLORS.load */
+  --color-series-load: rgb(96, 165, 250);
+  /* CHART_COLORS.hotWater */
+  --color-series-hot-water: rgb(251, 146, 60);
+  /* CHART_COLORS.battery.main */
+  --color-series-battery: rgb(74, 222, 128);
+  /* CHART_COLORS.grid.main */
+  --color-series-grid: rgb(236, 72, 153);
+  /* CHART_COLORS.pool */
+  --color-series-pool: rgb(34, 211, 238);
+  /* CHART_COLORS.hvac */
+  --color-series-hvac: rgb(167, 139, 250);
+  /* CHART_COLORS.ev */
+  --color-series-ev: rgb(220, 38, 38);
+
+  /* ── brand ───────────────────────────────────────────────────────────────────────────────────
      🛑 NOT `warn`. Amber-the-retailer is an identity; mapping it onto the warning token would be
      the single most likely "semantic" mistake in this vocabulary. */
-  --color-brand-amber: oklch(82.8% 0.189 84.429); /* tw amber-400 */
+
+  /* tw amber-400 */
+  --color-brand-amber: oklch(82.8% 0.189 84.429);
 }
 /* ── design tokens ────────────────────────────────────────────────── end ── */
 

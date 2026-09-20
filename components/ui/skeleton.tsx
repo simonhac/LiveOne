@@ -110,9 +110,9 @@ export function StatGridSkeleton({
       {Array.from({ length: cells }).map((_, i) => (
         <div key={i} className="animate-pulse">
           {/* `Stat`'s hero line: text-xl leading-none md:text-2xl */}
-          <div className="h-5 rounded bg-gray-700/40 md:h-6" />
+          <div className="h-5 rounded bg-skeleton md:h-6" />
           {/* `Stat`'s caption: mt-1 text-[10px] md:text-xs */}
-          <div className="mt-1 h-3 w-2/3 rounded bg-gray-700/30 md:h-4" />
+          <div className="mt-1 h-3 w-2/3 rounded bg-skeleton-quiet md:h-4" />
         </div>
       ))}
     </div>

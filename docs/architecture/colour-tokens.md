@@ -110,6 +110,11 @@ The rename is provable, not eyeballed:
 
 - `lib/__tests__/colour-tokens.test.ts` — every aliased token vs Tailwind's own `theme.css`, and
   the non-aliased ones pinned literally.
+- 🛑 **A utility that never generated is the failure mode to check for**, because it fails
+  *silently*: the class is simply absent from the built CSS and the element loses that colour
+  rather than erroring. Grep the build output for each one — and match `(?:\.|\\:)<name>`, not
+  `\.<name>`, or every variant-only utility (`hover:bg-accent-hover` →
+  `.hover\:bg-accent-hover:hover`) reads as missing when it is fine.
 - `lib/__tests__/role-chrome.test.ts` — every role class resolves, through the shipped CSS, to the
   exact `CHART_COLORS` value its SVG uses.
 - `e2e/charts.spec.ts` — ~40 chart cases at two widths, zero-diff rule.

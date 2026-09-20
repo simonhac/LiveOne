@@ -25,7 +25,7 @@ export default function Stat({
     <div>
       <p
         className={`text-xl font-bold leading-none md:text-2xl ${
-          valueClassName ?? "text-gray-100"
+          valueClassName ?? "text-ink-strong"
         }`}
       >
         <Value
@@ -36,7 +36,7 @@ export default function Stat({
         />
       </p>
       {caption && (
-        <p className="mt-1 text-[10px] uppercase tracking-wide text-gray-500 md:text-xs">
+        <p className="mt-1 text-[10px] uppercase tracking-wide text-ink-faint md:text-xs">
           {caption}
         </p>
       )}

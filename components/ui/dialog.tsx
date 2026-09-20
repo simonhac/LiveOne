@@ -17,7 +17,7 @@ const DialogOverlay = React.forwardRef<
   <DialogPrimitive.Overlay
     ref={ref}
     className={cn(
-      "fixed inset-0 z-50 bg-black/50 backdrop-blur-sm data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
+      "fixed inset-0 z-50 bg-scrim backdrop-blur-sm data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
       className,
     )}
     {...props}
@@ -31,7 +31,7 @@ interface DialogContentProps
    * This dialog opens ON TOP of another one (the activity trail over a control dialog).
    *
    * Two portals with the same z-index paint in DOM order, so a nested dialog's BACKDROP lands above
-   * the parent's content — and at the default `bg-black/50 backdrop-blur-sm` that blanks the parent
+   * the parent's content — and at the default `bg-scrim backdrop-blur-sm` that blanks the parent
    * entirely, which reads as "the dialog I was in disappeared" rather than "something opened over
    * it". This lifts the nested content above the parent and softens its backdrop to a plain dim, so
    * the parent stays legible underneath and the stack is visibly a stack.
@@ -45,7 +45,7 @@ const DialogContent = React.forwardRef<
 >(({ className, children, nested = false, style, ...props }, ref) => (
   <DialogPortal>
     <DialogOverlay
-      className={cn(nested && "z-[55] bg-black/40 backdrop-blur-none")}
+      className={cn(nested && "z-[55] bg-scrim-soft backdrop-blur-none")}
     />
     <DialogPrimitive.Content
       onPointerDownOutside={(e) => e.preventDefault()}
@@ -65,14 +65,14 @@ const DialogContent = React.forwardRef<
        */
       style={nested ? { marginLeft: 12, marginTop: 12, ...style } : style}
       className={cn(
-        "fixed left-[50%] top-[50%] z-50 grid w-full max-w-lg translate-x-[-50%] translate-y-[-50%] gap-4 border border-gray-700 bg-gray-800 p-6 shadow-lg duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[state=closed]:slide-out-to-left-1/2 data-[state=closed]:slide-out-to-top-[48%] data-[state=open]:slide-in-from-left-1/2 data-[state=open]:slide-in-from-top-[48%] sm:rounded-lg text-white",
+        "fixed left-[50%] top-[50%] z-50 grid w-full max-w-lg translate-x-[-50%] translate-y-[-50%] gap-4 border border-line bg-surface-overlay p-6 shadow-lg duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[state=closed]:slide-out-to-left-1/2 data-[state=closed]:slide-out-to-top-[48%] data-[state=open]:slide-in-from-left-1/2 data-[state=open]:slide-in-from-top-[48%] sm:rounded-lg text-ink",
         nested && "z-[60]",
         className,
       )}
       {...props}
     >
       {children}
-      <DialogPrimitive.Close className="absolute right-4 top-4 rounded-sm opacity-70 transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-gray-600 focus:ring-offset-2 disabled:pointer-events-none text-gray-400 hover:text-white">
+      <DialogPrimitive.Close className="absolute right-4 top-4 rounded-sm opacity-70 transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-line-strong focus:ring-offset-2 disabled:pointer-events-none text-ink-muted hover:text-ink">
         <X className="h-4 w-4" />
         <span className="sr-only">Close</span>
       </DialogPrimitive.Close>
@@ -130,7 +130,7 @@ const DialogDescription = React.forwardRef<
 >(({ className, ...props }, ref) => (
   <DialogPrimitive.Description
     ref={ref}
-    className={cn("text-sm text-gray-400", className)}
+    className={cn("text-sm text-ink-muted", className)}
     {...props}
   />
 ));

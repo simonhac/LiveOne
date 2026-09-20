@@ -81,7 +81,7 @@ export function TileHeader({
   return (
     <div className={`flex min-h-7 items-center gap-2 ${className ?? ""}`}>
       <div
-        className={`flex min-w-0 flex-1 items-center gap-1.5 ${tone ?? "text-white"}`}
+        className={`flex min-w-0 flex-1 items-center gap-1.5 ${tone ?? "text-ink"}`}
       >
         {icon && (
           <span aria-hidden className="shrink-0 [&_svg]:h-4 [&_svg]:w-4">

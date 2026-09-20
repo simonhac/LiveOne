@@ -10,7 +10,7 @@ export default function TrendRow({
   chip,
   label,
   value,
-  valueColor = "text-white",
+  valueColor = "text-ink",
   caption,
   title,
 }: {
