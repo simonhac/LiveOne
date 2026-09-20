@@ -186,6 +186,138 @@ test.describe("run bands on touch", () => {
   });
 });
 
+test.describe("axis-tap navigation on touch", () => {
+  // The zones only exist on a touch device (`DashboardChart` gates them on `isTouch`), so on
+  // desktop there is nothing here to tap and a synthetic tap would prove nothing.
+  test.skip(({ hasTouch }) => !hasTouch, "the axis-tap zones are touch-only");
+
+  /**
+   * Geometry of the axis strip, in viewport coordinates.
+   *
+   * `top` comes from a time-axis GRIDLINE, whose `y2` is the plot height by construction
+   * (`TimeAxis`) — so the strip begins exactly where the plot ends, without this test carrying its
+   * own copy of `DEFAULT_MARGIN`. `left`/`right` come from the same gridlines' extent, which is the
+   * plot's width, i.e. the span the handler halves.
+   */
+  const strip = async (page: import("@playwright/test").Page) => {
+    const box = await page.evaluate(() => {
+      const lines = Array.from(
+        document.querySelectorAll('[data-testid="time-axis"] line'),
+      );
+      if (lines.length === 0) return null;
+      const rects = lines.map((l) => l.getBoundingClientRect());
+      return {
+        top: Math.max(...rects.map((r) => r.bottom)),
+        left: Math.min(...rects.map((r) => r.left)),
+        right: Math.max(...rects.map((r) => r.right)),
+      };
+    });
+    expect(
+      box,
+      "no time-axis gridlines to measure the strip from",
+    ).not.toBeNull();
+    return box!;
+  };
+
+  /** Opens a case and hands back the element the gallery reports axis taps on. */
+  const open = async (page: import("@playwright/test").Page, id: string) => {
+    await page.goto(`/labs/chart-gallery?case=${id}`);
+    await expect(page.getByTestId("chart-case")).toHaveAttribute(
+      "data-case-ready",
+      "true",
+    );
+    await expect(page.getByTestId("axis-tap-hints")).toBeVisible();
+    const report = page.getByTestId("axis-tap-report");
+    await expect(report).toHaveAttribute("data-axis-tap", "none");
+    return report;
+  };
+
+  test("tapping the two halves of the axis strip steps older and newer", async ({
+    page,
+  }) => {
+    const frame = await open(page, "stacked-load-d-axis-tap");
+    const s = await strip(page);
+    const mid = (s.left + s.right) / 2;
+
+    // 🛑 +3px: the TOP of the strip, immediately under the plot. The zone is the whole 48px, and a
+    // test that only ever tapped the middle would still pass if the live area had collapsed to the
+    // glyph's own line.
+    await page.touchscreen.tap((s.left + mid) / 2, s.top + 3);
+    await expect(frame).toHaveAttribute("data-axis-tap", "older");
+
+    // …and +40px is near the BOTTOM of it, which is what pins the strip at the 44px touch minimum:
+    // at the old 34px margin this point is outside the svg entirely.
+    await page.touchscreen.tap((mid + s.right) / 2, s.top + 40);
+    await expect(frame).toHaveAttribute("data-axis-tap", "newer");
+  });
+
+  test("an axis tap does not move the crosshair", async ({ page }) => {
+    // The reason the handler returns before `pointer.onPointerDown`: stepping the window must not
+    // also drag the shared focus (and with it the energy table and the Sankey) to wherever the
+    // finger happened to land on the way.
+    const frame = await open(page, "stacked-load-d-axis-tap");
+    const s = await strip(page);
+
+    await expect(page.getByTestId("focus-line")).toHaveCount(0);
+    await page.touchscreen.tap((s.left + s.right) / 4, s.top + 20);
+    await expect(frame).toHaveAttribute("data-axis-tap", "older");
+    await expect(page.getByTestId("focus-line")).toHaveCount(0);
+
+    // A tap in the PLOT still focuses, so the guard is narrow rather than a dead chart.
+    await page.touchscreen.tap((s.left + s.right) / 2, s.top - 20);
+    await expect(page.getByTestId("focus-line")).toHaveCount(1);
+  });
+
+  test("the newer half is inert at the latest window", async ({ page }) => {
+    const frame = await open(page, "stacked-load-d-axis-tap-latest");
+    const s = await strip(page);
+    const mid = (s.left + s.right) / 2;
+
+    await page.touchscreen.tap((mid + s.right) / 2, s.top + 20);
+    await expect(frame).toHaveAttribute("data-axis-tap", "none");
+
+    // Older still steps — `canGoNewer` gates one half, not the strip.
+    await page.touchscreen.tap((s.left + mid) / 2, s.top + 20);
+    await expect(frame).toHaveAttribute("data-axis-tap", "older");
+  });
+
+  test("a horizontal drag scrubs the crosshair instead of stepping", async ({
+    page,
+  }) => {
+    // `TAP_SLOP` is what separates the two gestures, and it is the one that fails silently: without
+    // it, scrubbing the crosshair along the axis fires a window step on every release.
+    //
+    // 🛑 Driven through CDP, not `dispatchEvent`. A synthetic `pointerdown` built by
+    // `locator.dispatchEvent` carries `pointerType: ""`, so `DashboardChart` never records a tap
+    // start and the test passes whatever the slop logic does — verified by deleting the slop check
+    // and watching the dispatchEvent version stay green. `Input.dispatchTouchEvent` produces real
+    // touch input, which Chromium turns into pointer events with `pointerType: "touch"`.
+    const frame = await open(page, "stacked-load-d-axis-tap");
+    const s = await strip(page);
+    const y = s.top + 20;
+    const from = (s.left + s.right) / 2;
+
+    const cdp = await page.context().newCDPSession(page);
+    const touch = (type: "touchStart" | "touchMove" | "touchEnd", x: number) =>
+      cdp.send("Input.dispatchTouchEvent", {
+        type,
+        touchPoints: type === "touchEnd" ? [] : [{ x, y, id: 1 }],
+      });
+
+    await touch("touchStart", from);
+    await touch("touchMove", from + 60);
+    await touch("touchEnd", from + 60);
+
+    await expect(frame).toHaveAttribute("data-axis-tap", "none");
+
+    // The same gesture WITHOUT the travel does step, so the guard is the distance and not the
+    // transport — otherwise this test would also pass against a chart that ignored touch entirely.
+    await touch("touchStart", from);
+    await touch("touchEnd", from);
+    await expect(frame).toHaveAttribute("data-axis-tap", "newer");
+  });
+});
+
 test("the gallery index lists every case", async ({ page }) => {
   // Guards the harness itself: if a case is added to `cases.ts` but the gallery cannot render it,
   // the per-case tests above would fail one-by-one with a confusing "unknown case" body. This fails

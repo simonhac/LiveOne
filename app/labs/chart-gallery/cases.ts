@@ -42,6 +42,16 @@ export type ChartCase = {
       withRuns?: boolean;
       /** …and render it in its hovered state (deeper fill, brighter outline). */
       hoveredRun?: boolean;
+      /**
+       * Wire `onAxisTap`, i.e. offer the touch axis-tap zones.
+       *
+       * 🛑 Opt-in per case, not on every stacked case, because the zones CHANGE THE GEOMETRY: on a
+       * touch device the bottom margin grows from 34px to 48 and two chevrons appear. Wiring it
+       * everywhere would churn every mobile baseline to cover one feature.
+       */
+      axisTap?: boolean;
+      /** With `axisTap`: the window is the latest one, so the `›` glyph is dimmed and inert. */
+      atLatest?: boolean;
     }
   | {
       /**
@@ -116,6 +126,14 @@ export type ChartCase = {
 
 const W = 900;
 const H = 340;
+/**
+ * Phone width for the axis-tap cases.
+ *
+ * 🛑 Narrower than `W` on purpose, and not cosmetic: each tap zone is half the PLOT, and the mobile
+ * Playwright project's viewport is 412px (Pixel 7). At 900 the right-hand zone sits past the right
+ * edge of the screen, so `touchscreen.tap` cannot reach it and the `newer` half would be untestable.
+ */
+const AXIS_TAP_W = 340;
 
 export const CHART_CASES: ChartCase[] = [
   // --- lines variant: the four periods (D/W power, M/Y energy→bars) -------------------------
@@ -329,6 +347,33 @@ export const CHART_CASES: ChartCase[] = [
     focusAt: 0.62,
     note: "stacked crosshair at the shared focus instant",
     width: W,
+    height: H,
+  },
+  {
+    id: "stacked-load-d-axis-tap",
+    kind: "stacked",
+    range: "D",
+    mode: "load",
+    axisTap: true,
+    // 🛑 Only the MOBILE render of this differs from a plain stacked case — `DashboardChart` gates
+    // the zones on `isTouch`. That is the point of the pair: the desktop baseline asserts the
+    // desktop geometry is untouched, the mobile one asserts the 48px strip and its two glyphs.
+    note: "touch axis-tap zones offered: on mobile the axis strip grows to 48px (the 44px touch minimum; the default is 34) and carries a ‹ › affordance at its ends. Desktop is unchanged — the zones are touch-only",
+    // 🛑 Phone-width, not the gallery's usual 900. The zones are half the PLOT each, and the mobile
+    // project's viewport is 412px — at 900 the right-hand zone is off-screen and untappable, so the
+    // test that proves `newer` works could not reach it.
+    width: AXIS_TAP_W,
+    height: H,
+  },
+  {
+    id: "stacked-load-d-axis-tap-latest",
+    kind: "stacked",
+    range: "D",
+    mode: "load",
+    axisTap: true,
+    atLatest: true,
+    note: "…at the latest window: the › glyph dims to near-nothing and its half of the strip is inert, the same fact the `>` button states by being disabled",
+    width: AXIS_TAP_W,
     height: H,
   },
 

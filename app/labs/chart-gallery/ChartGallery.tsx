@@ -139,9 +139,24 @@ function StackedCase({ c }: { c: Extract<ChartCase, { kind: "stacked" }> }) {
   const [hoveredRunId, setHoveredRunId] = useState<string | null>(
     c.hoveredRun ? (runBands?.[0]?.id ?? null) : null,
   );
+  // The last axis-tap direction, published to the DOM for the same reason `onToggleRun` is wired:
+  // this gallery is the only place `DashboardChart` mounts outside the Clerk gate, so `e2e` is the
+  // only thing that can prove a tap on the axis strip reports `older`/`newer` at all. Absent until
+  // one lands, so "nothing was reported" is distinguishable from "older was".
+  const [axisTap, setAxisTap] = useState<"older" | "newer" | null>(null);
+  // Seeded from the case, so every existing baseline renders exactly what it asked for. Only the
+  // axis-tap cases feed the pointer BACK into it, because that is the only thing that needs to prove
+  // a tap in the plot still focuses — the guard against the axis zones swallowing the whole chart.
+  const [hoveredTimestamp, setHoveredTimestamp] = useState<Date | null>(focus);
 
   return (
-    <div style={{ width: c.width, height: c.height }}>
+    <div
+      style={{ width: c.width, height: c.height }}
+      data-testid="axis-tap-report"
+      // Always present, with an explicit "none": a missing attribute and an absent element are the
+      // same thing to a locator, and the tests need to assert that NOTHING was reported.
+      data-axis-tap={axisTap ?? "none"}
+    >
       <DashboardChart
         variant="stacked-areas"
         chartData={chartData}
@@ -151,8 +166,15 @@ function StackedCase({ c }: { c: Extract<ChartCase, { kind: "stacked" }> }) {
         timeRange={c.range}
         windowEnd={windowEnd}
         windowStart={windowStart}
-        hoveredTimestamp={focus}
-        onHoverIndex={noop}
+        hoveredTimestamp={hoveredTimestamp}
+        onHoverIndex={
+          c.axisTap
+            ? (i) =>
+                setHoveredTimestamp(
+                  i == null ? null : (chartData.timestamps[i] ?? null),
+                )
+            : noop
+        }
         runBands={runBands}
         hoveredRunId={hoveredRunId}
         onHoverRun={(run) => setHoveredRunId(run?.id ?? null)}
@@ -161,6 +183,8 @@ function StackedCase({ c }: { c: Extract<ChartCase, { kind: "stacked" }> }) {
         onToggleRun={(run) =>
           setHoveredRunId((id) => (id === run.id ? null : run.id))
         }
+        onAxisTap={c.axisTap ? setAxisTap : undefined}
+        canGoNewer={c.axisTap ? !c.atLatest : undefined}
         className="h-full"
       />
     </div>
