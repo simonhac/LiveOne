@@ -1,43 +1,64 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import { isScrollHeld, subscribeScrollHold } from "@/lib/charts/scroll-hold";
 
-export interface ScrollStep {
-  /** Current visibility. */
-  hidden: boolean;
+/**
+ * Where the header is. Two states, and the second is the whole trick:
+ *
+ * - `stuck` — `position: sticky; top: 0`, pinned to the top of the viewport.
+ * - `free` — `position: relative; top: <top>px`: an ordinary part of the DOCUMENT, parked at page
+ *   offset `top`. It is not moved on scroll at all; the page scrolls and it goes with it, so it
+ *   leaves and re-enters the viewport pixel for pixel with the reader's finger, on the compositor,
+ *   with no per-frame JS and no transition to lag behind.
+ */
+export interface HeaderPlacement {
+  mode: "stuck" | "free";
+  /** Page offset of the header's top edge while `free`. Meaningless while `stuck`. */
+  top: number;
   /** Scroll offset at the previous step, and the page height it was read at. */
   lastY: number;
   lastHeight: number;
 }
 
 /**
- * One scroll step → the next state. Pure, so the direction logic is testable without a DOM.
+ * One scroll step → the next placement. Pure, so the logic is testable without a DOM.
  *
  * `y` must already be clamped to `[0, maxY]` — iOS rubber-banding past either end otherwise reads
- * as a direction change. Hides only on a downward step once past the header's own height (so the
- * top of the page never loses it); ANY upward step shows it again.
+ * as a direction change.
  *
- * 🛑 A step whose PAGE HEIGHT changed is layout, not the reader, and only resyncs the baseline.
- * That case is not hypothetical and not rare: Chrome's native scroll anchoring bumps `scrollY`
- * whenever content above the viewport grows, and that bump fires a `scroll` event indistinguishable
- * from a downward flick. A slow period (Y) lands its data after the header pin has expired, the
- * charts above the reader grow, and the header would slide away on its own with nobody touching the
- * screen. Anything that both scrolls the reader AND reflows the page costs one ignored step; the
- * next event, at a settled height, decides.
+ * - `stuck`, reader scrolls DOWN → let go where it was (`top = lastY`), and the page carries it off.
+ * - `free` and fully above the viewport, reader scrolls UP → re-park it just above the viewport
+ *   (`top = lastY - headerHeight`), so the same upward scroll carries it back in.
+ * - `free` and the viewport's top edge has reached it (`y <= top`) → `stuck` again. At that instant
+ *   the two placements coincide, so nothing moves.
+ *
+ * 🛑 A step whose PAGE HEIGHT changed is layout, not the reader, and decides no DIRECTION. That case
+ * is not hypothetical and not rare: Chrome's native scroll anchoring bumps `scrollY` whenever
+ * content above the viewport grows, and that bump fires a `scroll` event indistinguishable from a
+ * downward flick. A slow period (Y) lands its data after the header pin has expired, the charts
+ * above the reader grow, and the header would let go on its own with nobody touching the screen.
+ * The next event, at a settled height, decides.
  */
-export function scrollStep(
-  prev: ScrollStep,
+export function placeHeader(
+  prev: HeaderPlacement,
   y: number,
   height: number,
   headerHeight: number,
-): ScrollStep {
-  const base = { lastY: y, lastHeight: height };
-  if (height !== prev.lastHeight) return { ...base, hidden: prev.hidden };
-  if (y <= headerHeight) return { ...base, hidden: false };
-  if (y > prev.lastY) return { ...base, hidden: true };
-  if (y < prev.lastY) return { ...base, hidden: false };
-  return { ...base, hidden: prev.hidden };
+): HeaderPlacement {
+  const next = { ...prev, lastY: y, lastHeight: height };
+  const settled = height === prev.lastHeight;
+  if (prev.mode === "stuck") {
+    return settled && y > prev.lastY
+      ? { ...next, mode: "free", top: prev.lastY }
+      : next;
+  }
+  let top = prev.top;
+  const wasOffscreen = top + headerHeight <= prev.lastY;
+  if (settled && y < prev.lastY && wasOffscreen) {
+    top = Math.max(0, prev.lastY - headerHeight);
+  }
+  return y <= top ? { ...next, mode: "stuck", top: 0 } : { ...next, top };
 }
 
 /**
@@ -47,94 +68,136 @@ export function scrollStep(
  */
 const NARROW_SCREEN = "(max-width: 639.98px)";
 
+const SLIDE_IN_MS = 200;
+
 /**
- * `true` while the page is being scrolled DOWN past the header; flips back on any scroll up. Scroll
- * container is the window. Scrolls made by `holdScrollAnchor` (lib/charts/scroll-hold.ts) are
- * compensation, not the reader, so they only resync the baseline — and for the whole of a temporal
- * change the header is held SHOWN, because the D|W|M|Y buttons the reader is aiming at live in it.
- * `pinned` forces it shown too (e.g. while a menu hanging off the header is open).
+ * Lets the header scroll away with the page on the way DOWN and scroll back in on any scroll UP,
+ * tracking the reader pixel for pixel (see `HeaderPlacement`). Scroll container is the window. The
+ * header must be `position: sticky; top: 0` by class; this writes `position`/`top` inline over it
+ * and clears them to hand control back.
  *
- * 🛑 **Narrow viewports only** — always `false` from `sm` up. The whole justification for taking
+ * Scrolls made by `holdScrollAnchor` (lib/charts/scroll-hold.ts) are compensation, not the reader,
+ * so they only resync the baseline — and for the whole of a temporal change the header is held
+ * STUCK, because the D|W|M|Y buttons the reader is aiming at live in it. `pinned` forces it stuck
+ * too (e.g. while a menu hanging off the header is open).
+ *
+ * 🛑 While it is away the header is NOT a sticky element, and that is deliberate. Safari 26 paints
+ * a solid band behind its status bar and URL pill whenever a viewport-constrained (fixed/sticky)
+ * element sits at the top edge — `visibility: hidden` and a translate do not exempt one — and lets
+ * the page show through otherwise. A `relative` header parked up the page is just content.
+ *
+ * 🛑 **Narrow viewports only** — from `sm` up it never lets go. The whole justification for taking
  * the header away is that on a phone its two rows permanently eat a chunk of a short screen; on a
  * desktop they cost a sliver of a tall one, and moving them buys nothing while costing the reader
  * the D|W|M|Y buttons and the dashboard switcher every time they scroll down a page. This is a
  * viewport-WIDTH question, not a touch one: a touch laptop has the room, and a phone does not stop
  * being cramped when a mouse is paired to it.
  *
- * Reports `false` on the server and on the first client render, adopting the real answer in a mount
- * effect, so the two renders agree and hydration cannot mismatch — the same shape as
- * `useIsTouchDevice`. Erring "shown" for one frame is the safe direction.
+ * Everything happens in effects, imperatively: the server and the first client render both emit the
+ * plain sticky header, so hydration cannot mismatch, and no scroll event re-renders React.
  */
 export function useHideOnScroll(
   headerRef: React.RefObject<HTMLElement | null>,
   pinned = false,
-): boolean {
-  const [hidden, setHidden] = useState(false);
-  const hiddenRef = useRef(false);
-  const [held, setHeld] = useState(false);
-  const heldRef = useRef(false);
-  const [narrow, setNarrow] = useState(false);
+): void {
+  const pinnedRef = useRef(pinned);
+  const forceStuckRef = useRef<() => void>(() => {});
+
+  useEffect(() => {
+    pinnedRef.current = pinned;
+    if (pinned) forceStuckRef.current();
+  }, [pinned]);
 
   useEffect(() => {
     const mq = window.matchMedia(NARROW_SCREEN);
-    const apply = () => setNarrow(mq.matches);
-    apply();
-    mq.addEventListener("change", apply);
-    return () => mq.removeEventListener("change", apply);
-  }, []);
-
-  useEffect(
-    () =>
-      subscribeScrollHold((p) => {
-        heldRef.current = p;
-        setHeld(p);
-        // Nothing observed during a temporal change may latch: otherwise the state flips the
-        // instant the pin lifts, which is the jump this exists to prevent.
-        if (!p && hiddenRef.current) {
-          hiddenRef.current = false;
-          setHidden(false);
-        }
-      }),
-    [],
-  );
-
-  useEffect(() => {
     const pageHeight = () => document.documentElement.scrollHeight;
-    let state: ScrollStep = {
-      hidden: false,
+    const clampedY = (height: number) => {
+      const maxY = Math.max(0, height - window.innerHeight);
+      return Math.min(Math.max(window.scrollY, 0), maxY);
+    };
+    let held = false;
+    let state: HeaderPlacement = {
+      mode: "stuck",
+      top: 0,
       lastY: window.scrollY,
       lastHeight: pageHeight(),
     };
+
+    const apply = () => {
+      const header = headerRef.current;
+      if (!header) return;
+      if (state.mode === "free") {
+        header.style.position = "relative";
+        header.style.top = `${state.top}px`;
+      } else {
+        header.style.position = "";
+        header.style.top = "";
+      }
+    };
+
+    const forceStuck = () => {
+      const header = headerRef.current;
+      const height = pageHeight();
+      const y = clampedY(height);
+      const wasOffscreen =
+        state.mode === "free" && state.top + (header?.offsetHeight ?? 0) <= y;
+      state = { mode: "stuck", top: 0, lastY: y, lastHeight: height };
+      apply();
+      // It was nowhere on screen, so there is no position to continue from: slide it in rather
+      // than have it appear.
+      if (
+        wasOffscreen &&
+        header?.animate &&
+        !window.matchMedia("(prefers-reduced-motion: reduce)").matches
+      ) {
+        header.animate(
+          [{ transform: "translateY(-100%)" }, { transform: "none" }],
+          { duration: SLIDE_IN_MS, easing: "ease-out" },
+        );
+      }
+    };
+    forceStuckRef.current = forceStuck;
+
     let raf = 0;
     const update = () => {
       raf = 0;
       const height = pageHeight();
-      const maxY = Math.max(0, height - window.innerHeight);
-      const y = Math.min(Math.max(window.scrollY, 0), maxY);
-      if (heldRef.current || isScrollHeld()) {
+      const y = clampedY(height);
+      if (!mq.matches || held || pinnedRef.current || isScrollHeld()) {
         state = { ...state, lastY: y, lastHeight: height };
         return;
       }
-      state = scrollStep(
+      const next = placeHeader(
         state,
         y,
         height,
         headerRef.current?.offsetHeight ?? 0,
       );
-      if (state.hidden !== hiddenRef.current) {
-        hiddenRef.current = state.hidden;
-        setHidden(state.hidden);
-      }
+      const moved = next.mode !== state.mode || next.top !== state.top;
+      state = next;
+      if (moved) apply();
     };
     const onScroll = () => {
       if (!raf) raf = requestAnimationFrame(update);
     };
+    const onWidth = () => {
+      if (!mq.matches) forceStuck();
+    };
+    const unsubscribe = subscribeScrollHold((p) => {
+      held = p;
+      // Nothing observed during a temporal change may latch: it is stuck when the hold starts and
+      // still stuck, measured from wherever the page now is, when the hold lifts.
+      forceStuck();
+    });
+
     window.addEventListener("scroll", onScroll, { passive: true });
+    mq.addEventListener("change", onWidth);
     return () => {
       window.removeEventListener("scroll", onScroll);
+      mq.removeEventListener("change", onWidth);
+      unsubscribe();
       if (raf) cancelAnimationFrame(raf);
+      forceStuckRef.current = () => {};
     };
   }, [headerRef]);
-
-  return narrow && hidden && !pinned && !held;
 }
