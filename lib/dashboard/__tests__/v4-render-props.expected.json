@@ -494,7 +494,7 @@
                   "value": "73"
                 }
               },
-              "className": "text-[17px] @[180px]:text-[24px] font-bold leading-none text-white"
+              "className": "text-[17px] @[180px]:text-[24px] font-bold leading-none text-ink"
             }
           },
           "className": "h-[76px] w-[76px] shrink-0 @[180px]:h-[108px] @[180px]:w-[108px] opacity-55",
@@ -551,7 +551,7 @@
                   "value": "73"
                 }
               },
-              "className": "text-[17px] @[180px]:text-[24px] font-bold leading-none text-white"
+              "className": "text-[17px] @[180px]:text-[24px] font-bold leading-none text-ink"
             }
           },
           "className": "h-[76px] w-[76px] shrink-0 @[180px]:h-[108px] @[180px]:w-[108px] opacity-55",

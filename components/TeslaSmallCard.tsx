@@ -281,8 +281,9 @@ export default function TeslaSmallCard({
       }
     >
       {/* DEBUG: Container size indicator */}
+      {/* `bg-red-500` stays literal: a ?debug-only badge, not a `danger` state. */}
       {showDebug && (
-        <div className="absolute top-0 right-0 bg-red-500 text-white text-[10px] px-1 rounded-bl z-50">
+        <div className="absolute top-0 right-0 bg-red-500 text-ink text-[10px] px-1 rounded-bl z-50">
           {containerSize.width}w {containerSize.height}h
         </div>
       )}
@@ -290,13 +291,13 @@ export default function TeslaSmallCard({
       {/* Title slot: the Tesla mark, white, a guest in the place a title goes. The charge-control
           cog takes the top-right corner as a grey disc — owner/admin only, once there is room. */}
       <div className="flex min-h-7 items-center justify-between gap-2">
-        <TeslaMark className="w-4 h-4 @[180px]:w-5 @[180px]:h-5 text-white" />
+        <TeslaMark className="w-4 h-4 @[180px]:w-5 @[180px]:h-5 text-ink" />
         {showControls && (
           <button
             type="button"
             onClick={() => setControlsOpen(true)}
             aria-label="Charging controls"
-            className={`${TILE_CHIP} text-white/60 transition-colors hover:bg-white/15 hover:text-white`}
+            className={`${TILE_CHIP} text-tile-ink-soft transition-colors hover:bg-wash-strong hover:text-ink`}
           >
             <Settings className="w-4 h-4" />
           </button>
@@ -315,12 +316,12 @@ export default function TeslaSmallCard({
             isCharging ? (
               isHighPower ? (
                 <ChevronsRight
-                  className="w-3 h-3 @[180px]:w-4 @[180px]:h-4 text-white"
+                  className="w-3 h-3 @[180px]:w-4 @[180px]:h-4 text-ink"
                   strokeWidth={3}
                 />
               ) : (
                 <ChevronRight
-                  className="w-3 h-3 @[180px]:w-4 @[180px]:h-4 text-white"
+                  className="w-3 h-3 @[180px]:w-4 @[180px]:h-4 text-ink"
                   strokeWidth={3}
                 />
               )
@@ -328,7 +329,7 @@ export default function TeslaSmallCard({
           }
           className={TILE_RING}
         >
-          <div className={`${TILE_RING_VALUE} text-white`}>
+          <div className={`${TILE_RING_VALUE} text-ink`}>
             <Value value={Math.round(batterySoc)} unit="%" />
           </div>
         </ProgressRing>
@@ -348,12 +349,12 @@ export default function TeslaSmallCard({
         )}
         {/* The armed limit: compact from 180px, the full sentence from 260px like `etaText`. */}
         {limitCompact && (
-          <div className="hidden @[180px]:block @[260px]:hidden truncate text-white/80">
+          <div className="hidden @[180px]:block @[260px]:hidden truncate text-tile-ink-dim">
             {limitCompact}
           </div>
         )}
         {limitText && (
-          <div className="hidden @[260px]:block truncate text-white/80">
+          <div className="hidden @[260px]:block truncate text-tile-ink-dim">
             {limitText}
           </div>
         )}

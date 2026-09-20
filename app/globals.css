@@ -46,6 +46,8 @@
   --color-scrim-soft: rgb(0 0 0 / 0.4);
   /* tw white/[0.08] — the disc a direction chevron or control glyph sits in */
   --color-wash: rgb(255 255 255 / 0.08);
+  /* tw white/15 — a wash one step up from `wash`: a hovered chip, a control pill on a tile */
+  --color-wash-strong: rgb(255 255 255 / 0.15);
   /* tw white/10 — the segmented control's track.
      🛑 Two percent off `wash`, and nobody chose that: the chip and the rail were authored a year
      apart. Left as two tokens because pass 1 renames and never re-tones; unifying them is a
@@ -88,8 +90,17 @@
   --color-tile-ink-dim: rgb(255 255 255 / 0.8);
   /* tw white/55 — TILE_CAPTION, TILE_TICK */
   --color-tile-ink-muted: rgb(255 255 255 / 0.55);
+  /* tw white/60 */
+  --color-tile-ink-soft: rgb(255 255 255 / 0.6);
   /* tw white/40 — IDLE_CHROME: an absence of flow, never a direction */
   --color-tile-ink-idle: rgb(255 255 255 / 0.4);
+  /* tw white/10 — a divider INSIDE a tile, where `line` would be a bar across the slab */
+  --color-tile-line: rgb(255 255 255 / 0.1);
+  /* tw white/[0.06] and white/[0.04] — the tile ramp's skeleton weights, `skeleton` and
+     `skeleton-quiet` on the grey ramp. Four near-identical alphas across the two ramps
+     (0.04/0.06/0.08/0.10/0.15) is the clearest evidence for the unification this prefix defers. */
+  --color-tile-skeleton: rgb(255 255 255 / 0.06);
+  --color-tile-skeleton-quiet: rgb(255 255 255 / 0.04);
 
   /* ── line ───────────────────────────────────────────────────────────────────────────────── */
 
@@ -121,8 +132,10 @@
   --color-danger-wash: oklch(63.7% 0.237 25.331 / 0.1);
   /* tw amber-400 */
   --color-warn: oklch(82.8% 0.189 84.429);
-  /* tw amber-800/40 */
-  --color-warn-line: oklch(47.3% 0.137 46.201 / 0.4);
+  /* tw amber-500/40 — the outline of a `warn-wash` chip; one hue for the fill and its edge */
+  --color-warn-line: oklch(76.9% 0.188 70.08 / 0.4);
+  /* tw amber-300 — text ON a warn wash, where `warn` itself is too heavy */
+  --color-warn-ink: oklch(87.9% 0.169 91.605);
   /* tw amber-500/10 */
   --color-warn-wash: oklch(76.9% 0.188 70.08 / 0.1);
   /* tw green-400 */

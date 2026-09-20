@@ -69,7 +69,7 @@ export default function Tile({
   valueClassName,
 }: TileProps) {
   const staleness = useStaleness(measurementTime, staleThresholdSeconds);
-  const heroColor = `${valueColor ?? "text-white"} ${staleness.isStale ? TILE_STALE : ""}`;
+  const heroColor = `${valueColor ?? "text-ink"} ${staleness.isStale ? TILE_STALE : ""}`;
 
   return (
     <TileSurface overlay={overlay} surfaceClassName="flex flex-col">

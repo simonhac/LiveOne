@@ -179,7 +179,7 @@ export default function RunsCard({
   // 🛑 The rules live on the CELLS, not on the `<tr>`. Tailwind's preflight collapses table borders,
   // and a collapsed border belongs to the table rather than to the row — so a border on a sticky
   // `<tr>` scrolls away with the body instead of sticking with its header.
-  const th = `${cellPad} py-2 align-top text-xs font-normal border-b border-gray-700 ${LEGEND_HEADER}`;
+  const th = `${cellPad} py-2 align-top text-xs font-normal border-b border-line ${LEGEND_HEADER}`;
   const td = `${cellPad} py-2 text-sm`;
   /** A numeric cell. `LEGEND_VALUE` brings the mono face, tabular figures and right alignment. */
   const tdNum = `${td} ${LEGEND_VALUE}`;
@@ -192,7 +192,7 @@ export default function RunsCard({
    *  cell, and "Energy kWh" on one line made the header, not the numbers, the widest cell — enough,
    *  across Energy/Avg/CO₂, to push Cost out of a phone-width card. */
   const unit = (u: string) => (
-    <span className="block font-normal text-gray-500">{u}</span>
+    <span className="block font-normal text-ink-faint">{u}</span>
   );
 
   // No box. This table sits under a stacked chart whose own `EnergyTable` is frameless and inset by
@@ -202,12 +202,12 @@ export default function RunsCard({
   return (
     <div className={CHART_BODY_PAD}>
       <div className={`${TABLE_GUTTER} @container`}>
-        <div className="flex items-center justify-between pb-2 border-b border-gray-700/70">
-          <h2 className="text-sm font-semibold text-gray-100 flex items-center gap-2">
+        <div className="flex items-center justify-between pb-2 border-b border-line-soft">
+          <h2 className="text-sm font-semibold text-ink-strong flex items-center gap-2">
             {title}
             {(runningOverride ?? data?.running) && (
-              <span className="inline-flex items-center gap-1 text-xs font-medium text-green-400">
-                <span className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
+              <span className="inline-flex items-center gap-1 text-xs font-medium text-ok">
+                <span className="w-1.5 h-1.5 rounded-full bg-ok animate-pulse" />
                 {activeLabel}
               </span>
             )}
@@ -219,27 +219,27 @@ export default function RunsCard({
           // "nothing in this period" — is a swap rather than a resize. A long run list still grows
           // past this — a known residual (see dashboard-layout-stability.md).
           <div className="py-6" data-skeleton="" aria-hidden>
-            <div className="h-5 w-2/3 animate-pulse rounded bg-gray-700/30" />
+            <div className="h-5 w-2/3 animate-pulse rounded bg-skeleton-quiet" />
           </div>
         ) : isError ? (
-          <div className="py-6 text-sm text-red-400">
+          <div className="py-6 text-sm text-danger">
             Failed to load {title.toLowerCase()}
           </div>
         ) : data?.tracked === false ? (
           // Not "nothing happened" — nothing is watching. `tracked` is optional on the wire, so an
           // older deployment's response (undefined) keeps the period reading, which is what every
           // caller assumed before the field existed.
-          <div className="py-6 text-sm text-gray-400">{untrackedText}</div>
+          <div className="py-6 text-sm text-ink-muted">{untrackedText}</div>
         ) : rows.length === 0 ? (
-          <div className="py-6 text-sm text-gray-400">{emptyText}</div>
+          <div className="py-6 text-sm text-ink-muted">{emptyText}</div>
         ) : (
           <>
             <div className="max-h-[420px] overflow-y-auto">
               <table className="w-full">
-                {/* 🛑 `bg-black`, and not a translucent tint: a sticky header has rows scrolling
+                {/* 🛑 `bg-canvas`, and not a translucent tint: a sticky header has rows scrolling
                   UNDER it, so it needs an opaque backing or the text collides. Black is the
                   dashboard canvas, so the opacity is invisible. */}
-                <thead className="sticky top-0 bg-black">
+                <thead className="sticky top-0 bg-canvas">
                   <tr>
                     <th className={`${th} text-left`}>When</th>
                     <th className={`${th} text-right`}>Duration</th>
@@ -299,7 +299,7 @@ export default function RunsCard({
                     </tr>
                   ))}
                 </tbody>
-                <tfoot className="sticky bottom-0 bg-black [&_td]:border-t [&_td]:border-gray-700">
+                <tfoot className="sticky bottom-0 bg-canvas [&_td]:border-t [&_td]:border-line">
                   <tr className="font-medium">
                     <td className={`${td} ${LEGEND_LABEL}`}>
                       {rows.length} {rows.length === 1 ? noun : `${noun}s`}
@@ -334,10 +334,10 @@ export default function RunsCard({
               </table>
             </div>
             {anyOutside && (
-              <div className="py-2 text-xs text-gray-400 border-t border-gray-700">
-                <span className="text-amber-400 font-semibold">*</span> Run
-                extends beyond the selected period; its full duration and energy
-                are included in the totals.
+              <div className="py-2 text-xs text-ink-muted border-t border-line">
+                <span className="text-warn font-semibold">*</span> Run extends
+                beyond the selected period; its full duration and energy are
+                included in the totals.
               </div>
             )}
           </>
@@ -349,12 +349,12 @@ export default function RunsCard({
 
 /**
  * The date half of a run's "when": a touch heavier, since it is what the eye scans the column by.
- * `text-gray-300` is the legend's label tone (`LEGEND_LABEL`) — in a legend-styled table the NUMBERS
+ * `text-ink-secondary` is the legend's label tone (`LEGEND_LABEL`) — in a legend-styled table the NUMBERS
  * are the bright thing, and a full-strength label column competes with them.
  */
-const WHEN_DATE = "font-medium text-gray-300";
+const WHEN_DATE = "font-medium text-ink-secondary";
 /** The time half: a touch dimmer, subordinate to the date it belongs to. */
-const WHEN_TIME = "text-gray-400";
+const WHEN_TIME = "text-ink-muted";
 
 /**
  * "10:05am–3:09pm" that stays on one line when it fits and, when a row's numbers are wide enough
@@ -386,7 +386,7 @@ function RunWhenCell({
   spansOutside: boolean;
 }) {
   const marker = spansOutside && (
-    <sup className="font-semibold text-amber-400">*</sup>
+    <sup className="font-semibold text-warn">*</sup>
   );
   const lines = formatRunWhenLines(e);
   if (lines.length === 2) {

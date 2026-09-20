@@ -65,7 +65,7 @@ export default function DeviceMetricsCard({
     if (rows.length === 0) {
       return (
         <div
-          className={`${CHART_HAIRLINE} px-4 py-6 text-center text-sm text-gray-400`}
+          className={`${CHART_HAIRLINE} px-4 py-6 text-center text-sm text-ink-muted`}
         >
           No device metrics available.
         </div>
@@ -75,7 +75,7 @@ export default function DeviceMetricsCard({
     return (
       <div className={`${CHART_HAIRLINE} overflow-hidden`}>
         <table className="w-full text-sm">
-          <tbody className="divide-y divide-gray-700/70">
+          <tbody className="divide-y divide-line-soft">
             {rows.map((row, i) => {
               const formatted =
                 row.value != null
@@ -94,12 +94,16 @@ export default function DeviceMetricsCard({
                     row.logicalPath ??
                     `${row.physicalPath}-${i}`
                   }
+                  // Not tokenised: `gray-800/40` is this card's own pre-tile-style fill, a step off
+                  // LoadProvenanceCard's `gray-800/50`. See the note there.
                   className="hover:bg-gray-800/40"
                 >
-                  <td className="px-3 py-1.5 text-gray-300">{row.pointName}</td>
+                  <td className="px-3 py-1.5 text-ink-secondary">
+                    {row.pointName}
+                  </td>
                   <td
                     className={`px-3 py-1.5 text-right font-mono tabular-nums ${
-                      missing || isStale ? "text-gray-500" : "text-white"
+                      missing || isStale ? "text-ink-faint" : "text-ink"
                     }`}
                     title={
                       isStale && row.measurementTime
@@ -138,7 +142,7 @@ export default function DeviceMetricsCard({
   if (rows.length === 0) {
     return (
       <div
-        className={`${CHART_HAIRLINE} px-4 py-6 text-center text-sm text-gray-400`}
+        className={`${CHART_HAIRLINE} px-4 py-6 text-center text-sm text-ink-muted`}
       >
         No device metrics available.
       </div>

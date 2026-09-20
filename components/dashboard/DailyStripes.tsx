@@ -384,7 +384,7 @@ export default function DailyStripes({
         )}
       </div>
 
-      <div className="mt-4 flex items-center gap-2 text-xs text-gray-400 pl-[108px]">
+      <div className="mt-4 flex items-center gap-2 text-xs text-ink-muted pl-[108px]">
         <span>
           {[label, `${domain[0]}${unitSuffix}`].filter(Boolean).join(" ")}
         </span>
@@ -424,7 +424,7 @@ function Tooltip({
   );
   return (
     <div
-      className="pointer-events-none absolute z-50 rounded-md border border-gray-700 bg-gray-900 px-2 py-1 text-xs text-gray-100 shadow-md"
+      className="pointer-events-none absolute z-50 rounded-md border border-line bg-surface-sunken px-2 py-1 text-xs text-ink-strong shadow-md"
       style={{
         left,
         top: yPx - 4,

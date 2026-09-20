@@ -42,7 +42,7 @@ import { CardSkeleton, subjectOf, useAreaDatum } from "./shared";
 
 function ConfigNotice() {
   return (
-    <Panel className="px-4 py-3 text-sm text-gray-400" padded={false}>
+    <Panel className="px-4 py-3 text-sm text-ink-muted" padded={false}>
       This daily-stripe card is misconfigured.
     </Panel>
   );

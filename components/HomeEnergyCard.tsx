@@ -44,11 +44,17 @@ const RATE_TIP =
 /**
  * The three ratios, as rings, outermost first — each ring's hue is its row's hue. Literal classes
  * (Tailwind's scanner) beside the rgb the SVG needs; the pair is the same colour.
+ *
+ * 🛑 SERIES tokens, not `ok`/`warn`. These are the same class-plus-rgb pair `lib/role-chrome.ts`
+ * carries, and for the same reason — the row's number and the ring beside it are one fact. As
+ * Tailwind classes the two halves had drifted: v4's palette is oklch and these rgb values are the
+ * v3 sRGB hexes, so ring and number were different colours on a P3 display. The `series-*` tokens
+ * are DEFINED as these rgb values, so the pair is now true by construction.
  */
 const RINGS = {
-  renewable: { text: "text-green-400", rgb: CHART_COLORS.battery.main },
-  selfUse: { text: "text-yellow-200", rgb: CHART_COLORS.solar.primary },
-  autarky: { text: "text-cyan-400", rgb: CHART_COLORS.pool },
+  renewable: { text: "text-series-battery", rgb: CHART_COLORS.battery.main },
+  selfUse: { text: "text-series-solar", rgb: CHART_COLORS.solar.primary },
+  autarky: { text: "text-series-pool", rgb: CHART_COLORS.pool },
 } as const;
 
 /**
@@ -93,18 +99,18 @@ export default function HomeEnergyCard({
       <div data-skeleton="" aria-hidden>
         <RingsLayout
           rings={
-            <div className="h-full w-full animate-pulse rounded-full border-[12px] border-white/[0.06]" />
+            <div className="h-full w-full animate-pulse rounded-full border-[12px] border-tile-skeleton" />
           }
           rows={["Renewable", "Self-use", "Autarky"].map((label) => (
             <div
               key={label}
-              className="animate-pulse rounded bg-white/[0.04] [&_*]:!text-transparent"
+              className="animate-pulse rounded bg-tile-skeleton-quiet [&_*]:!text-transparent"
             >
               <TrendRow label={label} value="00%" />
             </div>
           ))}
           caption={
-            <span className="animate-pulse rounded bg-white/[0.06] text-transparent">
+            <span className="animate-pulse rounded bg-tile-skeleton text-transparent">
               000 kWh · $00.00 · 00¢/kWh · 00 kg CO₂ · 000 g/kWh
             </span>
           }
@@ -114,7 +120,7 @@ export default function HomeEnergyCard({
   }
   if (!summary || summary.consumptionKwh <= 0) {
     return shell(
-      <p className="py-3 text-sm text-white/55">
+      <p className="py-3 text-sm text-tile-ink-muted">
         No attributed energy for this period yet.
       </p>,
     );

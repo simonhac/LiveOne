@@ -58,9 +58,9 @@ export default function AmberNow({ latest }: AmberNowProps) {
 
   return (
     <div
-      className={`w-full max-w-md mx-auto p-4 md:p-6 bg-[rgb(40,49,66)] border border-gray-700 ${ttInterphases.className}`}
+      className={`w-full max-w-md mx-auto p-4 md:p-6 bg-[rgb(40,49,66)] border border-line ${ttInterphases.className}`}
     >
-      <h2 className="text-sm font-semibold text-gray-400 mb-6 tracking-wide">
+      <h2 className="text-sm font-semibold text-ink-muted mb-6 tracking-wide">
         LIVE PRICE
       </h2>
 
@@ -139,7 +139,7 @@ export default function AmberNow({ latest }: AmberNowProps) {
 
       {/* Summary card - light background like Amber */}
       <div className="bg-slate-200 p-4 mb-4">
-        <h3 className="text-xs font-semibold text-gray-500 mb-1 tracking-wide">
+        <h3 className="text-xs font-semibold text-ink-faint mb-1 tracking-wide">
           SUMMARY
         </h3>
         <p className="text-sm" style={{ color: "rgb(0, 0, 0)" }}>
@@ -149,10 +149,10 @@ export default function AmberNow({ latest }: AmberNowProps) {
 
       {/* Feed-in section - only show when feed-in rate available */}
       {showFeedIn && (
-        <div className="border-t border-gray-600 pt-4">
+        <div className="border-t border-line-strong pt-4">
           <div className="flex items-center gap-2 mb-1">
             <SunIcon className="w-5 h-5" />
-            <span className="text-base font-medium text-gray-300">
+            <span className="text-base font-medium text-ink-secondary">
               Solar Feed-in
             </span>
           </div>

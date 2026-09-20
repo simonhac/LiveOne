@@ -273,8 +273,9 @@ function CardNodeView({
   const plugin = RENDERERS[node.type];
   if (!plugin) {
     return (
-      <Panel className="px-4 py-3 text-sm text-gray-400" padded={false}>
-        Unknown card type <code className="text-gray-300">{node.type}</code>
+      <Panel className="px-4 py-3 text-sm text-ink-muted" padded={false}>
+        Unknown card type{" "}
+        <code className="text-ink-secondary">{node.type}</code>
       </Panel>
     );
   }
@@ -494,7 +495,7 @@ function GroupNodeView({
       // and a table with its columns, so the frame was an outline around things that already have
       // an edge — invisible on a phone (it bled) and a second box inside the page on a laptop.
       <section>
-        <h2 className="px-1 pb-2.5 text-[20px] font-bold leading-tight text-white">
+        <h2 className="px-1 pb-2.5 text-[20px] font-bold leading-tight text-ink">
           {area.displayName}
         </h2>
         {node.direction === "row" ? (
@@ -519,7 +520,7 @@ function CardUnavailable({ height }: { height: number }) {
   return (
     <div
       style={{ minHeight: height }}
-      className={`flex items-center justify-center px-4 py-3 text-sm text-gray-500 ${CHART_PANEL}`}
+      className={`flex items-center justify-center px-4 py-3 text-sm text-ink-faint ${CHART_PANEL}`}
     >
       This card&rsquo;s area couldn&rsquo;t be loaded.
     </div>

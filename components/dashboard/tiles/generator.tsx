@@ -327,7 +327,7 @@ function GeneratorTile({
       <span className={countdown != null ? "@[180px]:hidden" : undefined}>
         {detailWords ? ", " : ""}
         {detailWords ? time.long.toLowerCase() : time.long}{" "}
-        <span className="text-white">{time.value}</span>
+        <span className="text-ink">{time.value}</span>
       </span>
     </>
   );
@@ -340,7 +340,7 @@ function GeneratorTile({
    */
   const heroColor =
     status.tone === "warning"
-      ? "text-red-400"
+      ? "text-danger"
       : status.isRunning
         ? ROLE_CHROME.battery.value
         : IDLE_CHROME.value;
@@ -368,7 +368,7 @@ function GeneratorTile({
             strokeRatio={0.16}
             className="hidden h-11 w-11 shrink-0 @[180px]:block"
           >
-            <span className="text-[10px] font-bold leading-none text-white">
+            <span className="text-[10px] font-bold leading-none text-ink">
               {time.value.replace(/\u00A0min$/, "m")}
             </span>
           </ProgressRing>
@@ -380,7 +380,7 @@ function GeneratorTile({
               is only a signal that there is something to go and read. */}
           {lastError && (
             <span
-              className={`${TILE_CHIP} text-[13px] font-bold text-red-400`}
+              className={`${TILE_CHIP} text-[13px] font-bold text-danger`}
               title="The generator reported an error — open the controls to read it"
             >
               !
@@ -393,7 +393,7 @@ function GeneratorTile({
               type="button"
               onClick={() => setControlsOpen(true)}
               aria-label="Generator controls"
-              className={`${TILE_CHIP} text-white/60 transition-colors hover:bg-white/15 hover:text-white`}
+              className={`${TILE_CHIP} text-tile-ink-soft transition-colors hover:bg-wash-strong hover:text-ink`}
             >
               <Settings className="h-4 w-4" />
             </button>

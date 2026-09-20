@@ -75,6 +75,7 @@ const ALIASES: Record<string, string> = {
   "--color-danger-solid": "--color-red-600",
   "--color-danger-solid-hover": "--color-red-700",
   "--color-warn": "--color-amber-400",
+  "--color-warn-ink": "--color-amber-300",
   "--color-ok": "--color-green-400",
   "--color-accent": "--color-blue-600",
   "--color-accent-hover": "--color-blue-700",
@@ -95,7 +96,7 @@ const ALPHA_ALIASES: Record<string, [string, string]> = {
   "--color-line-soft": ["--color-gray-700", "0.7"],
   "--color-danger-line": ["--color-red-500", "0.7"],
   "--color-danger-wash": ["--color-red-500", "0.1"],
-  "--color-warn-line": ["--color-amber-800", "0.4"],
+  "--color-warn-line": ["--color-amber-500", "0.4"],
   "--color-warn-wash": ["--color-amber-500", "0.1"],
 };
 
@@ -137,6 +138,13 @@ describe("colour tokens", () => {
     expect(OURS.get("--color-line-faint")).toBe("rgb(255 255 255 / 0.07)");
     expect(OURS.get("--color-wash")).toBe("rgb(255 255 255 / 0.08)");
     expect(OURS.get("--color-rail")).toBe("rgb(255 255 255 / 0.1)");
+    expect(OURS.get("--color-wash-strong")).toBe("rgb(255 255 255 / 0.15)");
+    expect(OURS.get("--color-tile-ink-soft")).toBe("rgb(255 255 255 / 0.6)");
+    expect(OURS.get("--color-tile-line")).toBe("rgb(255 255 255 / 0.1)");
+    expect(OURS.get("--color-tile-skeleton")).toBe("rgb(255 255 255 / 0.06)");
+    expect(OURS.get("--color-tile-skeleton-quiet")).toBe(
+      "rgb(255 255 255 / 0.04)",
+    );
     expect(OURS.get("--color-scrim")).toBe("rgb(0 0 0 / 0.5)");
     expect(OURS.get("--color-scrim-soft")).toBe("rgb(0 0 0 / 0.4)");
   });

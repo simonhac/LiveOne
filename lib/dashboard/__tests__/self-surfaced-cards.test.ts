@@ -20,9 +20,22 @@ import path from "node:path";
 const ROOT = path.join(__dirname, "..", "..", "..");
 const CARDS = path.join(ROOT, "components", "dashboard", "cards");
 
-/** Anything that paints the one tile slab (lib/tile-style.ts's `TILE_SURFACE`). */
-const SURFACE_IMPORTS =
+/**
+ * Does this module IMPORT something that paints the one tile slab (lib/tile-style.ts's
+ * `TILE_SURFACE`)?
+ *
+ * 🛑 Matched against the file's `import` statements only, never its whole text. Scanning the whole
+ * file made a card that merely MENTIONS `TileSurface` in a comment — as LoadProvenanceCard does,
+ * explaining that it has NOT moved onto one yet — read as though it drew one.
+ */
+const SURFACE_SYMBOLS =
   /\b(TileSurface|StatCardShell|TILE_ROOT|TILE_SURFACE)\b/;
+
+function importsASurface(src: string): boolean {
+  return [...src.matchAll(/^\s*import\s[\s\S]*?from\s+"[^"]+";/gm)].some((m) =>
+    SURFACE_SYMBOLS.test(m[0]),
+  );
+}
 
 /** `import X from "@/components/…"` — the leaf a card plugin delegates to. */
 function leafComponents(src: string): string[] {
@@ -56,7 +69,7 @@ describe("self-surfaced card plugins", () => {
     "%s flags itself iff its leaf draws a surface",
     (_file, plugin) => {
       const drawsSurface = leafComponents(plugin.src).some((leaf) =>
-        SURFACE_IMPORTS.test(read(leaf)),
+        importsASurface(read(leaf)),
       );
       const flagged = /selfSurfaced:\s*true/.test(plugin.src);
       expect(flagged).toBe(drawsSurface);
