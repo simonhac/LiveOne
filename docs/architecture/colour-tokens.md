@@ -130,12 +130,45 @@ scanned source. A `text-ok` that nothing uses simply does not exist in the built
 
 ## Where we are
 
-Done: the `@theme` block and its tests; `lib/tile-style.ts`, `lib/charts/style.ts`,
-`lib/point/unit-typography.ts`, `lib/role-chrome.ts`, `components/ui/segmented.ts`.
+**Done** — at zero raw palette classes but for the ten listed below:
 
-Not yet: `components/ui/**` primitives, `components/dashboard/**`, the card bodies, the charts and
-Sankey, the dashboard chrome and its dialogs — roughly 600 literals across ~60 files. Until that
-lands, `text-gray-400` still works (`@theme` adds to the default palette rather than replacing it),
-which is what lets the sweep land file by file. A `check:colours` prebuild gate with a
-monotonically-shrinking allowlist — modelled on `scripts/check-readings-boundary.mjs` — should land
-with the last phase, or phase 4 will regress within a month.
+- the `@theme` block and its guard tests;
+- the style-token modules: `lib/tile-style.ts`, `lib/charts/style.ts`,
+  `lib/point/unit-typography.ts`, `lib/role-chrome.ts`, `components/ui/segmented.ts`;
+- all of `components/ui/**` — button, input, select, dialog, label, skeleton, stat, trend-row,
+  tile-surface, tile-stale, mini-bars;
+- all of `components/dashboard/**`, and the twelve card bodies: `Tile`, `HomeEnergyCard`,
+  `BatteryContentsCard`, `LoadProvenanceCard`, `DeviceMetricsCard`, `RunsCard`, `HwsSmallCard`,
+  `GridSignalsCard`, `AmberCard`, `AmberSmallCard`, `AmberNow`, `TeslaSmallCard`.
+
+**Not yet**, ~390 literals:
+
+| Group | Files | Literals |
+| --- | --- | --- |
+| charts, Sankey, tables | `SiteChartsCard` `HeatmapChart` `LinesChartCard` `ChartTooltip` `EnergyTable` `NodeTooltip` `LinkTooltip` `FlowsSettingsMenu` `heatmap/` `battery-provenance/` | ~100 |
+| dashboard chrome | `DashboardClient` `DashboardsMenu` `TemporalNavigator` `app/dashboard/` | ~54 |
+| dialogs | `DashboardSettingsDialog` `ShareLinksPanel` `GrantsPanel` `NewDashboardDialog` `AddAreaDialog` `area-builder/` | ~305 |
+| controls, errors | `GeneratorControlDialog` `TeslaControlDialog` `TeslaChargeLimits` `CommandActivityLog` `ControlNotice` `ServerErrorModal` `ErrorPanel` | ~72 |
+
+Until those land, `text-gray-400` still works — `@theme` adds to the default palette rather than
+replacing it — which is what lets the sweep go file by file. A `check:colours` prebuild gate with a
+monotonically-shrinking allowlist, modelled on `scripts/check-readings-boundary.mjs`, should land
+with the last group, or the dialogs will regrow literals within a month.
+
+## Deliberately left literal
+
+Not every colour should become a token, and these say so where they sit rather than silently:
+
+- **`LoadProvenanceCard`'s and `DeviceMetricsCard`'s own surfaces** — `gray-800/50`, `gray-800/40`,
+  `gray-700/60`. Both cards predate [tile-style.md](tile-style.md) and carry a fill and hairlines a
+  step off every other card's. Minting a token per accident is how a vocabulary stops being
+  navigable, and re-toning them is a decision rather than a rename. They go when those cards move
+  onto `TileSurface`.
+- **`LoadProvenanceCard`'s cyan car icon** — cyan is the POOL series and this is the EV card, so
+  `series-pool` would encode a lie and `series-ev` is a re-tone. Left visible.
+- **`AmberNow`'s light panel** (`bg-slate-200`) — the one light-on-dark surface in the app.
+- **Two `?debug` badges** (`bg-red-500`) — dev-only affordances, not a `danger` state.
+
+Each is a *question*, not an oversight, which is why none of them is quietly mapped to the nearest
+token. Same spirit as the repo's `@knipignore <reason>`: grep for them to find what is still
+awaiting a decision.
