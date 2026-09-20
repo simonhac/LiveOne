@@ -83,5 +83,19 @@ export interface CardPlugin {
    * before any context/handle resolution, so it may read `node.config` and nothing else.
    */
   collapseKey?: (node: CardNode) => string | null;
+  /**
+   * True ⇒ this card draws its OWN surface, so the section must not wrap it in `SECTION_RUN_PAD`.
+   *
+   * A section's children fall into two kinds (see `isSelfSurfaced` in ../v4/node-view.tsx): things
+   * that state their own extent — a tile, a row of them, a card that paints a `TileSurface` — stand
+   * bare at the section's full width, and everything else (charts, tables) shares a padded run.
+   * Tiles answered that question by their `kind` alone, which made `battery-contents` 12px narrower
+   * per side than the Home Energy card beside it at `sm` and up: same shell, same padding, but one
+   * is registered as a tile view and the other as a card, and only the card got the run's gutter.
+   *
+   * So the flag, not the kind. Set it when the plugin's leaf renders `TileSurface` /
+   * `StatCardShell`, or paints a slab of its own.
+   */
+  selfSurfaced?: boolean;
   Render: React.FC<CardRenderProps>;
 }

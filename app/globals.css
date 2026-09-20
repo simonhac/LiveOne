@@ -1,5 +1,140 @@
 @import "tailwindcss";
 
+/* ── design tokens ──────────────────────────────────────────────── begin ──
+   Colour is reached for by MEANING, not by hue. `text-ink-muted`, not
+   `text-gray-400`; `bg-surface`, not `bg-[#1C1C1E]`. The why — and the decision table for
+   picking between two tokens that carry the same paint — is docs/architecture/colour-tokens.md.
+
+   🛑 EVERY ALIASED VALUE IS COPIED FROM `node_modules/tailwindcss/theme.css`, NEVER FROM MEMORY.
+   Tailwind v4's palette is `oklch`, not the v3 sRGB hexes: `gray-400` is
+   `oklch(70.7% 0.022 261.325)`, which is NOT `rgb(156 163 175)`. A token written from a v3 cheat
+   sheet shifts every grey on the page with nothing to catch it. The Tailwind key each value came
+   from is in the comment beside it, and `lib/__tests__/colour-tokens.test.ts` re-reads
+   `theme.css` on every run, so a Tailwind upgrade that retunes the palette fails the build
+   instead of silently re-toning the dashboard.
+
+   `@theme` ADDS to the default palette rather than replacing it, so `text-gray-400` keeps working
+   while the sweep lands file by file.
+
+   Alpha: a tone that means something gets its OWN token (`tile-ink-muted`, not `ink/55`) — `/55`
+   is exactly the magic number this exists to delete. Keep `/NN` for a genuinely one-off
+   decorative wash. Never stack `/NN` on a token that already carries alpha; the two compound. */
+@theme {
+  /* ── canvas & surface ── */
+  --color-canvas: #000; /* tw black */
+  --color-surface: #1c1c1e; /* the tile slab — Apple's secondary system background (dark) */
+  --color-surface-raised: #2c2c2e; /* one step up from the slab — the stale badge */
+  --color-surface-sunken: oklch(21% 0.034 264.665); /* tw gray-900 */
+  --color-surface-panel: oklch(
+    21% 0.034 264.665 / 0.3
+  ); /* tw gray-900/30 — chart panel fill */
+  --color-surface-overlay: oklch(
+    27.8% 0.033 256.848
+  ); /* tw gray-800 — menus, modals, popovers */
+  --color-surface-control: oklch(
+    37.3% 0.034 259.733
+  ); /* tw gray-700 — inputs, secondary buttons */
+  --color-surface-control-hover: oklch(44.6% 0.03 256.802); /* tw gray-600 */
+  --color-scrim: rgb(
+    0 0 0 / 0.5
+  ); /* tw black/50, as authored on the dialog overlay */
+  --color-wash: rgb(
+    255 255 255 / 0.08
+  ); /* tw white/[0.08] — the direction/control chip disc */
+  --color-rail: rgb(
+    255 255 255 / 0.1
+  ); /* tw white/10 — the segmented control's track
+     🛑 Two percent off `wash`, and nobody chose that: the chip and the rail were authored a year
+     apart. Left as two tokens because pass 1 renames and never re-tones; unifying them is a
+     one-line change here once someone decides which is right. */
+
+  /* ── ink: the chrome ramp (grey on a dark page) ── */
+  --color-ink: #fff; /* tw white */
+  --color-ink-strong: oklch(96.7% 0.003 264.542); /* tw gray-100 */
+  --color-ink-secondary: oklch(87.2% 0.01 258.338); /* tw gray-300 */
+  --color-ink-muted: oklch(70.7% 0.022 261.325); /* tw gray-400 */
+  --color-ink-faint: oklch(55.1% 0.027 264.364); /* tw gray-500 */
+  --color-ink-disabled: oklch(44.6% 0.03 256.802); /* tw gray-600 */
+  --color-ink-inverse: #000; /* tw black — text on a light fill */
+
+  /* ── ink: the TILE ramp (white-alpha on the slab) ──
+     A second ramp doing the same job as the one above, by accident of history: `white/55` over
+     `#1C1C1E` and `gray-300` over `gray-900` are both "secondary text". The `tile-` prefix is the
+     standing TODO — unifying them is a design decision, not a rename, and is deliberately NOT
+     part of the token sweep. */
+  --color-tile-ink-dim: rgb(255 255 255 / 0.8); /* tw white/80 */
+  --color-tile-ink-muted: rgb(
+    255 255 255 / 0.55
+  ); /* tw white/55 — TILE_CAPTION, TILE_TICK */
+  --color-tile-ink-idle: rgb(
+    255 255 255 / 0.4
+  ); /* tw white/40 — IDLE_CHROME: absence of flow */
+
+  /* ── line ── */
+  --color-line: oklch(37.3% 0.034 259.733); /* tw gray-700 */
+  --color-line-strong: oklch(44.6% 0.03 256.802); /* tw gray-600 */
+  --color-line-soft: oklch(
+    37.3% 0.034 259.733 / 0.7
+  ); /* tw gray-700/70 — CHART_PANEL, hairline */
+  --color-line-hairline: rgb(
+    255 255 255 / 0.25
+  ); /* tw white/25 — MiniBars baseline */
+  --color-line-faint: rgb(
+    255 255 255 / 0.07
+  ); /* tw white/[0.07] — MiniBars trough, chart shading */
+
+  /* ── state ──
+     🛑 STATE, NOT IDENTITY. A battery series is green because it is the battery, not because
+     something is OK; Amber is amber because it is Amber, not because something needs attention.
+     Reach for `series-*` or `brand-*` for those — see the doc. */
+  --color-danger: oklch(70.4% 0.191 22.216); /* tw red-400 */
+  --color-danger-solid: oklch(57.7% 0.245 27.325); /* tw red-600 */
+  --color-danger-solid-hover: oklch(50.5% 0.213 27.518); /* tw red-700 */
+  --color-danger-line: oklch(63.7% 0.237 25.331 / 0.7); /* tw red-500/70 */
+  --color-danger-wash: oklch(63.7% 0.237 25.331 / 0.1); /* tw red-500/10 */
+  --color-warn: oklch(82.8% 0.189 84.429); /* tw amber-400 */
+  --color-warn-line: oklch(47.3% 0.137 46.201 / 0.4); /* tw amber-800/40 */
+  --color-warn-wash: oklch(76.9% 0.188 70.08 / 0.1); /* tw amber-500/10 */
+  --color-ok: oklch(79.2% 0.209 151.711); /* tw green-400 */
+
+  /* ── interactive ── */
+  --color-accent: oklch(54.6% 0.245 262.881); /* tw blue-600 — primary button */
+  --color-accent-hover: oklch(48.8% 0.243 264.376); /* tw blue-700 */
+  --color-accent-ink: oklch(62.3% 0.214 259.815); /* tw blue-500 — links */
+  --color-focus: oklch(
+    62.3% 0.214 259.815
+  ); /* tw blue-500 — focus ring, selected border */
+
+  /* ── series ──
+     A tile's hero number, its ring and its chart trace are ONE fact, so they are one colour. These
+     carry `lib/chart-colors.ts`'s values verbatim (`lib/__tests__/role-chrome.test.ts` pins them),
+     which is what finally makes `role-chrome.ts`'s promise true.
+
+     🛑 DELIBERATELY sRGB, NOT the Tailwind key they look like. `text-green-400` in Tailwind v4 is
+     `oklch(79.2% 0.209 151.711)` — a deliberately more vivid green than `#4ADE80` on a P3 display —
+     while the SVG ring beside it was always drawn in `rgb(74, 222, 128)`. The tile's number and its
+     own ring were therefore two greens on every Mac and iPhone, and the guard test could not see it
+     because its lookup table was a hand-copied Tailwind v3 table. The series is the authority here:
+     a chart trace cannot be an oklch utility class, so the class follows the trace, not the reverse.
+
+     Roles only. A genuine scale (Tesla's SoC ramp, Amber's price levels) is state-coded and stays
+     out — see lib/role-chrome.ts. */
+  --color-series-solar: rgb(254, 240, 138); /* CHART_COLORS.solar.primary */
+  --color-series-load: rgb(96, 165, 250); /* CHART_COLORS.load */
+  --color-series-hot-water: rgb(251, 146, 60); /* CHART_COLORS.hotWater */
+  --color-series-battery: rgb(74, 222, 128); /* CHART_COLORS.battery.main */
+  --color-series-grid: rgb(236, 72, 153); /* CHART_COLORS.grid.main */
+  --color-series-pool: rgb(34, 211, 238); /* CHART_COLORS.pool */
+  --color-series-hvac: rgb(167, 139, 250); /* CHART_COLORS.hvac */
+  --color-series-ev: rgb(220, 38, 38); /* CHART_COLORS.ev */
+
+  /* ── brand ──
+     🛑 NOT `warn`. Amber-the-retailer is an identity; mapping it onto the warning token would be
+     the single most likely "semantic" mistake in this vocabulary. */
+  --color-brand-amber: oklch(82.8% 0.189 84.429); /* tw amber-400 */
+}
+/* ── design tokens ────────────────────────────────────────────────── end ── */
+
 /* Font is applied via Next.js font optimization in layout.tsx */
 /* This ensures consistent font loading and prevents preload warnings */
 
@@ -198,8 +333,11 @@
    VALUE's colour — the tile's colour lives in its data, so a grey `kW` beside a yellow number would
    split one fact into two tones. A unit keeps its case (`kW`, `g/kWh`): SI case is load-bearing
    (`mW` is not `MW`). This is plain CSS rather than a prop on `<Value>` so that every Value nested
-   anywhere in a tile follows it without being told, and it is unlayered so it outranks the `text-gray-400`
-   utility the same span carries everywhere else. */
+   anywhere in a tile follows it without being told, and it is unlayered so it outranks the
+   `text-ink-muted` utility the same span carries everywhere else.
+   🛑 Being unlayered means a plain utility can never override it either, at any specificity — a
+   caption that wants QUIETER units than its numbers needs `!important`
+   (`TILE_CAPTION_UNITS_DIM`). */
 .tile-scope {
   font-family:
     ui-rounded,

@@ -12,7 +12,7 @@
  */
 
 /** The rail. Add `gap-*` only if you want the segments further apart than the padding implies. */
-export const SEGMENTED_TRACK = "inline-flex rounded-full bg-white/10 p-0.5";
+export const SEGMENTED_TRACK = "inline-flex rounded-full bg-rail p-0.5";
 
 /** Every segment, selected or not. */
 export const SEGMENTED_ITEM =
@@ -22,6 +22,6 @@ export const SEGMENTED_ITEM =
 export const SEGMENTED_ICON_ITEM =
   "rounded-full px-2 py-1 transition-colors disabled:opacity-40 disabled:cursor-not-allowed";
 
-export const SEGMENTED_ITEM_ON = "bg-gray-600 text-white shadow-sm";
+export const SEGMENTED_ITEM_ON = "bg-surface-control-hover text-ink shadow-sm";
 
-export const SEGMENTED_ITEM_OFF = "text-gray-300 hover:text-white";
+export const SEGMENTED_ITEM_OFF = "text-ink-secondary hover:text-ink";

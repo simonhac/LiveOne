@@ -180,12 +180,22 @@ function SpanCell({
 }
 
 /**
- * Does this node draw its own surface — a tile, or a row group of them — rather than relying on a
- * frame around it? Decides which of a heading section's children get the section's chart `Panel`.
+ * Does this node draw its own surface — rather than relying on a frame around it? Decides which of
+ * a heading section's children stand bare and which share the section's padded run.
+ *
+ * 🛑 THE RULE IS "DRAWS ITS OWN SURFACE", NOT "IS A TILE". `kind === "tile"` is merely the common
+ * case; a CARD plugin says so with `CardPlugin.selfSurfaced`. Reading the kind alone was a bug you
+ * could see: `battery-contents` and the Home Energy card render through the very same
+ * `StatCardShell` → `TileSurface`, but Home Energy is registered as a tile VIEW (it renders a full
+ * card and stays a tile only so the persisted docs need no rewrite) while battery-contents is a
+ * card — so only the latter picked up `SECTION_RUN_PAD` and sat 12px narrower per side from `sm`
+ * up. On a phone, where that token carries no horizontal padding, the two had always agreed.
  */
 function isSelfSurfaced(node: DashboardNode): boolean {
   if (node.kind === "group") return node.direction === "row";
-  return RENDERERS[node.type]?.kind === "tile";
+  const plugin = RENDERERS[node.type];
+  if (!plugin) return false;
+  return plugin.kind === "tile" || plugin.selfSurfaced === true;
 }
 
 /**

@@ -9,7 +9,9 @@ role's theme colour — the one its series has in every chart — but wears it o
 data (number, ring, bars, chevron), never on the box.
 
 Source of truth for the _what_: `lib/tile-style.ts` (tokens), `components/ui/tile-surface.tsx`
-(the shell), `lib/role-chrome.ts` (role colours). This document holds the _why_.
+(the shell), `lib/role-chrome.ts` (role colours). This document holds the _why_. The colours those
+tokens name — `surface`, `tile-ink-muted`, `series-battery` — are defined in `app/globals.css`'s
+`@theme` block and explained in [colour-tokens.md](colour-tokens.md).
 
 ## What it replaced
 
@@ -42,6 +44,14 @@ duplicated the same class string (`Tile`, `StatCardShell`, `AmberSmallCard`/`Tes
    without being told; outside a tile, units stay muted ([number-typography.md](number-typography.md)).
    Units are never upper-cased: SI case is load-bearing (`mW` is not `MW`), and `KW`/`G/KWH` read
    as typos.
+
+   **One exception, and it is about heroes vs captions.** The rule protects a HERO, where a grey
+   `kW` beside a yellow number splits one fact into two tones. A dense CAPTION is the opposite
+   case: the Home Energy footer packs five facts onto one line, the numbers are what the eye scans
+   for, and the units are the furniture between them. `TILE_CAPTION_UNITS_DIM` sets them a step
+   quieter (`tile-ink-idle` against the caption's `tile-ink-muted`). 🛑 It needs `!important`,
+   because the `.tile-scope [data-unit]` rule above is deliberately unlayered and outranks any
+   plain utility at any specificity.
 6. **The narrowest tile is ~150px — never design a tier below it.** `lib/dashboard/tile-grid.ts`
    never drops under 2 columns and never lets a column fall under 176px, so a tile in a multi-tile
    row runs ~150–280px, and a tile alone in its row is as wide as the section (~1000px). Those are

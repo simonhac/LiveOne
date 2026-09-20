@@ -34,11 +34,11 @@ export const TILE_ROOT = "tile-scope @container relative h-full min-w-0";
 /**
  * The one tile surface: a neutral slab, no border, no tint, no shadow. Role never touches it.
  *
- * `#1C1C1E` is Apple's secondary system background (dark); on the true-black dashboard page it
- * reads as a card without needing an outline.
+ * `--color-surface` is Apple's secondary system background (dark), `#1C1C1E`; on the true-black
+ * dashboard page it reads as a card without needing an outline.
  */
 export const TILE_SURFACE =
-  "relative h-full overflow-hidden bg-[#1C1C1E] rounded-[18px] @[180px]:rounded-[22px] p-3 @[180px]:p-4";
+  "relative h-full overflow-hidden bg-surface rounded-[18px] @[180px]:rounded-[22px] p-3 @[180px]:p-4";
 
 /**
  * Card title — semibold, top-left. Deliberately colourless: the header takes the tile's THEME colour
@@ -47,14 +47,30 @@ export const TILE_SURFACE =
 export const TILE_TITLE = "text-[15px] leading-tight font-semibold truncate";
 
 /** A label over a value ("Now", "Imported"). White, regular. */
-export const TILE_LABEL = "text-[13px] leading-tight text-white";
+export const TILE_LABEL = "text-[13px] leading-tight text-ink";
 
 /** Secondary text: qualifiers, time-axis labels, stale age. */
 export const TILE_CAPTION =
-  "text-[11px] leading-tight font-medium text-white/55";
+  "text-[11px] leading-tight font-medium text-tile-ink-muted";
+
+/**
+ * A caption whose UNITS read a step quieter than its numbers — the Home Energy footer, which packs
+ * five facts onto one line.
+ *
+ * A deliberate exception to tile-style rule 5 ("units take the value's colour"). That rule is about
+ * a HERO, where a grey `kW` beside a yellow number would split one fact into two tones. Here the
+ * numbers are what the eye is scanning for and the units are the furniture between them.
+ *
+ * 🛑 `!` IS LOAD-BEARING. `.tile-scope [data-unit] { color: inherit }` (app/globals.css) is
+ * deliberately UNLAYERED so it outranks the `text-ink-muted` utility `<Value>` carries outside a
+ * tile — which means a plain utility here loses to it too, at any specificity. Only `!important`
+ * wins, the same trick the Home Energy skeleton already uses for `!text-transparent`.
+ */
+export const TILE_CAPTION_UNITS_DIM = "[&_[data-unit]]:!text-tile-ink-idle";
 
 /** A time-axis label under a mini chart — a caption a size down, since four share a 150px tile. */
-export const TILE_TICK = "text-[10px] leading-none font-medium text-white/55";
+export const TILE_TICK =
+  "text-[10px] leading-none font-medium text-tile-ink-muted";
 
 /**
  * The one hero number per tile. Colour is the caller's — it is the DATA's colour.
@@ -82,7 +98,7 @@ export const TILE_RING_VALUE =
 
 /** The grey disc a direction chevron or a control glyph sits in. */
 export const TILE_CHIP =
-  "size-7 shrink-0 rounded-full bg-white/[0.08] grid place-items-center";
+  "size-7 shrink-0 rounded-full bg-wash grid place-items-center";
 
 /**
  * Added to a LIVE value (a hero, a ring, a row) while its reading is stale: the value keeps its hue

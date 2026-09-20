@@ -34,7 +34,7 @@
  * {@link SECTION_RUN_PAD}.
  */
 export const CHART_PANEL =
-  "rounded-lg border border-gray-700/70 bg-gray-900/30";
+  "rounded-lg border border-line-soft bg-surface-panel";
 
 /** Padding inside {@link CHART_PANEL}. */
 export const CHART_PANEL_PAD = "p-2 sm:p-3";
@@ -90,7 +90,7 @@ export const TABLE_GUTTER = "px-0.5 sm:px-0";
  * not, and a scroll region needs an edge to scroll within. So a tabular card may draw this around
  * the table, and only around the table — never a filled card around the whole card.
  */
-export const CHART_HAIRLINE = "rounded-lg border border-gray-700/70";
+export const CHART_HAIRLINE = "rounded-lg border border-line-soft";
 
 // ---------------------------------------------------------------------------------------------
 // Ink — SVG attribute values, not classes
@@ -169,10 +169,10 @@ export const LEGEND_SWATCH_BOX = "w-3 h-3 rounded-sm flex-shrink-0";
 export const LEGEND_SWATCH = `${LEGEND_SWATCH_BOX} border-2`;
 
 /** A series name. */
-export const LEGEND_LABEL = "text-gray-300";
+export const LEGEND_LABEL = "text-ink-secondary";
 
 /** A column heading in a table legend ("Load", "Energy (kWh)", "%"). */
-export const LEGEND_HEADER = "text-gray-400";
+export const LEGEND_HEADER = "text-ink-muted";
 
 /**
  * A legend's numbers.
@@ -181,7 +181,7 @@ export const LEGEND_HEADER = "text-gray-400";
  * of readings scan as a column, and `tabular-nums` is what stops a live value shoving its unit
  * sideways on every poll (see docs/architecture/number-typography.md). Callers add their own width.
  */
-export const LEGEND_VALUE = "text-gray-100 font-mono tabular-nums text-right";
+export const LEGEND_VALUE = "text-ink-strong font-mono tabular-nums text-right";
 
 /**
  * The inline half of a legend swatch — the part that has to name an actual colour.

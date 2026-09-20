@@ -6,12 +6,13 @@ import StatCardShell from "@/components/ui/stat-card-shell";
 import TrendRow from "@/components/ui/trend-row";
 import { ConcentricRings } from "@/components/ui/progress-ring";
 import { CHART_COLORS } from "@/lib/chart-colors";
-import { TILE_CAPTION } from "@/lib/tile-style";
+import { TILE_CAPTION, TILE_CAPTION_UNITS_DIM } from "@/lib/tile-style";
 import type { RenewablesSummary } from "@/lib/renewables/summary";
 import {
-  formatCarbonTotal,
+  carbonTotalParts,
+  dollarPrefix,
   formatCentsPerKwh,
-  formatDollars,
+  formatDollarsBare,
   formatGramsPerKwh,
   formatKwh,
 } from "@/lib/provenance-format";
@@ -104,7 +105,7 @@ export default function HomeEnergyCard({
           ))}
           caption={
             <span className="animate-pulse rounded bg-white/[0.06] text-transparent">
-              000 kWh · 00¢/kWh · 000 g/kWh · $00.00 · 00 kg CO₂
+              000 kWh · $00.00 · 00¢/kWh · 00 kg CO₂ · 000 g/kWh
             </span>
           }
         />
@@ -175,21 +176,27 @@ export default function HomeEnergyCard({
         />
       ))}
       caption={
+        // Energy, then each total beside the rate it came from: $ with ¢/kWh, kg CO₂ with g/kWh.
+        // Every part goes through `<Value>` — including the ones that used to be plain strings —
+        // so the units all carry `data-unit` and dim together under TILE_CAPTION_UNITS_DIM.
         <>
-          <Value value={formatKwh(summary.consumptionKwh)} unit="kWh" /> used ·{" "}
+          <Value value={formatKwh(summary.consumptionKwh)} unit="kWh" /> ·{" "}
+          <Value
+            prefix={dollarPrefix(summary.costC)}
+            value={formatDollarsBare(summary.costC)}
+          />{" "}
+          ·{" "}
           <span title={RATE_TIP} className="cursor-help">
             <Value
               value={formatCentsPerKwh(summary.avgCentsPerKwh)}
               unit={summary.avgCentsPerKwh != null ? "¢/kWh" : undefined}
             />
           </span>{" "}
-          ·{" "}
+          · <Value {...carbonTotalParts(summary.emissionsG)} /> ·{" "}
           <Value
             value={formatGramsPerKwh(summary.avgGramsPerKwh)}
             unit={summary.avgGramsPerKwh != null ? "g/kWh" : undefined}
-          />{" "}
-          · {formatDollars(summary.costC)} ·{" "}
-          {formatCarbonTotal(summary.emissionsG)} CO₂
+          />
         </>
       }
     />,
@@ -219,7 +226,9 @@ function RingsLayout({
           {rows}
         </div>
       </div>
-      <p className={`mt-3 ${TILE_CAPTION}`}>{caption}</p>
+      <p className={`mt-3 ${TILE_CAPTION} ${TILE_CAPTION_UNITS_DIM}`}>
+        {caption}
+      </p>
     </>
   );
 }
