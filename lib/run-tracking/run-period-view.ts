@@ -233,7 +233,13 @@ interface RunWhen {
   date: string;
   /** Start time, "h:mma" (e.g. "4:16pm"). */
   startTime: string;
-  /** End date, "EEE d MMM" — only when it differs from `date`; else null/undefined. */
+  /**
+   * End date, "EEE d MMM" — set only when the "when" needs to print it; else null/undefined.
+   *
+   * 🛑 NOT simply "the end fell on another day". The server suppresses it for a run that merely
+   * carries on past midnight into the small hours (see `endDateIfDifferentDay` in the run-periods
+   * route), so "Sat 19 Sep 10:45pm–3:12am" is a complete reading of a midnight-crossing run.
+   */
   endDate?: string | null;
   /** End time, "h:mma"; null for an open run. */
   endTime: string | null;
@@ -247,9 +253,10 @@ interface RunWhen {
  * A run inside ONE day is two separate facts — which day, and which part of it — so it returns them
  * as two lines: `["Sat 1 Aug", "8:55pm–9:39pm"]`. Left as a single string, a 140px tooltip breaks it
  * wherever the text happens to run out ("…, 8:55pm–" / "9:39pm"), which reads as a severed value
- * rather than a wrapped one. A MIDNIGHT-CROSSING run has no such split — each side of the dash
- * carries its own date, and separating them would strand a date from its time — so it stays one line
- * and wraps as it always did.
+ * rather than a wrapped one. A run the server gave an `endDate` has no such split — each side of the
+ * dash carries its own date, and separating them would strand a date from its time — so it stays one
+ * line and wraps as it always did. A run that simply ran past midnight carries NO `endDate` and
+ * takes the two-line path, the same as any other evening: `["Sat 19 Sep", "10:45pm–3:12am"]`.
  *
  * `formatRunWhen` is this joined back up, for the callers (the run tables) with a whole row to play
  * with. One source of truth for the wording; the caller picks the shape.
@@ -273,9 +280,9 @@ export function formatRunWhenLines(e: RunWhen): string[] {
  * columns. Operates on the strings the server already formatted in the device's display timezone
  * (`formatInTimezone`), so no timezone logic leaks to the client.
  *
- * `endDate` is set by the server ONLY when the run ends on a different local day than it started;
- * printing it then is the point of this function. Without it a midnight-crossing run reads
- * "Mon 27 Jul, 11:40pm–1:15am", which quietly implies both times are on the Monday.
+ * `endDate` is set by the server only when the second date is worth its width — a run that ended two
+ * days later, or one whose end is far enough into the next day that "11:40pm–1:15am" would mislead.
+ * Printing it then is the point of this function; see the field's own note.
  */
 export function formatRunWhen(e: RunWhen): string {
   return formatRunWhenLines(e).join(", ");

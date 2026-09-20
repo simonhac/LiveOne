@@ -171,6 +171,27 @@ export function indexForSpan(
     : next;
 }
 
+/**
+ * Index of the equal-width category containing pixel `px`, or null.
+ *
+ * 🛑 The counterpart to {@link indexForSpan}, and the reason it is needed: with no `barSpans` a bar
+ * chart is laid out POSITIONALLY — category `i` occupies the `i`-th equal slice of the plot
+ * (`barLayout`'s `evenW` fallback) — while the x SCALE maps the window's instants across the same
+ * width. The two agree only when the window is exactly `n` bucket-durations long, which the M period
+ * is not: its window carries a partial bucket at one end (and a DST day is 23 or 25 hours), so the
+ * scale's answer walks away from the layout's across the month and the neighbouring bar is selected
+ * near the edges. Ask the layout where the bars are, not the scale.
+ */
+export function indexForPosition(
+  px: number,
+  plotWidth: number,
+  categories: number,
+): number | null {
+  if (categories <= 0 || plotWidth <= 0) return null;
+  const i = Math.floor((px * categories) / plotWidth);
+  return Math.min(categories - 1, Math.max(0, i));
+}
+
 export interface PointerIndexOptions {
   timestamps: readonly Date[];
   /**
@@ -178,6 +199,12 @@ export interface PointerIndexOptions {
    * the pointer resolves by CONTAINMENT rather than by nearest timestamp — see {@link indexForSpan}.
    */
   spans?: readonly { start: Date; end: Date }[];
+  /**
+   * Equal-width bar categories: resolve the index by POSITION rather than by time. Set for a bar
+   * chart WITHOUT `spans` — see {@link indexForPosition}. Ignored when `spans` is given (those bars
+   * are placed on the time scale, so time is the right question).
+   */
+  positional?: { categories: number; plotWidth: number };
   /** Inverts a pixel x (relative to the plot area) back to an instant. */
   invert: (px: number) => Date;
   /** Left inset of the plot area within the svg. */
@@ -203,6 +230,7 @@ export interface PointerIndexOptions {
 export function usePointerIndex({
   timestamps,
   spans,
+  positional,
   invert,
   plotLeft,
   onChange,
@@ -222,12 +250,17 @@ export function usePointerIndex({
     (e: React.PointerEvent<SVGSVGElement>) => {
       const rect = e.currentTarget.getBoundingClientRect();
       const px = e.clientX - rect.left - plotLeft;
-      const at = invert(px).getTime();
-      report(
-        spans ? indexForSpan(spans, at) : nearestIndexForTime(timestamps, at),
-      );
+      if (spans) {
+        report(indexForSpan(spans, invert(px).getTime()));
+      } else if (positional) {
+        report(
+          indexForPosition(px, positional.plotWidth, positional.categories),
+        );
+      } else {
+        report(nearestIndexForTime(timestamps, invert(px).getTime()));
+      }
     },
-    [timestamps, spans, invert, plotLeft, report],
+    [timestamps, spans, positional, invert, plotLeft, report],
   );
 
   /**

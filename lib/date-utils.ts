@@ -544,7 +544,7 @@ export function getNextMinuteBoundary(
  * Format a Date in a specific IANA timezone
  * @param date - JavaScript Date object
  * @param displayTimezone - IANA timezone string (e.g., "Australia/Melbourne", "Europe/London")
- * @param formatStr - Format string: "HH:mm", "h:mma", "d MMM", or "EEE d MMM"
+ * @param formatStr - Format string: "HH:mm", "h:mma", "yyyy-MM-dd", "d MMM", or "EEE d MMM"
  * @returns Formatted string in the display timezone
  */
 export function formatInTimezone(
@@ -560,6 +560,9 @@ export function formatInTimezone(
     // The house 12-hour spelling ("4:16pm"), shared with the chart axis and `formatDateTimeRange` so
     // there is exactly one am/pm convention in the UI.
     return formatTime12h(zoned);
+  } else if (formatStr === "yyyy-MM-dd") {
+    // The LOCAL calendar day, for comparing or stepping days without touching the instant.
+    return `${zoned.year}-${String(zoned.month).padStart(2, "0")}-${String(zoned.day).padStart(2, "0")}`;
   } else if (formatStr === "d MMM") {
     return `${zoned.day} ${MONTHS_SHORT[zoned.month - 1]}`;
   } else if (formatStr === "EEE d MMM") {

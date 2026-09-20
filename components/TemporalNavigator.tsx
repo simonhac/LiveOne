@@ -3,6 +3,11 @@
 import { useEffect } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import PeriodSwitcher from "@/components/PeriodSwitcher";
+import {
+  SEGMENTED_ICON_ITEM,
+  SEGMENTED_ITEM_OFF,
+  SEGMENTED_TRACK,
+} from "@/components/ui/segmented";
 import { fromUnixTimestamp } from "@/lib/date-utils";
 import { useTemporalRange } from "@/lib/charts/useTemporalRange";
 import {
@@ -12,6 +17,7 @@ import {
   formatHoverTimestamp,
 } from "@/lib/charts/temporal";
 import { useChartFocus } from "@/lib/charts/ChartFocusContext";
+import { useAxisNavAvailable } from "@/lib/charts/AxisNavContext";
 
 interface TemporalNavigatorProps {
   /** Device/area timezone offset (minutes) — used to format the range label and encode prev/next URLs. */
@@ -35,6 +41,7 @@ export default function TemporalNavigator({
   const { period, start, end, isLatest, older, newer, setPeriod } =
     useTemporalRange({ timezoneOffsetMin });
   const { focusedTime } = useChartFocus();
+  const axisNavAvailable = useAxisNavAvailable();
 
   // Keyboard navigation: ArrowLeft = older, ArrowRight = newer (historical only). NOT gated on the
   // fetch state — stepping is a synchronous URL write (see useTemporalRange), so held/rapid arrow
@@ -114,14 +121,19 @@ export default function TemporalNavigator({
             {hoverLabel ? hoverLabel.mobile : rangeLabel.mobile}
           </span>
         </span>
-        {/* Prev/Next navigation buttons. `-ml-px` collapses the shared border seam (matching
-            PeriodSwitcher) and `focus:z-20` keeps a focused button's UA ring painted ABOVE its
-            neighbour — z-index applies to flex items even though these are `position: static`, so
-            without it the later sibling's opaque background clips the ring at the seam. */}
-        <div className="inline-flex rounded-md shadow-sm" role="group">
+        {/* Prev/Next, in the same pill vocabulary as the period switcher so the row reads as one
+            control. Stood down on touch — a phone steps the window by tapping a chart's axis strip
+            instead — but ONLY while a chart is actually offering that (`useAxisNavAvailable`): a
+            dashboard of runs/HWS cards has no axis to tap, and neither does one whose chart is
+            still loading or failed. The `(pointer: coarse)` half stays in CSS so a touch laptop
+            with a mouse keeps its buttons with no hydration flash. */}
+        <div
+          className={`${SEGMENTED_TRACK} ${axisNavAvailable ? "coarse-nav-hidden" : ""}`}
+          role="group"
+        >
           <button
             onClick={older}
-            className="px-2 py-1 text-sm font-medium border rounded-l-lg bg-gray-700 text-gray-300 border-gray-600 hover:bg-gray-600 hover:text-white focus:z-20 transition-none"
+            className={`${SEGMENTED_ICON_ITEM} ${SEGMENTED_ITEM_OFF}`}
             title="Older (Previous)"
           >
             <ChevronLeft className="w-4 h-4" />
@@ -129,7 +141,7 @@ export default function TemporalNavigator({
           <button
             onClick={newer}
             disabled={isLatest}
-            className="px-2 py-1 text-sm font-medium -ml-px border rounded-r-lg bg-gray-700 text-gray-300 border-gray-600 hover:bg-gray-600 hover:text-white focus:z-20 disabled:opacity-50 disabled:cursor-not-allowed transition-none"
+            className={`${SEGMENTED_ICON_ITEM} ${SEGMENTED_ITEM_OFF}`}
             title="Newer (Next)"
           >
             <ChevronRight className="w-4 h-4" />

@@ -85,4 +85,16 @@ describe("formatSecondsAsDuration", () => {
     expect(formatSecondsAsDuration(29)).toBe("0m");
     expect(formatSecondsAsDuration(31)).toBe("1m");
   });
+
+  it("drops the minutes from 100h up, rounding the hours", () => {
+    // The last "h m" reading, and the first rounded one.
+    expect(formatSecondsAsDuration(99 * 3600 + 59 * 60)).toBe("99h 59m");
+    expect(formatSecondsAsDuration(100 * 3600)).toBe("100h");
+    expect(formatSecondsAsDuration(100 * 3600 + 29 * 60)).toBe("100h");
+    expect(formatSecondsAsDuration(100 * 3600 + 31 * 60)).toBe("101h");
+    // The case from the dashboard: a year's generator total.
+    expect(formatSecondsAsDuration(509 * 3600 + 43 * 60)).toBe("510h");
+    // 🛑 Rounded from SECONDS. Via minutes this rounds twice — up to 100h 30m, then up to 101h.
+    expect(formatSecondsAsDuration(100 * 3600 + 29 * 60 + 30)).toBe("100h");
+  });
 });

@@ -15,6 +15,7 @@ import ViewDataModal from "@/components/ViewDataModal";
 import DeviceSettingsDialog from "@/components/DeviceSettingsDialog";
 import ConnectionNotification from "@/components/ConnectionNotification";
 import { ChartFocusProvider } from "@/lib/charts/ChartFocusContext";
+import { AxisNavProvider } from "@/lib/charts/AxisNavContext";
 
 interface DeviceInfo {
   model?: string;
@@ -166,121 +167,124 @@ export default function DeviceLayout({
 
   return (
     <ChartFocusProvider>
-      <div className="min-h-screen bg-gray-900">
-        {/* Connection Notification */}
-        <ConnectionNotification />
+      {/* Page-wide: the header's navigator and the charts down the page are not in one card. */}
+      <AxisNavProvider>
+        <div className="min-h-screen bg-gray-900">
+          {/* Connection Notification */}
+          <ConnectionNotification />
 
-        {/* Header */}
-        <DashboardHeader
-          temporalNav={temporalNav}
-          displayName={device.displayName}
-          systemId={device.id.toString()}
-          vendorSiteId={device.vendorSiteId}
-          lastUpdate={lastUpdate ?? null}
-          deviceInfo={deviceInfo ?? null}
-          vendorType={device.vendorType}
-          supportsPolling={supportsPolling ?? device.supportsPolling ?? false}
-          deviceStatus={device.status as "active" | "disabled" | "archived"}
-          isAdmin={isAdmin}
-          userId={userId}
-          availableDevices={availableDevices}
-          onLogout={handleLogout}
-          onTestConnection={() => setShowTestConnection(true)}
-          onViewData={() => setShowViewDataModal(true)}
-          onPollNow={(dryRun) =>
-            setShowPollNow({ isOpen: true, dryRun: dryRun || false })
-          }
-          onAddDevice={() => setShowAddDeviceDialog(true)}
-          onDeviceSettings={() => setShowDeviceSettingsDialog(true)}
-          onUpdateCredentials={
-            canUpdateCredentials
-              ? () => setShowUpdateCredentials(true)
-              : undefined
-          }
-          shiftKeyDown={shiftKeyDown}
-        />
-
-        {/* Main Content */}
-        {children}
-
-        {/* Test Connection Modal */}
-        {showTestConnection && (
-          <TestConnectionModal
-            systemId={device.id}
+          {/* Header */}
+          <DashboardHeader
+            temporalNav={temporalNav}
             displayName={device.displayName}
-            vendorType={device.vendorType}
-            onClose={() => setShowTestConnection(false)}
-          />
-        )}
-
-        {/* Update Credentials Modal */}
-        {showUpdateCredentials && (
-          <UpdateCredentialsModal
-            systemId={device.id}
-            displayName={device.displayName}
-            vendorType={device.vendorType}
-            onClose={() => setShowUpdateCredentials(false)}
-            onUpdated={() => router.refresh()}
-          />
-        )}
-
-        {/* Poll Now Modal */}
-        {showPollNow.isOpen && (
-          <PollNowModal
-            systemId={device.id}
-            displayName={device.displayName}
-            vendorType={device.vendorType}
-            dryRun={showPollNow.dryRun}
-            onClose={() => setShowPollNow({ isOpen: false, dryRun: false })}
-          />
-        )}
-
-        {/* Add Device Dialog */}
-        <AddDeviceDialog
-          open={showAddDeviceDialog}
-          onOpenChange={setShowAddDeviceDialog}
-        />
-
-        <ServerErrorModal
-          isOpen={serverError.type !== null}
-          onClose={() => setServerError({ type: null })}
-          errorType={serverError.type}
-          errorDetails={serverError.details}
-        />
-
-        <SessionTimeoutModal
-          isOpen={showSessionTimeout}
-          onReconnect={() => {
-            setShowSessionTimeout(false);
-            window.location.reload();
-          }}
-        />
-
-        {/* View Data Modal */}
-        {showViewDataModal && (
-          <ViewDataModal
-            isOpen={showViewDataModal}
-            onClose={() => setShowViewDataModal(false)}
-            systemId={device.id}
-            deviceName={device.displayName}
-            vendorType={device.vendorType}
+            systemId={device.id.toString()}
             vendorSiteId={device.vendorSiteId}
-            timezoneOffsetMin={device.timezoneOffsetMin}
+            lastUpdate={lastUpdate ?? null}
+            deviceInfo={deviceInfo ?? null}
+            vendorType={device.vendorType}
+            supportsPolling={supportsPolling ?? device.supportsPolling ?? false}
+            deviceStatus={device.status as "active" | "disabled" | "archived"}
+            isAdmin={isAdmin}
+            userId={userId}
+            availableDevices={availableDevices}
+            onLogout={handleLogout}
+            onTestConnection={() => setShowTestConnection(true)}
+            onViewData={() => setShowViewDataModal(true)}
+            onPollNow={(dryRun) =>
+              setShowPollNow({ isOpen: true, dryRun: dryRun || false })
+            }
+            onAddDevice={() => setShowAddDeviceDialog(true)}
+            onDeviceSettings={() => setShowDeviceSettingsDialog(true)}
+            onUpdateCredentials={
+              canUpdateCredentials
+                ? () => setShowUpdateCredentials(true)
+                : undefined
+            }
+            shiftKeyDown={shiftKeyDown}
           />
-        )}
 
-        {/* Device Settings Dialog */}
-        <DeviceSettingsDialog
-          isOpen={showDeviceSettingsDialog}
-          onClose={() => setShowDeviceSettingsDialog(false)}
-          systemId={device.id}
-          vendorType={device.vendorType}
-          metadata={device.metadata}
-          ownerClerkUserId={device.ownerClerkUserId ?? undefined}
-          isAdmin={isAdmin}
-          onUpdate={handleUpdateDeviceSettings}
-        />
-      </div>
+          {/* Main Content */}
+          {children}
+
+          {/* Test Connection Modal */}
+          {showTestConnection && (
+            <TestConnectionModal
+              systemId={device.id}
+              displayName={device.displayName}
+              vendorType={device.vendorType}
+              onClose={() => setShowTestConnection(false)}
+            />
+          )}
+
+          {/* Update Credentials Modal */}
+          {showUpdateCredentials && (
+            <UpdateCredentialsModal
+              systemId={device.id}
+              displayName={device.displayName}
+              vendorType={device.vendorType}
+              onClose={() => setShowUpdateCredentials(false)}
+              onUpdated={() => router.refresh()}
+            />
+          )}
+
+          {/* Poll Now Modal */}
+          {showPollNow.isOpen && (
+            <PollNowModal
+              systemId={device.id}
+              displayName={device.displayName}
+              vendorType={device.vendorType}
+              dryRun={showPollNow.dryRun}
+              onClose={() => setShowPollNow({ isOpen: false, dryRun: false })}
+            />
+          )}
+
+          {/* Add Device Dialog */}
+          <AddDeviceDialog
+            open={showAddDeviceDialog}
+            onOpenChange={setShowAddDeviceDialog}
+          />
+
+          <ServerErrorModal
+            isOpen={serverError.type !== null}
+            onClose={() => setServerError({ type: null })}
+            errorType={serverError.type}
+            errorDetails={serverError.details}
+          />
+
+          <SessionTimeoutModal
+            isOpen={showSessionTimeout}
+            onReconnect={() => {
+              setShowSessionTimeout(false);
+              window.location.reload();
+            }}
+          />
+
+          {/* View Data Modal */}
+          {showViewDataModal && (
+            <ViewDataModal
+              isOpen={showViewDataModal}
+              onClose={() => setShowViewDataModal(false)}
+              systemId={device.id}
+              deviceName={device.displayName}
+              vendorType={device.vendorType}
+              vendorSiteId={device.vendorSiteId}
+              timezoneOffsetMin={device.timezoneOffsetMin}
+            />
+          )}
+
+          {/* Device Settings Dialog */}
+          <DeviceSettingsDialog
+            isOpen={showDeviceSettingsDialog}
+            onClose={() => setShowDeviceSettingsDialog(false)}
+            systemId={device.id}
+            vendorType={device.vendorType}
+            metadata={device.metadata}
+            ownerClerkUserId={device.ownerClerkUserId ?? undefined}
+            isAdmin={isAdmin}
+            onUpdate={handleUpdateDeviceSettings}
+          />
+        </div>
+      </AxisNavProvider>
     </ChartFocusProvider>
   );
 }

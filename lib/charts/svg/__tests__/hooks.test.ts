@@ -1,5 +1,5 @@
 import { describe, it, expect } from "@jest/globals";
-import { indexForSpan, nearestIndexForTime } from "../hooks";
+import { indexForPosition, indexForSpan, nearestIndexForTime } from "../hooks";
 
 /**
  * Only the pure half is covered here. The hooks themselves need a DOM and this repo has no jsdom or
@@ -115,5 +115,46 @@ describe("indexForSpan", () => {
     ];
     expect(indexForSpan(gapped, ms("2026-07-10"))).toBe(0);
     expect(indexForSpan(gapped, ms("2026-08-20"))).toBe(1);
+  });
+});
+
+describe("indexForPosition", () => {
+  // 300px / 30 categories = one 10px slice each.
+  const W = 300;
+  const N = 30;
+
+  it("puts a pixel in the slice that contains it", () => {
+    expect(indexForPosition(0, W, N)).toBe(0);
+    expect(indexForPosition(9.9, W, N)).toBe(0);
+    expect(indexForPosition(10, W, N)).toBe(1);
+    expect(indexForPosition(155, W, N)).toBe(15);
+    expect(indexForPosition(299, W, N)).toBe(29);
+  });
+
+  it("clamps outside the plot rather than reporting a missing category", () => {
+    // The pointer reaches the margins (the svg is the hit target, not the plot box), and a reader
+    // dragging off the right edge should keep the last bar, not lose the crosshair.
+    expect(indexForPosition(-40, W, N)).toBe(0);
+    expect(indexForPosition(W, W, N)).toBe(N - 1);
+    expect(indexForPosition(W + 40, W, N)).toBe(N - 1);
+  });
+
+  it("returns null for a degenerate plot", () => {
+    expect(indexForPosition(10, 0, N)).toBeNull();
+    expect(indexForPosition(10, W, 0)).toBeNull();
+  });
+
+  it("disagrees with nearest-timestamp exactly where the M bug was", () => {
+    // A 30-bar window whose SCALE spans 30.5 buckets — the partial bucket an M window carries. The
+    // scale therefore compresses each bucket to 300/30.5 px while the bars are drawn 10px wide, so
+    // by the last bar the two readings are a whole category apart.
+    const step = 3600_000;
+    const t0 = Date.UTC(2026, 5, 1);
+    const stamps = Array.from({ length: N }, (_, i) => new Date(t0 + i * step));
+    const msPerPx = ((N + 0.5) * step) / W;
+    const px = 195; // dead centre of the 20th bar, which spans 190–200px
+    expect(indexForPosition(px, W, N)).toBe(19);
+    // The scale reads the same pixel as 19.8 buckets in and hands back the NEXT bar.
+    expect(nearestIndexForTime(stamps, t0 + px * msPerPx)).toBe(20);
   });
 });

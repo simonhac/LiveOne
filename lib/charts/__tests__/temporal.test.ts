@@ -340,6 +340,19 @@ describe("encodeRangeToParams", () => {
     expect(dayOf(r.start)).toBe("2026-07-21");
     expect(dayOf(r.end)).toBe("2026-07-22");
   });
+
+  // Params this module knows nothing about ride along: `?access=` on a shared dashboard, and any
+  // short-lived experiment flag. A D|W|M|Y tap must not silently drop them.
+  it("preserves unrelated params", () => {
+    const p = encodeRangeToParams(
+      params("period=M&access=tok&safariTop=b"),
+      "live",
+      { period: "D", timezoneOffsetMin: OFFSET },
+    );
+    expect(p.get("period")).toBe("D");
+    expect(p.get("access")).toBe("tok");
+    expect(p.get("safariTop")).toBe("b");
+  });
 });
 
 describe("isDateOnlyPeriod", () => {

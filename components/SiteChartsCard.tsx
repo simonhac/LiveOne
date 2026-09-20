@@ -255,6 +255,9 @@ interface StackedChartProps {
   visibleSeries?: Set<string>;
   /** Draw the Battery SoC overlay? Owned by the parent, which remembers it per period. */
   socVisible?: boolean;
+  /** Touch: step the shared window from the chart's axis strip. Passed straight to DashboardChart. */
+  onAxisTap?: (dir: "older" | "newer") => void;
+  canGoNewer?: boolean;
   className?: string;
 }
 
@@ -273,6 +276,8 @@ function StackedChart({
   onHoverIndexChange,
   visibleSeries,
   socVisible,
+  onAxisTap,
+  canGoNewer,
   className = "",
 }: StackedChartProps) {
   // Derived, not mirrored: the chart is "loading" exactly when the parent has nothing for it yet
@@ -548,6 +553,8 @@ function StackedChart({
           onHoverRun={handleHoverRun}
           onToggleRun={handleToggleRun}
           onTapOutsideRun={closeRun}
+          onAxisTap={onAxisTap}
+          canGoNewer={canGoNewer}
           // 🛑 `absolute inset-0`, NOT `h-full w-full`. The chart measures its own root and draws
           // nothing at zero height, and a percentage height here resolves to `auto` on MOBILE: this
           // box's parent gets its 375px from flex growth, so its *specified* height stays `auto`
@@ -747,9 +754,17 @@ export default function SiteChartsCard({
     start: desiredStart,
     end: desiredEnd,
     isLatest: desiredIsLatest,
+    older,
+    newer,
   } = useTemporalRange({
     timezoneOffsetMin: device?.timezoneOffsetMin ?? 600,
   });
+  // On touch the charts' axis strips ARE the older/newer control (the `<` `>` buttons are hidden at
+  // `pointer: coarse`); both halves of the card get the same two actions.
+  const onAxisTap = useCallback(
+    (dir: "older" | "newer") => (dir === "older" ? older() : newer()),
+    [older, newer],
+  );
   const desiredWindow = useMemo(
     () => ({ period: desiredPeriod, start: desiredStart, end: desiredEnd }),
     [desiredPeriod, desiredStart, desiredEnd],
@@ -1126,6 +1141,8 @@ export default function SiteChartsCard({
                     socVisible={socShown}
                     data={processedHistoryData.load}
                     isLoading={historyLoading}
+                    onAxisTap={onAxisTap}
+                    canGoNewer={!desiredIsLatest}
                   />
                 </div>
                 <div
@@ -1176,6 +1193,8 @@ export default function SiteChartsCard({
                     socVisible={socShown}
                     data={processedHistoryData.generation}
                     isLoading={historyLoading}
+                    onAxisTap={onAxisTap}
+                    canGoNewer={!desiredIsLatest}
                   />
                 </div>
                 <div

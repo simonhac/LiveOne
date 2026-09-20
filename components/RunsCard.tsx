@@ -7,7 +7,12 @@ import { getPeriodDuration, toInstantRange } from "@/lib/charts/temporal";
 import { formatSecondsAsDuration } from "@/lib/fe-date-format";
 import { formatRunWhenLines } from "@/lib/run-tracking/run-period-view";
 import { formatDollars, formatKgCo2 } from "@/lib/provenance-format";
-import { CHART_HAIRLINE } from "@/lib/charts/style";
+import {
+  CHART_HAIRLINE,
+  LEGEND_HEADER,
+  LEGEND_LABEL,
+  LEGEND_VALUE,
+} from "@/lib/charts/style";
 
 /**
  * A dashboard panel listing one tracked device's run periods WITHIN the temporal-navigator window —
@@ -164,14 +169,22 @@ export default function RunsCard({
   // for 16: five columns at 32px of padding each is ~160px of a ~330px phone-width card. The outer
   // edges keep 16px so the first column still lines up with the title.
   const cellPad = "px-2 first:pl-4 last:pr-4 @[480px]:px-4";
-  const th = `${cellPad} py-2 align-top text-xs font-medium text-gray-200`;
+  // Read like a chart legend, not a spreadsheet: the tokens are the legend's own
+  // (`lib/charts/style.ts`), so a card holding a chart and a table speaks with one voice. No fill
+  // behind the header, no zebra, no row rules — the numbers' alignment is what makes the columns.
+  // 🛑 The rules live on the CELLS, not on the `<tr>`. Tailwind's preflight collapses table borders,
+  // and a collapsed border belongs to the table rather than to the row — so a border on a sticky
+  // `<tr>` scrolls away with the body instead of sticking with its header.
+  const th = `${cellPad} py-2 align-top text-xs font-normal border-b border-gray-700 ${LEGEND_HEADER}`;
   const td = `${cellPad} py-2 text-sm`;
+  /** A numeric cell. `LEGEND_VALUE` brings the mono face, tabular figures and right alignment. */
+  const tdNum = `${td} ${LEGEND_VALUE}`;
   /** A header's unit, muted so the scanned word is the quantity ("Energy") and not its unit, and
    *  STACKED under the label rather than beside it: a numeric column is only as wide as its widest
    *  cell, and "Energy kWh" on one line made the header, not the numbers, the widest cell — enough,
    *  across Energy/Avg/CO₂, to push Cost out of a phone-width card. */
   const unit = (u: string) => (
-    <span className="block font-normal text-gray-400">{u}</span>
+    <span className="block font-normal text-gray-500">{u}</span>
   );
 
   // A hairline, not a filled card. A chart delimits itself with its axes; a table does not, so this
@@ -213,7 +226,10 @@ export default function RunsCard({
         <>
           <div className="max-h-[420px] overflow-y-auto">
             <table className="w-full">
-              <thead className="bg-gray-800 sticky top-0">
+              {/* 🛑 `bg-black`, and not a translucent tint: a sticky header has rows scrolling
+                  UNDER it, so it needs an opaque backing or the text collides. Black is the
+                  dashboard canvas (`data-dashboard-root`), so the opacity is invisible. */}
+              <thead className="sticky top-0 bg-black">
                 <tr>
                   <th className={`${th} text-left`}>When</th>
                   <th className={`${th} text-right`}>Duration</th>
@@ -229,9 +245,9 @@ export default function RunsCard({
                   {showCost && <th className={`${th} text-right`}>Cost</th>}
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-700/70">
+              <tbody>
                 {rows.map(({ e, durationSec, spansOutside }, i) => (
-                  <tr key={i} className="text-gray-100 odd:bg-white/[0.02]">
+                  <tr key={i}>
                     {/* Deliberately NOT whitespace-nowrap: this card sits in a fixed-width
                         dashboard column, and a midnight-crossing run's full
                         "Mon 27 Jul, 23:40 – Tue 28 Jul, 01:15" would set a min-content width that
@@ -239,48 +255,48 @@ export default function RunsCard({
                     <td className={td}>
                       <RunWhenCell e={e} spansOutside={spansOutside} />
                     </td>
-                    <td className={`${td} text-right tabular-nums`}>
+                    <td className={tdNum}>
                       {durationSec != null
                         ? formatSecondsAsDuration(durationSec)
                         : "—"}
                     </td>
                     {showEnergy && (
-                      <td className={`${td} text-right tabular-nums`}>
+                      <td className={tdNum}>
                         {e.energyKwh != null ? e.energyKwh.toFixed(1) : "—"}
                       </td>
                     )}
                     {showAvgPower && (
-                      <td className={`${td} text-right tabular-nums`}>
+                      <td className={tdNum}>
                         {e.avgPowerW != null
                           ? (e.avgPowerW / 1000).toFixed(1)
                           : "—"}
                       </td>
                     )}
                     {showEmissions && (
-                      <td className={`${td} text-right tabular-nums`}>
+                      <td className={tdNum}>
                         {e.emissionsG != null
                           ? formatKgCo2(e.emissionsG / 1000)
                           : "—"}
                       </td>
                     )}
                     {showCost && (
-                      <td className={`${td} text-right tabular-nums`}>
+                      <td className={tdNum}>
                         {e.costC != null ? formatDollars(e.costC) : "—"}
                       </td>
                     )}
                   </tr>
                 ))}
               </tbody>
-              <tfoot className="sticky bottom-0">
-                <tr className="bg-gray-800 text-gray-100 font-medium border-t border-gray-700/70">
-                  <td className={td}>
+              <tfoot className="sticky bottom-0 bg-black [&_td]:border-t [&_td]:border-gray-700">
+                <tr className="font-medium">
+                  <td className={`${td} ${LEGEND_LABEL}`}>
                     {rows.length} {rows.length === 1 ? noun : `${noun}s`}
                   </td>
-                  <td className={`${td} text-right tabular-nums`}>
+                  <td className={tdNum}>
                     {formatSecondsAsDuration(totalSeconds)}
                   </td>
                   {showEnergy && (
-                    <td className={`${td} text-right tabular-nums`}>
+                    <td className={tdNum}>
                       {totalEnergyKwh != null ? totalEnergyKwh.toFixed(1) : "—"}
                     </td>
                   )}
@@ -288,14 +304,14 @@ export default function RunsCard({
                       an energy-weighted one needs the energy this card does not have. */}
                   {showAvgPower && <td className={td} />}
                   {showEmissions && (
-                    <td className={`${td} text-right tabular-nums`}>
+                    <td className={tdNum}>
                       {totalEmissionsG != null
                         ? formatKgCo2(totalEmissionsG / 1000)
                         : "—"}
                     </td>
                   )}
                   {showCost && (
-                    <td className={`${td} text-right tabular-nums`}>
+                    <td className={tdNum}>
                       {totalCostC != null ? formatDollars(totalCostC) : "—"}
                     </td>
                   )}
@@ -316,8 +332,12 @@ export default function RunsCard({
   );
 }
 
-/** The date half of a run's "when": a touch heavier, since it is what the eye scans the column by. */
-const WHEN_DATE = "font-medium text-gray-100";
+/**
+ * The date half of a run's "when": a touch heavier, since it is what the eye scans the column by.
+ * `text-gray-300` is the legend's label tone (`LEGEND_LABEL`) — in a legend-styled table the NUMBERS
+ * are the bright thing, and a full-strength label column competes with them.
+ */
+const WHEN_DATE = "font-medium text-gray-300";
 /** The time half: a touch dimmer, subordinate to the date it belongs to. */
 const WHEN_TIME = "text-gray-400";
 

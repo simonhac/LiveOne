@@ -47,9 +47,18 @@ export default function LinesChartCard({
     period: desiredPeriod,
     start: desiredStart,
     end: desiredEnd,
+    isLatest,
+    older,
+    newer,
   } = useTemporalRange({
     timezoneOffsetMin,
   });
+  // On touch the chart's axis strip IS the older/newer control (the `<` `>` buttons are hidden at
+  // `pointer: coarse`) — the same two actions the header's buttons and the arrow keys call.
+  const onAxisTap = useCallback(
+    (dir: "older" | "newer") => (dir === "older" ? older() : newer()),
+    [older, newer],
+  );
   const desiredWindow = useMemo(
     () => ({ period: desiredPeriod, start: desiredStart, end: desiredEnd }),
     [desiredPeriod, desiredStart, desiredEnd],
@@ -364,6 +373,8 @@ export default function LinesChartCard({
           windowStart={windowStart}
           onHoverIndex={handleHover}
           hoveredTimestamp={hoveredData.timestamp}
+          onAxisTap={onAxisTap}
+          canGoNewer={!isLatest}
           className="flex-1 min-h-0"
         />
         <div className="flex justify-center mt-2 px-2 sm:px-0">

@@ -290,9 +290,24 @@ export const CHART_CASES: ChartCase[] = [
     range: "Y",
     mode: "load",
     focusAt: 0.62,
-    // The crosshair lands on a MONTH-wide bucket here, not a day: with uneven bars the pointer has
-    // to resolve by containment, and the focus line has to land on the bucket's own left edge.
-    note: "crosshair on a monthly bucket — the uneven-bar hover path",
+    // The crosshair lands on a MONTH-wide bucket here, not a day: with uneven bars the pointer
+    // resolves by containment, and the focus line is drawn through the bucket's CENTRE. It used to
+    // sit on the bucket's left edge — `at` is the bucket start — which read as the crosshair
+    // splitting the gap between two months rather than marking one.
+    note: "crosshair on a monthly bucket — the uneven-bar hover path, line through the bar's middle",
+    width: W,
+    height: H,
+  },
+  {
+    id: "stacked-load-m-focused",
+    kind: "stacked",
+    range: "M",
+    mode: "load",
+    focusAt: 0.62,
+    // M is the EQUAL-width bar path, where the bars are placed positionally and the x scale is not
+    // consulted at all. The regression guard for the crosshair drifting across the month: the line
+    // must be centred in its column here just as it is in the Y case above.
+    note: "crosshair on a daily bar at month scale — the equal-width (positional) bar path",
     width: W,
     height: H,
   },
