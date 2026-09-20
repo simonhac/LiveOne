@@ -107,7 +107,8 @@ export default function DashboardClient({
   // moves: the room is there, and taking the D|W|M|Y buttons away would be a cost with nothing
   // bought. Held shown while a menu hanging off it is open.
   const headerRef = useRef<HTMLElement>(null);
-  useHideOnScroll(headerRef, switcherOpen || actionsOpen);
+  const freeHostRef = useRef<HTMLDivElement>(null);
+  useHideOnScroll(headerRef, freeHostRef, switcherOpen || actionsOpen);
 
   // Warm the switcher's dashboards + default so the dropdown paints fully on first open (no jump).
   // The switcher is only shown to a real authed owner (not the read-only shared view).
@@ -176,134 +177,140 @@ export default function DashboardClient({
           Safari's top bar leave alone. `clip`, not `hidden`, so this does not become a scroll
           container and the header still sticks. */}
       <div className="min-h-screen overflow-x-clip bg-black">
-        {/* `useHideOnScroll` writes `position`/`top` inline over `sticky top-0` to let the header go
-            with the page — no transform, no transition. While it is away it is `relative`, because
-            Safari 26 paints a solid band behind its status bar for as long as ANY fixed/sticky
-            element sits at the top edge, however invisible. The paint lives on an `absolute` child
-            so that, while it IS stuck, the band takes the body's black rather than a sampled tint. */}
-        <header ref={headerRef} className="sticky top-0 z-30 px-4 py-3">
-          <div
-            aria-hidden
-            className="pointer-events-none absolute inset-0 -z-10 border-b border-white/10 bg-black/80 backdrop-blur"
-          />
-          <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-3">
-            <div className="relative min-w-0">
-              {sharedAreas ? (
-                <h1 className="truncate text-lg font-semibold text-white">
-                  {dashboard.displayName ?? "Dashboard"}
-                </h1>
-              ) : (
-                <button
-                  onClick={() => setSwitcherOpen((o) => !o)}
-                  className="flex min-w-0 items-center gap-2 rounded-lg px-2 py-1 transition-colors hover:bg-gray-800"
-                >
+        {/* Two hosts, and `useHideOnScroll` moves the <header> node between them: this sticky one
+            while it is pinned, the `relative` one below while it rides away with the page — no
+            transform, no transition. Safari 26 paints a solid band behind its status bar for as
+            long as a fixed/sticky element sits at the top edge, and ORPHANS that band for good if
+            the element's `position` is rewritten while it is rendered — so this host is never
+            anything but sticky; it is switched off instead. 🛑 The header must stay its only
+            child. The paint lives on an `absolute` child so that, while it IS stuck, the band
+            takes the body's black rather than a sampled tint. */}
+        <div className="sticky top-0 z-30">
+          <header ref={headerRef} className="relative px-4 py-3">
+            <div
+              aria-hidden
+              className="pointer-events-none absolute inset-0 -z-10 border-b border-white/10 bg-black/80 backdrop-blur"
+            />
+            <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-3">
+              <div className="relative min-w-0">
+                {sharedAreas ? (
                   <h1 className="truncate text-lg font-semibold text-white">
                     {dashboard.displayName ?? "Dashboard"}
                   </h1>
-                  <ChevronDown
-                    className={`h-4 w-4 flex-shrink-0 text-gray-400 transition-transform ${switcherOpen ? "rotate-180" : ""}`}
-                  />
-                </button>
-              )}
-              {switcherOpen && (
-                <>
-                  <div
-                    className="fixed inset-0 z-40"
-                    onClick={() => setSwitcherOpen(false)}
-                  />
-                  <div className="absolute left-0 top-full z-50 mt-2 w-64 rounded-lg border border-gray-700 bg-gray-800 shadow-lg">
-                    <DashboardsMenu
-                      currentDashboardId={dashboard.id}
-                      enabled={!sharedAreas}
-                      onNew={() => setNewOpen(true)}
-                      onNavigate={() => setSwitcherOpen(false)}
+                ) : (
+                  <button
+                    onClick={() => setSwitcherOpen((o) => !o)}
+                    className="flex min-w-0 items-center gap-2 rounded-lg px-2 py-1 transition-colors hover:bg-gray-800"
+                  >
+                    <h1 className="truncate text-lg font-semibold text-white">
+                      {dashboard.displayName ?? "Dashboard"}
+                    </h1>
+                    <ChevronDown
+                      className={`h-4 w-4 flex-shrink-0 text-gray-400 transition-transform ${switcherOpen ? "rotate-180" : ""}`}
                     />
-                  </div>
-                </>
-              )}
-            </div>
-            {/* `ml-auto`, not just the parent's `justify-between`: when the title + navigator +
+                  </button>
+                )}
+                {switcherOpen && (
+                  <>
+                    <div
+                      className="fixed inset-0 z-40"
+                      onClick={() => setSwitcherOpen(false)}
+                    />
+                    <div className="absolute left-0 top-full z-50 mt-2 w-64 rounded-lg border border-gray-700 bg-gray-800 shadow-lg">
+                      <DashboardsMenu
+                        currentDashboardId={dashboard.id}
+                        enabled={!sharedAreas}
+                        onNew={() => setNewOpen(true)}
+                        onNavigate={() => setSwitcherOpen(false)}
+                      />
+                    </div>
+                  </>
+                )}
+              </div>
+              {/* `ml-auto`, not just the parent's `justify-between`: when the title + navigator +
                   cog do not fit on one line this cluster WRAPS onto its own, and a lone item on a
                   `justify-between` line sits flush left. `ml-auto` keeps it against the right edge
                   in both layouts. */}
-            <div className="ml-auto flex items-center gap-2">
-              {/* Temporal navigator, left of the edit cluster (desktop). Mobile → own row below. */}
-              {showNav && navHandle != null && (
-                <div className="hidden sm:block">
+              <div className="ml-auto flex items-center gap-2">
+                {/* Temporal navigator, left of the edit cluster (desktop). Mobile → own row below. */}
+                {showNav && navHandle != null && (
+                  <div className="hidden sm:block">
+                    <HeaderTemporalNav
+                      handle={navHandle}
+                      axisNavExpected={axisNavExpected}
+                    />
+                  </div>
+                )}
+                {canEdit && (
+                  <DropdownMenu.Root onOpenChange={setActionsOpen}>
+                    <DropdownMenu.Trigger asChild>
+                      <button
+                        type="button"
+                        title="Dashboard actions"
+                        aria-label="Dashboard actions"
+                        className="inline-flex items-center gap-1.5 rounded-md border border-gray-700 px-2.5 py-1.5 text-sm text-gray-300 outline-none transition-colors hover:bg-gray-800 hover:text-white data-[state=open]:bg-gray-800 data-[state=open]:text-white"
+                      >
+                        <Settings className="h-4 w-4" />
+                      </button>
+                    </DropdownMenu.Trigger>
+                    <DropdownMenu.Portal>
+                      <DropdownMenu.Content
+                        align="end"
+                        sideOffset={5}
+                        className="min-w-[200px] rounded-lg border border-gray-700 bg-gray-800 p-1 shadow-xl"
+                        style={{ zIndex: 9999 }}
+                      >
+                        <DropdownMenu.Item
+                          className={MENU_ITEM_CLASS}
+                          onSelect={() => setNewOpen(true)}
+                        >
+                          <Plus className="h-4 w-4 text-gray-400" />
+                          New dashboard
+                        </DropdownMenu.Item>
+                        <DropdownMenu.Item
+                          className={MENU_ITEM_CLASS}
+                          onSelect={() => setAddAreaOpen(true)}
+                        >
+                          <Layers className="h-4 w-4 text-gray-400" />
+                          Add existing area…
+                        </DropdownMenu.Item>
+                        <DropdownMenu.Item
+                          className={MENU_ITEM_CLASS}
+                          onSelect={() => setCreateAreaOpen(true)}
+                        >
+                          <Plus className="h-4 w-4 text-gray-400" />
+                          Create new area…
+                        </DropdownMenu.Item>
+                        <DropdownMenu.Separator className="my-1 h-px bg-gray-700" />
+                        <DropdownMenu.Item
+                          className={MENU_ITEM_CLASS}
+                          onSelect={() => setRenameOpen(true)}
+                        >
+                          <Settings className="h-4 w-4 text-gray-400" />
+                          Settings…
+                        </DropdownMenu.Item>
+                      </DropdownMenu.Content>
+                    </DropdownMenu.Portal>
+                  </DropdownMenu.Root>
+                )}
+              </div>
+              {showNav && navHandle != null ? (
+                <div className="w-full sm:hidden">
                   <HeaderTemporalNav
                     handle={navHandle}
                     axisNavExpected={axisNavExpected}
                   />
                 </div>
-              )}
-              {canEdit && (
-                <DropdownMenu.Root onOpenChange={setActionsOpen}>
-                  <DropdownMenu.Trigger asChild>
-                    <button
-                      type="button"
-                      title="Dashboard actions"
-                      aria-label="Dashboard actions"
-                      className="inline-flex items-center gap-1.5 rounded-md border border-gray-700 px-2.5 py-1.5 text-sm text-gray-300 outline-none transition-colors hover:bg-gray-800 hover:text-white data-[state=open]:bg-gray-800 data-[state=open]:text-white"
-                    >
-                      <Settings className="h-4 w-4" />
-                    </button>
-                  </DropdownMenu.Trigger>
-                  <DropdownMenu.Portal>
-                    <DropdownMenu.Content
-                      align="end"
-                      sideOffset={5}
-                      className="min-w-[200px] rounded-lg border border-gray-700 bg-gray-800 p-1 shadow-xl"
-                      style={{ zIndex: 9999 }}
-                    >
-                      <DropdownMenu.Item
-                        className={MENU_ITEM_CLASS}
-                        onSelect={() => setNewOpen(true)}
-                      >
-                        <Plus className="h-4 w-4 text-gray-400" />
-                        New dashboard
-                      </DropdownMenu.Item>
-                      <DropdownMenu.Item
-                        className={MENU_ITEM_CLASS}
-                        onSelect={() => setAddAreaOpen(true)}
-                      >
-                        <Layers className="h-4 w-4 text-gray-400" />
-                        Add existing area…
-                      </DropdownMenu.Item>
-                      <DropdownMenu.Item
-                        className={MENU_ITEM_CLASS}
-                        onSelect={() => setCreateAreaOpen(true)}
-                      >
-                        <Plus className="h-4 w-4 text-gray-400" />
-                        Create new area…
-                      </DropdownMenu.Item>
-                      <DropdownMenu.Separator className="my-1 h-px bg-gray-700" />
-                      <DropdownMenu.Item
-                        className={MENU_ITEM_CLASS}
-                        onSelect={() => setRenameOpen(true)}
-                      >
-                        <Settings className="h-4 w-4 text-gray-400" />
-                        Settings…
-                      </DropdownMenu.Item>
-                    </DropdownMenu.Content>
-                  </DropdownMenu.Portal>
-                </DropdownMenu.Root>
-              )}
+              ) : navRowPending ? (
+                // Same box, no content — `TemporalNavigator` is one segmented pill row: a 16px line
+                // box (`text-xs`, or a 16px chevron) + 8px of `py-1` + 4px of the track's `p-0.5`.
+                // On a phone the prev/next pill is hidden, but the period switcher sets the same height.
+                <div className="h-[28px] w-full sm:hidden" aria-hidden />
+              ) : null}
             </div>
-            {showNav && navHandle != null ? (
-              <div className="w-full sm:hidden">
-                <HeaderTemporalNav
-                  handle={navHandle}
-                  axisNavExpected={axisNavExpected}
-                />
-              </div>
-            ) : navRowPending ? (
-              // Same box, no content — `TemporalNavigator` is one segmented pill row: a 16px line
-              // box (`text-xs`, or a 16px chevron) + 8px of `py-1` + 4px of the track's `p-0.5`.
-              // On a phone the prev/next pill is hidden, but the period switcher sets the same height.
-              <div className="h-[28px] w-full sm:hidden" aria-hidden />
-            ) : null}
-          </div>
-        </header>
+          </header>
+        </div>
+        <div ref={freeHostRef} className="relative z-30" />
 
         <main className="mx-auto max-w-7xl px-0 py-4 sm:px-1">
           {docHasCards(dashboard.doc) ? (
