@@ -4,6 +4,11 @@ import { useCallback, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import PeriodSwitcher from "@/components/PeriodSwitcher";
+import {
+  SEGMENTED_ICON_ITEM,
+  SEGMENTED_ITEM_OFF,
+  SEGMENTED_TRACK,
+} from "@/components/ui/segmented";
 import ProvenanceChart from "@/components/battery-provenance/ProvenanceChart";
 import ProvenanceValueTable from "@/components/battery-provenance/ProvenanceValueTable";
 import {
@@ -208,11 +213,11 @@ function PanelInner({
         >
           {rangeLabel}
         </span>
-        <div className="inline-flex rounded-md shadow-sm" role="group">
+        <div className={SEGMENTED_TRACK} role="group">
           <button
             onClick={older}
             disabled={isPending || atHistoryStart}
-            className="px-2 py-1 text-sm font-medium border rounded-l-lg bg-gray-700 text-gray-300 border-gray-600 hover:bg-gray-600 hover:text-white disabled:opacity-50 disabled:cursor-not-allowed transition-none"
+            className={`${SEGMENTED_ICON_ITEM} ${SEGMENTED_ITEM_OFF}`}
             title={
               atHistoryStart ? "No earlier history" : "Older (previous period)"
             }
@@ -222,7 +227,7 @@ function PanelInner({
           <button
             onClick={newer}
             disabled={isPending || olderSteps === 0}
-            className="px-2 py-1 text-sm font-medium border-l-0 border rounded-r-lg bg-gray-700 text-gray-300 border-gray-600 hover:bg-gray-600 hover:text-white disabled:opacity-50 disabled:cursor-not-allowed transition-none"
+            className={`${SEGMENTED_ICON_ITEM} ${SEGMENTED_ITEM_OFF}`}
             title="Newer (next period)"
           >
             <ChevronRight className="w-4 h-4" />

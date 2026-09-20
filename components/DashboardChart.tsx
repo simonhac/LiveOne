@@ -10,13 +10,16 @@ import {
   buildGeometry,
   buildShadingBands,
   buildTimeTicks,
+  indexForSpan,
   linePath,
+  nearestIndexForTime,
   niceDomain,
   stackedBands,
   useContainerSize,
   useIsTouchDevice,
   usePointerIndex,
 } from "@/lib/charts/svg";
+import { useProvideAxisNav } from "@/lib/charts/AxisNavContext";
 import { CHART_COLORS } from "@/lib/chart-colors";
 import { CHART_INK } from "@/lib/charts/style";
 import { SOC_DASH, lineSeries } from "@/lib/charts/line-series";
@@ -108,6 +111,15 @@ const RUN_STRIPE_TILE = 8;
 const RUN_STRIPE_WIDTH = 4;
 /** How far a touch may travel, in px, and still count as a TAP rather than a scrub of the crosshair. */
 const TAP_SLOP = 10;
+/**
+ * Height of the axis strip when it is also a tap target.
+ *
+ * 🛑 `DEFAULT_MARGIN.bottom` is 34px, which is BELOW the 44px minimum touch target — so the axis is
+ * not big enough to tap as it stands, and the zone has to buy the height rather than assume it.
+ * Desktop geometry is untouched: the strip only grows when `onAxisTap` is wired AND the device is
+ * touch.
+ */
+const AXIS_TAP_HEIGHT = 48;
 
 type CommonProps = {
   timeRange: ChartTimeRange;
@@ -117,6 +129,15 @@ type CommonProps = {
   /** Shared focus instant → the crosshair, synced across the section by ChartFocusContext. */
   hoveredTimestamp: Date | null;
   onHoverIndex: (index: number | null) => void;
+  /**
+   * TOUCH only: a tap on the time-axis strip below the plot steps the shared window — left half
+   * older, right half newer. This is the phone's replacement for the `<` `>` buttons, which are
+   * hidden at `(pointer: coarse)` (see `TemporalNavigator`). Absent → no zones, no glyphs, and the
+   * axis keeps its desktop height.
+   */
+  onAxisTap?: (dir: "older" | "newer") => void;
+  /** False at the latest window: the `newer` zone is inert and its glyph is dimmed. */
+  canGoNewer?: boolean;
   className?: string;
 };
 
@@ -204,6 +225,14 @@ function barLayout(
   return {
     /** Width of one bar in category `i` — a function, since categories may differ in width. */
     width: (i: number) => Math.max(0.5, slot(i).slotW * barPct),
+    /**
+     * Middle of category `i`, in plot coordinates. Read from `slot`, so the crosshair is placed by
+     * the same arithmetic that places the bars — the two cannot drift apart.
+     */
+    center: (i: number) => {
+      const { left, categoryW } = slot(i);
+      return left + categoryW / 2;
+    },
     /** Left edge of series `s`'s bar within category `i`. */
     x: (i: number, s: number) => {
       const { left, categoryW, groupW, slotW } = slot(i);
@@ -231,6 +260,8 @@ export default function DashboardChart(props: DashboardChartProps) {
   // run-overlay block below, and the outside-tap dismissal in `SiteChartsCard`'s `StackedChart`.
   const isTouch = useIsTouchDevice();
   const isEnergy = props.chartData.mode === "energy";
+  /** Are the axis-tap zones live? Both halves of the question, asked once. */
+  const axisTap = isTouch && props.onAxisTap ? props.onAxisTap : null;
   const timestamps = props.chartData.timestamps;
   // Uneven bars (the Y period's calendar months). Only trusted when it matches the timestamps
   // one-for-one — a mismatched pair would place bars against the wrong months in silence.
@@ -282,9 +313,12 @@ export default function DashboardChart(props: DashboardChartProps) {
       // Sizes the left gutter; must match the `unit` the left ValueAxis is given below. A month's
       // energy total is four digits, which does not fit the default 44 px.
       yUnit: isEnergy ? "kWh" : "kW",
+      // The axis doubles as the older/newer control on touch, and 34px is under the 44px minimum.
+      ...(axisTap ? { margin: { bottom: AXIS_TAP_HEIGHT } } : {}),
       y1Domain: SOC_DOMAIN,
     });
   }, [
+    axisTap,
     size.width,
     size.height,
     windowStart,
@@ -295,16 +329,33 @@ export default function DashboardChart(props: DashboardChartProps) {
     isEnergy,
   ]);
 
+  // Declared while this chart is actually DRAWING its zones, so the navigator only stands its own
+  // buttons down against a live axis — not while this chart is a skeleton, an error, or unmeasured.
+  useProvideAxisNav(!!axisTap && !!geo && !geo.empty);
+
   const pointer = usePointerIndex({
     timestamps,
     spans: barSpans,
+    // Span-less bars are placed positionally, so the pointer must be resolved positionally too —
+    // see `indexForPosition`. Areas/lines keep the time scale.
+    positional:
+      isEnergy && !barSpans
+        ? { categories: timestamps.length, plotWidth: geo?.plot.width ?? 0 }
+        : undefined,
     invert: (px) => (geo ? geo.x.invert(px) : new Date(0)),
     plotLeft: geo?.plot.left ?? 0,
     onChange: onHoverIndex,
   });
 
   // Where a touch went down, so `pointerup` can tell a tap from a drag along the time axis.
-  const tapStartRef = useRef<{ id: number; x: number; y: number } | null>(null);
+  // `zone` is set when the touch landed on the axis strip rather than in the plot — that tap steps
+  // the window and must not move the crosshair or hit-test runs on the way.
+  const tapStartRef = useRef<{
+    id: number;
+    x: number;
+    y: number;
+    zone: "older" | "newer" | null;
+  } | null>(null);
 
   // `data-unmeasured` so "the container measured zero, so the chart drew nothing" is visible in
   // devtools. Without it this is an anonymous empty div, which is what made the mobile stacked-chart
@@ -349,6 +400,19 @@ export default function DashboardChart(props: DashboardChartProps) {
           })),
       )
     : null;
+
+  // On bars the focused instant is the bucket's START — i.e. the column's LEFT EDGE — so the
+  // crosshair is drawn through the middle of the category instead. Resolved the same way the pointer
+  // resolves it (containment for uneven spans, position for equal ones) so the line lands on the bar
+  // the reader actually hit.
+  const focusIndex =
+    bars && hoveredTimestamp
+      ? barSpans
+        ? indexForSpan(barSpans, hoveredTimestamp.getTime())
+        : nearestIndexForTime(timestamps, hoveredTimestamp.getTime())
+      : null;
+  const focusPx =
+    bars && focusIndex !== null ? bars.center(focusIndex) : undefined;
 
   const socBand =
     socMin && socMax
@@ -440,18 +504,48 @@ export default function DashboardChart(props: DashboardChartProps) {
    * through `pointerup` sidesteps the heuristic, and the geometric test is what lets a two-pixel
    * charge session have a fingertip-sized target (`hitTestRuns`).
    */
+  /**
+   * Which axis-tap zone a touch is in, or null for anywhere in the plot (and for every mouse).
+   * Below the plot's baseline, left half steps older and right half newer — half the chart wide by
+   * {@link AXIS_TAP_HEIGHT} tall, which is the whole strip.
+   */
+  const axisTapZone = (
+    e: React.PointerEvent<SVGSVGElement>,
+  ): "older" | "newer" | null => {
+    if (!axisTap || e.pointerType !== "touch") return null;
+    const rect = e.currentTarget.getBoundingClientRect();
+    if (e.clientY - rect.top - geo.plot.top < geo.plot.height) return null;
+    return e.clientX - rect.left - geo.plot.left < geo.plot.width / 2
+      ? "older"
+      : "newer";
+  };
+
   const onPointerDown = (e: React.PointerEvent<SVGSVGElement>) => {
-    pointer.onPointerDown(e);
+    const zone = axisTapZone(e);
     tapStartRef.current =
       e.pointerType === "touch"
-        ? { id: e.pointerId, x: e.clientX, y: e.clientY }
+        ? { id: e.pointerId, x: e.clientX, y: e.clientY, zone }
         : null;
+    // A tap meant for the axis reports no hover: the crosshair (and with it the energy table and
+    // the Sankey) must not jump to wherever the finger happened to land while stepping the window.
+    if (zone) return;
+    pointer.onPointerDown(e);
+  };
+  const onPointerMove = (e: React.PointerEvent<SVGSVGElement>) => {
+    if (tapStartRef.current?.zone) return;
+    pointer.onPointerMove(e);
   };
   const onPointerUp = (e: React.PointerEvent<SVGSVGElement>) => {
     const start = tapStartRef.current;
     tapStartRef.current = null;
     if (!start || start.id !== e.pointerId) return;
     if (Math.hypot(e.clientX - start.x, e.clientY - start.y) > TAP_SLOP) return;
+    if (start.zone) {
+      // Inert at the latest window, exactly as the `>` button is disabled there.
+      if (start.zone === "newer" && props.canGoNewer === false) return;
+      axisTap?.(start.zone);
+      return;
+    }
     if (props.variant !== "stacked-areas") return;
     const rect = e.currentTarget.getBoundingClientRect();
     const id = hitTestRuns(
@@ -477,7 +571,7 @@ export default function DashboardChart(props: DashboardChartProps) {
         // as the chart ignoring you.
         className="max-w-full touch-pan-y"
         onPointerDown={onPointerDown}
-        onPointerMove={pointer.onPointerMove}
+        onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
         onPointerCancel={() => (tapStartRef.current = null)}
         onPointerLeave={pointer.onPointerLeave}
@@ -499,6 +593,37 @@ export default function DashboardChart(props: DashboardChartProps) {
             plotHeight={geo.plot.height}
             align={timeRange === "D" ? "center" : "start"}
           />
+          {/* 🛑 The affordance, not decoration. Tapping the axis to step the window is invisible
+              without something drawn there — the reader has to be told the two halves of the strip
+              do anything at all. Below the two label lines, at the ends, faint enough not to
+              compete with the data; the `›` dims to near-nothing at the latest window, the same
+              fact the `>` button expresses by being disabled. `pointerEvents="none"`: the tap is
+              hit-tested against the strip's geometry, so the glyph must not eat it. */}
+          {axisTap && (
+            <g
+              data-testid="axis-tap-hints"
+              pointerEvents="none"
+              fill={CHART_INK.tickText}
+              fontSize={CHART_INK.fontSize + 3}
+              fontFamily={CHART_INK.fontFamily}
+            >
+              <text
+                x={2}
+                y={geo.plot.height + AXIS_TAP_HEIGHT - 6}
+                fillOpacity={0.55}
+              >
+                ‹
+              </text>
+              <text
+                x={geo.plot.width - 2}
+                y={geo.plot.height + AXIS_TAP_HEIGHT - 6}
+                textAnchor="end"
+                fillOpacity={props.canGoNewer === false ? 0.18 : 0.55}
+              >
+                ›
+              </text>
+            </g>
+          )}
           <ValueAxis
             scale={geo.y}
             plotWidth={geo.plot.width}
@@ -730,6 +855,7 @@ export default function DashboardChart(props: DashboardChartProps) {
             at={hoveredTimestamp}
             x={geo.x}
             plotHeight={geo.plot.height}
+            xPx={focusPx}
           />
         </g>
       </svg>

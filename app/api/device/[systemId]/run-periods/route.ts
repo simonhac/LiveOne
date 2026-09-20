@@ -118,14 +118,54 @@ interface EventShape {
 }
 
 /**
- * The run's end date, but only when it falls on a DIFFERENT local day than the start — the merged
- * "when" column prints it exactly then, so a midnight-crossing run can't read as a same-day range.
+ * A local time-of-day, in minutes past midnight, from the device's display timezone.
+ */
+function localMinutes(t: Date, tz: string): number {
+  const [h, m] = formatInTimezone(t, tz, "HH:mm").split(":");
+  return Number(h) * 60 + Number(m);
+}
+
+/** The local calendar day, as `yyyy-MM-dd`, shifted by `days`. */
+function localDay(t: Date, tz: string, days = 0): string {
+  const iso = formatInTimezone(t, tz, "yyyy-MM-dd");
+  if (days === 0) return iso;
+  // Calendar arithmetic on the naive date only — never on the instant — so a DST boundary in `tz`
+  // cannot move the answer.
+  const d = new Date(`${iso}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+/** Before this local hour, a run's end still belongs to the evening it started in. */
+const SAME_NIGHT_BEFORE_HOUR = 9;
+
+/**
+ * The run's end date, but only when the merged "when" column needs to PRINT it — so a
+ * midnight-crossing run can't read as a same-day range.
+ *
+ * The obvious rule, "different local day", spells a 10:45pm–3:12am run as
+ * "Sat 19 Sep, 10:45pm – Sun 20 Sep, 3:12am". That is true and nobody reads it that way: the small
+ * hours are still that evening, and the second date costs the widest cell in the table to restate
+ * something the reader already inferred. So a run that merely carries on past midnight collapses to
+ * "Sat 19 Sep 10:45pm–3:12am", and the date is printed for everything else.
+ *
+ * 🛑 All three conditions are load-bearing, and the last two are what stop a LONG run collapsing:
+ *  - the end is on the day IMMEDIATELY after the start (not two days later);
+ *  - it is before {@link SAME_NIGHT_BEFORE_HOUR} local;
+ *  - and its time-of-day is EARLIER than the start's. Without this a ~24h run (Sat 2:00am →
+ *    Sun 3:12am) satisfies the other two and would print as "Sat 19 Sep 2:00am–3:12am", i.e. as
+ *    seventy minutes.
  */
 function endDateIfDifferentDay(r: DerivedInterval, tz: string): string | null {
   if (!r.endTime) return null;
   const startDay = formatInTimezone(r.startTime, tz, "EEE d MMM");
   const endDay = formatInTimezone(r.endTime, tz, "EEE d MMM");
-  return endDay === startDay ? null : endDay;
+  if (endDay === startDay) return null;
+  const sameNight =
+    localDay(r.endTime, tz) === localDay(r.startTime, tz, 1) &&
+    localMinutes(r.endTime, tz) < SAME_NIGHT_BEFORE_HOUR * 60 &&
+    localMinutes(r.endTime, tz) < localMinutes(r.startTime, tz);
+  return sameNight ? null : endDay;
 }
 
 /** Shape one derived interval into the (legacy-compatible + enriched) event the UI consumes. */

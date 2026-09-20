@@ -195,13 +195,27 @@ export function formatDuration(ms: number): string {
  * `formatDuration` takes MILLISECONDS and spells things differently ("2m 15s", NBSP-joined), and
  * `formatHoursAsDuration` takes HOURS and omits the space ("1h5m"). Hence the explicit name.
  *
+ * From 100 hours the minutes are DROPPED and the hours rounded ("509h 43m" -> "510h"). That figure
+ * is a total — a year of generator runs — and at that size the minutes are noise that makes the
+ * widest cell in the column, so they cost the table a column's worth of width to say nothing. Below
+ * the threshold nothing changes: an individual run is still "2h 30m".
+ *
  * Examples:
  * - 9000 -> "2h 30m"
  * - 2700 -> "45m"
  * - 10800 -> "3h"
+ * - 1834980 -> "510h"
  */
+const DROP_MINUTES_ABOVE_MIN = 100 * 60;
+
 export function formatSecondsAsDuration(seconds: number): string {
   const totalMin = Math.round(seconds / 60);
+  if (totalMin >= DROP_MINUTES_ABOVE_MIN) {
+    // 🛑 From SECONDS, not from `totalMin`. Rounding to minutes and then to hours rounds twice, and
+    // the two steps compound in the same direction: 100h 29m 30s rounds up to 100h 30m and then up
+    // again to 101h, an hour away from its own nearest hour.
+    return `${Math.round(seconds / 3600)}h`;
+  }
   const h = Math.floor(totalMin / 60);
   const m = totalMin % 60;
   if (h > 0) return m > 0 ? `${h}h ${m}m` : `${h}h`;

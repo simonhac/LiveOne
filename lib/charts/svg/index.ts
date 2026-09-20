@@ -19,6 +19,7 @@ export { buildTimeTicks, buildShadingBands } from "./time-ticks";
 export { bandPath, linePath, stackedBands } from "./paths";
 
 export {
+  indexForSpan,
   isTouchDevice,
   nearestIndexForTime,
   useContainerSize,

@@ -189,7 +189,20 @@ body {
 
 /* The dashboard is black but body is gray-900, and the root canvas is what shows in overscroll and
    behind Safari's status-bar glass. Unlayered, so it beats the `bg-gray-900` utility. */
-html:has([data-dashboard-root]),
-html:has([data-dashboard-root]) body {
+/* 🚧 The `:not([data-safari-top="c"])` is TEMPORARY — variant `c` of the Safari top-band experiment
+   turns this rule off to see whether the band's colour follows the root canvas. Delete the two
+   `:not(...)` clauses along with the rest of the experiment. */
+html:has([data-dashboard-root]):not([data-safari-top="c"]),
+html:has([data-dashboard-root]):not([data-safari-top="c"]) body {
   background-color: #000;
+}
+
+/* Touch devices step the chart window by tapping its axis strip (DashboardChart's axis-tap zones),
+   so the prev/next pill is redundant there. `pointer: coarse` and not a width query on purpose: a
+   touch laptop driven by a mouse keeps its buttons, and a small window on a desktop is still a
+   mouse. */
+@media (pointer: coarse) {
+  .coarse-nav-hidden {
+    display: none;
+  }
 }

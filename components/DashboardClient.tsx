@@ -23,7 +23,10 @@ import {
 } from "@/lib/dashboard/temporal-cards";
 import { HeaderTemporalNav } from "@/components/dashboard/HeaderTemporalNav";
 import { ChartFocusProvider } from "@/lib/charts/ChartFocusContext";
+import { AxisNavProvider } from "@/lib/charts/AxisNavContext";
 import { useHideOnScroll } from "@/lib/dashboard/useHideOnScroll";
+import { useSafariTopVariant } from "@/lib/dashboard/useSafariTopVariant";
+import SafariTopSwitcher from "@/components/dashboard/SafariTopSwitcher";
 import type { ReadableArea } from "@/lib/areas/list";
 import type { ReadableDevice } from "@/lib/devices/list";
 import type { ResolvedDevice } from "@/lib/dashboard/resolve-shell";
@@ -106,7 +109,20 @@ export default function DashboardClient({
   // is there, and taking the D|W|M|Y buttons away would be a cost with nothing bought. Held shown
   // while a menu hanging off it is open.
   const headerRef = useRef<HTMLElement>(null);
-  const headerHidden = useHideOnScroll(headerRef, switcherOpen || actionsOpen);
+  // 🚧 TEMPORARY (`?safariTop=`) — variant `d` pins the header shown. See useSafariTopVariant.
+  const safariTop = useSafariTopVariant();
+  const headerHidden = useHideOnScroll(
+    headerRef,
+    switcherOpen || actionsOpen || safariTop.variant === "d",
+  );
+  // 🚧 TEMPORARY (`?safariTop=`). `sticky`/`relative` swap costs no layout: a sticky element keeps
+  // its normal flow slot either way.
+  const headerPosition =
+    safariTop.variant === "d"
+      ? "relative sm:sticky sm:top-0"
+      : (safariTop.variant === "a" || safariTop.variant === "b") && headerHidden
+        ? "relative"
+        : "sticky top-0";
 
   // Warm the switcher's dashboards + default so the dropdown paints fully on first open (no jump).
   // The switcher is only shown to a real authed owner (not the read-only shared view).
@@ -167,196 +183,208 @@ export default function DashboardClient({
 
   return (
     <ChartFocusProvider>
-      {/* `data-dashboard-root` turns the root canvas black (globals.css), so overscroll and the
+      {/* Page-wide: the header's navigator and the charts down the page are not in one card. */}
+      <AxisNavProvider>
+        {/* `data-dashboard-root` turns the root canvas black (globals.css), so overscroll and the
           backing of Safari's glass match the page instead of body's gray-900. */}
-      <div data-dashboard-root className="min-h-screen bg-black">
-        {/* A transform, not a layout change: hiding moves nothing beneath it.
+        <div data-dashboard-root className="min-h-screen bg-black">
+          {/* A transform, not a layout change: hiding moves nothing beneath it.
             The sticky element itself carries NO paint: Safari 26 tints a solid bar behind the
             status bar from any fixed/sticky edge element that has a background-color or
             backdrop-filter, and only an `absolute` child escapes the sampling. `invisible` while
             hidden, because a merely translated-away sticky element still counts. */}
-        <header
-          ref={headerRef}
-          className={`sticky top-0 z-30 px-4 py-3 transition-[transform,visibility] duration-200 motion-reduce:transition-none ${headerHidden ? "invisible -translate-y-full" : ""}`}
-        >
-          <div
-            aria-hidden
-            className="pointer-events-none absolute inset-0 -z-10 border-b border-white/10 bg-black/80 backdrop-blur"
-          />
-          <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-3">
-            <div className="relative min-w-0">
-              {sharedAreas ? (
-                <h1 className="truncate text-lg font-semibold text-white">
-                  {dashboard.displayName ?? "Dashboard"}
-                </h1>
-              ) : (
-                <button
-                  onClick={() => setSwitcherOpen((o) => !o)}
-                  className="flex min-w-0 items-center gap-2 rounded-lg px-2 py-1 transition-colors hover:bg-gray-800"
-                >
+          <header
+            ref={headerRef}
+            className={`${headerPosition} z-30 px-4 py-3 transition-[transform,visibility] duration-200 motion-reduce:transition-none ${headerHidden ? "invisible -translate-y-full" : ""}`}
+          >
+            <div
+              aria-hidden
+              className="pointer-events-none absolute inset-0 -z-10 border-b border-white/10 bg-black/80 backdrop-blur"
+            />
+            <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-3">
+              <div className="relative min-w-0">
+                {sharedAreas ? (
                   <h1 className="truncate text-lg font-semibold text-white">
                     {dashboard.displayName ?? "Dashboard"}
                   </h1>
-                  <ChevronDown
-                    className={`h-4 w-4 flex-shrink-0 text-gray-400 transition-transform ${switcherOpen ? "rotate-180" : ""}`}
-                  />
-                </button>
-              )}
-              {switcherOpen && (
-                <>
-                  <div
-                    className="fixed inset-0 z-40"
-                    onClick={() => setSwitcherOpen(false)}
-                  />
-                  <div className="absolute left-0 top-full z-50 mt-2 w-64 rounded-lg border border-gray-700 bg-gray-800 shadow-lg">
-                    <DashboardsMenu
-                      currentDashboardId={dashboard.id}
-                      enabled={!sharedAreas}
-                      onNew={() => setNewOpen(true)}
-                      onNavigate={() => setSwitcherOpen(false)}
+                ) : (
+                  <button
+                    onClick={() => setSwitcherOpen((o) => !o)}
+                    className="flex min-w-0 items-center gap-2 rounded-lg px-2 py-1 transition-colors hover:bg-gray-800"
+                  >
+                    <h1 className="truncate text-lg font-semibold text-white">
+                      {dashboard.displayName ?? "Dashboard"}
+                    </h1>
+                    <ChevronDown
+                      className={`h-4 w-4 flex-shrink-0 text-gray-400 transition-transform ${switcherOpen ? "rotate-180" : ""}`}
                     />
+                  </button>
+                )}
+                {switcherOpen && (
+                  <>
+                    <div
+                      className="fixed inset-0 z-40"
+                      onClick={() => setSwitcherOpen(false)}
+                    />
+                    <div className="absolute left-0 top-full z-50 mt-2 w-64 rounded-lg border border-gray-700 bg-gray-800 shadow-lg">
+                      <DashboardsMenu
+                        currentDashboardId={dashboard.id}
+                        enabled={!sharedAreas}
+                        onNew={() => setNewOpen(true)}
+                        onNavigate={() => setSwitcherOpen(false)}
+                      />
+                    </div>
+                  </>
+                )}
+              </div>
+              <div className="flex items-center gap-2">
+                {/* Temporal navigator, left of the edit cluster (desktop). Mobile → own row below. */}
+                {showNav && navHandle != null && (
+                  <div className="hidden sm:block">
+                    <HeaderTemporalNav handle={navHandle} />
                   </div>
-                </>
-              )}
-            </div>
-            <div className="flex items-center gap-2">
-              {/* Temporal navigator, left of the edit cluster (desktop). Mobile → own row below. */}
-              {showNav && navHandle != null && (
-                <div className="hidden sm:block">
+                )}
+                {canEdit && (
+                  <DropdownMenu.Root onOpenChange={setActionsOpen}>
+                    <DropdownMenu.Trigger asChild>
+                      <button
+                        type="button"
+                        title="Dashboard actions"
+                        aria-label="Dashboard actions"
+                        className="inline-flex items-center gap-1.5 rounded-md border border-gray-700 px-2.5 py-1.5 text-sm text-gray-300 outline-none transition-colors hover:bg-gray-800 hover:text-white data-[state=open]:bg-gray-800 data-[state=open]:text-white"
+                      >
+                        <Settings className="h-4 w-4" />
+                      </button>
+                    </DropdownMenu.Trigger>
+                    <DropdownMenu.Portal>
+                      <DropdownMenu.Content
+                        align="end"
+                        sideOffset={5}
+                        className="min-w-[200px] rounded-lg border border-gray-700 bg-gray-800 p-1 shadow-xl"
+                        style={{ zIndex: 9999 }}
+                      >
+                        <DropdownMenu.Item
+                          className={MENU_ITEM_CLASS}
+                          onSelect={() => setNewOpen(true)}
+                        >
+                          <Plus className="h-4 w-4 text-gray-400" />
+                          New dashboard
+                        </DropdownMenu.Item>
+                        <DropdownMenu.Item
+                          className={MENU_ITEM_CLASS}
+                          onSelect={() => setAddAreaOpen(true)}
+                        >
+                          <Layers className="h-4 w-4 text-gray-400" />
+                          Add existing area…
+                        </DropdownMenu.Item>
+                        <DropdownMenu.Item
+                          className={MENU_ITEM_CLASS}
+                          onSelect={() => setCreateAreaOpen(true)}
+                        >
+                          <Plus className="h-4 w-4 text-gray-400" />
+                          Create new area…
+                        </DropdownMenu.Item>
+                        <DropdownMenu.Separator className="my-1 h-px bg-gray-700" />
+                        <DropdownMenu.Item
+                          className={MENU_ITEM_CLASS}
+                          onSelect={() => setRenameOpen(true)}
+                        >
+                          <Settings className="h-4 w-4 text-gray-400" />
+                          Settings…
+                        </DropdownMenu.Item>
+                      </DropdownMenu.Content>
+                    </DropdownMenu.Portal>
+                  </DropdownMenu.Root>
+                )}
+              </div>
+              {showNav && navHandle != null ? (
+                <div className="w-full sm:hidden">
                   <HeaderTemporalNav handle={navHandle} />
                 </div>
-              )}
-              {canEdit && (
-                <DropdownMenu.Root onOpenChange={setActionsOpen}>
-                  <DropdownMenu.Trigger asChild>
-                    <button
-                      type="button"
-                      title="Dashboard actions"
-                      aria-label="Dashboard actions"
-                      className="inline-flex items-center gap-1.5 rounded-md border border-gray-700 px-2.5 py-1.5 text-sm text-gray-300 outline-none transition-colors hover:bg-gray-800 hover:text-white data-[state=open]:bg-gray-800 data-[state=open]:text-white"
-                    >
-                      <Settings className="h-4 w-4" />
-                    </button>
-                  </DropdownMenu.Trigger>
-                  <DropdownMenu.Portal>
-                    <DropdownMenu.Content
-                      align="end"
-                      sideOffset={5}
-                      className="min-w-[200px] rounded-lg border border-gray-700 bg-gray-800 p-1 shadow-xl"
-                      style={{ zIndex: 9999 }}
-                    >
-                      <DropdownMenu.Item
-                        className={MENU_ITEM_CLASS}
-                        onSelect={() => setNewOpen(true)}
-                      >
-                        <Plus className="h-4 w-4 text-gray-400" />
-                        New dashboard
-                      </DropdownMenu.Item>
-                      <DropdownMenu.Item
-                        className={MENU_ITEM_CLASS}
-                        onSelect={() => setAddAreaOpen(true)}
-                      >
-                        <Layers className="h-4 w-4 text-gray-400" />
-                        Add existing area…
-                      </DropdownMenu.Item>
-                      <DropdownMenu.Item
-                        className={MENU_ITEM_CLASS}
-                        onSelect={() => setCreateAreaOpen(true)}
-                      >
-                        <Plus className="h-4 w-4 text-gray-400" />
-                        Create new area…
-                      </DropdownMenu.Item>
-                      <DropdownMenu.Separator className="my-1 h-px bg-gray-700" />
-                      <DropdownMenu.Item
-                        className={MENU_ITEM_CLASS}
-                        onSelect={() => setRenameOpen(true)}
-                      >
-                        <Settings className="h-4 w-4 text-gray-400" />
-                        Settings…
-                      </DropdownMenu.Item>
-                    </DropdownMenu.Content>
-                  </DropdownMenu.Portal>
-                </DropdownMenu.Root>
-              )}
+              ) : navRowPending ? (
+                // Same box, no content — `TemporalNavigator` is one segmented pill row: a 16px line
+                // box (`text-xs`, or a 16px chevron) + 8px of `py-1` + 4px of the track's `p-0.5`.
+                // On a phone the prev/next pill is hidden, but the period switcher sets the same height.
+                <div className="h-[28px] w-full sm:hidden" aria-hidden />
+              ) : null}
             </div>
-            {showNav && navHandle != null ? (
-              <div className="w-full sm:hidden">
-                <HeaderTemporalNav handle={navHandle} />
+          </header>
+
+          <main className="mx-auto max-w-7xl px-0 py-4 sm:px-1">
+            {docHasCards(dashboard.doc) ? (
+              <DashboardV4View
+                doc={dashboard.doc}
+                areaById={areaById}
+                dashboardId={dashboard.id}
+                areasResolved={areasResolved}
+                deviceById={deviceById}
+              />
+            ) : (
+              // A brand-new dashboard has an empty document, and `DashboardV4View` renders literally
+              // nothing for it. The shell owns the empty case, because the shell owns the dialog it
+              // opens.
+              <div className="mx-auto max-w-md px-4 py-16 text-center text-gray-400">
+                <Layers className="mx-auto mb-3 h-10 w-10 text-gray-600" />
+                <p className="text-sm">
+                  This dashboard has no cards yet.
+                  {canEdit ? " Add an area to get started." : ""}
+                </p>
+                {canEdit && (
+                  <button
+                    onClick={() => setAddAreaOpen(true)}
+                    className="mt-4 inline-flex items-center gap-1.5 rounded-md border border-gray-700 px-3 py-1.5 text-sm text-gray-300 transition-colors hover:bg-gray-800 hover:text-white"
+                  >
+                    <Layers className="h-4 w-4" />
+                    Add area
+                  </button>
+                )}
               </div>
-            ) : navRowPending ? (
-              // Same box, no content — `TemporalNavigator` is one row of `px-2 py-1 text-sm`
-              // buttons, i.e. 20px of line box + 8px padding + 2px border.
-              <div className="h-[30px] w-full sm:hidden" aria-hidden />
-            ) : null}
-          </div>
-        </header>
+            )}
 
-        <main className="mx-auto max-w-7xl px-0 py-4 sm:px-1">
-          {docHasCards(dashboard.doc) ? (
-            <DashboardV4View
-              doc={dashboard.doc}
-              areaById={areaById}
-              dashboardId={dashboard.id}
-              areasResolved={areasResolved}
-              deviceById={deviceById}
-            />
-          ) : (
-            // A brand-new dashboard has an empty document, and `DashboardV4View` renders literally
-            // nothing for it. The shell owns the empty case, because the shell owns the dialog it
-            // opens.
-            <div className="mx-auto max-w-md px-4 py-16 text-center text-gray-400">
-              <Layers className="mx-auto mb-3 h-10 w-10 text-gray-600" />
-              <p className="text-sm">
-                This dashboard has no cards yet.
-                {canEdit ? " Add an area to get started." : ""}
-              </p>
-              {canEdit && (
-                <button
-                  onClick={() => setAddAreaOpen(true)}
-                  className="mt-4 inline-flex items-center gap-1.5 rounded-md border border-gray-700 px-3 py-1.5 text-sm text-gray-300 transition-colors hover:bg-gray-800 hover:text-white"
-                >
-                  <Layers className="h-4 w-4" />
-                  Add area
-                </button>
-              )}
-            </div>
+            {/* 🚧 TEMPORARY — the Safari top-band variant picker, only when `?safariTop` is in the URL. */}
+            {safariTop.enabled && (
+              <SafariTopSwitcher
+                variant={safariTop.variant}
+                onChange={safariTop.select}
+              />
+            )}
+          </main>
+
+          {canEdit && (
+            <>
+              <DashboardSettingsDialog
+                isOpen={renameOpen}
+                onClose={() => setRenameOpen(false)}
+                id={dashboard.id}
+                initialName={dashboard.displayName ?? ""}
+                initialAlias={dashboard.alias ?? ""}
+                areaIds={docAreaRefs(dashboard.doc)}
+                onDeleted={() => router.push("/dashboard")}
+                onSaved={() => router.refresh()}
+              />
+              <AddAreaDialog
+                isOpen={addAreaOpen}
+                onClose={() => setAddAreaOpen(false)}
+                dashboardId={dashboard.id}
+                doc={dashboard.doc}
+                revision={dashboard.revision}
+                readableAreas={readableAreas}
+                onSaved={() => router.refresh()}
+              />
+              <NewDashboardDialog
+                isOpen={newOpen}
+                onClose={() => setNewOpen(false)}
+              />
+              <AreaBuilderDialog
+                isOpen={createAreaOpen}
+                areaId={null}
+                onClose={() => setCreateAreaOpen(false)}
+                onSaved={() => router.refresh()}
+              />
+            </>
           )}
-        </main>
-
-        {canEdit && (
-          <>
-            <DashboardSettingsDialog
-              isOpen={renameOpen}
-              onClose={() => setRenameOpen(false)}
-              id={dashboard.id}
-              initialName={dashboard.displayName ?? ""}
-              initialAlias={dashboard.alias ?? ""}
-              areaIds={docAreaRefs(dashboard.doc)}
-              onDeleted={() => router.push("/dashboard")}
-              onSaved={() => router.refresh()}
-            />
-            <AddAreaDialog
-              isOpen={addAreaOpen}
-              onClose={() => setAddAreaOpen(false)}
-              dashboardId={dashboard.id}
-              doc={dashboard.doc}
-              revision={dashboard.revision}
-              readableAreas={readableAreas}
-              onSaved={() => router.refresh()}
-            />
-            <NewDashboardDialog
-              isOpen={newOpen}
-              onClose={() => setNewOpen(false)}
-            />
-            <AreaBuilderDialog
-              isOpen={createAreaOpen}
-              areaId={null}
-              onClose={() => setCreateAreaOpen(false)}
-              onSaved={() => router.refresh()}
-            />
-          </>
-        )}
-      </div>
+        </div>
+      </AxisNavProvider>
     </ChartFocusProvider>
   );
 }

@@ -1,13 +1,19 @@
 "use client";
 
 import type { ChartTimeRange } from "@/lib/charts/temporal";
+import {
+  SEGMENTED_ITEM,
+  SEGMENTED_ITEM_OFF,
+  SEGMENTED_ITEM_ON,
+  SEGMENTED_TRACK,
+} from "@/components/ui/segmented";
 
 const DEFAULT_PERIODS: readonly ChartTimeRange[] = ["D", "W", "M", "Y"];
 
 interface PeriodSwitcherProps {
   value: ChartTimeRange;
   onChange: (value: ChartTimeRange) => void;
-  /** Periods to offer, one button each (default the D/W/M/Y set). */
+  /** Periods to offer, one segment each (default the D/W/M/Y set). */
   periods?: readonly ChartTimeRange[];
   className?: string;
 }
@@ -19,26 +25,15 @@ export default function PeriodSwitcher({
   className = "",
 }: PeriodSwitcherProps) {
   return (
-    <div
-      className={`inline-flex rounded-md shadow-sm ${className}`}
-      role="group"
-    >
-      {periods.map((period, index) => (
+    <div className={`${SEGMENTED_TRACK} ${className}`} role="group">
+      {periods.map((period) => (
         <button
           key={period}
           onClick={() => onChange(period)}
-          className={`
-            px-3 py-1 text-xs font-medium transition-colors border focus:z-20
-            ${index === 0 ? "rounded-l-md" : "-ml-px"}
-            ${index === periods.length - 1 ? "rounded-r-md" : ""}
-            ${
-              value === period
-                ? // z-10 lifts the selected button over its neighbours' borders; focus:z-20
-                  // above outranks it so a focused button's ring is never painted under it.
-                  "bg-blue-900/50 text-blue-300 border-blue-800 z-10"
-                : "bg-gray-700 text-gray-400 border-gray-600 hover:bg-gray-600 hover:text-gray-300"
-            }
-          `}
+          aria-pressed={value === period}
+          className={`${SEGMENTED_ITEM} ${
+            value === period ? SEGMENTED_ITEM_ON : SEGMENTED_ITEM_OFF
+          }`}
         >
           {period}
         </button>

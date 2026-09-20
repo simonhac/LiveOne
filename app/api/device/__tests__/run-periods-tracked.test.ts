@@ -139,3 +139,69 @@ describe("GET run-periods — tracked vs empty", () => {
     expect(body.hasMore).toBe(false);
   });
 });
+
+/**
+ * The merged "when" column prints a second date only when it earns its width — the widest cell in a
+ * phone-width table. See `endDateIfDifferentDay` in the route.
+ */
+describe("GET run-periods — endDate", () => {
+  // Australia/Melbourne (mocked above). September = AEST, UTC+10.
+  const mel = (iso: string) => new Date(`${iso}+10:00`);
+  const run = (startLocal: string, endLocal: string) => ({
+    startTime: mel(startLocal),
+    endTime: mel(endLocal),
+    energyKwh: null,
+    avgSignal: null,
+    minSignal: null,
+    maxSignal: null,
+    signalUnit: null,
+    costC: null,
+    emissionsG: null,
+  });
+
+  const endDateFor = async (startLocal: string, endLocal: string) => {
+    getRunDetectorForDevices.mockResolvedValue({
+      id: "dx_1",
+      signalPoint: "pt_1",
+      energyPoint: null,
+    });
+    dbRows = [run(startLocal, endLocal)];
+    const body = await (await call("role=generator&period=7d")).json();
+    return body.events[0];
+  };
+
+  it("is absent for a run inside one day", async () => {
+    expect(
+      (await endDateFor("2026-09-19T10:05", "2026-09-19T15:09")).endDate,
+    ).toBeNull();
+  });
+
+  it("is absent for a run that merely carries on past midnight", async () => {
+    const e = await endDateFor("2026-09-19T22:45", "2026-09-20T03:12");
+    expect(e.endDate).toBeNull();
+    // …and the rest of the row still says exactly when it was.
+    expect(e.date).toBe("Sat 19 Sep");
+    expect(e.startTime).toBe("10:45pm");
+    expect(e.endTime).toBe("3:12am");
+  });
+
+  it("is printed once the end is late enough into the next day to mislead", async () => {
+    expect(
+      (await endDateFor("2026-09-19T22:45", "2026-09-20T09:30")).endDate,
+    ).toBe("Sun 20 Sep");
+  });
+
+  it("🛑 is printed for a ~24h run, which the hour rule alone would collapse", async () => {
+    // 2:00am → 3:12am the NEXT day is 25 hours, and both ends are before 9am. Only the
+    // "end earlier in the day than the start" test keeps this from reading as 72 minutes.
+    expect(
+      (await endDateFor("2026-09-19T02:00", "2026-09-20T03:12")).endDate,
+    ).toBe("Sun 20 Sep");
+  });
+
+  it("is printed when the run spans more than one night", async () => {
+    expect(
+      (await endDateFor("2026-09-19T22:45", "2026-09-21T03:12")).endDate,
+    ).toBe("Mon 21 Sep");
+  });
+});

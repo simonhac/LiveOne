@@ -184,6 +184,12 @@ export interface FocusLineProps {
   at: Date | null;
   x: ScaleTime<number, number>;
   plotHeight: number;
+  /**
+   * Draw here instead of at `x(at)`. For BARS: `at` is the bucket's START, which on a bar is the
+   * column's left edge, not the thing the reader is pointing at — the caller passes the category's
+   * centre, read from the same numbers that placed the bar. `at` still decides *whether* to draw.
+   */
+  xPx?: number | null;
 }
 
 /**
@@ -197,13 +203,14 @@ export interface FocusLineProps {
  * for enter/leave therefore sees the pointer leave and re-enter on every single mouse move — which
  * made the run-period tooltip strobe while scrubbing across a charge session.
  */
-export function FocusLine({ at, x, plotHeight }: FocusLineProps) {
+export function FocusLine({ at, x, plotHeight, xPx }: FocusLineProps) {
   if (!at) return null;
+  const px = xPx ?? x(at);
   return (
     <line
       data-testid="focus-line"
-      x1={x(at)}
-      x2={x(at)}
+      x1={px}
+      x2={px}
       y1={0}
       y2={plotHeight}
       stroke={CHART_COLORS.focusLine}
