@@ -90,9 +90,7 @@ describe("formatWindowLabel", () => {
     // [18 Aug 00:00, 25 Aug 00:00) is 18 – 24 Aug.
     const start = localMidnight("2026-08-17");
     const end = localMidnight("2026-08-24");
-    expect(formatWindowLabel(start, end, "W", desktop)).toBe(
-      "18 – 24 Aug 2026",
-    );
+    expect(formatWindowLabel(start, end, "W", desktop)).toBe("18–24 Aug 2026");
   });
 
   it("desktop and mobile agree for a whole-day window", () => {
@@ -228,7 +226,7 @@ describe("formatWindowLabel", () => {
           "M",
           mobile,
         ),
-      ).toBe("1 – 30 Aug 2026");
+      ).toBe("1–30 Aug 2026");
       expect(
         formatWindowLabel(
           zdt("2026-08-02T00:00:00Z"),
@@ -236,7 +234,7 @@ describe("formatWindowLabel", () => {
           "M",
           mobile,
         ),
-      ).toBe("2 – 31 Aug 2026");
+      ).toBe("2–31 Aug 2026");
       expect(
         formatWindowLabel(
           zdt("2026-02-01T00:00:00Z"),
@@ -244,7 +242,7 @@ describe("formatWindowLabel", () => {
           "M",
           mobile,
         ),
-      ).toBe("1 – 27 Feb 2026");
+      ).toBe("1–27 Feb 2026");
       expect(
         formatWindowLabel(
           zdt("2025-01-01T00:00:00Z"),

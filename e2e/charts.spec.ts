@@ -251,6 +251,28 @@ test.describe("axis-tap navigation on touch", () => {
     await expect(frame).toHaveAttribute("data-axis-tap", "newer");
   });
 
+  test("tapping the gutters either side of the plot steps older and newer", async ({
+    page,
+  }) => {
+    const frame = await open(page, "stacked-load-d-axis-tap");
+    const s = await strip(page);
+    const svg = await page
+      .locator('svg[data-testid^="dashboard-chart"]')
+      .first()
+      .boundingBox();
+    expect(svg).not.toBeNull();
+
+    // 🛑 Half-way UP the plot, not down in the strip: "to the left of the chart" is the y-axis label
+    // column at thumb height, and a test that tapped the gutter at strip height would pass on the
+    // strip's own zone without the gutters existing at all.
+    const midY = (svg!.y + s.top) / 2;
+    await page.touchscreen.tap((svg!.x + s.left) / 2, midY);
+    await expect(frame).toHaveAttribute("data-axis-tap", "older");
+
+    await page.touchscreen.tap((s.right + svg!.x + svg!.width) / 2, midY);
+    await expect(frame).toHaveAttribute("data-axis-tap", "newer");
+  });
+
   test("an axis tap does not move the crosshair", async ({ page }) => {
     // The reason the handler returns before `pointer.onPointerDown`: stepping the window must not
     // also drag the shared focus (and with it the energy table and the Sankey) to wherever the
@@ -275,10 +297,16 @@ test.describe("axis-tap navigation on touch", () => {
 
     await page.touchscreen.tap((mid + s.right) / 2, s.top + 20);
     await expect(frame).toHaveAttribute("data-axis-tap", "none");
+    // …and it SAYS it refused: without the X a refused step and a missed tap look the same.
+    const flash = page.getByTestId("axis-tap-flash");
+    await expect(flash).toHaveAttribute("data-kind", "blocked");
 
     // Older still steps — `canGoNewer` gates one half, not the strip.
     await page.touchscreen.tap((s.left + mid) / 2, s.top + 20);
     await expect(frame).toHaveAttribute("data-axis-tap", "older");
+    await expect(flash).toHaveAttribute("data-kind", "older");
+    // The badge is a flash, not a fixture.
+    await expect(flash).toHaveCount(0);
   });
 
   test("a horizontal drag scrubs the crosshair instead of stepping", async ({

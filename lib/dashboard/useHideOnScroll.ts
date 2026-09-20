@@ -4,17 +4,21 @@ import { useEffect, useRef } from "react";
 import { isScrollHeld, subscribeScrollHold } from "@/lib/charts/scroll-hold";
 
 /**
- * Where the header is. Two states, and the second is the whole trick:
+ * Where the header is. Two states:
  *
- * - `stuck` — inside the sticky host (`position: sticky; top: 0`), pinned to the top of the viewport.
+ * - `stuck` — inside the sticky host (`position: sticky; top: 0`). Pinned to the top of the
+ *   viewport until the page scrolls past `top`, its ARMING POINT; over the next `travel` px a
+ *   scroll-driven CSS animation on the host translates it up and out. The leave is therefore a pure
+ *   function of scroll offset that was set up BEFORE the reader moved — no JS runs at the moment it
+ *   starts, which is the only way it can start from rest (see `placeHeader`).
  * - `free` — inside the free host (`position: relative; top: <top>px`): an ordinary part of the
- *   DOCUMENT, parked at page offset `top`. It is not moved on scroll at all; the page scrolls and it
- *   goes with it, so it leaves and re-enters the viewport pixel for pixel with the reader's finger,
- *   on the compositor, with no per-frame JS and no transition to lag behind.
+ *   DOCUMENT, parked at page offset `top`. The page carries it at 1px per px and the same kind of
+ *   animation adds the rest of {@link HEADER_SPEED}. This is where it lives while it is AWAY, and
+ *   how it comes back in.
  */
 export interface HeaderPlacement {
   mode: "stuck" | "free";
-  /** Page offset of the header's top edge while `free`. Meaningless while `stuck`. */
+  /** `free`: page offset of the header's top edge. `stuck`: the scroll offset it starts leaving at. */
   top: number;
   /** Scroll offset at the previous step, and the page height it was read at. */
   lastY: number;
@@ -24,41 +28,74 @@ export interface HeaderPlacement {
 /**
  * One scroll step → the next placement. Pure, so the logic is testable without a DOM.
  *
+ * `travel` is how much SCROLL takes the header from fully shown to fully gone: its own height at
+ * 1px per px, half that at {@link HEADER_SPEED}.
+ *
  * `y` must already be clamped to `[0, maxY]` — iOS rubber-banding past either end otherwise reads
  * as a direction change.
  *
- * - `stuck`, reader scrolls DOWN → let go where it was (`top = lastY`), and the page carries it off.
- * - `free` and fully above the viewport, reader scrolls UP → re-park it just above the viewport
- *   (`top = lastY - headerHeight`), so the same upward scroll carries it back in.
- * - `free` and the viewport's top edge has reached it (`y <= top`) → `stuck` again. At that instant
- *   the two placements coincide, so nothing moves.
+ * `stuck` (armed at `top`):
+ * - `y < top` — the reader has scrolled UP past the arming point: re-arm at `y`, so a turn back
+ *   down starts the leave from wherever they turned. A late re-arm only delays the leave a hair.
+ * - `top <= y < top + travel` — mid-leave, and CSS owns it. Nothing to do, in either direction.
+ * - `y >= top + travel` — fully out of sight: hand it to the free host, parked where it is. This
+ *   swap is what Safari's top band needs (see `useHideOnScroll`), and it is invisible, so it does
+ *   not matter how late it runs.
  *
- * 🛑 A step whose PAGE HEIGHT changed is layout, not the reader, and decides no DIRECTION. That case
- * is not hypothetical and not rare: Chrome's native scroll anchoring bumps `scrollY` whenever
- * content above the viewport grows, and that bump fires a `scroll` event indistinguishable from a
- * downward flick. A slow period (Y) lands its data after the header pin has expired, the charts
- * above the reader grow, and the header would let go on its own with nobody touching the screen.
- * The next event, at a settled height, decides.
+ * `free`:
+ * - fully above the viewport, reader scrolls UP → re-park it just out of sight (`top = y - travel`),
+ *   so the rest of that upward scroll carries it back in.
+ * - the viewport's top edge has reached it (`y <= top`) → `stuck` again, armed at `y`. The two
+ *   placements coincide there, so nothing moves.
+ *
+ * 🛑 Why the leave is armed in advance rather than started by this function. A touch scroll runs
+ * on the compositor, AHEAD of the main thread: by the time a scroll event has been delivered and
+ * a release applied, the page is already some px further on, and a header released "now" lands
+ * that far into its journey — doubled at 2px per px. It read as a big jump on the way down, and no
+ * choice of release point fixes it, because the lag is in when JS runs at all.
+ *
+ * 🛑 A step whose PAGE HEIGHT changed is layout, not the reader. Chrome's native scroll anchoring
+ * bumps `scrollY` whenever content above the viewport grows, which is indistinguishable from a
+ * downward flick — and an armed header would leave on it without asking. So such a step carries
+ * a stuck header's arming point along with the page (its progress is untouched), and never
+ * re-parks a free one. The hook also runs a step whenever the page RESIZES, not only on scroll, so
+ * that a height change with no scroll event cannot make the reader's next real step look like one.
+ *
+ * `scrollDriven: false` is the browser without scroll timelines: nothing can be armed, so a stuck
+ * header is released by JS on a downward step, at 1px per px, as it always was.
  */
 export function placeHeader(
   prev: HeaderPlacement,
   y: number,
   height: number,
-  headerHeight: number,
+  travel: number,
+  scrollDriven = true,
 ): HeaderPlacement {
   const next = { ...prev, lastY: y, lastHeight: height };
   const settled = height === prev.lastHeight;
   if (prev.mode === "stuck") {
-    return settled && y > prev.lastY
-      ? { ...next, mode: "free", top: prev.lastY }
-      : next;
+    if (!scrollDriven) {
+      return settled && y > prev.lastY
+        ? { ...next, mode: "free", top: y }
+        : next;
+    }
+    // Layout moved the page, so move the arming point WITH it: the header keeps exactly the
+    // progress it had, neither leaving on the bump nor snapping back from a leave already begun.
+    if (!settled) {
+      return { ...next, top: Math.max(0, prev.top + (y - prev.lastY)) };
+    }
+    if (y < prev.top) return { ...next, top: y };
+    return y >= prev.top + travel ? { ...next, mode: "free" } : next;
   }
   let top = prev.top;
-  const wasOffscreen = top + headerHeight <= prev.lastY;
+  // Strictly BEYOND just-out-of-sight: a header this function parked one step ago sits at exactly
+  // `lastY - travel`, and re-parking that one on every upward step would hold it at the threshold
+  // for ever instead of letting it in.
+  const wasOffscreen = top + travel < prev.lastY - 0.5;
   if (settled && y < prev.lastY && wasOffscreen) {
-    top = Math.max(0, prev.lastY - headerHeight);
+    top = Math.max(0, y - travel);
   }
-  return y <= top ? { ...next, mode: "stuck", top: 0 } : { ...next, top };
+  return y <= top ? { ...next, mode: "stuck", top: y } : { ...next, top };
 }
 
 /**
@@ -69,6 +106,23 @@ export function placeHeader(
 const NARROW_SCREEN = "(max-width: 639.98px)";
 
 const SLIDE_IN_MS = 200;
+
+/**
+ * How many px the header moves per px of scroll while it is leaving or returning.
+ *
+ * The motion is a CSS scroll-driven animation on whichever host holds the header
+ * (`.header-scroll-host`, globals.css): a `translateY` tied to the root scroller over
+ * `[top, top + travel]`. The sticky host contributes no motion of its own, so there the animation
+ * is the whole journey (`-height`); the free host rides the page at 1px per px, so there it is the
+ * remainder. Either way it is a pure function of scroll offset — reversible mid-way with nothing
+ * to re-anchor, and no per-frame JS to fall behind a fling. A browser without `animation-timeline`
+ * gets 1px per px and a JS release.
+ */
+const HEADER_SPEED = 2;
+const scrollTimelineSupported = () =>
+  typeof CSS !== "undefined" &&
+  CSS.supports("animation-timeline: scroll()") &&
+  CSS.supports("animation-range: 0px 1px");
 
 /**
  * Lets the header scroll away with the page on the way DOWN and scroll back in on any scroll UP,
@@ -116,7 +170,8 @@ export function useHideOnScroll(
 
   useEffect(() => {
     pinnedRef.current = pinned;
-    if (pinned) forceStuckRef.current();
+    // Both ways: pinning brings it back, and un-pinning has to re-arm it where the page now is.
+    forceStuckRef.current();
   }, [pinned]);
 
   useEffect(() => {
@@ -127,14 +182,29 @@ export function useHideOnScroll(
       return Math.min(Math.max(window.scrollY, 0), maxY);
     };
     let held = false;
+    const scrollDriven = scrollTimelineSupported();
+    const speed = scrollDriven ? HEADER_SPEED : 1;
+    /** Shown no matter what: wide screen, a menu open, or a temporal change in flight. */
+    const locked = () => !mq.matches || held || pinnedRef.current;
+    const travelOf = (header: HTMLElement | null) =>
+      (header?.offsetHeight ?? 0) / speed;
     let state: HeaderPlacement = {
       mode: "stuck",
-      top: 0,
+      top: Math.max(0, window.scrollY),
       lastY: window.scrollY,
       lastHeight: pageHeight(),
     };
 
     const stickyHost = headerRef.current?.parentElement ?? null;
+
+    const drive = (host: HTMLElement, start: number, away: number) => {
+      host.style.setProperty("--header-range-start", `${start}px`);
+      host.style.setProperty(
+        "--header-range-end",
+        `${start + travelOf(headerRef.current)}px`,
+      );
+      host.style.setProperty("--header-away", `${away}px`);
+    };
 
     const apply = () => {
       const header = headerRef.current;
@@ -143,11 +213,19 @@ export function useHideOnScroll(
       if (state.mode === "free") {
         if (header.parentElement !== freeHost) freeHost.appendChild(header);
         freeHost.style.top = `${state.top}px`;
+        // The page supplies 1px per px; the animation supplies the other `speed - 1`.
+        drive(freeHost, state.top, -(speed - 1) * travelOf(header));
         stickyHost.style.display = "none";
       } else {
         stickyHost.style.display = "";
         if (header.parentElement !== stickyHost) stickyHost.appendChild(header);
         freeHost.style.top = "";
+        // Sticky supplies no motion, so the animation is the whole journey.
+        drive(stickyHost, state.top, -header.offsetHeight);
+        // 🛑 Locked means NO animation, not a zero-length one: any `transform`, even a null one,
+        // makes the host the containing block for `position: fixed` descendants, and the dashboard
+        // switcher's full-screen click-catcher lives in here — it would shrink to the header.
+        stickyHost.style.animationName = locked() ? "none" : "";
       }
     };
 
@@ -156,8 +234,8 @@ export function useHideOnScroll(
       const height = pageHeight();
       const y = clampedY(height);
       const wasOffscreen =
-        state.mode === "free" && state.top + (header?.offsetHeight ?? 0) <= y;
-      state = { mode: "stuck", top: 0, lastY: y, lastHeight: height };
+        state.mode === "free" && state.top + travelOf(header ?? null) <= y;
+      state = { mode: "stuck", top: y, lastY: y, lastHeight: height };
       apply();
       // It was nowhere on screen, so there is no position to continue from: slide it in rather
       // than have it appear.
@@ -179,15 +257,22 @@ export function useHideOnScroll(
       raf = 0;
       const height = pageHeight();
       const y = clampedY(height);
-      if (!mq.matches || held || pinnedRef.current || isScrollHeld()) {
+      if (locked() || isScrollHeld()) {
         state = { ...state, lastY: y, lastHeight: height };
+        // Keep a stuck header armed at the reader, so that whenever this lifts the leave starts
+        // from where they are rather than from wherever they were when it began.
+        if (state.mode === "stuck" && state.top !== y) {
+          state = { ...state, top: y };
+          apply();
+        }
         return;
       }
       const next = placeHeader(
         state,
         y,
         height,
-        headerRef.current?.offsetHeight ?? 0,
+        travelOf(headerRef.current),
+        scrollDriven,
       );
       const moved = next.mode !== state.mode || next.top !== state.top;
       state = next;
@@ -196,9 +281,7 @@ export function useHideOnScroll(
     const onScroll = () => {
       if (!raf) raf = requestAnimationFrame(update);
     };
-    const onWidth = () => {
-      if (!mq.matches) forceStuck();
-    };
+    const onWidth = () => forceStuck();
     const unsubscribe = subscribeScrollHold((p) => {
       held = p;
       // Nothing observed during a temporal change may latch: it is stuck when the hold starts and
@@ -208,14 +291,23 @@ export function useHideOnScroll(
 
     window.addEventListener("scroll", onScroll, { passive: true });
     mq.addEventListener("change", onWidth);
+    // See `placeHeader` on layout steps: absorb a height change when it happens.
+    const resize =
+      typeof ResizeObserver === "undefined"
+        ? null
+        : new ResizeObserver(onScroll);
+    resize?.observe(document.body);
+    apply(); // arm it where the page already is
     return () => {
       window.removeEventListener("scroll", onScroll);
       mq.removeEventListener("change", onWidth);
+      resize?.disconnect();
       unsubscribe();
       if (raf) cancelAnimationFrame(raf);
       forceStuckRef.current = () => {};
-      // Hand React back the tree it rendered.
-      state = { ...state, mode: "stuck", top: 0 };
+      // Hand React back the tree it rendered, with nothing armed.
+      held = true;
+      state = { ...state, mode: "stuck" };
       apply();
     };
   }, [headerRef, freeHostRef]);
