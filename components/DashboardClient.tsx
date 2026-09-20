@@ -102,12 +102,12 @@ export default function DashboardClient({
   const [createAreaOpen, setCreateAreaOpen] = useState(false);
   const [switcherOpen, setSwitcherOpen] = useState(false);
   const [actionsOpen, setActionsOpen] = useState(false);
-  // On a NARROW screen the header slides away while scrolling down and returns on any scroll up —
-  // its two rows otherwise permanently eat a phone's screen. From `sm` up it never moves: the room
-  // is there, and taking the D|W|M|Y buttons away would be a cost with nothing bought. Held shown
-  // while a menu hanging off it is open.
+  // On a NARROW screen the header scrolls away with the page on the way down and back in on any
+  // scroll up — its two rows otherwise permanently eat a phone's screen. From `sm` up it never
+  // moves: the room is there, and taking the D|W|M|Y buttons away would be a cost with nothing
+  // bought. Held shown while a menu hanging off it is open.
   const headerRef = useRef<HTMLElement>(null);
-  const headerHidden = useHideOnScroll(headerRef, switcherOpen || actionsOpen);
+  useHideOnScroll(headerRef, switcherOpen || actionsOpen);
 
   // Warm the switcher's dashboards + default so the dropdown paints fully on first open (no jump).
   // The switcher is only shown to a real authed owner (not the read-only shared view).
@@ -172,19 +172,16 @@ export default function DashboardClient({
 
   return (
     <ChartFocusProvider>
-      {/* `overflow-x: clip` sits HERE rather than on html/body: overflow on the root propagates to
-          the viewport, and that appears to be what stops the page painting through Safari's top bar.
-          `clip`, not `hidden`, so this does not become a scroll container and the header still sticks. */}
+      {/* `overflow-x: clip` sits HERE rather than on html/body, which the pages that paint through
+          Safari's top bar leave alone. `clip`, not `hidden`, so this does not become a scroll
+          container and the header still sticks. */}
       <div className="min-h-screen overflow-x-clip bg-black">
-        {/* A transform, not a layout change: hiding moves nothing beneath it.
-            The sticky element itself carries NO paint: Safari 26 tints a solid bar behind the
-            status bar from any fixed/sticky edge element that has a background-color or
-            backdrop-filter, and only an `absolute` child escapes the sampling. `invisible` while
-            hidden, because a merely translated-away sticky element still counts. */}
-        <header
-          ref={headerRef}
-          className={`sticky top-0 z-30 px-4 py-3 transition-[transform,visibility] duration-200 motion-reduce:transition-none ${headerHidden ? "invisible -translate-y-full" : ""}`}
-        >
+        {/* `useHideOnScroll` writes `position`/`top` inline over `sticky top-0` to let the header go
+            with the page — no transform, no transition. While it is away it is `relative`, because
+            Safari 26 paints a solid band behind its status bar for as long as ANY fixed/sticky
+            element sits at the top edge, however invisible. The paint lives on an `absolute` child
+            so that, while it IS stuck, the band takes the body's black rather than a sampled tint. */}
+        <header ref={headerRef} className="sticky top-0 z-30 px-4 py-3">
           <div
             aria-hidden
             className="pointer-events-none absolute inset-0 -z-10 border-b border-white/10 bg-black/80 backdrop-blur"

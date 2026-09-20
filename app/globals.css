@@ -184,7 +184,10 @@
    black to the dashboard and won the cascade — html and body both computed #000, measured on prod —
    and the phone still painted the band in the `bg-gray-900` utility's literal #111827. So that
    utility is gone from <body> and there is exactly one colour in the document to find. Routes that
-   want a lighter page paint it on their own wrapper. */
+   want a lighter page paint it on their own wrapper.
+   That settles the band's COLOUR only. Whether there is a solid band at all is a separate rule: one
+   is painted while a fixed/sticky element sits at the top edge of the viewport, and the page shows
+   through otherwise — see `useHideOnScroll`. */
 html,
 body {
   background-color: #000;

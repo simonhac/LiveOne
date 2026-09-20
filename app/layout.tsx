@@ -22,9 +22,11 @@ export const metadata: Metadata = {
 };
 
 /**
- * The colour Safari 26 tints the band behind its status bar and URL pill. This meta is the only
- * top-of-page opt-in used by the pages that manage to paint through that band; deliberately no
- * `viewport-fit=cover`, which was tried on the phone and changed nothing.
+ * For browsers that still read it. Safari 26 does NOT: it takes the colour of the band behind its
+ * status bar and URL pill from a fixed/sticky element at the top edge, else from the body
+ * background — and paints a solid band at all only while such an element is there (see
+ * `useHideOnScroll`). Deliberately no `viewport-fit=cover`, which the pages that paint through
+ * that band do not use either, and which was tried on the phone and changed nothing.
  */
 export const viewport: Viewport = { themeColor: "#000000" };
 
