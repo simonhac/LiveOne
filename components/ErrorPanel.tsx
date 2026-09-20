@@ -24,14 +24,14 @@ export function ErrorPanel({
 }) {
   return (
     <div
-      className={`flex items-start gap-2.5 rounded-lg border border-amber-800/40 bg-amber-950/20 px-4 py-3 text-sm${className ? ` ${className}` : ""}`}
+      className={`flex items-start gap-2.5 rounded-lg border border-warn-panel-line bg-warn-panel px-4 py-3 text-sm${className ? ` ${className}` : ""}`}
     >
-      <AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0 text-amber-400" />
+      <AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0 text-warn" />
       {/* `min-w-0` so a long unbroken value in the message (a pasted URL, an id) wraps instead of
           forcing the panel wider than its container. */}
       <div className="min-w-0">
-        <p className="font-medium text-amber-200">{title}</p>
-        <p className="mt-0.5 text-amber-200/70">{children}</p>
+        <p className="font-medium text-warn-ink-strong">{title}</p>
+        <p className="mt-0.5 text-warn-ink">{children}</p>
       </div>
     </div>
   );

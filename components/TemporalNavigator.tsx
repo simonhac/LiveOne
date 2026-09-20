@@ -116,7 +116,7 @@ export default function TemporalNavigator({
     <div className={`flex justify-end items-center ${className}`}>
       <div className="flex items-center gap-2 sm:gap-4">
         <span
-          className="text-xs sm:text-sm text-gray-400"
+          className="text-xs sm:text-sm text-ink-muted"
           style={{ fontFamily: "DM Sans, system-ui, sans-serif" }}
         >
           <span className="hidden sm:inline">

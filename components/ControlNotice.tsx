@@ -28,7 +28,7 @@ export default function ControlNotice({
   return (
     <Alert
       variant={isError ? "destructive" : "default"}
-      className={isError ? "pr-9" : "pr-9 border-gray-600 text-gray-200"}
+      className={isError ? "pr-9" : "pr-9 border-line-strong text-ink-control"}
     >
       {isError ? (
         <AlertCircle className="h-4 w-4" />

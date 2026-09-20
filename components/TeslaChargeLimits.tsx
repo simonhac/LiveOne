@@ -271,11 +271,11 @@ export default function TeslaChargeLimits({
   }
 
   return (
-    <div className="space-y-3 border-t border-gray-700 pt-4">
+    <div className="space-y-3 border-t border-line pt-4">
       <div className="flex items-baseline justify-between">
         <Label className="text-sm">Stop charging after…</Label>
         {list.isLoading && (
-          <Loader2 className="h-3 w-3 animate-spin text-gray-500" />
+          <Loader2 className="h-3 w-3 animate-spin text-ink-faint" />
         )}
       </div>
 
@@ -285,7 +285,7 @@ export default function TeslaChargeLimits({
           {described.map(({ row, desc }) => (
             <li
               key={row.id}
-              className="rounded border border-gray-700 px-3 py-2 text-sm"
+              className="rounded border border-line px-3 py-2 text-sm"
             >
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0">
@@ -294,11 +294,11 @@ export default function TeslaChargeLimits({
                       chargeTrigger(row)?.afterMinutes,
                       chargeTrigger(row)?.afterKwh,
                     )}
-                    <span className="ml-2 text-xs text-gray-400">
+                    <span className="ml-2 text-xs text-ink-muted">
                       {row.mode === "once" ? "this session" : "every charge"}
                     </span>
                   </div>
-                  <div className="text-xs text-gray-400">
+                  <div className="text-xs text-ink-muted">
                     {stateWords(row, desc)}
                   </div>
                 </div>
@@ -399,7 +399,7 @@ export default function TeslaChargeLimits({
                       )}
                     </Button>
                   </div>
-                  <p className="text-xs text-gray-500">
+                  <p className="text-xs text-ink-faint">
                     Changing a limit re-arms it on the next check, so “so far”
                     starts again from zero.
                   </p>
@@ -415,7 +415,7 @@ export default function TeslaChargeLimits({
           {unreadable.map((row) => (
             <li
               key={row.id}
-              className="flex items-center justify-between rounded border border-gray-700 px-3 py-2 text-sm text-gray-400"
+              className="flex items-center justify-between rounded border border-line px-3 py-2 text-sm text-ink-muted"
             >
               <span>Unreadable rule</span>
               <Button
@@ -453,7 +453,7 @@ export default function TeslaChargeLimits({
             onChange={(e) => setMinutes(e.target.value)}
             className="h-8"
           />
-          <span className="text-xs text-gray-500">or</span>
+          <span className="text-xs text-ink-faint">or</span>
           <Input
             type="number"
             min={0.1}
@@ -486,12 +486,12 @@ export default function TeslaChargeLimits({
           </Button>
         </div>
         {canCreate && parsedMinutes.ok && parsedKwh.ok && (
-          <p className="text-xs text-gray-400">
+          <p className="text-xs text-ink-muted">
             {summaryWords(mode, parsedMinutes.value, parsedKwh.value)}
           </p>
         )}
         {mode === "once" && !isCharging && (
-          <p className="text-xs text-amber-400/80">
+          <p className="text-xs text-warn">
             The car doesn’t look like it’s charging right now — a this-charge
             limit only takes hold if a charge is actually running; otherwise it
             cancels itself.
@@ -510,7 +510,7 @@ export default function TeslaChargeLimits({
           )}
         </Button>
         {(!addedPt || !activePt) && (
-          <p className="text-xs text-gray-500">
+          <p className="text-xs text-ink-faint">
             Waiting for the car’s charge points to report before a limit can be
             set.
           </p>

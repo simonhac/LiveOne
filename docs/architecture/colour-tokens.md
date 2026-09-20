@@ -135,32 +135,14 @@ scanned source. A `text-ok` that nothing uses simply does not exist in the built
 
 ## Where we are
 
-**Done** — at zero raw palette classes but for the ten listed below:
+**The dashboard is done.** Every file it renders — `components/ui/**`, `components/dashboard/**`,
+the twelve card bodies, the charts, Sankey and tables, the chrome and every dialog,
+`components/area-builder/**`, `app/dashboard/**`, and the style-token modules — carries no raw
+palette class, bar the handful listed below that say why in place.
 
-- the `@theme` block and its guard tests;
-- the style-token modules: `lib/tile-style.ts`, `lib/charts/style.ts`,
-  `lib/point/unit-typography.ts`, `lib/role-chrome.ts`, `components/ui/segmented.ts`;
-- all of `components/ui/**` — button, input, select, dialog, label, skeleton, stat, trend-row,
-  tile-surface, tile-stale, mini-bars;
-- all of `components/dashboard/**`, and the twelve card bodies: `Tile`, `HomeEnergyCard`,
-  `BatteryContentsCard`, `LoadProvenanceCard`, `DeviceMetricsCard`, `RunsCard`, `HwsSmallCard`,
-  `GridSignalsCard`, `AmberCard`, `AmberSmallCard`, `AmberNow`, `TeslaSmallCard`;
-- the charts, Sankey and tables: `SiteChartsCard`, `LinesChartCard`, `DashboardChart`,
-  `ChartTooltip`, `EnergyTable`, `HeatmapChart`, `NodeTooltip`, `LinkTooltip`,
-  `FlowsSettingsMenu`, `EnergyFlowSankey`, `heatmap/`, `battery-provenance/`.
-
-**Not yet**, ~290 literals:
-
-| Group | Files | Literals |
-| --- | --- | --- |
-| dashboard chrome | `DashboardClient` `DashboardsMenu` `TemporalNavigator` `app/dashboard/` | ~54 |
-| dialogs | `DashboardSettingsDialog` `ShareLinksPanel` `GrantsPanel` `NewDashboardDialog` `AddAreaDialog` `area-builder/` | ~305 |
-| controls, errors | `GeneratorControlDialog` `TeslaControlDialog` `TeslaChargeLimits` `CommandActivityLog` `ControlNotice` `ServerErrorModal` `ErrorPanel` | ~72 |
-
-Until those land, `text-gray-400` still works — `@theme` adds to the default palette rather than
-replacing it — which is what lets the sweep go file by file. A `check:colours` prebuild gate with a
-monotonically-shrinking allowlist, modelled on `scripts/check-readings-boundary.mjs`, should land
-with the last group, or the dialogs will regrow literals within a month.
+Out of scope and still on literals: the admin and device-only screens (`app/admin/**`, the device
+settings and poll modals, `DeviceViewer` and its chrome). They render identically either way,
+because every token equals the literal it replaced.
 
 ## Deliberately left literal
 
@@ -181,12 +163,24 @@ token.
 
 ## Deliberate re-tones
 
-Under rule 4's exception. All four are one meaning that had two spellings:
+Under rule 4's exception. Each was one meaning with two spellings; leaving both would have minted a
+token that memorialises an accident.
 
 | Was | Now | Where |
 | --- | --- | --- |
 | `black/60` | `ink-inverse-muted` (0.55) | `LinkTooltip` — `NodeTooltip` already said 0.55, and they are the same object at two scales |
 | `border-white/20` | `line-hairline` (0.25) | `HeatmapChart`'s legend swatch |
 | `bg-gray-800/30` | `skeleton-quiet` (gray-700/30) | `SiteChartsCard`'s skeleton |
-| `text-blue-400` | `accent-ink` (blue-500) | `FlowsSettingsMenu`'s tick — and blue-400 is `series-load`, so leaving it risked the tick reading as a series colour | Same spirit as the repo's `@knipignore <reason>`: grep for them to find what is still
-awaiting a decision.
+| `text-blue-400` | `accent-ink` (blue-500) | links and ticks — and blue-400 IS `series-load`, so leaving it risked reading as a series colour |
+| `gray-900/60` · `/40` | `surface-panel-strong` (0.7) · `surface-panel` (0.3) | `ShareLinksPanel` spelled four depths of one recess |
+| `red-950/40` | `danger-panel` (red-950/30) | a delete control's hover, beside a notice already at 0.3 |
+| `gray-700/60` · `gray-800` | `line-soft` (gray-700/70) · `line` | dividers and borders a step off their neighbours |
+| `ring-gray-700/80` | `ring-line` | one ring, one spelling |
+| `amber-400/90` · `/80` · `amber-200/70` | `warn` · `warn-ink` | a softened warning is still a warning |
+| `red-400/90` · `red-500` | `danger` | ditto |
+| `green-500` · `/90` | `ok` | ditto |
+| `yellow-500` | `warn` | `ServerErrorModal`'s warning triangle |
+| `accent-green-600` · `accent-amber-500` | `accent-ok` · `accent-warn` | a range input's native tint |
+
+None is larger than one palette step or a few percent of alpha, and all are inside the dashboard —
+nothing that only the admin screens render was re-toned.

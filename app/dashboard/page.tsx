@@ -47,17 +47,17 @@ export default async function DashboardPage() {
   const primaryDevice = await DeviceConfigRegistry.primaryVisibleDevice(userId);
 
   return (
-    <div className="min-h-screen bg-gray-900 flex items-center justify-center">
+    <div className="min-h-screen bg-surface-sunken flex items-center justify-center">
       <div className="text-center max-w-md">
-        <h2 className="text-xl font-semibold text-white mb-2">No dashboards</h2>
-        <p className="text-gray-400">
+        <h2 className="text-xl font-semibold text-ink mb-2">No dashboards</h2>
+        <p className="text-ink-muted">
           You don&apos;t have any dashboards yet, and none have been shared with
           you.
         </p>
         {primaryDevice && (
           <Link
             href={`/device/${primaryDevice.id}`}
-            className="mt-4 inline-block rounded-md bg-blue-600 px-4 py-2 text-sm text-white transition-colors hover:bg-blue-700"
+            className="mt-4 inline-block rounded-md bg-accent px-4 py-2 text-sm text-ink transition-colors hover:bg-accent-hover"
           >
             Browse devices
           </Link>

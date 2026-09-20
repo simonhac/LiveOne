@@ -302,10 +302,12 @@ export default function TeslaControlDialog({
           <DialogDescription className="flex items-center gap-1.5">
             <span>{statusText ?? "Tesla charging"}</span>
             {freshness && (
-              <span className="text-xs text-gray-500">· as of {freshness}</span>
+              <span className="text-xs text-ink-faint">
+                · as of {freshness}
+              </span>
             )}
             {refreshingFrom != null && (
-              <span className="flex items-center gap-1 text-xs text-gray-500">
+              <span className="flex items-center gap-1 text-xs text-ink-faint">
                 <RefreshCw className="h-3 w-3 animate-spin" />
                 updating…
               </span>
@@ -372,7 +374,7 @@ export default function TeslaControlDialog({
                 value={limit}
                 disabled={busy}
                 onChange={(e) => setLimit(parseInt(e.target.value, 10))}
-                className="flex-1 accent-green-600"
+                className="flex-1 accent-ok"
               />
               <Button
                 size="sm"
@@ -412,7 +414,7 @@ export default function TeslaControlDialog({
                 value={amps}
                 disabled={busy}
                 onChange={(e) => setAmps(parseInt(e.target.value, 10))}
-                className="flex-1 accent-green-600"
+                className="flex-1 accent-ok"
               />
               <Button
                 size="sm"
