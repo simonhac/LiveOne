@@ -345,13 +345,13 @@ describe("encodeRangeToParams", () => {
   // short-lived experiment flag. A D|W|M|Y tap must not silently drop them.
   it("preserves unrelated params", () => {
     const p = encodeRangeToParams(
-      params("period=M&access=tok&safariTop=b"),
+      params("period=M&access=tok&debugFlag=b"),
       "live",
       { period: "D", timezoneOffsetMin: OFFSET },
     );
     expect(p.get("period")).toBe("D");
     expect(p.get("access")).toBe("tok");
-    expect(p.get("safariTop")).toBe("b");
+    expect(p.get("debugFlag")).toBe("b");
   });
 });
 

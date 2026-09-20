@@ -14,11 +14,14 @@ import TemporalNavigator from "@/components/TemporalNavigator";
 export function HeaderTemporalNav({
   handle,
   timezoneOffsetMin,
+  axisNavExpected,
 }: {
   /** The primary section's Area handle — whose live `system.timezoneOffsetMin` labels the range. */
   handle: number;
   /** Immediate tz fallback (the device route already knows its device tz); refined by the query. */
   timezoneOffsetMin?: number;
+  /** `mayHaveAxisTapChart(doc)` — hides the prev/next pill on touch. Passed through unchanged. */
+  axisNavExpected?: boolean;
 }) {
   const { data } = useQuery(dashboardDataQuery(handle));
   // tz only drives the label + prev/next encoding; decode uses the URL's own offset, so an initial
@@ -27,5 +30,10 @@ export function HeaderTemporalNav({
     subjectOf(data as AreaDatum | undefined)?.timezoneOffsetMin ??
     timezoneOffsetMin ??
     600;
-  return <TemporalNavigator timezoneOffsetMin={tz} />;
+  return (
+    <TemporalNavigator
+      timezoneOffsetMin={tz}
+      axisNavExpected={axisNavExpected}
+    />
+  );
 }

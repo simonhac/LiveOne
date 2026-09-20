@@ -8,10 +8,11 @@ import { formatSecondsAsDuration } from "@/lib/fe-date-format";
 import { formatRunWhenLines } from "@/lib/run-tracking/run-period-view";
 import { formatDollars, formatKgCo2 } from "@/lib/provenance-format";
 import {
-  CHART_HAIRLINE,
+  CHART_BODY_PAD,
   LEGEND_HEADER,
   LEGEND_LABEL,
   LEGEND_VALUE,
+  TABLE_GUTTER,
 } from "@/lib/charts/style";
 
 /**
@@ -167,8 +168,11 @@ export default function RunsCard({
   //
   // Cell padding is 8px a side until the CARD (not the viewport — see `@container` below) has room
   // for 16: five columns at 32px of padding each is ~160px of a ~330px phone-width card. The outer
-  // edges keep 16px so the first column still lines up with the title.
-  const cellPad = "px-2 first:pl-4 last:pr-4 @[480px]:px-4";
+  // edges take NONE: the card's own `CHART_BODY_PAD` + `TABLE_GUTTER` already hold the table off
+  // the screen edge, by exactly the amount they hold the stacked charts' energy table off it, and
+  // a first column indented further than that one reads as a different kind of object.
+  const cellPad =
+    "px-2 first:pl-0 last:pr-0 @[480px]:px-4 @[480px]:first:pl-0 @[480px]:last:pr-0";
   // Read like a chart legend, not a spreadsheet: the tokens are the legend's own
   // (`lib/charts/style.ts`), so a card holding a chart and a table speaks with one voice. No fill
   // behind the header, no zebra, no row rules — the numbers' alignment is what makes the columns.
@@ -179,6 +183,10 @@ export default function RunsCard({
   const td = `${cellPad} py-2 text-sm`;
   /** A numeric cell. `LEGEND_VALUE` brings the mono face, tabular figures and right alignment. */
   const tdNum = `${td} ${LEGEND_VALUE}`;
+  /** The Duration cell. `whitespace-nowrap` because "5h30m" is ONE quantity and must not break
+   *  across two lines in a narrow column. 🛑 Not on the "When" column — see the note on its `<td>`
+   *  for why a nowrap there pushes the rightmost column out of the card. */
+  const tdDuration = `${tdNum} whitespace-nowrap`;
   /** A header's unit, muted so the scanned word is the quantity ("Energy") and not its unit, and
    *  STACKED under the label rather than beside it: a numeric column is only as wide as its widest
    *  cell, and "Energy kWh" on one line made the header, not the numbers, the widest cell — enough,
@@ -187,147 +195,154 @@ export default function RunsCard({
     <span className="block font-normal text-gray-500">{u}</span>
   );
 
-  // A hairline, not a filled card. A chart delimits itself with its axes; a table does not, so this
-  // is the one card shape allowed an outline of its own — around the content, with no fill. See
-  // docs/architecture/chart-style.md.
+  // No box. This table sits under a stacked chart whose own `EnergyTable` is frameless and inset by
+  // `CHART_BODY_PAD` + `TABLE_GUTTER`; two tables reading the same window should start at the same
+  // pixel and carry the same ink, so this one borrows both and leans on its sticky header/footer
+  // rules for the edges a scroll region needs. See docs/architecture/chart-style.md rule 3.
   return (
-    <div className={`${CHART_HAIRLINE} @container overflow-hidden`}>
-      <div className="flex items-center justify-between px-4 py-3 border-b border-gray-700/70">
-        <h2 className="text-sm font-semibold text-gray-100 flex items-center gap-2">
-          {title}
-          {(runningOverride ?? data?.running) && (
-            <span className="inline-flex items-center gap-1 text-xs font-medium text-green-400">
-              <span className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
-              {activeLabel}
-            </span>
-          )}
-        </h2>
-      </div>
+    <div className={CHART_BODY_PAD}>
+      <div className={`${TABLE_GUTTER} @container`}>
+        <div className="flex items-center justify-between pb-2 border-b border-gray-700/70">
+          <h2 className="text-sm font-semibold text-gray-100 flex items-center gap-2">
+            {title}
+            {(runningOverride ?? data?.running) && (
+              <span className="inline-flex items-center gap-1 text-xs font-medium text-green-400">
+                <span className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
+                {activeLabel}
+              </span>
+            )}
+          </h2>
+        </div>
 
-      {isPending && !data ? (
-        // Sized to the empty/short settled body rather than a line of text, so the common case —
-        // "nothing in this period" — is a swap rather than a resize. A long run list still grows
-        // past this — a known residual (see dashboard-layout-stability.md).
-        <div className="px-4 py-6" data-skeleton="" aria-hidden>
-          <div className="h-5 w-2/3 animate-pulse rounded bg-gray-700/30" />
-        </div>
-      ) : isError ? (
-        <div className="px-4 py-6 text-sm text-red-400">
-          Failed to load {title.toLowerCase()}
-        </div>
-      ) : data?.tracked === false ? (
-        // Not "nothing happened" — nothing is watching. `tracked` is optional on the wire, so an
-        // older deployment's response (undefined) keeps the period reading, which is what every
-        // caller assumed before the field existed.
-        <div className="px-4 py-6 text-sm text-gray-400">{untrackedText}</div>
-      ) : rows.length === 0 ? (
-        <div className="px-4 py-6 text-sm text-gray-400">{emptyText}</div>
-      ) : (
-        <>
-          <div className="max-h-[420px] overflow-y-auto">
-            <table className="w-full">
-              {/* 🛑 `bg-black`, and not a translucent tint: a sticky header has rows scrolling
+        {isPending && !data ? (
+          // Sized to the empty/short settled body rather than a line of text, so the common case —
+          // "nothing in this period" — is a swap rather than a resize. A long run list still grows
+          // past this — a known residual (see dashboard-layout-stability.md).
+          <div className="py-6" data-skeleton="" aria-hidden>
+            <div className="h-5 w-2/3 animate-pulse rounded bg-gray-700/30" />
+          </div>
+        ) : isError ? (
+          <div className="py-6 text-sm text-red-400">
+            Failed to load {title.toLowerCase()}
+          </div>
+        ) : data?.tracked === false ? (
+          // Not "nothing happened" — nothing is watching. `tracked` is optional on the wire, so an
+          // older deployment's response (undefined) keeps the period reading, which is what every
+          // caller assumed before the field existed.
+          <div className="py-6 text-sm text-gray-400">{untrackedText}</div>
+        ) : rows.length === 0 ? (
+          <div className="py-6 text-sm text-gray-400">{emptyText}</div>
+        ) : (
+          <>
+            <div className="max-h-[420px] overflow-y-auto">
+              <table className="w-full">
+                {/* 🛑 `bg-black`, and not a translucent tint: a sticky header has rows scrolling
                   UNDER it, so it needs an opaque backing or the text collides. Black is the
-                  dashboard canvas (`data-dashboard-root`), so the opacity is invisible. */}
-              <thead className="sticky top-0 bg-black">
-                <tr>
-                  <th className={`${th} text-left`}>When</th>
-                  <th className={`${th} text-right`}>Duration</th>
-                  {showEnergy && (
-                    <th className={`${th} text-right`}>Energy{unit("kWh")}</th>
-                  )}
-                  {showAvgPower && (
-                    <th className={`${th} text-right`}>Avg{unit("kW")}</th>
-                  )}
-                  {showEmissions && (
-                    <th className={`${th} text-right`}>CO₂{unit("kg")}</th>
-                  )}
-                  {showCost && <th className={`${th} text-right`}>Cost</th>}
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map(({ e, durationSec, spansOutside }, i) => (
-                  <tr key={i}>
-                    {/* Deliberately NOT whitespace-nowrap: this card sits in a fixed-width
+                  dashboard canvas, so the opacity is invisible. */}
+                <thead className="sticky top-0 bg-black">
+                  <tr>
+                    <th className={`${th} text-left`}>When</th>
+                    <th className={`${th} text-right`}>Duration</th>
+                    {showEnergy && (
+                      <th className={`${th} text-right`}>
+                        Energy{unit("kWh")}
+                      </th>
+                    )}
+                    {showAvgPower && (
+                      <th className={`${th} text-right`}>Avg{unit("kW")}</th>
+                    )}
+                    {showEmissions && (
+                      <th className={`${th} text-right`}>CO₂{unit("kg")}</th>
+                    )}
+                    {showCost && <th className={`${th} text-right`}>Cost</th>}
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map(({ e, durationSec, spansOutside }, i) => (
+                    <tr key={i}>
+                      {/* Deliberately NOT whitespace-nowrap: this card sits in a fixed-width
                         dashboard column, and a midnight-crossing run's full
                         "Mon 27 Jul, 23:40 – Tue 28 Jul, 01:15" would set a min-content width that
                         pushes the rightmost column out of the card's `overflow-hidden` box. */}
-                    <td className={td}>
-                      <RunWhenCell e={e} spansOutside={spansOutside} />
+                      <td className={td}>
+                        <RunWhenCell e={e} spansOutside={spansOutside} />
+                      </td>
+                      <td className={tdDuration}>
+                        {durationSec != null
+                          ? formatSecondsAsDuration(durationSec)
+                          : "—"}
+                      </td>
+                      {showEnergy && (
+                        <td className={tdNum}>
+                          {e.energyKwh != null ? e.energyKwh.toFixed(1) : "—"}
+                        </td>
+                      )}
+                      {showAvgPower && (
+                        <td className={tdNum}>
+                          {e.avgPowerW != null
+                            ? (e.avgPowerW / 1000).toFixed(1)
+                            : "—"}
+                        </td>
+                      )}
+                      {showEmissions && (
+                        <td className={tdNum}>
+                          {e.emissionsG != null
+                            ? formatKgCo2(e.emissionsG / 1000)
+                            : "—"}
+                        </td>
+                      )}
+                      {showCost && (
+                        <td className={tdNum}>
+                          {e.costC != null ? formatDollars(e.costC) : "—"}
+                        </td>
+                      )}
+                    </tr>
+                  ))}
+                </tbody>
+                <tfoot className="sticky bottom-0 bg-black [&_td]:border-t [&_td]:border-gray-700">
+                  <tr className="font-medium">
+                    <td className={`${td} ${LEGEND_LABEL}`}>
+                      {rows.length} {rows.length === 1 ? noun : `${noun}s`}
                     </td>
-                    <td className={tdNum}>
-                      {durationSec != null
-                        ? formatSecondsAsDuration(durationSec)
-                        : "—"}
+                    <td className={tdDuration}>
+                      {formatSecondsAsDuration(totalSeconds)}
                     </td>
                     {showEnergy && (
                       <td className={tdNum}>
-                        {e.energyKwh != null ? e.energyKwh.toFixed(1) : "—"}
-                      </td>
-                    )}
-                    {showAvgPower && (
-                      <td className={tdNum}>
-                        {e.avgPowerW != null
-                          ? (e.avgPowerW / 1000).toFixed(1)
+                        {totalEnergyKwh != null
+                          ? totalEnergyKwh.toFixed(1)
                           : "—"}
                       </td>
                     )}
+                    {/* No total for average power: a mean of means is not the window's average, and
+                      an energy-weighted one needs the energy this card does not have. */}
+                    {showAvgPower && <td className={td} />}
                     {showEmissions && (
                       <td className={tdNum}>
-                        {e.emissionsG != null
-                          ? formatKgCo2(e.emissionsG / 1000)
+                        {totalEmissionsG != null
+                          ? formatKgCo2(totalEmissionsG / 1000)
                           : "—"}
                       </td>
                     )}
                     {showCost && (
                       <td className={tdNum}>
-                        {e.costC != null ? formatDollars(e.costC) : "—"}
+                        {totalCostC != null ? formatDollars(totalCostC) : "—"}
                       </td>
                     )}
                   </tr>
-                ))}
-              </tbody>
-              <tfoot className="sticky bottom-0 bg-black [&_td]:border-t [&_td]:border-gray-700">
-                <tr className="font-medium">
-                  <td className={`${td} ${LEGEND_LABEL}`}>
-                    {rows.length} {rows.length === 1 ? noun : `${noun}s`}
-                  </td>
-                  <td className={tdNum}>
-                    {formatSecondsAsDuration(totalSeconds)}
-                  </td>
-                  {showEnergy && (
-                    <td className={tdNum}>
-                      {totalEnergyKwh != null ? totalEnergyKwh.toFixed(1) : "—"}
-                    </td>
-                  )}
-                  {/* No total for average power: a mean of means is not the window's average, and
-                      an energy-weighted one needs the energy this card does not have. */}
-                  {showAvgPower && <td className={td} />}
-                  {showEmissions && (
-                    <td className={tdNum}>
-                      {totalEmissionsG != null
-                        ? formatKgCo2(totalEmissionsG / 1000)
-                        : "—"}
-                    </td>
-                  )}
-                  {showCost && (
-                    <td className={tdNum}>
-                      {totalCostC != null ? formatDollars(totalCostC) : "—"}
-                    </td>
-                  )}
-                </tr>
-              </tfoot>
-            </table>
-          </div>
-          {anyOutside && (
-            <div className="px-4 py-2 text-xs text-gray-400 border-t border-gray-700">
-              <span className="text-amber-400 font-semibold">*</span> Run
-              extends beyond the selected period; its full duration and energy
-              are included in the totals.
+                </tfoot>
+              </table>
             </div>
-          )}
-        </>
-      )}
+            {anyOutside && (
+              <div className="py-2 text-xs text-gray-400 border-t border-gray-700">
+                <span className="text-amber-400 font-semibold">*</span> Run
+                extends beyond the selected period; its full duration and energy
+                are included in the totals.
+              </div>
+            )}
+          </>
+        )}
+      </div>
     </div>
   );
 }

@@ -17,11 +17,16 @@ import {
   formatHoverTimestamp,
 } from "@/lib/charts/temporal";
 import { useChartFocus } from "@/lib/charts/ChartFocusContext";
-import { useAxisNavAvailable } from "@/lib/charts/AxisNavContext";
 
 interface TemporalNavigatorProps {
   /** Device/area timezone offset (minutes) — used to format the range label and encode prev/next URLs. */
   timezoneOffsetMin: number;
+  /**
+   * Does this page put a chart on screen whose axis strip steps the window on touch? Decided from
+   * the DOCUMENT by `mayHaveAxisTapChart`, so it is known at first paint — see the prev/next block
+   * below for why that matters.
+   */
+  axisNavExpected?: boolean;
   className?: string;
 }
 
@@ -36,12 +41,12 @@ interface TemporalNavigatorProps {
  */
 export default function TemporalNavigator({
   timezoneOffsetMin,
+  axisNavExpected = false,
   className = "",
 }: TemporalNavigatorProps) {
   const { period, start, end, isLatest, older, newer, setPeriod } =
     useTemporalRange({ timezoneOffsetMin });
   const { focusedTime } = useChartFocus();
-  const axisNavAvailable = useAxisNavAvailable();
 
   // Keyboard navigation: ArrowLeft = older, ArrowRight = newer (historical only). NOT gated on the
   // fetch state — stepping is a synchronous URL write (see useTemporalRange), so held/rapid arrow
@@ -123,12 +128,17 @@ export default function TemporalNavigator({
         </span>
         {/* Prev/Next, in the same pill vocabulary as the period switcher so the row reads as one
             control. Stood down on touch — a phone steps the window by tapping a chart's axis strip
-            instead — but ONLY while a chart is actually offering that (`useAxisNavAvailable`): a
-            dashboard of runs/HWS cards has no axis to tap, and neither does one whose chart is
-            still loading or failed. The `(pointer: coarse)` half stays in CSS so a touch laptop
-            with a mouse keeps its buttons with no hydration flash. */}
+            instead — but only where there IS a chart: a dashboard of runs/HWS cards has no axis to
+            tap and keeps its buttons.
+
+            🛑 `axisNavExpected` is a fact about the DOCUMENT, passed in and true from the first
+            paint. It used to be a runtime declaration from the mounted charts, which could not
+            answer until hydration + measurement + the history fetch had all landed — so on a phone
+            the pill painted, sat there for a second and then `display: none`d, reshaping the header
+            on every load. The `(pointer: coarse)` half stays in CSS so a touch laptop with a mouse
+            keeps its buttons with no hydration flash. */}
         <div
-          className={`${SEGMENTED_TRACK} ${axisNavAvailable ? "coarse-nav-hidden" : ""}`}
+          className={`${SEGMENTED_TRACK} ${axisNavExpected ? "coarse-nav-hidden" : ""}`}
           role="group"
         >
           <button

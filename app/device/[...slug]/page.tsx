@@ -18,7 +18,10 @@ import {
 import { getUserIdByUsername } from "@/lib/user-cache";
 import { resolveDefaultDashboardRoute } from "@/lib/user-preferences";
 import { getViewerDevices } from "@/lib/devices/viewer-devices";
-import { hasTimeTravelingCard } from "@/lib/dashboard/temporal-cards";
+import {
+  hasTimeTravelingCard,
+  mayHaveAxisTapChart,
+} from "@/lib/dashboard/temporal-cards";
 import type { DashboardV4 } from "@/lib/dashboard/v4";
 import { DeviceConfigRegistry } from "@/lib/registry/device-config";
 
@@ -271,7 +274,13 @@ export default async function DevicePage({ params }: PageProps) {
   // are excluded, exactly as before.
   const temporalNav =
     device && doc && hasTimeTravelingCard(doc, new Map())
-      ? { handle: device.id, timezoneOffsetMin: device.timezoneOffsetMin }
+      ? {
+          handle: device.id,
+          timezoneOffsetMin: device.timezoneOffsetMin,
+          // Whether the page will draw a chart whose axis strip steps the window on touch; the
+          // navigator hides its own prev/next pill there. Same document question as the dashboard.
+          axisNavExpected: mayHaveAxisTapChart(doc),
+        }
       : null;
 
   // Render the device viewer. When the device doesn't exist, render without the chrome (the viewer

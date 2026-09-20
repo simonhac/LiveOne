@@ -30,7 +30,7 @@ export default function Error({
   const isDev = process.env.NODE_ENV === "development";
 
   return (
-    <div className="flex min-h-screen items-center justify-center p-6">
+    <div className="flex min-h-screen items-center justify-center bg-gray-900 p-6">
       <div className="w-full max-w-lg">
         {/* The same panel the dashboard uses for an unresolvable area or device, so a crash reads as
             part of the app rather than as a browser failure. */}

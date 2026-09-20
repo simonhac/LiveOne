@@ -48,9 +48,12 @@ byte-identical `TICK_TEXT` and `FONT_FAMILY`.
 A dashboard has exactly one box around a card, and the **section** draws it. A card body inside a
 section adds no background, no border and no radius — only padding.
 
-`<Panel>` is that box. It is for the outermost surface only: the v4 section, and the standalone
-pages (`/device/{id}/heatmap`, the labs pages) that mount a panel component with no section around
-it and would otherwise render it naked on the page background.
+`<Panel>` is that box. A dashboard SECTION is no longer one of its users: a section is a bold
+heading on the black page, and the runs of cards under it carry padding only (`SECTION_RUN_PAD`).
+What is left for `Panel` is a surface that genuinely stands alone on a page background — the
+standalone pages (`/device/{id}/heatmap`, the labs pages) that mount a panel component with no
+section around it, and the short notices (unknown card type, misconfigured card, area unavailable),
+which are prose with no shape of their own.
 
 This is why `HeatmapPanel` and `DailyStripes` render frameless and their standalone hosts wrap them
 — the same component appears in both places, so the frame cannot belong to the component.
@@ -62,16 +65,17 @@ its neighbours on a phone and diverges on a laptop. The lines chart and the dail
 did this, in different directions. What the rule protects is AGREEMENT between neighbours: no card
 may carry a gate its neighbour does not.
 
-There is exactly one gate that is allowed, and it is allowed because it cannot cause that drift:
-`CHART_PANEL_BLEED` drops the **section** frame and its side padding below `sm`, for every section at
-once. On a phone the chrome cost ~20px a side once the page inset, the section padding and the card
-body padding had each taken their cut, and a 600px Sankey had to fit in what was left; sections are
-separated by `gap-4` regardless, so the border was not what told them apart. `CHART_BODY_PAD` goes
-horizontally to zero at the same breakpoint for the same reason — bleeding the section while keeping
-the body inset just moves the gutter inwards. Vertical padding is untouched at every width: it keeps
-stacked charts off each other, which has nothing to do with screen width.
+There are now no exceptions at all. There used to be one — `CHART_PANEL_BLEED` dropped the
+**section** frame below `sm`, for every section at once, because on a phone the chrome cost ~20px a
+side once the page inset, the section padding and the card body padding had each taken their cut,
+and a 600px Sankey had to fit in what was left. That frame is gone at every width (see rule 3: the
+things inside it already have an edge), so the gate went with it and only the padding remains, as
+`SECTION_RUN_PAD`. `CHART_BODY_PAD` still goes horizontally to zero at `sm` for the matching reason
+— the section reaches the screen edge there, and keeping the body inset just moves the gutter
+inwards. Vertical padding is untouched at every width: it keeps stacked charts off each other,
+which has nothing to do with screen width.
 
-If you find yourself wanting a second such gate, it is almost certainly a per-surface one. Don't.
+If you find yourself wanting such a gate, it is almost certainly a per-surface one. Don't.
 
 ### 3. A chart delimits itself; a table does not
 
@@ -80,7 +84,10 @@ extent, so a box around it is redundant ink. A **table** has no such shape, and 
 needs an edge to scroll within. So a tabular card may draw `CHART_HAIRLINE` — a border with **no
 fill** — around the table, and only around the table. Never a filled card around the whole card.
 
-`RunsCard` and `DeviceMetricsCard` are the two that qualify.
+`DeviceMetricsCard` qualifies. `RunsCard` deliberately does NOT: it sits directly beneath a stacked
+chart whose own `EnergyTable` is frameless, and two tables describing the same window should start
+at the same pixel and carry the same ink. It uses `CHART_BODY_PAD` + `TABLE_GUTTER`, the energy
+table's gutters, and leans on its sticky header/footer rules instead of an outline.
 
 ### 4. One of each token
 

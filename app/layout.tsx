@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { DM_Sans } from "next/font/google";
 import { ClerkProvider } from "@clerk/nextjs";
 import { Analytics } from "@vercel/analytics/next";
@@ -21,6 +21,13 @@ export const metadata: Metadata = {
   description: "Real-time solar energy monitoring and analytics",
 };
 
+/**
+ * The colour Safari 26 tints the band behind its status bar and URL pill. This meta is the only
+ * top-of-page opt-in used by the pages that manage to paint through that band; deliberately no
+ * `viewport-fit=cover`, which was tried on the phone and changed nothing.
+ */
+export const viewport: Viewport = { themeColor: "#000000" };
+
 export default function RootLayout({
   children,
 }: {
@@ -31,7 +38,7 @@ export default function RootLayout({
   return (
     <ClerkProvider>
       <html lang="en">
-        <body className={`${dmSans.className} bg-gray-900`}>
+        <body className={dmSans.className}>
           {isDev && (
             <div className="fixed top-0 left-0 right-0 h-1 bg-orange-500 z-[9999]" />
           )}

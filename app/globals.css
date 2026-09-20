@@ -178,23 +178,26 @@
   display: none; /* Chrome, Safari and Opera */
 }
 
-/* No sideways pan. `clip`, not `hidden`: body must not become a scroll container or every
-   `sticky` header stops sticking; on the root it propagates to the viewport as `hidden`. iOS
-   rubber-bands the whole page sideways on a single sub-pixel of overflow. */
+/* The site canvas — black everywhere, with no second opinion anywhere in the document.
+   Safari 26 tints the band behind its status bar and URL pill from the body's AUTHORED
+   background-color and does NOT respect a later override. The rule that used to live here scoped
+   black to the dashboard and won the cascade — html and body both computed #000, measured on prod —
+   and the phone still painted the band in the `bg-gray-900` utility's literal #111827. So that
+   utility is gone from <body> and there is exactly one colour in the document to find. Routes that
+   want a lighter page paint it on their own wrapper. */
 html,
 body {
-  overflow-x: clip;
-  overscroll-behavior-x: none;
+  background-color: #000;
 }
 
-/* The dashboard is black but body is gray-900, and the root canvas is what shows in overscroll and
-   behind Safari's status-bar glass. Unlayered, so it beats the `bg-gray-900` utility. */
-/* 🚧 The `:not([data-safari-top="c"])` is TEMPORARY — variant `c` of the Safari top-band experiment
-   turns this rule off to see whether the band's colour follows the root canvas. Delete the two
-   `:not(...)` clauses along with the rest of the experiment. */
-html:has([data-dashboard-root]):not([data-safari-top="c"]),
-html:has([data-dashboard-root]):not([data-safari-top="c"]) body {
-  background-color: #000;
+/* No sideways pan. iOS rubber-bands the whole page sideways on a single sub-pixel of overflow.
+   Only `overscroll-behavior-x` lives on the root: overflow on the root PROPAGATES to the viewport,
+   and the pages that manage to paint through Safari's top bar leave html/body overflow untouched.
+   The `overflow-x: clip` moved onto the dashboard shell (`DashboardClient`) — `clip`, not `hidden`,
+   so the shell does not become a scroll container and its `sticky` header keeps sticking. */
+html,
+body {
+  overscroll-behavior-x: none;
 }
 
 /* Touch devices step the chart window by tapping its axis strip (DashboardChart's axis-tap zones),

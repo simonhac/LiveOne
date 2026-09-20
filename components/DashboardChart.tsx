@@ -19,7 +19,6 @@ import {
   useIsTouchDevice,
   usePointerIndex,
 } from "@/lib/charts/svg";
-import { useProvideAxisNav } from "@/lib/charts/AxisNavContext";
 import { CHART_COLORS } from "@/lib/chart-colors";
 import { CHART_INK } from "@/lib/charts/style";
 import { SOC_DASH, lineSeries } from "@/lib/charts/line-series";
@@ -329,10 +328,6 @@ export default function DashboardChart(props: DashboardChartProps) {
     isEnergy,
   ]);
 
-  // Declared while this chart is actually DRAWING its zones, so the navigator only stands its own
-  // buttons down against a live axis — not while this chart is a skeleton, an error, or unmeasured.
-  useProvideAxisNav(!!axisTap && !!geo && !geo.empty);
-
   const pointer = usePointerIndex({
     timestamps,
     spans: barSpans,
@@ -355,6 +350,14 @@ export default function DashboardChart(props: DashboardChartProps) {
     x: number;
     y: number;
     zone: "older" | "newer" | null;
+  } | null>(null);
+
+  // The axis tap in flight, kept alive PAST `pointerup` and past `pointercancel` for the `click`
+  // that delivers it — see `onClick`. Cleared by that click, or overwritten by the next touch.
+  const axisTapRef = useRef<{
+    x: number;
+    y: number;
+    zone: "older" | "newer";
   } | null>(null);
 
   // `data-unmeasured` so "the container measured zero, so the chart drew nothing" is visible in
@@ -520,8 +523,42 @@ export default function DashboardChart(props: DashboardChartProps) {
       : "newer";
   };
 
+  /**
+   * Stepping the window is DELIVERED by `click`, not by the `pointerup` beside it — while the
+   * decision (which zone, and was it a tap rather than a scrub) is still made from the pointer
+   * pair, recorded here at `pointerdown` and read back when the click lands.
+   *
+   * 🛑 `pointerup` could not be relied on for the delivery. Two ways it goes missing, both silent,
+   * and the stacked chart is exposed to both where the lines chart is not:
+   *
+   *  - Touch gets IMPLICIT POINTER CAPTURE on the `pointerdown` target — here a `TimeAxis` tick
+   *    `<text>` inside the strip. The stacked card re-renders constantly while a finger is down
+   *    (run-period queries, `useSettledWindow`, the hover arbitration), and a replaced node takes
+   *    the `pointerup` with it: it is dispatched at something detached and never reaches the svg.
+   *    A `click` is dispatched at the nearest common ancestor of the two targets instead, so it
+   *    still arrives.
+   *  - The svg carries `touch-action: pan-y`, so a tap that drifts vertically on a page you have
+   *    just been scrolling can be claimed as a scroll: `pointercancel` fires and the `pointerup`
+   *    never comes. That is ALSO why `pointercancel` deliberately does not clear
+   *    {@link axisTapRef} — if the browser really did take the gesture as a scroll there is no
+   *    click either, and if a click does arrive the gesture was a tap after all.
+   *
+   * The `TAP_SLOP` travel test is kept, measured from the recorded start to where the click lands:
+   * scrubbing along the strip must not step the window on release.
+   */
+  const onClick = (e: React.MouseEvent<SVGSVGElement>) => {
+    const start = axisTapRef.current;
+    axisTapRef.current = null;
+    if (!start) return; // not a touch, or the touch began in the plot
+    if (Math.hypot(e.clientX - start.x, e.clientY - start.y) > TAP_SLOP) return;
+    // Inert at the latest window, exactly as the `>` button is disabled there.
+    if (start.zone === "newer" && props.canGoNewer === false) return;
+    axisTap?.(start.zone);
+  };
+
   const onPointerDown = (e: React.PointerEvent<SVGSVGElement>) => {
     const zone = axisTapZone(e);
+    axisTapRef.current = zone ? { x: e.clientX, y: e.clientY, zone } : null;
     tapStartRef.current =
       e.pointerType === "touch"
         ? { id: e.pointerId, x: e.clientX, y: e.clientY, zone }
@@ -540,12 +577,9 @@ export default function DashboardChart(props: DashboardChartProps) {
     tapStartRef.current = null;
     if (!start || start.id !== e.pointerId) return;
     if (Math.hypot(e.clientX - start.x, e.clientY - start.y) > TAP_SLOP) return;
-    if (start.zone) {
-      // Inert at the latest window, exactly as the `>` button is disabled there.
-      if (start.zone === "newer" && props.canGoNewer === false) return;
-      axisTap?.(start.zone);
-      return;
-    }
+    // An axis tap is the `click` handler's, not this one's — it must not also hit-test runs on the
+    // way past, and the two must never both fire.
+    if (start.zone) return;
     if (props.variant !== "stacked-areas") return;
     const rect = e.currentTarget.getBoundingClientRect();
     const id = hitTestRuns(
@@ -570,6 +604,7 @@ export default function DashboardChart(props: DashboardChartProps) {
         // browser claims the gesture as a sideways scroll and the crosshair never moves, which reads
         // as the chart ignoring you.
         className="max-w-full touch-pan-y"
+        onClick={onClick}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
