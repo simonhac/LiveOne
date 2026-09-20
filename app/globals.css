@@ -40,6 +40,8 @@
   --color-surface-control-hover: oklch(44.6% 0.03 256.802);
   /* tw black/50 — the dialog overlay */
   --color-scrim: rgb(0 0 0 / 0.5);
+  /* tw gray-900/80 — a busy/blocked veil over ONE panel, rather than over the page */
+  --color-veil: oklch(21% 0.034 264.665 / 0.8);
   /* tw black/40 — a NESTED dialog's dim, and no blur with it, so the dialog underneath stays
      legible and the stack reads as a stack rather than as the parent having vanished. See
      `DialogContentProps.nested`. */
@@ -77,8 +79,28 @@
   --color-ink-faint: oklch(55.1% 0.027 264.364);
   /* tw gray-600 */
   --color-ink-disabled: oklch(44.6% 0.03 256.802);
-  /* tw black — text on a light fill */
+  /* ── ink: ON A SERIES FILL ───────────────────────────────────────────────────────────────────
+     The Sankey's node and link tooltips paint themselves in the series colour they describe
+     (`style={{ backgroundColor: color }}`), so their text is BLACK on a saturated fill. Same three
+     steps as the chrome ramp, inverted. */
+
+  /* tw black — the value */
   --color-ink-inverse: #000;
+  /* tw black/70 */
+  --color-ink-inverse-secondary: rgb(0 0 0 / 0.7);
+  /* tw black/55 — a unit, a row label
+     🛑 LinkTooltip spelled this `black/60` and NodeTooltip `black/55`. They are the same object at
+     two scales, so they are now one token at 0.55 — the first deliberate RE-TONE in this sweep,
+     and 5% of alpha below the threshold anyone could see. Where two files spell one thing two ways
+     within a few percent, unify and say so; where an odd tone belongs to a surface that is
+     scheduled to disappear, leave it literal. */
+  --color-ink-inverse-muted: rgb(0 0 0 / 0.55);
+  /* tw white/25 — a heading's plate on a series fill */
+  --color-plate-light: rgb(255 255 255 / 0.25);
+  /* tw black/10 — a chip's fill on a series fill */
+  --color-plate-dark: rgb(0 0 0 / 0.1);
+  /* tw black/15 — that chip's edge */
+  --color-plate-dark-line: rgb(0 0 0 / 0.15);
 
   /* ── ink: the TILE ramp (white-alpha on the slab) ────────────────────────────────────────────
      A second ramp doing the same job as the one above, by accident of history: `white/55` over
@@ -136,6 +158,13 @@
   --color-warn-line: oklch(76.9% 0.188 70.08 / 0.4);
   /* tw amber-300 — text ON a warn wash, where `warn` itself is too heavy */
   --color-warn-ink: oklch(87.9% 0.169 91.605);
+  /* tw amber-200 — emphasis WITHIN warn text (an inline `<code>`) */
+  --color-warn-ink-strong: oklch(92.4% 0.12 95.746);
+  /* tw amber-900/20 — a full-width warning NOTICE, deeper than the `warn-wash` chip because it
+     carries a sentence rather than two words */
+  --color-warn-panel: oklch(41.4% 0.112 45.904 / 0.2);
+  /* tw amber-700/50 — that notice's edge */
+  --color-warn-panel-line: oklch(55.5% 0.163 48.998 / 0.5);
   /* tw amber-500/10 */
   --color-warn-wash: oklch(76.9% 0.188 70.08 / 0.1);
   /* tw green-400 */

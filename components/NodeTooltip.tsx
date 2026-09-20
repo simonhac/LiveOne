@@ -60,8 +60,10 @@ function HeadingText({ text }: { text: string }) {
 function Heading({ text, chip = false }: { text: string; chip?: boolean }) {
   return (
     <span
-      className={`text-[11px] uppercase tracking-wide text-black ${
-        chip ? "rounded bg-white/25 px-2 py-0.5 font-medium" : "font-semibold"
+      className={`text-[11px] uppercase tracking-wide text-ink-inverse ${
+        chip
+          ? "rounded bg-plate-light px-2 py-0.5 font-medium"
+          : "font-semibold"
       }`}
     >
       <HeadingText text={text} />
@@ -186,13 +188,13 @@ function MetricColumn({
     <div className="min-w-0">
       <p
         className={`text-lg font-bold leading-none break-words ${
-          muted ? "text-black/55" : "text-black"
+          muted ? "text-ink-inverse-muted" : "text-ink-inverse"
         }`}
       >
         {v.value}
       </p>
       {v.unit && (
-        <p className="mt-0.5 text-[10px] leading-none text-black/55">
+        <p className="mt-0.5 text-[10px] leading-none text-ink-inverse-muted">
           {v.unit}
         </p>
       )}
@@ -223,7 +225,7 @@ function MetricStat({
   return (
     <>
       <p
-        className={`col-span-2 mb-0.5 text-[10px] font-medium uppercase tracking-wide text-black/55 ${
+        className={`col-span-2 mb-0.5 text-[10px] font-medium uppercase tracking-wide text-ink-inverse-muted ${
           first ? "" : "mt-2"
         }`}
       >
@@ -391,7 +393,7 @@ export default function NodeTooltip({
 
         {isFull && !!data.estimatedPct && data.estimatedPct > 0 && (
           <div className="mt-3 flex justify-end">
-            <span className="rounded-full border border-black/15 bg-black/10 px-2 py-0.5 text-[11px] text-black/70">
+            <span className="rounded-full border border-plate-dark-line bg-plate-dark px-2 py-0.5 text-[11px] text-ink-inverse-secondary">
               {Math.round(data.estimatedPct)}% estimated
             </span>
           </div>

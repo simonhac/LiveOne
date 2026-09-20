@@ -76,6 +76,7 @@ const ALIASES: Record<string, string> = {
   "--color-danger-solid-hover": "--color-red-700",
   "--color-warn": "--color-amber-400",
   "--color-warn-ink": "--color-amber-300",
+  "--color-warn-ink-strong": "--color-amber-200",
   "--color-ok": "--color-green-400",
   "--color-accent": "--color-blue-600",
   "--color-accent-hover": "--color-blue-700",
@@ -98,6 +99,9 @@ const ALPHA_ALIASES: Record<string, [string, string]> = {
   "--color-danger-wash": ["--color-red-500", "0.1"],
   "--color-warn-line": ["--color-amber-500", "0.4"],
   "--color-warn-wash": ["--color-amber-500", "0.1"],
+  "--color-warn-panel": ["--color-amber-900", "0.2"],
+  "--color-warn-panel-line": ["--color-amber-700", "0.5"],
+  "--color-veil": ["--color-gray-900", "0.8"],
 };
 
 describe("colour tokens", () => {
@@ -146,6 +150,11 @@ describe("colour tokens", () => {
       "rgb(255 255 255 / 0.04)",
     );
     expect(OURS.get("--color-scrim")).toBe("rgb(0 0 0 / 0.5)");
+    expect(OURS.get("--color-ink-inverse-secondary")).toBe("rgb(0 0 0 / 0.7)");
+    expect(OURS.get("--color-ink-inverse-muted")).toBe("rgb(0 0 0 / 0.55)");
+    expect(OURS.get("--color-plate-light")).toBe("rgb(255 255 255 / 0.25)");
+    expect(OURS.get("--color-plate-dark")).toBe("rgb(0 0 0 / 0.1)");
+    expect(OURS.get("--color-plate-dark-line")).toBe("rgb(0 0 0 / 0.15)");
     expect(OURS.get("--color-scrim-soft")).toBe("rgb(0 0 0 / 0.4)");
   });
 

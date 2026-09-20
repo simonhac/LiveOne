@@ -147,15 +147,15 @@ function SankeyBlockPlaceholder({ anchor }: { anchor: string }) {
       aria-hidden
     >
       <div className="mb-2 flex items-center justify-between px-2 sm:px-0">
-        <h3 className="text-base font-semibold text-gray-300">Flows</h3>
+        <h3 className="text-base font-semibold text-ink-secondary">Flows</h3>
       </div>
       <div className="flex justify-center">
         <div
           style={{ width: SANKEY_W, height: SANKEY_H }}
-          className={`max-w-full animate-pulse bg-gray-800/30 ${CHART_HAIRLINE}`}
+          className={`max-w-full animate-pulse bg-skeleton-quiet ${CHART_HAIRLINE}`}
         />
       </div>
-      <div className="mt-1 text-center text-xs text-gray-500">&nbsp;</div>
+      <div className="mt-1 text-center text-xs text-ink-faint">&nbsp;</div>
     </div>
   );
 }
@@ -210,7 +210,7 @@ function SankeyBlockEmpty({
   return (
     <div className={CHART_BODY_PAD} data-scroll-anchor={anchor}>
       <div className="mb-2 flex items-center justify-between px-2 sm:px-0">
-        <h3 className="text-base font-semibold text-gray-300">Flows</h3>
+        <h3 className="text-base font-semibold text-ink-secondary">Flows</h3>
         {menu}
       </div>
       <div className="flex justify-center">
@@ -219,11 +219,11 @@ function SankeyBlockEmpty({
           className="flex max-w-full items-center justify-center"
           data-testid="sankey-empty"
         >
-          <p className="text-sm text-gray-500">No flows recorded</p>
+          <p className="text-sm text-ink-faint">No flows recorded</p>
         </div>
       </div>
       {/* Same unconditional 16px line as the real block, so nothing shifts on hover. */}
-      <div className="mt-1 text-center text-xs text-gray-500">
+      <div className="mt-1 text-center text-xs text-ink-faint">
         {label || " "}
       </div>
     </div>
@@ -525,8 +525,8 @@ function StackedChart({
       return (
         <div className="flex-1 flex items-center justify-center min-h-0">
           <div className="flex flex-col items-center gap-3">
-            <CalendarX2 className="w-12 h-12 text-gray-500" />
-            <p className="text-sm text-gray-300">No data available</p>
+            <CalendarX2 className="w-12 h-12 text-ink-faint" />
+            <p className="text-sm text-ink-secondary">No data available</p>
           </div>
         </div>
       );
@@ -1594,7 +1594,7 @@ export default function SiteChartsCard({
                   data-scroll-anchor={`${systemId}:sankey`}
                 >
                   <div className="mb-2 flex items-center justify-between px-2 sm:px-0">
-                    <h3 className="text-base font-semibold text-gray-300">
+                    <h3 className="text-base font-semibold text-ink-secondary">
                       Flows
                     </h3>
                     <FlowsSettingsMenu
@@ -1620,7 +1620,7 @@ export default function SiteChartsCard({
                   </div>
                   {/* Rendered unconditionally (` ` when there is no period label yet) so the
                       line's 16px never appears or disappears under the block. */}
-                  <div className="mt-1 text-center text-xs text-gray-500">
+                  <div className="mt-1 text-center text-xs text-ink-faint">
                     {label || " "}
                   </div>
                 </div>

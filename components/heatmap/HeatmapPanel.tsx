@@ -96,10 +96,10 @@ function StatusBlock({
   tone: "muted" | "error";
   children: ReactNode;
 }) {
-  const text = tone === "error" ? "text-red-400" : "text-gray-400";
+  const text = tone === "error" ? "text-danger" : "text-ink-muted";
   if (variant === "page") {
     return (
-      <div className="min-h-screen bg-gray-800 flex items-center justify-center">
+      <div className="min-h-screen bg-surface-overlay flex items-center justify-center">
         <div className={text}>{children}</div>
       </div>
     );
@@ -329,9 +329,10 @@ export default function HeatmapPanel({
   return (
     <div className={className}>
       {pin.pinUnavailable && (
-        <div className="mb-4 rounded-md border border-amber-700/50 bg-amber-900/20 px-3 py-2 text-xs text-amber-300">
-          Pinned series <code className="text-amber-200">{pinnedSeries}</code>{" "}
-          is unavailable on this device — showing the point selector instead.
+        <div className="mb-4 rounded-md border border-warn-panel-line bg-warn-panel px-3 py-2 text-xs text-warn-ink">
+          Pinned series{" "}
+          <code className="text-warn-ink-strong">{pinnedSeries}</code> is
+          unavailable on this device — showing the point selector instead.
         </div>
       )}
 
@@ -341,11 +342,11 @@ export default function HeatmapPanel({
           {/* Point selector */}
           {showPointSelect && (
             <div className="flex-1 min-w-[150px] max-w-[250px]">
-              <label className="block text-sm text-gray-400 mb-2">
+              <label className="block text-sm text-ink-muted mb-2">
                 Select Point
               </label>
               <Select value={selectedPoint} onValueChange={handlePointChange}>
-                <SelectTrigger className="bg-gray-900 border-gray-700">
+                <SelectTrigger className="bg-surface-sunken border-line">
                   <SelectValue placeholder="Select a point" />
                 </SelectTrigger>
                 <SelectContent className="max-h-[500px]">
@@ -362,7 +363,7 @@ export default function HeatmapPanel({
           {/* Palette selector */}
           {showPaletteSelect && (
             <div className="w-64">
-              <label className="block text-sm text-gray-400 mb-2">
+              <label className="block text-sm text-ink-muted mb-2">
                 Color Palette
               </label>
               <Select
@@ -371,7 +372,7 @@ export default function HeatmapPanel({
                   handlePaletteChange(value as HeatmapPaletteKey)
                 }
               >
-                <SelectTrigger className="bg-gray-900 border-gray-700">
+                <SelectTrigger className="bg-surface-sunken border-line">
                   <SelectValue>
                     {(() => {
                       const config = HEATMAP_PALETTES[selectedPalette];
@@ -387,7 +388,7 @@ export default function HeatmapPanel({
                               background: `linear-gradient(to right, ${gradientStops})`,
                             }}
                           />
-                          <span className="text-xs text-gray-400 whitespace-nowrap">
+                          <span className="text-xs text-ink-muted whitespace-nowrap">
                             {config.name}
                           </span>
                         </div>
@@ -411,7 +412,7 @@ export default function HeatmapPanel({
                               background: `linear-gradient(to right, ${gradientStops})`,
                             }}
                           />
-                          <span className="text-xs text-gray-400 whitespace-nowrap">
+                          <span className="text-xs text-ink-muted whitespace-nowrap">
                             {config.name}
                           </span>
                         </div>
@@ -427,7 +428,7 @@ export default function HeatmapPanel({
 
       {/* Debug info */}
       {showDebug && fetchInfo && (
-        <div className="mb-4 text-xs text-gray-400">
+        <div className="mb-4 text-xs text-ink-muted">
           <table>
             <tbody>
               <tr>
@@ -460,19 +461,19 @@ export default function HeatmapPanel({
                         );
                         return `${aestStart.year}-${String(aestStart.month).padStart(2, "0")}-${String(aestStart.day).padStart(2, "0")} ${String(aestStart.hour).padStart(2, "0")}:${String(aestStart.minute).padStart(2, "0")}`;
                       })()}{" "}
-                    <span className="text-gray-600">AEST</span>
+                    <span className="text-ink-disabled">AEST</span>
                     {" → "}
                     {fetchInfo.endTime &&
                       (() => {
                         const aestEnd = toZoned(fetchInfo.endTime, "+10:00");
                         return `${aestEnd.year}-${String(aestEnd.month).padStart(2, "0")}-${String(aestEnd.day).padStart(2, "0")} ${String(aestEnd.hour).padStart(2, "0")}:${String(aestEnd.minute).padStart(2, "0")}`;
                       })()}{" "}
-                    <span className="text-gray-600">AEST</span>
+                    <span className="text-ink-disabled">AEST</span>
                   </div>
                   <div>
                     {fetchInfo.startTime &&
                       `${fetchInfo.startTime.year}-${String(fetchInfo.startTime.month).padStart(2, "0")}-${String(fetchInfo.startTime.day).padStart(2, "0")} ${String(fetchInfo.startTime.hour).padStart(2, "0")}:${String(fetchInfo.startTime.minute).padStart(2, "0")}`}{" "}
-                    <span className="text-gray-600">
+                    <span className="text-ink-disabled">
                       {fetchInfo.startTime &&
                         new Intl.DateTimeFormat("en-US", {
                           timeZone: timezone,
@@ -484,7 +485,7 @@ export default function HeatmapPanel({
                     {" → "}
                     {fetchInfo.endTime &&
                       `${fetchInfo.endTime.year}-${String(fetchInfo.endTime.month).padStart(2, "0")}-${String(fetchInfo.endTime.day).padStart(2, "0")} ${String(fetchInfo.endTime.hour).padStart(2, "0")}:${String(fetchInfo.endTime.minute).padStart(2, "0")}`}{" "}
-                    <span className="text-gray-600">
+                    <span className="text-ink-disabled">
                       {fetchInfo.endTime &&
                         new Intl.DateTimeFormat("en-US", {
                           timeZone: timezone,
@@ -519,7 +520,7 @@ export default function HeatmapPanel({
           className={`flex items-center justify-center ${CHART_HAIRLINE}`}
           style={{ height: HEATMAP_CHART_H }}
         >
-          <div className="text-gray-400">Select a point to view heatmap</div>
+          <div className="text-ink-muted">Select a point to view heatmap</div>
         </div>
       )}
     </div>

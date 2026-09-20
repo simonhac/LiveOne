@@ -208,7 +208,7 @@ function PanelInner({
     <div className={CHART_BODY_PAD}>
       <div className="flex justify-end items-center gap-2 sm:gap-4 pb-2">
         <span
-          className="text-xs sm:text-sm text-gray-400"
+          className="text-xs sm:text-sm text-ink-muted"
           style={{ fontFamily: "DM Sans, system-ui, sans-serif" }}
         >
           {rangeLabel}
@@ -241,17 +241,17 @@ function PanelInner({
       </div>
 
       {isError ? (
-        <div className="text-sm text-red-400 py-8 text-center">
+        <div className="text-sm text-danger py-8 text-center">
           Failed to load battery-provenance history
         </div>
       ) : isPending || !view ? (
         <div className="animate-pulse space-y-4 py-2">
           {PROVENANCE_CHARTS.map((c) => (
-            <div key={c.id} className="h-44 bg-gray-700/40 rounded" />
+            <div key={c.id} className="h-44 bg-skeleton rounded" />
           ))}
         </div>
       ) : view.lastDataIndex === null ? (
-        <div className="text-sm text-gray-400 py-8 text-center">
+        <div className="text-sm text-ink-muted py-8 text-center">
           No battery-provenance history for this window
         </div>
       ) : (

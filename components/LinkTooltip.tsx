@@ -56,14 +56,14 @@ export default function LinkTooltip({
         visibility: hidden ? "hidden" : "visible",
       }}
     >
-      <p className="text-sm font-bold leading-tight text-black">
+      <p className="text-sm font-bold leading-tight text-ink-inverse">
         {data.energy}
-        <span className="ml-1 text-[10px] font-medium text-black/60">
+        <span className="ml-1 text-[10px] font-medium text-ink-inverse-muted">
           {data.energyUnit}
         </span>
       </p>
       {hasDetail && (
-        <p className="mt-0.5 text-[10px] leading-tight text-black/60">
+        <p className="mt-0.5 text-[10px] leading-tight text-ink-inverse-muted">
           {data.emissions} · {data.cost} · {data.renewable}
         </p>
       )}

@@ -21,7 +21,7 @@ interface FlowsSettingsMenuProps {
 // options can be toggled in one visit.
 const ITEM_CLASS =
   "relative flex items-center gap-2 pl-8 pr-3 py-2 text-sm rounded outline-none cursor-pointer " +
-  "text-gray-300 hover:bg-gray-700 data-[highlighted]:bg-gray-700 " +
+  "text-ink-secondary hover:bg-surface-control data-[highlighted]:bg-surface-control " +
   "data-[disabled]:opacity-40 data-[disabled]:cursor-not-allowed data-[disabled]:hover:bg-transparent";
 
 /**
@@ -38,7 +38,7 @@ export default function FlowsSettingsMenu({
       <DropdownMenu.Trigger asChild>
         <button
           type="button"
-          className="rounded p-1 text-gray-500 outline-none transition-colors hover:bg-gray-700 hover:text-gray-300"
+          className="rounded p-1 text-ink-faint outline-none transition-colors hover:bg-surface-control hover:text-ink-secondary"
           title="Flow display options"
           aria-label="Flow display options"
         >
@@ -50,7 +50,7 @@ export default function FlowsSettingsMenu({
         <DropdownMenu.Content
           align="end"
           sideOffset={5}
-          className="min-w-[220px] rounded-lg border border-gray-700 bg-gray-800 p-1 shadow-xl"
+          className="min-w-[220px] rounded-lg border border-line bg-surface-overlay p-1 shadow-xl"
           style={{
             transform: "translateZ(0)",
             willChange: "transform",
@@ -72,7 +72,7 @@ export default function FlowsSettingsMenu({
             }
           >
             <DropdownMenu.ItemIndicator className="absolute left-2 inline-flex">
-              <Check className="h-4 w-4 text-blue-400" />
+              <Check className="h-4 w-4 text-accent-ink" />
             </DropdownMenu.ItemIndicator>
             Combine solar arrays
           </DropdownMenu.CheckboxItem>
@@ -90,7 +90,7 @@ export default function FlowsSettingsMenu({
             }
           >
             <DropdownMenu.ItemIndicator className="absolute left-2 inline-flex">
-              <Check className="h-4 w-4 text-blue-400" />
+              <Check className="h-4 w-4 text-accent-ink" />
             </DropdownMenu.ItemIndicator>
             Battery in the middle
           </DropdownMenu.CheckboxItem>

@@ -50,7 +50,12 @@ and the stroke are one value, and the test now reads `app/globals.css` instead o
    be re-toned in one line. Keep `/NN` for a genuinely one-off decorative wash with no nameable
    meaning. **Never stack `/NN` on a token that already carries alpha** — the two compound.
 
-4. **Rename, never re-tone — especially in a shared file.** The dashboard's components are almost
+4. **Rename, never re-tone — with one narrow exception.** When two files spell ONE meaning two
+   ways and the gap is a few percent of alpha or a single palette step, unify them on one token and
+   say so in the commit: that *is* the job, and leaving both spellings mints a token that
+   memorialises an accident. When an odd tone belongs to a surface that is scheduled to disappear
+   (a card that has not moved onto `TileSurface` yet), leave it literal and annotate it. Everything
+   else is a rename. **Especially in a shared file** — The dashboard's components are almost
    all shared with `/device/*` (see below). A pass that only renames is safe everywhere by
    construction. A pass that changes a value is a decision about every page that renders it, and
    must be its own commit, called out in the PR.
@@ -139,13 +144,15 @@ scanned source. A `text-ok` that nothing uses simply does not exist in the built
   tile-surface, tile-stale, mini-bars;
 - all of `components/dashboard/**`, and the twelve card bodies: `Tile`, `HomeEnergyCard`,
   `BatteryContentsCard`, `LoadProvenanceCard`, `DeviceMetricsCard`, `RunsCard`, `HwsSmallCard`,
-  `GridSignalsCard`, `AmberCard`, `AmberSmallCard`, `AmberNow`, `TeslaSmallCard`.
+  `GridSignalsCard`, `AmberCard`, `AmberSmallCard`, `AmberNow`, `TeslaSmallCard`;
+- the charts, Sankey and tables: `SiteChartsCard`, `LinesChartCard`, `DashboardChart`,
+  `ChartTooltip`, `EnergyTable`, `HeatmapChart`, `NodeTooltip`, `LinkTooltip`,
+  `FlowsSettingsMenu`, `EnergyFlowSankey`, `heatmap/`, `battery-provenance/`.
 
-**Not yet**, ~390 literals:
+**Not yet**, ~290 literals:
 
 | Group | Files | Literals |
 | --- | --- | --- |
-| charts, Sankey, tables | `SiteChartsCard` `HeatmapChart` `LinesChartCard` `ChartTooltip` `EnergyTable` `NodeTooltip` `LinkTooltip` `FlowsSettingsMenu` `heatmap/` `battery-provenance/` | ~100 |
 | dashboard chrome | `DashboardClient` `DashboardsMenu` `TemporalNavigator` `app/dashboard/` | ~54 |
 | dialogs | `DashboardSettingsDialog` `ShareLinksPanel` `GrantsPanel` `NewDashboardDialog` `AddAreaDialog` `area-builder/` | ~305 |
 | controls, errors | `GeneratorControlDialog` `TeslaControlDialog` `TeslaChargeLimits` `CommandActivityLog` `ControlNotice` `ServerErrorModal` `ErrorPanel` | ~72 |
@@ -170,5 +177,16 @@ Not every colour should become a token, and these say so where they sit rather t
 - **Two `?debug` badges** (`bg-red-500`) — dev-only affordances, not a `danger` state.
 
 Each is a *question*, not an oversight, which is why none of them is quietly mapped to the nearest
-token. Same spirit as the repo's `@knipignore <reason>`: grep for them to find what is still
+token.
+
+## Deliberate re-tones
+
+Under rule 4's exception. All four are one meaning that had two spellings:
+
+| Was | Now | Where |
+| --- | --- | --- |
+| `black/60` | `ink-inverse-muted` (0.55) | `LinkTooltip` — `NodeTooltip` already said 0.55, and they are the same object at two scales |
+| `border-white/20` | `line-hairline` (0.25) | `HeatmapChart`'s legend swatch |
+| `bg-gray-800/30` | `skeleton-quiet` (gray-700/30) | `SiteChartsCard`'s skeleton |
+| `text-blue-400` | `accent-ink` (blue-500) | `FlowsSettingsMenu`'s tick — and blue-400 is `series-load`, so leaving it risked the tick reading as a series colour | Same spirit as the repo's `@knipignore <reason>`: grep for them to find what is still
 awaiting a decision.
