@@ -31,6 +31,7 @@ import { formatDateAEST } from "@/lib/date-utils";
 import { qualityRank } from "@/lib/data-quality";
 import { AmberReadingsBatch } from "./amber-readings-batch";
 import {
+  createAdvPricePoint,
   createChannelPoint,
   createRenewablesPoint,
   createSpotPricePoint,
@@ -171,11 +172,18 @@ function usagePointFilter(point: PointInfo): boolean {
 }
 
 /**
- * Filter for pricing-related points: grid.{renewables,spotPerKwh} and *.perKwh
- * These are grid-level renewables proportion, spot price, and channel-specific rates
+ * Filter for pricing-related points: grid.{renewables,spotPerKwh}, *.perKwh and *.advPerKwh
+ * These are grid-level renewables proportion, spot price, channel-specific rates, and Amber's own
+ * forecast of those rates. A pricing point missing here is never loaded locally, so the comparison
+ * stage sees it as new on every poll and rewrites every interval.
  */
 function pricingPointFilter(point: PointInfo): boolean {
-  const pricingSuffixes = ["/renewables", "/spotPerKwh", "/perKwh"];
+  const pricingSuffixes = [
+    "/renewables",
+    "/spotPerKwh",
+    "/perKwh",
+    "/advPerKwh",
+  ];
   return pricingSuffixes.some((suffix) =>
     point.physicalPathTail.endsWith(suffix),
   );
@@ -758,6 +766,106 @@ async function fetchAmberPrices(
 }
 
 /**
+ * The channelId a price record lands under — matching the `channelIdentifier` the USAGE endpoint
+ * reports, so a channel's price, energy and cost share one id. `/prices` omits the identifier, hence
+ * the map. (controlledLoad used to fall through to the literal "controlledLoad".)
+ */
+function amberPriceChannelId(
+  channelType: AmberPriceRecord["channelType"],
+): string {
+  return channelType === "general"
+    ? "E1"
+    : channelType === "feedIn"
+      ? "B1"
+      : "CL1";
+}
+
+/**
+ * The `data_quality` a price record is stored with — the long form, which `AmberReadingsBatch`
+ * abbreviates to one char on entry (`a`/`e`/`f`).
+ *
+ * 🛑 A CurrentInterval is `estimated`, not `actual`: it is Amber's running estimate of the interval
+ * now underway (`estimate: true` on the wire), and it changes poll to poll until the interval
+ * settles. Grading it `a` made an unsettled price read as settled — to the "% estimated" chip, and
+ * to anything choosing between a forecast and a settled value. Replace-on-settle still works: the
+ * rank is f < e < a < b (`lib/data-quality.ts`), so the ActualInterval that follows overwrites it.
+ */
+function amberPriceQuality(type: AmberPriceRecord["type"]): string {
+  if (type === "ActualInterval") return "actual";
+  if (type === "CurrentInterval") return "estimated";
+  if (type === "ForecastInterval") return "forecast";
+  return "unknown";
+}
+
+/**
+ * Price records → the readings batch the sync stores: per channel `perKwh` (+ Amber's own forecast,
+ * `advPerKwh`, while the interval is still a forecast), and the site-wide spot price and renewables.
+ * Pure — the fetch is `fetchAmberPrices`.
+ */
+export function buildPriceBatch(
+  priceRecords: readonly AmberPriceRecord[],
+  firstDay: CalendarDate,
+  numberOfDays: number,
+): AmberReadingsBatch {
+  const group = new AmberReadingsBatch(firstDay, numberOfDays);
+
+  for (const record of priceRecords) {
+    // Use nemTime (AEST/UTC+10) instead of endTime (UTC) to match our interval times
+    const intervalMs = new Date(record.nemTime).getTime() as Milliseconds;
+    const channelType = record.channelType;
+
+    const channelId = amberPriceChannelId(channelType);
+    const quality = amberPriceQuality(record.type);
+    const channel = getChannelMetadata(channelId, channelType);
+
+    // perKwh reading (per-channel: E1.perKwh or B1.perKwh)
+    group.add({
+      pointMetadata: createChannelPoint(channel, "rate"),
+      rawValue: record.perKwh,
+      measurementTimeMs: intervalMs,
+      receivedTimeMs: Date.now() as Milliseconds,
+      dataQuality: quality,
+      sessionId: 0,
+    });
+
+    // Amber's own forecast (advancedPrice.predicted) — a separate point, see createAdvPricePoint.
+    // Only Forecast/Current records carry the band; an Actual leaves the last forecast in place.
+    if (record.advancedPrice && record.type !== "ActualInterval") {
+      group.add({
+        pointMetadata: createAdvPricePoint(channel),
+        rawValue: record.advancedPrice.predicted,
+        measurementTimeMs: intervalMs,
+        receivedTimeMs: Date.now() as Milliseconds,
+        dataQuality: quality,
+        sessionId: 0,
+      });
+    }
+
+    // spotPerKwh reading (grid-level: grid.spotPerKwh)
+    group.add({
+      pointMetadata: createSpotPricePoint(),
+      rawValue: record.spotPerKwh,
+      measurementTimeMs: intervalMs,
+      receivedTimeMs: Date.now() as Milliseconds,
+      dataQuality: quality,
+      sessionId: 0,
+    });
+
+    // renewables reading (grid-level: grid.renewables)
+    group.add({
+      pointMetadata: createRenewablesPoint(),
+      rawValue: record.renewables,
+      measurementTimeMs: intervalMs,
+      receivedTimeMs: Date.now() as Milliseconds,
+      dataQuality: quality,
+      sessionId: 0,
+    });
+  }
+
+  return group;
+}
+
+/**
  * Stage 4: Load Remote Prices
  * Fetches price data from Amber API for the specified date range
  */
@@ -781,62 +889,7 @@ async function loadRemotePrices(
       numberOfDays,
     );
 
-    // Build AmberReadingsBatch from price data
-    const group = new AmberReadingsBatch(firstDay, numberOfDays);
-
-    for (const record of priceRecords) {
-      // Use nemTime (AEST/UTC+10) instead of endTime (UTC) to match our interval times
-      const intervalMs = new Date(record.nemTime).getTime() as Milliseconds;
-      const channelType = record.channelType;
-
-      // Map channelType to channelId to match usage data keys
-      const channelId =
-        channelType === "general"
-          ? "E1"
-          : channelType === "feedIn"
-            ? "B1"
-            : channelType; // fallback for "controlledLoad" if present
-
-      // Infer quality from type (always has a value)
-      let quality: string;
-      if (record.type === "ActualInterval") quality = "actual";
-      else if (record.type === "CurrentInterval") quality = "actual";
-      else if (record.type === "ForecastInterval") quality = "forecast";
-      else quality = "unknown"; // Fallback for unexpected types
-
-      // perKwh reading (per-channel: E1.perKwh or B1.perKwh)
-      group.add({
-        pointMetadata: createChannelPoint(
-          getChannelMetadata(channelId, channelType),
-          "rate",
-        ),
-        rawValue: record.perKwh,
-        measurementTimeMs: intervalMs,
-        receivedTimeMs: Date.now() as Milliseconds,
-        dataQuality: quality,
-        sessionId: 0,
-      });
-
-      // spotPerKwh reading (grid-level: grid.spotPerKwh)
-      group.add({
-        pointMetadata: createSpotPricePoint(),
-        rawValue: record.spotPerKwh,
-        measurementTimeMs: intervalMs,
-        receivedTimeMs: Date.now() as Milliseconds,
-        dataQuality: quality,
-        sessionId: 0,
-      });
-
-      // renewables reading (grid-level: grid.renewables)
-      group.add({
-        pointMetadata: createRenewablesPoint(),
-        rawValue: record.renewables,
-        measurementTimeMs: intervalMs,
-        receivedTimeMs: Date.now() as Milliseconds,
-        dataQuality: quality,
-        sessionId: 0,
-      });
-    }
+    const group = buildPriceBatch(priceRecords, firstDay, numberOfDays);
 
     // Get all views from group
     const info = group.getInfo();

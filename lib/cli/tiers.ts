@@ -95,6 +95,9 @@ export const TIERS: TierManifest = {
     // `device coverage` — per-day reading density and gap runs. Split from device/cli.ts for the
     // same reason `config` is: it carries its own arithmetic, renderers and a comparison mode.
     "scripts/ops/device/coverage.ts",
+    // `device forecasts` — Amber's published forecasts and the logger's capture health. Split out
+    // for the same reason: its own window rules (AEST days), three read shapes and renderers.
+    "scripts/ops/device/forecasts.ts",
     "scripts/ops/user/cli.ts",
     "scripts/ops/queue/cli.ts",
     // The `sync` verb — the only WRITER among the composed http modules, so it carries the

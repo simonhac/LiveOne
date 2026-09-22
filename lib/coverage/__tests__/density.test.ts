@@ -1,5 +1,7 @@
 import { describe, it, expect } from "@jest/globals";
 import {
+  sampleDensity,
+  LOW_SAMPLE_RATIO,
   collapseGaps,
   compareDensity,
   densityForPoint,
@@ -356,5 +358,49 @@ describe("compareDensity", () => {
       ["bidi.battery/soc", true, false],
       ["source.solar/power", false, true],
     ]);
+  });
+});
+
+describe("sampleDensity", () => {
+  const days = ["2026-08-09", "2026-08-10", "2026-08-11", "2026-08-12"];
+
+  it("flags a day folding materially fewer readings than the best day (the Aug 2026 halving)", () => {
+    const out = sampleDensity(
+      days,
+      new Map([
+        ["2026-08-09", 5],
+        ["2026-08-10", 4.98],
+        ["2026-08-11", 2.5],
+        ["2026-08-12", 2.51],
+      ]),
+    );
+    expect(out.bestDayMean).toBe(5);
+    expect(out.meanSamples).toEqual([5, 4.98, 2.5, 2.51]);
+    expect(out.lowDays).toEqual(["2026-08-11", "2026-08-12"]);
+  });
+
+  it("leaves an empty day to the row-count gaps rather than calling it low", () => {
+    const out = sampleDensity(days, new Map([["2026-08-10", 5]]));
+    expect(out.meanSamples).toEqual([null, 5, null, null]);
+    expect(out.lowDays).toEqual([]);
+  });
+
+  it("is exactly at the threshold → not low", () => {
+    const out = sampleDensity(
+      ["a", "b"],
+      new Map([
+        ["a", 10],
+        ["b", 10 * LOW_SAMPLE_RATIO],
+      ]),
+    );
+    expect(out.lowDays).toEqual([]);
+  });
+
+  it("reports nothing for an empty point", () => {
+    expect(sampleDensity(days, new Map())).toEqual({
+      meanSamples: [null, null, null, null],
+      bestDayMean: null,
+      lowDays: [],
+    });
   });
 });

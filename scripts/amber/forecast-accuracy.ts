@@ -2,13 +2,16 @@
 /**
  * Amber price-forecast accuracy — how wrong is Amber's published forecast, N hours out?
  *
- * Reads `amber_forecast_history` (the change-only capture of what Amber was publishing, added by
- * #373/#374) and scores it against the settled price for the same interval, per lead time. It also
- * prints a CAPTURE HEALTH preamble first, because every number below it is worthless if the logger
- * stopped: a silent capture outage and a genuinely unchanging forecast look identical in a
- * change-only table, and only the poll cadence tells them apart.
+ * Scores what Amber PUBLISHED (`amber_forecast_history`, the change-only capture added by #373/#374)
+ * against the settled price for the same interval, per lead time. It also prints a CAPTURE HEALTH
+ * preamble first, because every number below it is worthless if the logger stopped: a silent capture
+ * outage and a genuinely unchanging forecast look identical in a change-only table, and only the
+ * poll cadence tells them apart.
  *
- * Read-only. Safe against prod.
+ * Read-only, over the deployed API as you — every byte comes from the `liveone` CLI
+ * (`device forecasts` for what was published and the capture health, `device history` for the
+ * settled price), so there is no database connection and no credential beyond your CLI token.
+ * `npm run liveone -- auth login` first (for prod: `--base-url https://www.liveone.energy`).
  *
  * Conventions that matter:
  *   - **`--anchor` (default `end`) picks which end of the interval the lead is measured to.**
@@ -32,31 +35,26 @@
  *     per channel is not how anyone reads a shape.
  *
  * Usage:
- *   npm run amber:forecast-accuracy
- *   npm run amber:forecast-accuracy -- --days=7 --leads=1-12
- *   npm run amber:forecast-accuracy -- --leads=1-24 --summary-leads=1,6,12,24
- *   npm run amber:forecast-accuracy -- --start=2026-08-15 --end=2026-08-21 --csv=.context/afa.csv
- *   npm run amber:forecast-accuracy -- --anchor=start
- *   npm run amber:forecast-accuracy -- --health-only
- *   npm run amber:forecast-accuracy -- --no-chart --json
+ *   npm run amber:forecast-accuracy -- --device=9 --base-url=https://www.liveone.energy
+ *   npm run amber:forecast-accuracy -- --device=9 --days=7 --leads=1-12
+ *   npm run amber:forecast-accuracy -- --device=9 --leads=1-24 --summary-leads=1,6,12,24
+ *   npm run amber:forecast-accuracy -- --device=9 --start=2026-08-15 --end=2026-08-21 --csv=.context/afa.csv
+ *   npm run amber:forecast-accuracy -- --device=9 --anchor=start
+ *   npm run amber:forecast-accuracy -- --device=9 --health-only
+ *   npm run amber:forecast-accuracy -- --device=9 --no-chart --json
  *
- * Against PROD (the dev mirror lags ~2h and never back-fills prod history):
- *   pscale role create liveone sydney fc-read --inherited-roles pg_read_all_data --ttl 1h --format json
- *   PLANETSCALE_DATABASE_URL="<database_url>" npm run amber:forecast-accuracy -- --days=7
- *   pscale role delete liveone sydney <role-id> --force
+ * `--device` is any device ref the CLI accepts (dv_… id, handle, slug or name). `--base-url` is
+ * passed straight through; without it the CLI's own default origin applies.
+ *
+ * ⚠️ Truth arrives through `/api/history`, which rounds values to 4 significant figures, so an
+ * MAE here can differ from a direct-DB computation in the third decimal place.
  */
 
-// Postgres `timestamp` columns here are naive UTC, and node-pg parses them into Dates using the
-// process timezone. On a laptop set to Australia/Melbourne that shifts every reading by 10-11h and
-// the forecast↔actual join silently returns nothing. Pin it before any Date exists.
-process.env.TZ = "UTC";
-
-import { config } from "dotenv";
-config({ path: ".env.local" });
-
+import { execFile } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { mkdirSync } from "node:fs";
+import { promisify } from "node:util";
 
 import type {
   AccuracySummary,
@@ -64,15 +62,29 @@ import type {
   SettledActual,
   SkillScore,
 } from "@/lib/vendors/amber/forecast-accuracy";
-import { parseLeads } from "@/lib/vendors/amber/forecast-accuracy";
+import {
+  pairForecastsWithActuals,
+  parseLeads,
+  persistenceSkill,
+  scoreableTargets,
+  selectTruth,
+  summarisePairs,
+  truthDisagreements,
+} from "@/lib/vendors/amber/forecast-accuracy";
 import type { LeadAnchor } from "@/lib/vendors/amber/forecast-accuracy";
+import {
+  MAX_IN_FORCE_ROWS,
+  type WireCaptureHealth,
+  type WireInForceChannel,
+} from "@/lib/vendors/amber/forecast-wire";
+import { renderHealth } from "../ops/device/forecasts";
 
 const HOUR_MS = 3_600_000;
 const DAY_MS = 86_400_000;
 const AEST_OFFSET_MS = 10 * HOUR_MS; // fixed +10, no DST — Amber's nemTime basis
 
 /**
- * Amber `channelType` → the `points.physical_path` its settled price lands on, plus how to name it.
+ * Amber `channelType` → the logical series its settled price is served as, plus how to name it.
  *
  * `short` is for the chart legend only. Amber's own wire names are what the console sections and
  * the CSV's `channel` column use, because that column is a KEY — it joins back to
@@ -81,23 +93,24 @@ const AEST_OFFSET_MS = 10 * HOUR_MS; // fixed +10, no DST — Amber's nemTime ba
  */
 const CHANNEL_POINTS: Record<
   string,
-  { path: string; label: string; short: string }
+  { stem: string; label: string; short: string }
 > = {
-  general: { path: "E1/perKwh", label: "grid import", short: "import" },
+  general: { stem: "bidi.grid.import", label: "grid import", short: "import" },
   feedIn: {
-    path: "B1/perKwh",
+    stem: "bidi.grid.export",
     label: "grid export (feed-in)",
     short: "export",
   },
   controlledLoad: {
-    path: "CL1/perKwh",
+    stem: "bidi.grid.controlled",
     label: "controlled load",
     short: "ctrl load",
   },
 };
 
 interface Args {
-  deviceRid?: number;
+  device: string;
+  baseUrl?: string;
   leads: number[];
   /** Subset of `leads` shown in the console table; the CSV/JSON/chart always carry all of them. */
   summaryLeads: number[];
@@ -150,11 +163,16 @@ function parseArgs(argv: string[]): Args {
     }
   }
 
-  const deviceRid = get("device") ? Number(get("device")) : undefined;
+  const device = get("device");
+  if (!device)
+    throw new Error(
+      "--device=<ref> is required (a dv_… id, handle, slug or name — `npm run liveone -- device list`)",
+    );
   const maxStaleness = get("max-staleness-min");
 
   return {
-    deviceRid,
+    device,
+    baseUrl: get("base-url"),
     leads,
     summaryLeads,
     days: Number(get("days") ?? 7),
@@ -194,10 +212,6 @@ function pct(v: number, width = 5): string {
   );
 }
 
-function toPgTimestamp(ms: number): string {
-  return new Date(ms).toISOString().replace("T", " ").replace("Z", "");
-}
-
 /** AEST calendar day 'YYYY-MM-DD' → the UTC epoch of its 00:00 boundary. */
 function aestDayStartMs(day: string): number {
   const ms = Date.parse(`${day}T00:00:00+10:00`);
@@ -206,105 +220,242 @@ function aestDayStartMs(day: string): number {
   return ms;
 }
 
+/** The AEST calendar day `YYYY-MM-DD` that `ms` falls in. */
+function aestDay(ms: number): string {
+  return new Date(ms + AEST_OFFSET_MS).toISOString().slice(0, 10);
+}
+
+// ── the CLI ─────────────────────────────────────────────────────────────────────────────────────
+
+const execFileP = promisify(execFile);
+
+/**
+ * Run one `liveone` command and parse its JSON stdout.
+ *
+ * Exit 1 is FINDINGS in the CLI's vocabulary ("ran fine, the answer is empty or negative"), so its
+ * payload is still returned; any other non-zero exit is fatal and becomes this script's exit code,
+ * with the CLI's stderr passed through so the reason is not lost.
+ */
+async function runLiveone<T>(
+  args: string[],
+  baseUrl: string | undefined,
+): Promise<{ body: T; code: number }> {
+  const argv = [
+    "tsx",
+    "scripts/ops/liveone.ts",
+    ...args,
+    ...(baseUrl ? ["--base-url", baseUrl] : []),
+    "--format",
+    "json",
+    "--quiet",
+  ];
+  try {
+    const { stdout } = await execFileP("npx", argv, {
+      maxBuffer: 512 * 1024 * 1024,
+    });
+    return { body: JSON.parse(stdout) as T, code: 0 };
+  } catch (e) {
+    const err = e as { code?: number; stdout?: string; stderr?: string };
+    if (err.code === 1 && err.stdout)
+      return { body: JSON.parse(err.stdout) as T, code: 1 };
+    process.stderr.write(err.stderr ?? "");
+    const failure = new Error(
+      `liveone ${args.slice(0, 3).join(" ")} … exited ${err.code ?? "?"}`,
+    ) as Error & { exitCode?: number };
+    failure.exitCode = typeof err.code === "number" ? err.code : 1;
+    throw failure;
+  }
+}
+
+/** Run `fns` with at most `limit` in flight — each is a whole CLI process plus a server request. */
+async function pooled<T>(
+  fns: (() => Promise<T>)[],
+  limit: number,
+): Promise<T[]> {
+  const out: T[] = new Array(fns.length);
+  let next = 0;
+  await Promise.all(
+    Array.from({ length: Math.min(limit, fns.length) }, async () => {
+      while (next < fns.length) {
+        const i = next++;
+        out[i] = await fns[i]();
+      }
+    }),
+  );
+  return out;
+}
+
+interface HistorySeries {
+  path: string;
+  history: {
+    firstInterval: string;
+    interval: string;
+    data: (number | string | null)[];
+  };
+}
+interface HistoryBody {
+  subject: string;
+  response: { data: HistorySeries[] };
+}
+
+/**
+ * The settled price for one channel, from `device history --interval 30m`.
+ *
+ * `/api/history` stamps each value at its interval END (`firstInterval` is the end of the first
+ * bucket), which is Amber's `nemTime` — the same key `amber_forecast_history.interval_end` uses — so
+ * the join stays plain equality. The avg and quality series are separate series over one point.
+ */
+function settledFromHistory(
+  body: HistoryBody,
+  channel: string,
+): SettledActual[] {
+  const stem = CHANNEL_POINTS[channel].stem;
+  const find = (field: string) =>
+    body.response.data.find((d) => d.path === `${stem}/rate.${field}`);
+  const avg = find("avg");
+  const quality = find("quality");
+  if (!avg || !quality)
+    throw new Error(
+      `no settled-price series for channel ${channel} (expected ${stem}/rate.avg and .quality)`,
+    );
+  const stepMs = avg.history.interval === "30m" ? 30 * 60_000 : NaN;
+  if (!Number.isFinite(stepMs))
+    throw new Error(`expected 30m history, got ${avg.history.interval}`);
+  const qualityAt = new Map<number, string>();
+  const qFirst = Date.parse(quality.history.firstInterval);
+  quality.history.data.forEach((q, i) => {
+    if (typeof q === "string") qualityAt.set(qFirst + i * stepMs, q);
+  });
+  const first = Date.parse(avg.history.firstInterval);
+  const out: SettledActual[] = [];
+  avg.history.data.forEach((v, i) => {
+    const intervalEndMs = first + i * stepMs;
+    const q = qualityAt.get(intervalEndMs);
+    if (typeof v !== "number" || q === undefined) return;
+    out.push({ intervalEndMs, value: v, quality: q });
+  });
+  return out;
+}
+
 // ── main ────────────────────────────────────────────────────────────────────────────────────────
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
+  const cli = <T>(argv: string[]) => runLiveone<T>(argv, args.baseUrl);
 
-  const { requirePlanetscaleDb } = await import("@/lib/db/planetscale");
-  const { sql } = await import("drizzle-orm");
-  const { ReadingsDao } = await import("@/lib/readings");
-  const { Point } = await import("@/lib/ids");
-  const {
-    pairForecastsWithActuals,
-    persistenceSkill,
-    scoreableTargets,
-    selectTruth,
-    summarisePairs,
-    truthDisagreements,
-  } = await import("@/lib/vendors/amber/forecast-accuracy");
-
-  const db = requirePlanetscaleDb();
-  const rowsOf = <T>(res: unknown): T[] =>
-    ((res as { rows?: unknown[] }).rows ?? res) as T[];
-
-  // ── device ────────────────────────────────────────────────────────────────
-  const deviceRows = rowsOf<{ rid: number; name: string }>(
-    await db.execute(
-      sql`SELECT rid, name FROM devices WHERE vendor = 'amber' AND status = 'active' ORDER BY rid`,
-    ),
-  ).map((r) => ({ rid: Number(r.rid), name: String(r.name) }));
-
-  let device = deviceRows.find((d) => d.rid === args.deviceRid);
-  if (args.deviceRid !== undefined && !device) {
-    throw new Error(
-      `no active Amber device with rid=${args.deviceRid} (have: ${deviceRows.map((d) => d.rid).join(", ") || "none"})`,
-    );
-  }
-  if (!device) {
-    if (deviceRows.length !== 1) {
-      throw new Error(
-        deviceRows.length === 0
-          ? "no active Amber device found"
-          : `${deviceRows.length} Amber devices — pass --device=<rid>: ${deviceRows.map((d) => `${d.rid} (${d.name})`).join(", ")}`,
-      );
-    }
-    device = deviceRows[0];
-  }
-
-  // ── window ────────────────────────────────────────────────────────────────
-  const nowMs = Date.now();
-  const toMs = args.end ? aestDayStartMs(args.end) + DAY_MS : nowMs;
-  const fromMs = args.start
-    ? aestDayStartMs(args.start)
-    : toMs - args.days * DAY_MS;
+  // ── window: whole AEST days (the route's unit) ─────────────────────────────
+  const endDay = args.end ?? aestDay(Date.now());
+  const startDay =
+    args.start ?? aestDay(aestDayStartMs(endDay) - (args.days - 1) * DAY_MS);
+  const fromMs = aestDayStartMs(startDay);
+  const toMs = aestDayStartMs(endDay) + DAY_MS;
   if (fromMs >= toMs) throw new Error("empty window (--start is after --end)");
+  const window = ["--start", startDay, "--end", endDay];
+
+  // ── capture health ─────────────────────────────────────────────────────────
+  const health = await cli<{ deviceId: string; health: WireCaptureHealth }>([
+    "device",
+    "forecasts",
+    args.device,
+    "--health",
+    ...window,
+  ]);
+
+  // ── truth: settled prices, via `device history` ────────────────────────────
+  // Reach back an extra day so the persistence baseline (same half-hour yesterday) exists for the
+  // first intervals in the window — and forward one, because a local day's history stops at the
+  // 23:30 interval END, so the interval ending at the window's closing midnight lives in the next
+  // day. The surplus is clipped off again below.
+  const history = await cli<HistoryBody>([
+    "device",
+    "history",
+    args.device,
+    "--interval",
+    "30m",
+    "--start",
+    aestDay(fromMs - DAY_MS),
+    "--end",
+    aestDay(toMs),
+    ...args.channels.flatMap((c) => [
+      "--series",
+      `${CHANNEL_POINTS[c].stem}/rate.avg`,
+      "--series",
+      `${CHANNEL_POINTS[c].stem}/rate.quality`,
+    ]),
+  ]);
+  const deviceName = history.body.subject;
 
   console.log(
-    `\nAmber forecast accuracy — device ${device.rid} (${device.name})\n` +
+    `\nAmber forecast accuracy — ${deviceName}\n` +
       `window ${aest(fromMs)} → ${aest(toMs)} AEST  (all times AEST, prices c/kWh incl GST)\n` +
       `lead anchored to interval ${args.anchor.toUpperCase()}` +
       (args.anchor === "start"
         ? " — i.e. N hours before the half-hour BEGINS"
         : " — i.e. N hours before the half-hour FINISHES"),
   );
-
-  await reportHealth(db, sql, device.rid, fromMs, toMs, rowsOf);
+  console.log("\n" + renderHealth(health.body.health));
+  if (health.body.health.rows === 0) process.exitCode = 1;
   if (args.healthOnly) return;
 
-  // ── truth: settled prices from the 5m aggregate, via the readings seam ─────
-  // Reach back an extra day so the persistence baseline (same half-hour yesterday) exists for the
-  // first intervals in the window.
-  const pointRows = rowsOf<{ point_uid: string; physical_path: string }>(
-    await db.execute(sql`
-      SELECT p.id AS point_uid, p.physical_path
-      FROM points p JOIN devices d ON d.id = p.device_id
-      WHERE d.rid = ${device.rid}
-        AND p.physical_path IN (${sql.join(
-          args.channels.map((c) => sql`${CHANNEL_POINTS[c].path}`),
-          sql`, `,
-        )})`),
+  // ── published forecasts: one channel per request, leads split to fit the row budget ──
+  // Every captured interval can yield one row per lead, and the route refuses a request whose
+  // `captured × leads` exceeds MAX_IN_FORCE_ROWS — so size the lead chunks from the window.
+  const windowDays = Math.round((toMs - fromMs) / DAY_MS);
+  const leadsPerCall = Math.max(
+    1,
+    Math.floor(MAX_IN_FORCE_ROWS / (windowDays * 48 + 1)),
   );
-  const pointByPath = new Map(
-    pointRows.map((r) => [
-      String(r.physical_path),
-      Point.encode(String(r.point_uid)),
-    ]),
-  );
-  const missing = args.channels.filter(
-    (c) => !pointByPath.has(CHANNEL_POINTS[c].path),
-  );
-  if (missing.length) {
-    throw new Error(
-      `device ${device.rid} has no price point for channel(s) ${missing.join(", ")} ` +
-        `(expected physical_path ${missing.map((c) => CHANNEL_POINTS[c].path).join(", ")})`,
-    );
-  }
+  const leadChunks: number[][] = [];
+  for (let i = 0; i < args.leads.length; i += leadsPerCall)
+    leadChunks.push(args.leads.slice(i, i + leadsPerCall));
 
-  const series = await ReadingsDao.read5m([...pointByPath.values()], {
-    fromMs: fromMs - DAY_MS,
-    toMs,
-  });
+  const inForce = new Map<
+    string,
+    { captured: number[]; byLead: Map<number, ForecastObservation[]> }
+  >();
+  const calls = args.channels.flatMap((channel) =>
+    leadChunks.map((chunk) => async () => {
+      const { body } = await cli<{ channels: WireInForceChannel[] }>([
+        "device",
+        "forecasts",
+        args.device,
+        ...window,
+        "--channel",
+        channel,
+        "--lead",
+        chunk.join(","),
+        "--anchor",
+        args.anchor,
+      ]);
+      return { channel, read: body.channels[0] };
+    }),
+  );
+  for (const { channel, read } of await pooled(calls, 4)) {
+    let entry = inForce.get(channel);
+    if (!entry)
+      inForce.set(
+        channel,
+        (entry = {
+          captured: read.captured.map((t) => Date.parse(t)),
+          byLead: new Map(),
+        }),
+      );
+    for (const l of read.leads)
+      entry.byLead.set(
+        l.lead,
+        l.rows.map(
+          (r): ForecastObservation => ({
+            intervalEndMs: Date.parse(r.intervalEnd),
+            observedAtMs: Date.parse(r.observedAt),
+            durationMin: r.durationMin,
+            perKwh: r.perKwh,
+            advLow: r.advLow,
+            advPredicted: r.advPredicted,
+            advHigh: r.advHigh,
+          }),
+        ),
+      );
+  }
 
   // ── per-channel scoring ───────────────────────────────────────────────────
   const summaries: {
@@ -318,27 +469,15 @@ async function main() {
   ];
 
   for (const channel of args.channels) {
-    const point = pointByPath.get(CHANNEL_POINTS[channel].path)!;
-    const readings: SettledActual[] = (series.get(point) ?? [])
-      .filter((r) => r.avg !== null && r.dataQuality !== null)
-      .map((r) => ({
-        intervalEndMs: r.intervalEndMs,
-        value: r.avg!,
-        quality: r.dataQuality!,
-      }));
+    // Clipped to the span the truth line has always described: the window plus its lead-in day.
+    const readings = settledFromHistory(history.body, channel).filter(
+      (r) => r.intervalEndMs >= fromMs - DAY_MS && r.intervalEndMs <= toMs,
+    );
     const truth = selectTruth(readings);
     const disagree = truthDisagreements(readings);
 
-    const captured = rowsOf<{ interval_end_ms: string }>(
-      await db.execute(sql`
-        SELECT DISTINCT (extract(epoch FROM interval_end) * 1000)::bigint AS interval_end_ms
-        FROM amber_forecast_history
-        WHERE device_rid = ${device.rid} AND channel = ${channel}
-          AND interval_end >= ${toPgTimestamp(fromMs)}::timestamp
-          AND interval_end <= ${toPgTimestamp(toMs)}::timestamp`),
-    ).map((r) => Number(r.interval_end_ms));
-    const targets = scoreableTargets(captured, truth);
-
+    const published = inForce.get(channel)!;
+    const targets = scoreableTargets(published.captured, truth);
     const settledCount = { b: 0, a: 0 } as Record<string, number>;
     for (const t of truth.values())
       settledCount[t.quality] = (settledCount[t.quality] ?? 0) + 1;
@@ -376,39 +515,7 @@ async function main() {
     );
 
     for (const lead of args.leads) {
-      const revisions = rowsOf<{
-        interval_end_ms: string;
-        observed_at_ms: string;
-        duration_min: number;
-        per_kwh: number | null;
-        adv_low: number | null;
-        adv_predicted: number | null;
-        adv_high: number | null;
-      }>(
-        await db.execute(sql`
-          SELECT DISTINCT ON (interval_end)
-                 (extract(epoch FROM interval_end) * 1000)::bigint AS interval_end_ms,
-                 (extract(epoch FROM observed_at) * 1000)::bigint AS observed_at_ms,
-                 duration_min, per_kwh, adv_low, adv_predicted, adv_high
-          FROM amber_forecast_history
-          WHERE device_rid = ${device.rid} AND channel = ${channel}
-            AND interval_end >= ${toPgTimestamp(fromMs)}::timestamp
-            AND interval_end <= ${toPgTimestamp(toMs)}::timestamp
-            AND observed_at <= interval_end
-              - ${args.anchor === "start" ? sql`duration_min * interval '1 minute'` : sql`interval '0'`}
-              - ${lead} * interval '1 hour'
-          ORDER BY interval_end, observed_at DESC`),
-      ).map(
-        (r): ForecastObservation => ({
-          intervalEndMs: Number(r.interval_end_ms),
-          observedAtMs: Number(r.observed_at_ms),
-          durationMin: Number(r.duration_min),
-          perKwh: r.per_kwh,
-          advLow: r.adv_low,
-          advPredicted: r.adv_predicted,
-          advHigh: r.adv_high,
-        }),
-      );
+      const revisions = published.byLead.get(lead) ?? [];
 
       const pairs = pairForecastsWithActuals(revisions, truth, lead, {
         maxStalenessMin: args.maxStalenessMin,
@@ -498,7 +605,7 @@ async function main() {
   if (args.chart) {
     const { renderAccuracyChart } = await import("./forecast-accuracy-chart");
     const written = await renderAccuracyChart(args.chart, {
-      title: `Amber forecast error vs lead — ${device.name}`,
+      title: `Amber forecast error vs lead — ${deviceName}`,
       subtitle: `${aest(fromMs)} → ${aest(toMs)} AEST · lead anchored to interval ${args.anchor}`,
       footnote:
         args.anchor === "start"
@@ -530,228 +637,10 @@ function writeOut(path: string, content: string) {
   console.log(`\nwrote ${path}`);
 }
 
-// ── capture health ──────────────────────────────────────────────────────────────────────────────
-
-/**
- * A gap beyond this is worth attributing. The poll is nominally 5-minutely but the schedule is
- * drift-based (`BaseVendorAdapter.evaluateSchedule`: fire at the first minutely cron tick where
- * `now − lastPollTime >= pollInterval − toleranceSeconds`, and Amber's tolerance is 60s), so
- * observed spacing legitimately ranges ~4.0-6.0 min. 7 clears that band without hiding anything.
- */
-const POLL_GAP_THRESHOLD_MIN = 7;
-const EXPECTED_POLLS_PER_HOUR = 12;
-
-/**
- * `sessions.created_at` stamps the poll's START; `observed_at` is stamped mid-poll, ~1-5s later.
- * So the session that PRODUCED the capture closing a gap starts fractionally before it, and a naive
- * `created_at < gap_end` counts it as having run *inside* the gap — turning "the cron never fired"
- * into "a poll ran and captured nothing". Comfortably larger than the observed max poll duration
- * (1.7s) and orders of magnitude smaller than the gap threshold.
- */
-const POLL_SETTLE_MS = 30_000;
-
-async function reportHealth(
-  db: Awaited<
-    ReturnType<typeof import("@/lib/db/planetscale").requirePlanetscaleDb>
-  >,
-  sql: typeof import("drizzle-orm").sql,
-  deviceRid: number,
-  fromMs: number,
-  toMs: number,
-  rowsOf: <T>(res: unknown) => T[],
-) {
-  const from = toPgTimestamp(fromMs);
-  const to = toPgTimestamp(toMs);
-
-  const [overview] = rowsOf<{
-    rows: string;
-    polls: string;
-    first_obs_ms: string | null;
-    last_obs_ms: string | null;
-    min_target_ms: string | null;
-    max_target_ms: string | null;
-  }>(
-    await db.execute(sql`
-      SELECT count(*) AS rows, count(DISTINCT observed_at) AS polls,
-             (extract(epoch FROM min(observed_at)) * 1000)::bigint AS first_obs_ms,
-             (extract(epoch FROM max(observed_at)) * 1000)::bigint AS last_obs_ms,
-             (extract(epoch FROM min(interval_end)) * 1000)::bigint AS min_target_ms,
-             (extract(epoch FROM max(interval_end)) * 1000)::bigint AS max_target_ms
-      FROM amber_forecast_history
-      WHERE device_rid = ${deviceRid}
-        AND observed_at >= ${from}::timestamp AND observed_at <= ${to}::timestamp`),
-  );
-
-  console.log("\nCAPTURE HEALTH");
-  const rows = Number(overview?.rows ?? 0);
-  if (rows === 0) {
-    console.log("  ✗ no forecast rows captured in this window.");
-    process.exitCode = 1;
-    return;
-  }
-
-  const firstObs = Number(overview.first_obs_ms);
-  const lastObs = Number(overview.last_obs_ms);
-  const captures = Number(overview.polls);
-  const spanHours = Math.max((lastObs - firstObs) / HOUR_MS, 1 / 60);
-  const ageMin = (Date.now() - lastObs) / 60_000;
-
-  // `amber_forecast_history` only gets an `observed_at` when a poll INSERTS something, so counting
-  // distinct observed_at counts CAPTURES, not polls: a poll that failed, or whose whole horizon
-  // moved less than the 0.1 c/kWh threshold, leaves no trace at all. Reading the poll count from
-  // `sessions` instead is what turns "11.9/h vs 12/h expected — is the logger sick?" into an
-  // account that adds up. (Measured over the first 24h: 293 polls = 287 captures + 5 vendor 502s
-  // + 1 empty poll, i.e. the threshold silences a whole poll roughly once in 300.)
-  const [pollStats] = rowsOf<{
-    polls: string;
-    failed: string;
-    top_error: string | null;
-  }>(
-    await db.execute(sql`
-      SELECT count(*) AS polls,
-             count(*) FILTER (WHERE NOT successful) AS failed,
-             (SELECT left(error, 90) FROM sessions e
-               WHERE e.device_rid = ${deviceRid} AND NOT e.successful AND e.error IS NOT NULL
-                 AND e.created_at >= ${from}::timestamp AND e.created_at <= ${to}::timestamp
-               GROUP BY left(error, 90) ORDER BY count(*) DESC LIMIT 1) AS top_error
-      FROM sessions
-      WHERE device_rid = ${deviceRid} AND cause = 'CRON'
-        AND created_at >= ${toPgTimestamp(firstObs - POLL_SETTLE_MS)}::timestamp
-        AND created_at <= ${toPgTimestamp(lastObs)}::timestamp`),
-  );
-  const polls = Number(pollStats?.polls ?? 0);
-  const failed = Number(pollStats?.failed ?? 0);
-
-  console.log(
-    `  ${polls} polls run over ${spanHours.toFixed(1)}h ` +
-      `(${(polls / spanHours).toFixed(2)}/h vs ${EXPECTED_POLLS_PER_HOUR}/h nominal, ` +
-      `mean spacing ${((spanHours * 60) / Math.max(polls, 1)).toFixed(2)} min)` +
-      (failed > 0 ? `  ⚠ ${failed} failed` : ""),
-  );
-  if (failed > 0 && pollStats.top_error) {
-    console.log(`      most common error: ${pollStats.top_error}`);
-  }
-  console.log(
-    `  ${captures} captures (${polls - captures} poll(s) recorded nothing), ` +
-      `${rows.toLocaleString()} rows, ${(rows / Math.max(captures, 1)).toFixed(1)} rows/capture`,
-  );
-  console.log(
-    `  observed ${aest(firstObs, true)} → ${aest(lastObs, true)}  (newest row ${ageMin.toFixed(0)} min old)`,
-  );
-  console.log(
-    `  targets  ${aest(Number(overview.min_target_ms))} → ${aest(Number(overview.max_target_ms))}`,
-  );
-
-  // Amber's horizon is "today + tomorrow" in AEST days, not a rolling 48h, so the reach sawtooths
-  // from ~36h down to ~14h across the AEST midnight boundary. Reporting min/max makes an actual
-  // horizon change distinguishable from that expected sawtooth.
-  const [reach] = rowsOf<{ min_h: string; max_h: string }>(
-    await db.execute(sql`
-      SELECT min(extract(epoch FROM (interval_end - observed_at)) / 3600) AS min_h,
-             max(extract(epoch FROM (interval_end - observed_at)) / 3600) AS max_h
-      FROM amber_forecast_history
-      WHERE device_rid = ${deviceRid}
-        AND observed_at >= ${from}::timestamp AND observed_at <= ${to}::timestamp`),
-  );
-  console.log(
-    `  horizon  ${Number(reach.min_h).toFixed(1)}h … ${Number(reach.max_h).toFixed(1)}h ahead of the poll`,
-  );
-
-  // Each gap is attributed against `sessions`: polls that RAN inside it mean the vendor or the
-  // threshold ate the data, no polls at all means the cron never fired. Without that split every
-  // gap looks like "the logger broke", and the two have completely different fixes.
-  const gaps = rowsOf<{
-    prev_ms: string;
-    next_ms: string;
-    gap_min: string;
-    polls_inside: string;
-    failed_inside: string;
-    reason: string | null;
-  }>(
-    await db.execute(sql`
-      WITH p AS (
-        SELECT DISTINCT observed_at AS o FROM amber_forecast_history
-        WHERE device_rid = ${deviceRid}
-          AND observed_at >= ${from}::timestamp AND observed_at <= ${to}::timestamp
-      ), d AS (
-        SELECT o, lead(o) OVER (ORDER BY o) AS nxt FROM p
-      ), g AS (
-        SELECT o, nxt FROM d
-        WHERE nxt IS NOT NULL AND nxt - o > ${POLL_GAP_THRESHOLD_MIN} * interval '1 minute'
-      )
-      SELECT (extract(epoch FROM g.o) * 1000)::bigint AS prev_ms,
-             (extract(epoch FROM g.nxt) * 1000)::bigint AS next_ms,
-             extract(epoch FROM (g.nxt - g.o)) / 60 AS gap_min,
-             (SELECT count(*) FROM sessions s
-               WHERE s.device_rid = ${deviceRid}
-                 AND s.created_at > g.o
-                 AND s.created_at < g.nxt - ${POLL_SETTLE_MS} * interval '1 millisecond') AS polls_inside,
-             (SELECT count(*) FROM sessions s
-               WHERE s.device_rid = ${deviceRid} AND NOT s.successful
-                 AND s.created_at > g.o
-                 AND s.created_at < g.nxt - ${POLL_SETTLE_MS} * interval '1 millisecond') AS failed_inside,
-             (SELECT left(s.error, 70) FROM sessions s
-               WHERE s.device_rid = ${deviceRid} AND s.error IS NOT NULL
-                 AND s.created_at > g.o
-                 AND s.created_at < g.nxt - ${POLL_SETTLE_MS} * interval '1 millisecond'
-               ORDER BY s.created_at LIMIT 1) AS reason
-      FROM g
-      ORDER BY gap_min DESC`),
-  );
-  if (gaps.length === 0) {
-    console.log(`  no capture gaps > ${POLL_GAP_THRESHOLD_MIN} min ✓`);
-  } else {
-    const lostMin = gaps.reduce((s, g) => s + Number(g.gap_min), 0);
-    console.log(
-      `  ⚠ ${gaps.length} capture gap(s) > ${POLL_GAP_THRESHOLD_MIN} min (${lostMin.toFixed(0)} min):`,
-    );
-    for (const g of gaps.slice(0, 10)) {
-      const inside = Number(g.polls_inside);
-      const failedInside = Number(g.failed_inside);
-      const verdict =
-        inside === 0
-          ? "no poll ran — cron tick(s) missed"
-          : failedInside > 0
-            ? `${inside} poll(s) ran, ${failedInside} failed: ${g.reason ?? "unknown"}`
-            : `${inside} poll(s) ran and captured nothing (sub-threshold)`;
-      console.log(
-        `      ${aest(Number(g.prev_ms), true)} → ${aest(Number(g.next_ms), true)}  ` +
-          `${Number(g.gap_min).toFixed(1)} min — ${verdict}`,
-      );
-    }
-    if (gaps.length > 10) console.log(`      … and ${gaps.length - 10} more`);
-  }
-
-  const breakdown = rowsOf<{
-    channel: string;
-    interval_type: string;
-    n: string;
-    targets: string;
-    with_price: string;
-    with_band: string;
-  }>(
-    await db.execute(sql`
-      SELECT channel, interval_type, count(*) AS n, count(DISTINCT interval_end) AS targets,
-             count(per_kwh) AS with_price, count(adv_predicted) AS with_band
-      FROM amber_forecast_history
-      WHERE device_rid = ${deviceRid}
-        AND observed_at >= ${from}::timestamp AND observed_at <= ${to}::timestamp
-      GROUP BY 1, 2 ORDER BY 1, 2`),
-  );
-  console.log("\n  channel         type    rows  targets  w/price   w/band");
-  for (const b of breakdown) {
-    console.log(
-      `  ${b.channel.padEnd(15)} ${b.interval_type.padEnd(4)} ` +
-        `${Number(b.n).toLocaleString().padStart(7)}  ${String(b.targets).padStart(7)}  ` +
-        `${String(b.with_price).padStart(7)}  ${String(b.with_band).padStart(7)}`,
-    );
-  }
-}
-
 main().then(
   () => process.exit(process.exitCode ?? 0),
   (e) => {
     console.error(e instanceof Error ? e.message : e);
-    process.exit(1);
+    process.exit((e as { exitCode?: number }).exitCode ?? 1);
   },
 );

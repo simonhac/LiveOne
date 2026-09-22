@@ -142,6 +142,11 @@ export interface TickResult {
   spooled?: boolean;
   /** error message if the tick failed (read/build/push threw or timed out) */
   error?: string;
+  /**
+   * The device was NOT read: a `harvestOnDeliveryOnly` source on a poll-only tick. `count` is null
+   * (nothing was collected) but there is no error — this is the tick working as intended.
+   */
+  readSkipped?: boolean;
 }
 
 /**
@@ -237,6 +242,22 @@ export async function tickOnce(
   }
 
   const supervisor = entry.supervisor ?? null;
+
+  // A harvesting source loses whatever a read collects unless that read is delivered, so for it
+  // the delivery decision comes FIRST and a poll-only tick does not touch the device at all. See
+  // `Source.harvestOnDeliveryOnly` for the incident. `false` is the right `active` to ask with:
+  // such a source has no running/idle split by contract, so the post-read answer would be the same.
+  if (source.harvestOnDeliveryOnly && !supervisor && !shouldDeliver(false)) {
+    return {
+      ...base,
+      count: null,
+      active: false,
+      deliveryActive: false,
+      delivered: false,
+      readSkipped: true,
+    };
+  }
+
   let readings: ReturnType<typeof buildReadings>;
   let active = false;
   let deliveryActive = false;

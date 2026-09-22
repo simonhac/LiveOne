@@ -8,6 +8,8 @@ import { AMBER_STALE, boundaryRefetchInterval } from "./freshness";
 const AMBER_SERIES = [
   "bidi.grid.import/rate.avg",
   "bidi.grid.import/rate.quality",
+  // Amber's own forecast (`advancedPrice.predicted`) — the card shows it for unsettled slots.
+  "bidi.grid.import.forecast/rate.avg",
   "bidi.grid.renewables/proportion.avg",
   "bidi.grid.import/value.avg",
   "bidi.grid.export/value.avg",

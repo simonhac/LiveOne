@@ -1033,6 +1033,60 @@ async function countAgg5mByLocalDay(
 }
 
 /**
+ * Per-(point, local-day) MEAN `sample_count` of the `agg_5m` rows — the raw readings folded into
+ * each 5-minute row. Same bucketing and `[fromMs, toMs)` window as {@link countAgg5mByLocalDay}; the
+ * operator read behind `liveone device coverage --samples`.
+ *
+ * Row COUNT cannot see a source that delivers every other reading: every 5-minute row still exists,
+ * each just holds half its samples. Kinkora's Fronius hub did exactly that from 11 to 30 August 2026
+ * (2.5 samples per row instead of 5, and so half of every energy interval), with coverage reporting
+ * 100% throughout.
+ */
+async function meanSampleCountAgg5mByLocalDay(
+  points: PointId[],
+  opts: { fromMs: number; toMs: number; offsetMin: number },
+  exec?: ReadingsExec,
+): Promise<Map<PointId, Map<string, number>>> {
+  const out = new Map<PointId, Map<string, number>>(
+    points.map((p) => [p, new Map()]),
+  );
+  if (points.length === 0) return out;
+  const db = exec ?? requirePlanetscaleDb();
+  const from = new Date(opts.fromMs);
+  const to = new Date(opts.toMs);
+  const localDay = localDayExpr(opts.offsetMin);
+  const ridByPoint = await RegistryCache.ridsForPoints(points);
+  const rids = [...ridByPoint.values()];
+  const pointByRid = new Map<number, PointId>(
+    [...ridByPoint].map(([p, r]) => [r, p]),
+  );
+  // SEAM: rid-keyed WHERE. Raw SQL for the same reason as countAgg5mByLocalDay.
+  const res = await db.execute(sql`
+    SELECT ${localDay} AS local_day,
+           ${pointReadingsAgg5m.pointRid} AS point_rid,
+           avg(${pointReadingsAgg5m.sampleCount})::float8 AS mean_samples
+    FROM ${pointReadingsAgg5m}
+    WHERE ${pointReadingsAgg5m.pointRid} IN (${sql.join(
+      rids.map((r) => sql`${r}`),
+      sql`, `,
+    )})
+      AND ${pointReadingsAgg5m.intervalEnd} >= ${from}
+      AND ${pointReadingsAgg5m.intervalEnd} <  ${to}
+    GROUP BY 1, 2
+  `);
+  for (const row of res.rows ?? []) {
+    const rid = Number((row as { point_rid: unknown }).point_rid);
+    const id = pointByRid.get(rid);
+    if (!id) continue;
+    const day = String((row as { local_day: unknown }).local_day);
+    out
+      .get(id)!
+      .set(day, Number((row as { mean_samples: unknown }).mean_samples));
+  }
+  return out;
+}
+
+/**
  * Per-point `agg_5m` row count for ONE local day (the coverage runner's landing probe,
  * `countMaxPresent`). `WHERE localDay(offsetMin) = day`. Result: per PointId, its count (0 when absent).
  */
@@ -2301,6 +2355,7 @@ export const ReadingsDao = {
   countAgg5mForSessions,
   staleAgg1dLocalDays,
   countAgg5mByLocalDay,
+  meanSampleCountAgg5mByLocalDay,
   countAgg5mForLocalDay,
   insertRaw,
   insert5m,

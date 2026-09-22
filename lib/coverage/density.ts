@@ -39,6 +39,51 @@ export interface DensityGap {
   expected: number;
 }
 
+/**
+ * A day whose mean samples-per-row falls below this fraction of the window's best day is a finding.
+ *
+ * Deliberately relative, like the `observed` row expectation: no vendor declares how many raw
+ * readings a 5-minute row should fold, and a source that polls every 30 s rather than 60 s is not
+ * wrong, only different. What IS wrong is the same point folding materially fewer on some days than
+ * on its best — Kinkora's Fronius fell from 5 to 2.5 overnight on 11 August 2026 while the row count
+ * stayed at 288/day.
+ */
+export const LOW_SAMPLE_RATIO = 0.8;
+
+/** Mean raw readings per `agg_5m` row, per day — `device coverage --samples`. */
+export interface SampleDensity {
+  /** Parallel to the window's `days`; null where the point holds no rows that day. */
+  meanSamples: (number | null)[];
+  /** The best day's mean — the reference for {@link LOW_SAMPLE_RATIO}. Null if the point is empty. */
+  bestDayMean: number | null;
+  /** Days whose mean is below `LOW_SAMPLE_RATIO × bestDayMean`. Empty days are NOT listed here —
+   * a missing row is a row-count gap, and `gaps` already reports it. */
+  lowDays: string[];
+}
+
+/** Build a point's per-day sample density from the DAO's `localDay → mean` map. PURE. */
+export function sampleDensity(
+  days: string[],
+  byDay: Map<string, number>,
+): SampleDensity {
+  const meanSamples = days.map((d) => {
+    const v = byDay.get(d);
+    return v === undefined || !Number.isFinite(v)
+      ? null
+      : Math.round(v * 100) / 100;
+  });
+  const present = meanSamples.filter((v): v is number => v !== null);
+  const bestDayMean = present.length ? Math.max(...present) : null;
+  const lowDays =
+    bestDayMean === null || bestDayMean <= 0
+      ? []
+      : days.filter((_, i) => {
+          const v = meanSamples[i];
+          return v !== null && v < LOW_SAMPLE_RATIO * bestDayMean;
+        });
+  return { meanSamples, bestDayMean, lowDays };
+}
+
 /** One point's density over the window. `counts` is parallel to the window's `days`. */
 export interface PointDensity {
   pointId: string;
@@ -56,6 +101,8 @@ export interface PointDensity {
   firstDay: string | null;
   lastDay: string | null;
   gaps: DensityGap[];
+  /** Only when the caller asked (`samples=true`) — a second grouped scan. */
+  samples?: SampleDensity;
 }
 
 /**

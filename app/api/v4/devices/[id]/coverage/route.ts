@@ -176,6 +176,9 @@ export async function GET(
       );
   }
 
+  // `samples=true` adds each day's mean raw readings per row — a second grouped scan, so opt-in.
+  const samples = sp.get("samples") === "true";
+
   const report = await buildDeviceCoverage(
     {
       id: Device.encode(row.id),
@@ -188,6 +191,7 @@ export async function GET(
     { start, end },
     patterns,
     cadence,
+    samples,
   );
   return NextResponse.json(report, {
     headers: { "Cache-Control": "private, no-store" },
