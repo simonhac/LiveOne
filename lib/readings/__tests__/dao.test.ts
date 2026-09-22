@@ -703,6 +703,25 @@ describe("ReadingsDao reads — rows map back to PointId, timestamps → epoch-m
     );
   });
 
+  it("meanSampleCountAgg5mByLocalDay maps per-point per-local-day mean sample_count", async () => {
+    const p = point(34, 9);
+    const { exec } = makeFakeExec([
+      { local_day: "2026-08-10", point_rid: 34, mean_samples: 5 },
+      { local_day: "2026-08-11", point_rid: 34, mean_samples: "2.5" },
+    ]);
+    const out = await ReadingsDao.meanSampleCountAgg5mByLocalDay(
+      [p],
+      { fromMs: 0, toMs: 2_000_000_000_000, offsetMin: 600 },
+      exec,
+    );
+    expect(out.get(p)).toEqual(
+      new Map([
+        ["2026-08-10", 5],
+        ["2026-08-11", 2.5],
+      ]),
+    );
+  });
+
   it("countAgg5mForLocalDay maps per-point count for one day (0 when absent)", async () => {
     const p = point(32, 9);
     const absent = point(33, 9);

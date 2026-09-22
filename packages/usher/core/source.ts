@@ -91,6 +91,19 @@ export interface SourceControl {
 export interface Source {
   /** Real reads report their own metrics; read() only harvests cached data. */
   productionReadsInBackground?: boolean;
+  /**
+   * `read()` is DESTRUCTIVE — it harvests what accumulated since the last read and resets it — so a
+   * read that is not delivered loses that data for good. The run loop then decides delivery BEFORE
+   * reading and skips the read on a poll-only tick, so every harvest is a delivered one.
+   *
+   * 🛑 fusher is why: `generateFroniusMinutely()` emits the energy since the previous snapshot and
+   * advances the snapshot. From 11 to 30 August 2026 a missing delivery tolerance made every second
+   * tick poll-only at Kinkora, and every `*WhInterval` point (solar, load, battery in/out, grid
+   * in/out) landed at exactly half its true value — the other half was read and dropped. Only valid
+   * for a source whose delivery decision does not depend on the values (no `isRunning` split, no
+   * control supervisor), since it is made before there are any.
+   */
+  harvestOnDeliveryOnly?: boolean;
   /** short label for logs/sessions, e.g. "musher" */
   name: string;
   /** gusher vendorSiteId (identifies the LiveOne device) */

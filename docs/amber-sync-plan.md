@@ -142,7 +142,7 @@ Both `updateUsage` and `updateForecasts` follow a similar 3-stage pattern:
 **Quality Precedence**:
 
 - Usage: billable > actual > estimated > null
-- Prices: actual > forecast > null
+- Prices: billable > actual > estimated > forecast > null (`lib/data-quality.ts` `qualityRank`)
 
 **Comparison Overview Format**:
 
@@ -303,9 +303,13 @@ export async function updateForecasts(
 
 - Uses Amber `/prices` endpoint which returns pricing forecasts
 - Creates point readings for:
-  - **Per-channel**: E1.perKwh, B1.perKwh (channel-specific pricing)
+  - **Per-channel**: E1.perKwh, B1.perKwh, CL1.perKwh (channel-specific pricing)
+  - **Per-channel, unsettled intervals only**: E1.advPerKwh, B1.advPerKwh, CL1.advPerKwh — Amber's own
+    forecast (`advancedPrice.predicted`), written for Forecast/Current records that carry the band
   - **Grid-level**: grid.spotPerKwh (wholesale spot price), grid.renewables (renewable percentage)
-- Quality levels: actual > forecast > null
+- Quality by record type: `ForecastInterval` → `f`, `CurrentInterval` → `e` (Amber's running
+  estimate of the interval underway — it was graded `a` until September 2026, which made an
+  unsettled price read as settled), `ActualInterval` → `a`. A later `b` comes from usage.
 - **Critical**: Parse `record.nemTime` (AEST) NOT `record.endTime` (UTC) for timestamps
 
 ### Price Point Key Mapping
@@ -315,6 +319,7 @@ export async function updateForecasts(
 | API Field    | Point Key                  | Level       | Description                                        |
 | ------------ | -------------------------- | ----------- | -------------------------------------------------- |
 | `perKwh`     | `E1.perKwh` or `B1.perKwh` | Per-channel | Final price including wholesale + network + margin |
+| `advancedPrice.predicted` | `E1.advPerKwh` or `B1.advPerKwh` | Per-channel | Amber's own forecast (logical `bidi.grid.import.forecast`); beats `perKwh` as a forecast at every lead |
 | `spotPerKwh` | `grid.spotPerKwh`          | Grid-level  | Wholesale spot market price component              |
 | `renewables` | `grid.renewables`          | Grid-level  | Renewable energy percentage (0-100)                |
 
@@ -353,7 +358,7 @@ Based on production data analysis:
 | `b`          | billable  | 1008 records (64%)  |
 | `a`          | actual    | 243 records (15%)   |
 | `f`          | forecast  | 237 records (15%)   |
-| `e`          | estimated | 0 records           |
+| `e`          | estimated | 0 records (prices: every CurrentInterval since Sep 2026) |
 | `.`          | null      | 96 records (6%)     |
 | `?`          | unknown   | For unrecognized    |
 

@@ -31,6 +31,7 @@ import {
 } from "../shared";
 import {
   compareDensity,
+  LOW_SAMPLE_RATIO,
   type DensityComparisonRow,
   type ExpectedBasis,
   type PointDensity,
@@ -80,6 +81,12 @@ export const coverageSpec: CommandSpec = {
     "Works on a disabled or archived device with --include-inactive: coverage is exactly what you\n" +
     "ask about a device that has stopped.\n" +
     "\n" +
+    "--samples adds a second measure: the mean number of raw readings folded into each 5-minute\n" +
+    "row, per day. A source that delivers every other reading still produces every row, so row\n" +
+    "counts stay at 100% while each row holds half its samples — and, for an energy-interval\n" +
+    "point, half its energy (Kinkora's Fronius, 11–30 Aug 2026). A day below 80% of the window's\n" +
+    "best day is a finding.\n" +
+    "\n" +
     "--gaps collapses the per-day table to runs of short days. --against <device> joins another\n" +
     "device's points on (logical path, metric) and diffs them day by day.\n" +
     "🛑 --against is DAY-granularity: the interval counts it reports are a LOWER BOUND on the true\n" +
@@ -122,6 +129,10 @@ export const coverageSpec: CommandSpec = {
       type: "boolean",
       help: "Collapse the per-day table to runs of short days — the shape you act on",
     },
+    samples: {
+      type: "boolean",
+      help: "Also report each day's mean raw readings per 5-minute row, and flag days below 80% of the window's best — the halving row counts cannot see",
+    },
     against: {
       type: "string",
       placeholder: "device",
@@ -135,13 +146,14 @@ export const coverageSpec: CommandSpec = {
   },
   formats: ["human", "json", "csv"],
   exitCodes: {
-    1: "at least one day is short of expected (or, with --against, the two devices differ)",
+    1: "at least one day is short of expected, or (with --samples) folds under 80% of the best day's readings per row (or, with --against, the two devices differ)",
   },
   examples: [
     "liveone device coverage kinkora --last=90d",
     "liveone device coverage kinkora --series='bidi.battery/soc.avg' --start=2025-09-22 --end=2026-09-15 --gaps",
     "liveone device coverage kink_fron --series='bidi.battery/soc.avg' --last=365d --against=kink_mondo",
     "liveone device coverage kinkora --last=30d --format=csv --out=coverage.csv",
+    "liveone device coverage kink_fron --start=2026-08-08 --end=2026-09-02 --series='*/energy.delta' --samples",
   ],
   uses: ["api"],
 };
@@ -206,6 +218,7 @@ async function fetchCoverage(
     window,
     ...(globs.length ? [`series=${encodeURIComponent(globs.join(","))}`] : []),
     ...(cadence !== undefined ? [`cadence=${cadence}`] : []),
+    ...(bool(ctx, "samples") ? ["samples=true"] : []),
   ].join("&");
   return s.get<WireCoverage>(
     `/api/v4/devices/${encodeURIComponent(device.id!)}/coverage?${params}`,
@@ -278,9 +291,63 @@ function renderGaps(c: WireCoverage): string {
         `      ${g.start} → ${g.end}   ${String(g.days).padStart(4)} day${g.days === 1 ? " " : "s"}   ${n(g.present)} / ${n(g.expected)}`,
       );
   }
-  lines.push("", ...verdict(c, shortPoints));
+  lines.push("", ...verdict(c, shortPoints), ...renderSamples(c));
   return lines.join("\n");
 }
+
+/** Consecutive runs of the listed days, in window order — `2026-08-11 → 2026-08-30 (20 days)`. */
+function dayRuns(days: string[], picked: string[]): string[] {
+  const set = new Set(picked);
+  const runs: string[] = [];
+  let start: string | null = null;
+  let prev: string | null = null;
+  let len = 0;
+  for (const d of [...days, ""]) {
+    if (set.has(d)) {
+      if (start === null) start = d;
+      prev = d;
+      len += 1;
+      continue;
+    }
+    if (start !== null)
+      runs.push(len === 1 ? start : `${start} → ${prev}  (${len} days)`);
+    start = null;
+    len = 0;
+  }
+  return runs;
+}
+
+/** The `--samples` section: nothing unless asked, one line per point with low days. */
+function renderSamples(c: WireCoverage): string[] {
+  const withSamples = c.points.filter((p) => p.samples);
+  if (!withSamples.length) return [];
+  const lines = [
+    "",
+    `samples per 5-minute row (a day under ${LOW_SAMPLE_RATIO * 100}% of the point's best day is low)`,
+  ];
+  let low = 0;
+  for (const p of withSamples) {
+    const sm = p.samples!;
+    if (!sm.lowDays.length) continue;
+    low += 1;
+    const lowMeans = c.window.days
+      .map((d, i) => (sm.lowDays.includes(d) ? sm.meanSamples[i] : null))
+      .filter((v): v is number => v !== null);
+    lines.push(
+      `  ${p.logicalPath ?? "?"}/${p.metricType}   best ${sm.bestDayMean}/row, low days ${Math.min(...lowMeans)}–${Math.max(...lowMeans)}/row`,
+      ...dayRuns(c.window.days, sm.lowDays).map((r) => `      ${r}`),
+    );
+  }
+  if (low === 0)
+    lines.push(
+      `  every day of ${withSamples.length} point(s) is within ${LOW_SAMPLE_RATIO * 100}% of its best.`,
+    );
+  return lines;
+}
+
+/** Points whose per-row sample density dropped — only ever non-zero under `--samples`. */
+const lowSamplePoints = (c: WireCoverage) =>
+  c.points.filter((p) => (p.samples?.lowDays.length ?? 0) > 0).length;
 
 function renderDense(c: WireCoverage): string {
   const lines = header(c);
@@ -299,6 +366,7 @@ function renderDense(c: WireCoverage): string {
     ...(short > 0 && !noEvidence(c)
       ? ["re-run with --gaps to see the runs."]
       : []),
+    ...renderSamples(c),
   );
   return lines.join("\n");
 }
@@ -319,6 +387,8 @@ export function densityCsv(c: WireCoverage): string {
         // from an operator override from a high-water mark inferred from the data itself — and
         // `none` from a genuine zero.
         c.expectedBasis,
+        // Present only under --samples; the column is always emitted so the shape is stable.
+        p.samples?.meanSamples[i] ?? "",
       ]),
     );
   return toCsv(
@@ -330,6 +400,7 @@ export function densityCsv(c: WireCoverage): string {
       "count",
       "expected",
       "expected_basis",
+      "mean_samples",
     ],
     rows,
   );
@@ -502,7 +573,8 @@ export async function runCoverage(ctx: Ctx): Promise<number> {
     const findings =
       a.count === 0 ||
       a.expectedBasis === "none" ||
-      a.points.some((p) => p.gaps.length > 0);
+      a.points.some((p) => p.gaps.length > 0) ||
+      lowSamplePoints(a) > 0;
     return findings ? EXIT.FINDINGS : EXIT.OK;
   });
 }

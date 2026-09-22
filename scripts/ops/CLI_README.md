@@ -86,6 +86,7 @@ still reach stderr.
       - [liveone device diagnostics export](#liveone-device-diagnostics-export)
       - [liveone device diagnostics run](#liveone-device-diagnostics-run)  _(writes)_
     - [liveone device events](#liveone-device-events)
+    - [liveone device forecasts](#liveone-device-forecasts)
     - [liveone device recompute](#liveone-device-recompute)  _(writes)_
     - [liveone device change-offset](#liveone-device-change-offset)  _(writes)_
     - [liveone device area](#liveone-device-area)  _(writes)_
@@ -2168,6 +2169,7 @@ Subcommands:
   config                 The stored DeviceConfig blob — read it, audit it for rot, normalise it.
   diagnostics            Captures of the inverter's internal event logs — list them, read one, export one, ask for another.
   events                 The device's retained fault history, from the portal and from the inverter itself.
+  forecasts              Amber's published price forecasts: the revision in force N hours out, the curve as of an instant, or capture health.
   recompute              Rebuild the rows derived FROM a device's readings, over a window of local days.  (writes)
   change-offset          Move a device's fixed day offset, and re-bucket every daily aggregate rolled up on the old one.  (writes)
   area                   Put a device in an area, or in none.  (writes)
@@ -2721,6 +2723,12 @@ its expectation is `observed` and is a floor, not an authority.
 Works on a disabled or archived device with --include-inactive: coverage is exactly what you
 ask about a device that has stopped.
 
+--samples adds a second measure: the mean number of raw readings folded into each 5-minute
+row, per day. A source that delivers every other reading still produces every row, so row
+counts stay at 100% while each row holds half its samples — and, for an energy-interval
+point, half its energy (Kinkora's Fronius, 11–30 Aug 2026). A day below 80% of the window's
+best day is a finding.
+
 --gaps collapses the per-day table to runs of short days. --against <device> joins another
 device's points on (logical path, metric) and diffs them day by day.
 🛑 --against is DAY-granularity: the interval counts it reports are a LOWER BOUND on the true
@@ -2745,6 +2753,7 @@ Options:
   --series <glob>            Only points whose series match this glob, matched against the DEVICE-LESS path, e.g. "bidi.battery/*" (repeatable; `*` does not cross `/`)  (repeatable)
   --cadence <minutes>        Override expected rows/day with a poll cadence in minutes (5 → 288/day). Use when the vendor declares none and the observed best day is wrong
   --gaps                     Collapse the per-day table to runs of short days — the shape you act on
+  --samples                  Also report each day's mean raw readings per 5-minute row, and flag days below 80% of the window's best — the halving row counts cannot see
   --against <device>         Compare with another device, joined on (logical path, metric). Day-granularity: interval counts are a LOWER BOUND, and values are never compared
   --out <path>               Write the full payload (or the CSV, under --format csv) to this file; stdout gets a summary
 
@@ -2770,10 +2779,11 @@ Examples:
   liveone device coverage kinkora --series='bidi.battery/soc.avg' --start=2025-09-22 --end=2026-09-15 --gaps
   liveone device coverage kink_fron --series='bidi.battery/soc.avg' --last=365d --against=kink_mondo
   liveone device coverage kinkora --last=30d --format=csv --out=coverage.csv
+  liveone device coverage kink_fron --start=2026-08-08 --end=2026-09-02 --series='*/energy.delta' --samples
 
 Exit codes:
   0    success
-  1    at least one day is short of expected (or, with --against, the two devices differ)
+  1    at least one day is short of expected, or (with --samples) folds under 80% of the best day's readings per row (or, with --against, the two devices differ)
   2    usage error
   3    authentication failure
   5    upstream failure
@@ -3417,6 +3427,90 @@ Examples:
 Exit codes:
   0    success
   1    completed, with findings or no results
+  2    usage error
+  3    authentication failure
+  5    upstream failure
+  130  interrupted
+```
+
+#### liveone device forecasts
+
+Amber's published price forecasts: the revision in force N hours out, the curve as of an instant, or capture health.
+
+```
+Amber's published price forecasts: the revision in force N hours out, the curve as of an instant, or capture health.
+
+When to use:
+  Use this to ask what Amber was forecasting for an interval, how far ahead, and whether the
+  forecast logger was running. For the price that actually SETTLED, use `device history`
+  (`--series 'bidi.grid.import/rate.avg'`).
+
+Amber devices only (422 otherwise).
+
+Default: per channel, the captured interval set, and per --lead the revision in force at
+each interval's cutoff. --anchor end (default) measures the lead to the interval END;
+--anchor start to its START, which is how a decision is framed. Amber's intervals are 30
+minutes, so start-anchored lead L is end-anchored L + 0.5 — the same data, relabelled.
+
+--start/--end are AEST calendar days (fixed +10, no DST), inclusive, at most 62 days;
+--last=Nd ends today (AEST). --lead takes a list or ranges, e.g. 0.5,1-24 (at most 48).
+
+--as-of <ISO> returns the curve as published at that instant over --horizon hours (default
+48), every channel including `site` (spot price and renewables).
+
+--health reports polls (from `sessions`) against captures, the horizon reach, and every gap
+between captures over 7 minutes with its cause: no poll ran, polls failed, or polls ran and
+Amber's forecast moved less than the storage threshold.
+
+--format csv is LONG: one row per (channel, lead, interval) — or per gap under --health.
+
+Usage:
+  liveone device forecasts <device> [options]
+
+  Read-only. This command changes nothing.
+
+Arguments:
+  <device>               An Amber device: its dv_… id, integer handle, slug, or name
+
+Options:
+  --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
+  --start <YYYY-MM-DD>       Window start — an AEST calendar day
+  --end <YYYY-MM-DD>         Window end, inclusive (AEST)
+  --last <7d>                Window of whole AEST days ending today (default 7d)
+  --channel <string>         Channel(s) to read (default general + feedIn)  (one of: general, feedIn, controlledLoad; repeatable)
+  --lead <1-12>              Lead hours: a list and/or ranges, e.g. 1,2,6 or 0.5,1-24 (default 1-12)
+  --anchor <string>          Measure the lead to the interval end (default) or start  (one of: end, start)
+  --as-of <ISO>              Instead: the curve as published at this instant
+  --horizon <hours>          With --as-of: how far ahead of it to read (default 48, max 72)
+  --health                   Instead: capture health over the window
+  --out <path>               Also write the full payload (or the CSV, under --format csv) to this file
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json, csv)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  --format csv     comma-separated rows on stdout — the columns are documented above
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
+
+Examples:
+  liveone device forecasts amber --last=7d --lead=1,6,12
+  liveone device forecasts amber --start=2026-08-15 --end=2026-09-21 --lead=0.5,1-24 --anchor=start --format=json --out=fc.json
+  liveone device forecasts amber --health --last=3d
+  liveone device forecasts amber --as-of=2026-09-20T06:00:00Z --format=csv
+
+Exit codes:
+  0    success
+  1    nothing was captured in the window (or, with --as-of, nothing was in force)
   2    usage error
   3    authentication failure
   5    upstream failure

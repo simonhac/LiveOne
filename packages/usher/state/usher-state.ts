@@ -16,7 +16,9 @@ export function recordTick(_entry: ScheduledEntry, r: TickResult): void {
     siteId: r.siteId,
     name: r.name,
     lastTickAt: r.at,
-    lastCount: r.count,
+    // A skipped read collected nothing by design; showing null would flicker the inspector's count
+    // on every poll-only tick of a harvesting source.
+    lastCount: r.readSkipped ? (prev?.lastCount ?? null) : r.count,
     running: r.active,
     // A queued tick says NOTHING about delivery — the courier has not reported yet. Taking
     // `r.pushOk` (undefined) here would wipe the last real delivery outcome on every single tick,

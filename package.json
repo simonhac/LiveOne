@@ -47,7 +47,7 @@
     "cli:reference": "tsx scripts/ops/cli-reference.ts",
     "check:cli": "tsx scripts/ops/cli-conformance.ts",
     "check:cli:a": "tsx scripts/ops/cli-conformance.ts --tier a",
-    "amber:forecast-accuracy": "tsx --env-file=.env.local scripts/amber/forecast-accuracy.ts",
+    "amber:forecast-accuracy": "tsx scripts/amber/forecast-accuracy.ts",
     "poll-cadence": "tsx --env-file=.env.local scripts/utils/poll-cadence.ts",
     "sigen:poll": "tsx --env-file=.env.local scripts/sigenergy/poll.ts",
     "deepsea:poll": "npm run --workspace @liveone/usher deepsea:poll",

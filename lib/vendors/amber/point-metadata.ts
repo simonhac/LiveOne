@@ -42,6 +42,34 @@ export function createChannelPoint(
 }
 
 /**
+ * Amber's OWN forecast for a channel — `advancedPrice.predicted` — as a second point beside the
+ * displayed `perKwh`.
+ *
+ * Two points, not one, because they are different forecasts and the difference matters: `perKwh` on
+ * a ForecastInterval is AEMO's pre-dispatch price passed through Amber's tariff, while
+ * `advancedPrice.predicted` is Amber's own model, and it is the better forecast at every lead
+ * (Aug–Sep 2026: 1.6 vs 2.5 c/kWh MAE at 6 h). `perKwh` must stay what it is, because it is the
+ * series that settles into the billed price. Written only for Forecast/Current intervals (Actuals
+ * carry no band), so for a past interval this point holds the last forecast Amber published for it.
+ */
+export function createAdvPricePoint(
+  channel: AmberChannelMetadata,
+): PointMetadata {
+  const stem = channel.extension
+    ? `bidi.grid.${channel.extension}`
+    : "bidi.grid";
+  return {
+    physicalPathTail: `${channel.channelId}/advPerKwh`,
+    logicalPathStem: `${stem}.forecast`,
+    defaultName: `${channel.defaultName} (Amber forecast)`,
+    subsystem: "grid",
+    metricType: "rate",
+    metricUnit: "cents_kWh",
+    transform: null,
+  };
+}
+
+/**
  * Get channel metadata from Amber channel type
  */
 export function getChannelMetadata(

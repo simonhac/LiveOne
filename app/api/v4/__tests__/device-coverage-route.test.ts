@@ -138,6 +138,18 @@ describe("the window", () => {
       { start: "2026-01-01", end: "2026-01-31" },
       undefined,
       null,
+      false,
+    );
+  });
+
+  it("asks for the samples scan only when samples=true", async () => {
+    await call("?start=2026-01-01&end=2026-01-31&samples=true");
+    expect(mockBuild).toHaveBeenLastCalledWith(
+      expect.anything(),
+      expect.anything(),
+      undefined,
+      null,
+      true,
     );
   });
 

@@ -19,6 +19,40 @@ interface AmberCardProps {
 }
 
 /**
+ * The stored price-quality markers are Amber's single chars (`lib/data-quality.ts`): an interval
+ * is `f`orecast, then `e`stimated while it is underway, then `a`ctual, then `b`illable.
+ */
+const QUALITY_BADGE: Record<
+  string,
+  { label: string; bg: string; fg: string } | undefined
+> = {
+  f: {
+    label: "Forecast",
+    bg: "rgba(59, 130, 246, 0.3)",
+    fg: "rgb(147, 197, 253)",
+  },
+  e: {
+    label: "Estimated (interval underway)",
+    bg: "rgba(107, 114, 128, 0.3)",
+    fg: "rgb(156, 163, 175)",
+  },
+  a: {
+    label: "Actual",
+    bg: "rgba(34, 197, 94, 0.3)",
+    fg: "rgb(134, 239, 172)",
+  },
+  b: {
+    label: "Billable",
+    bg: "rgba(168, 85, 247, 0.3)",
+    fg: "rgb(216, 180, 254)",
+  },
+};
+
+/** Unsettled: the slot's price is still a forecast, so Amber's own forecast is the better number. */
+const isUnsettled = (quality: string | null) =>
+  quality === "f" || quality === "e";
+
+/**
  * The forecast strip's height — the scrollable slot table below the heading. Used by the loading
  * and error branches so the card is one size from mount, and mirrored by the `amber-timeline`
  * footprint in components/dashboard/cards/footprints.ts.
@@ -27,7 +61,12 @@ const AMBER_STRIP_H = 300;
 
 interface TimeSlot {
   periodEnd: Date;
+  /** What the slot shows: Amber's forecast while the interval is unsettled, else the stored price. */
   priceInCents: number | null;
+  /** True when `priceInCents` is Amber's forecast rather than the stored `perKwh`. */
+  isAmberForecast: boolean;
+  /** The stored `perKwh` — for an unsettled slot, AEMO's pre-dispatch price through the tariff. */
+  storedPriceInCents: number | null;
   renewables: number | null;
   costKwh: number | null;
   incomeKwh: number | null;
@@ -61,6 +100,11 @@ export default function AmberCard({
       payload.data!.find((d) => d.id.includes(needle));
     const priceSeries = findSeries("bidi.grid.import/rate.avg");
     const qualitySeries = findSeries("bidi.grid.import/rate.quality");
+    // Amber's own forecast (advancedPrice.predicted). It beats the displayed perKwh at every lead
+    // (Aug–Sep 2026: 1.6 vs 2.5 c/kWh MAE at 6 h), so an unsettled slot shows it instead.
+    const amberForecastSeries = findSeries(
+      "bidi.grid.import.forecast/rate.avg",
+    );
     const renewablesSeries = findSeries("bidi.grid.renewables/proportion.avg");
     const costSeries = findSeries("bidi.grid.import/value.avg");
     const incomeSeries = findSeries("bidi.grid.export/value.avg");
@@ -70,6 +114,8 @@ export default function AmberCard({
     const historyStart = new Date(priceSeries.history.firstInterval);
     let priceData: (number | null)[] = priceSeries.history.data;
     let qualityData: (string | null)[] = qualitySeries?.history?.data || [];
+    let amberForecastData: (number | null)[] =
+      amberForecastSeries?.history?.data || [];
     let renewablesData: (number | null)[] =
       renewablesSeries?.history?.data || [];
     let costData: (number | null)[] = costSeries?.history?.data || [];
@@ -89,6 +135,7 @@ export default function AmberCard({
     if (lastValidIndex >= 0 && lastValidIndex < priceData.length - 1) {
       priceData = priceData.slice(0, lastValidIndex + 1);
       qualityData = qualityData.slice(0, lastValidIndex + 1);
+      amberForecastData = amberForecastData.slice(0, lastValidIndex + 1);
       renewablesData = renewablesData.slice(0, lastValidIndex + 1);
       costData = costData.slice(0, lastValidIndex + 1);
       incomeData = incomeData.slice(0, lastValidIndex + 1);
@@ -102,13 +149,19 @@ export default function AmberCard({
         historyStart.getTime() + index * 30 * 60 * 1000,
       );
       const quality = qualityData[index];
+      const dataQuality = typeof quality === "string" ? quality : null;
+      const amberForecast = amberForecastData[index] ?? null;
+      const isAmberForecast =
+        isUnsettled(dataQuality) && amberForecast !== null;
       return {
         periodEnd: slotTime,
-        priceInCents: value,
+        priceInCents: isAmberForecast ? amberForecast : value,
+        isAmberForecast,
+        storedPriceInCents: value,
         renewables: renewablesData[index] ?? null,
         costKwh: costData[index] ?? null,
         incomeKwh: incomeData[index] ?? null,
-        dataQuality: typeof quality === "string" ? quality : null,
+        dataQuality,
         isPast: slotTime <= roundedNow,
         isMissing: value === null,
       };
@@ -306,6 +359,11 @@ export default function AmberCard({
                       {/* Price */}
                       <div
                         className="text-sm font-extrabold mb-2"
+                        title={
+                          slot.isAmberForecast
+                            ? `Amber forecast — the published price is ${slot.storedPriceInCents?.toFixed(1) ?? "—"}¢`
+                            : undefined
+                        }
                         style={{
                           color: slot.isMissing
                             ? "rgb(156, 163, 175)"
@@ -373,34 +431,20 @@ export default function AmberCard({
                         <div
                           className="mt-1"
                           title={
-                            slot.dataQuality === "forecast"
-                              ? "Forecast"
-                              : slot.dataQuality === "actual"
-                                ? "Actual"
-                                : slot.dataQuality === "billable"
-                                  ? "Billable"
-                                  : slot.dataQuality
+                            (QUALITY_BADGE[slot.dataQuality]?.label ??
+                              slot.dataQuality) +
+                            (slot.isAmberForecast ? " · Amber forecast" : "")
                           }
                         >
                           <span
                             className="inline-block px-1 text-xs font-bold rounded"
                             style={{
                               backgroundColor:
-                                slot.dataQuality === "forecast"
-                                  ? "rgba(59, 130, 246, 0.3)"
-                                  : slot.dataQuality === "actual"
-                                    ? "rgba(34, 197, 94, 0.3)"
-                                    : slot.dataQuality === "billable"
-                                      ? "rgba(168, 85, 247, 0.3)"
-                                      : "rgba(107, 114, 128, 0.3)",
+                                QUALITY_BADGE[slot.dataQuality]?.bg ??
+                                "rgba(107, 114, 128, 0.3)",
                               color:
-                                slot.dataQuality === "forecast"
-                                  ? "rgb(147, 197, 253)"
-                                  : slot.dataQuality === "actual"
-                                    ? "rgb(134, 239, 172)"
-                                    : slot.dataQuality === "billable"
-                                      ? "rgb(216, 180, 254)"
-                                      : "rgb(156, 163, 175)",
+                                QUALITY_BADGE[slot.dataQuality]?.fg ??
+                                "rgb(156, 163, 175)",
                               opacity: slot.isPast ? 0.4 : 1,
                               fontSize: "10px",
                               lineHeight: "12px",

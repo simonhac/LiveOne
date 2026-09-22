@@ -21,6 +21,7 @@ import {
   eachLocalDay,
   observedMaxPerDay,
   resolveExpectedPerDay,
+  sampleDensity,
   type ExpectedBasis,
   type PointDensity,
 } from "./density";
@@ -76,6 +77,7 @@ export async function buildDeviceCoverage(
   window: { start: string; end: string },
   patterns: string[] | undefined,
   cadenceOverride: number | null,
+  withSamples = false,
 ): Promise<DeviceCoverageReport> {
   const days = eachLocalDay(window.start, window.end);
   const offsetMin = device.dayOffsetMin;
@@ -132,13 +134,20 @@ export async function buildDeviceCoverage(
   // Over-reaching costs one extra day of index scan at each edge and cannot be off by one. The
   // surplus buckets are keyed by days absent from `days`, so `densityForPoint` ignores them — and
   // `observedMaxPerDay` is scoped to `days` for the same reason.
+  const scan = {
+    fromMs: localMidnightUtcMs(window.start, offsetMin) - DAY_MS,
+    toMs: localMidnightUtcMs(window.end, offsetMin) + 2 * DAY_MS,
+    offsetMin,
+  };
   const counts = pointIds.length
-    ? await ReadingsDao.countAgg5mByLocalDay(pointIds, {
-        fromMs: localMidnightUtcMs(window.start, offsetMin) - DAY_MS,
-        toMs: localMidnightUtcMs(window.end, offsetMin) + 2 * DAY_MS,
-        offsetMin,
-      })
+    ? await ReadingsDao.countAgg5mByLocalDay(pointIds, scan)
     : new Map<PointId, Map<string, number>>();
+  // A second grouped scan over the same rows, so it is opt-in: row count cannot see a source that
+  // delivers half its readings into every row, and this can (see `SampleDensity`).
+  const samples =
+    withSamples && pointIds.length
+      ? await ReadingsDao.meanSampleCountAgg5mByLocalDay(pointIds, scan)
+      : null;
 
   const vendorCadence = vendorCadenceMinutes(device.vendor);
   // The observed basis is fleet-wide across the selected points, not per point: a device's cadence
@@ -156,14 +165,20 @@ export async function buildDeviceCoverage(
   );
 
   const points = [...byPoint.values()]
-    .map((p) =>
-      densityForPoint(
+    .map((p) => {
+      const density = densityForPoint(
         p,
         days,
         counts.get(p.pointId as PointId) ?? new Map(),
         expected,
-      ),
-    )
+      );
+      if (samples)
+        density.samples = sampleDensity(
+          days,
+          samples.get(p.pointId as PointId) ?? new Map(),
+        );
+      return density;
+    })
     .sort((a, b) =>
       `${a.logicalPath}/${a.metricType}` < `${b.logicalPath}/${b.metricType}`
         ? -1

@@ -190,6 +190,10 @@ export function createFusher(opts: FusherOptions): Source {
   return {
     name: "fusher",
     productionReadsInBackground: true,
+    // read() harvests the energy accumulated since the last harvest and resets the snapshot, so a
+    // read that is not delivered discards that interval's Wh (11–30 Aug 2026: every *WhInterval
+    // point at half its value). Read only on ticks that will be delivered.
+    harvestOnDeliveryOnly: true,
     siteId: opts.siteId,
     manifest: FUSHER_MANIFEST,
     async read(): Promise<Values> {

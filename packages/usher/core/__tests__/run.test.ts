@@ -717,3 +717,104 @@ it("does not count a background source's harvest as a production device read", a
     record.mockRestore();
   }
 });
+
+describe("a harvesting source (harvestOnDeliveryOnly)", () => {
+  /**
+   * Drive `tickOnce` the way `runEntryLoop` does — ticks ON the 60 s boundary, `sinceDeliveredMs`
+   * measured from the END of the previous delivery — against a meter whose read() hands over the
+   * energy accumulated since the last read and resets it, as fusher's `generateFroniusMinutely()`
+   * does. `toleranceMs: 0` is the pre-#403 gate that halved Kinkora's energy in August 2026.
+   */
+  async function run(harvestOnDeliveryOnly: boolean) {
+    const T0 = 1_788_000_000_000;
+    let now = T0;
+    const clock = jest.spyOn(Date, "now").mockImplementation(() => now);
+    let pendingWh = 0;
+    let reads = 0;
+    const { entry } = makeEntry(async () => {
+      reads++;
+      const wh = pendingWh;
+      pendingWh = 0;
+      return { x: wh };
+    });
+    entry.source.isRunning = undefined;
+    entry.source.harvestOnDeliveryOnly = harvestOnDeliveryOnly;
+    const delivered: number[] = [];
+    (entry as unknown as { pusher: unknown }).pusher = {
+      async store(readings: { value: number }[]) {
+        delivered.push(readings[0]?.value ?? 0);
+        return "ok" as const;
+      },
+    };
+
+    let lastDeliveredAt = 0;
+    let producedAtLastDelivery = 0;
+    let produced = 0;
+    try {
+      for (let tick = 0; tick < 12; tick++) {
+        now = T0 + tick * 60_000;
+        pendingWh += 100; // a minute of energy lands between ticks
+        produced += 100;
+        const r = await tickOnce(
+          entry,
+          () => {},
+          undefined,
+          (active) =>
+            shouldDeliverTick({
+              active,
+              wasActive: false,
+              controlVersion: undefined,
+              lastControlVersion: undefined,
+              inTransition: false,
+              sinceDeliveredMs: Date.now() - lastDeliveredAt,
+              idlePushMs: 120_000,
+              activePushMs: 120_000,
+              toleranceMs: 0,
+            }),
+        );
+        if (r.delivered) {
+          lastDeliveredAt = now + 5; // the delivery ends a few ms after the boundary
+          producedAtLastDelivery = produced;
+        }
+      }
+    } finally {
+      clock.mockRestore();
+    }
+    return { reads, delivered, producedAtLastDelivery };
+  }
+
+  it("is read exactly once per delivery, and delivers every Wh", async () => {
+    const { reads, delivered, producedAtLastDelivery } = await run(true);
+    expect(delivered.length).toBeGreaterThan(1);
+    expect(delivered.length).toBeLessThan(12); // the cadence really did skip ticks
+    expect(reads).toBe(delivered.length);
+    expect(delivered.reduce((a, b) => a + b, 0)).toBe(producedAtLastDelivery);
+  });
+
+  it("control: without the flag, poll-only reads discard energy (the August 2026 halving)", async () => {
+    const { reads, delivered, producedAtLastDelivery } = await run(false);
+    expect(reads).toBe(12);
+    expect(delivered.reduce((a, b) => a + b, 0)).toBeLessThan(
+      producedAtLastDelivery,
+    );
+  });
+
+  it("skips the read without reporting an error", async () => {
+    const { entry } = makeEntry(async () => ({ x: 1 }));
+    const read = jest.spyOn(entry.source, "read");
+    entry.source.harvestOnDeliveryOnly = true;
+    const r = await tickOnce(
+      entry,
+      () => {},
+      undefined,
+      () => false,
+    );
+    expect(read).not.toHaveBeenCalled();
+    expect(r).toMatchObject({
+      count: null,
+      delivered: false,
+      readSkipped: true,
+    });
+    expect(r.error).toBeUndefined();
+  });
+});

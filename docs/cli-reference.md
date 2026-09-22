@@ -106,6 +106,7 @@ still reach stderr.
       - [liveone device diagnostics export](../scripts/ops/CLI_README.md#liveone-device-diagnostics-export) — Write a capture to a fresh directory: manifest, decoded CSV, raw records, checksums.
       - [liveone device diagnostics run](../scripts/ops/CLI_README.md#liveone-device-diagnostics-run) — Ask for a fresh acquisition of the inverter's event logs.  _(writes)_
     - [liveone device events](../scripts/ops/CLI_README.md#liveone-device-events) — The device's retained fault history, from the portal and from the inverter itself.
+    - [liveone device forecasts](../scripts/ops/CLI_README.md#liveone-device-forecasts) — Amber's published price forecasts: the revision in force N hours out, the curve as of an instant, or capture health.
     - [liveone device recompute](../scripts/ops/CLI_README.md#liveone-device-recompute) — Rebuild the rows derived FROM a device's readings, over a window of local days.  _(writes)_
     - [liveone device change-offset](../scripts/ops/CLI_README.md#liveone-device-change-offset) — Move a device's fixed day offset, and re-bucket every daily aggregate rolled up on the old one.  _(writes)_
     - [liveone device area](../scripts/ops/CLI_README.md#liveone-device-area) — Put a device in an area, or in none.  _(writes)_

@@ -20,6 +20,9 @@
  * Select.live Events page and the inverter's own internal logs, retained because `fault_code` is a
  * sample of an instant and every sample of the September 2026 Daylesford outages read zero.
  * `diagnostics run` writes — but only a job row; the acquisition itself is the minutely worker's.
+ *
+ * `forecasts` (./forecasts.ts) reads what Amber PUBLISHED (`amber_forecast_history`) and whether
+ * the logger capturing it was alive — read-only, Amber devices only.
  */
 import {
   defineCommand,
@@ -45,6 +48,7 @@ import {
 } from "../shared";
 import { configSpec, CONFIG_HANDLERS } from "./config";
 import { coverageSpec, runCoverage } from "./coverage";
+import { forecastsSpec, runForecasts } from "./forecasts";
 import {
   diagnosticsSpec,
   eventsSpec,
@@ -250,6 +254,7 @@ export const deviceCommand = defineCommand({
     config: configSpec,
     diagnostics: diagnosticsSpec,
     events: eventsSpec,
+    forecasts: forecastsSpec,
     recompute: {
       name: "recompute",
       summary:
@@ -1020,6 +1025,7 @@ const HANDLERS: Record<string, (ctx: Ctx) => Promise<number>> = {
   latest: runLatest,
   history: runHistory,
   coverage: runCoverage,
+  forecasts: runForecasts,
   recompute: runRecompute,
   "change-offset": runChangeOffset,
 };
