@@ -11,7 +11,7 @@ on:
   workflow_dispatch:
     inputs:
       reason:
-        description: "Why this run fired; the self-heal passes 'self-heal' (drives the Slack-row marker)."
+        description: "Why this run fired; the self-heal passes 'self-heal' (drives the Slack row's marker, which the-gitfather's scheduler posts)."
         type: string
         default: manual
 
@@ -21,19 +21,18 @@ concurrency:
 
 jobs:
   backup:
-    permissions: { contents: read, actions: read }   # optional — lets failure alerts link to THIS job's log page (jobs API); see the-gitfather README
+    # id-token: the job's last step tells the-gitfather's scheduler it finished (GitHub OIDC — no stored secret);
+    # the scheduler then posts the run to Slack.
+    permissions: { contents: read, id-token: write }
     uses: simonhac/the-gitfather/.github/workflows/pg-backup.yml@main
     with:
       profile: pg-backup/liveone.yaml
       r2_bucket: ${{ vars.R2_BUCKET }}
-      slack_channel: ${{ vars.SLACK_CHANNEL }}
+      notify_url: ${{ vars.GITFATHER_NOTIFY_URL }}
       trigger: ${{ github.event_name == 'schedule' && 'schedule' || github.event.inputs.reason }}
     secrets:
       PG_BACKUP_DATABASE_URL: ${{ secrets.PG_BACKUP_DATABASE_URL }}
       R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
       R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
       R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-      SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}              # optional — daily Slack status row
       HEARTBEAT_URL: ${{ secrets.HEARTBEAT_URL }}                 # optional — dead-man's-switch
-      # ALERT_WEBHOOK_URL intentionally NOT passed: the Slack bot already posts to this channel, so the
-      # webhook fallback would duplicate every alert. (Engine still supports it for no-bot consumers.)

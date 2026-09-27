@@ -13,6 +13,7 @@ backup-prefix: pg/sydney
 timezone: Australia/Sydney      # Slack daily-row + dashboard heatmap rendering tz
 encryption: none                # liveone sets no AGE_RECIPIENT; dumps sit in a private (R2-encrypted) bucket
 anchor-hour-utc: 16             # the 16:xx UTC run promotes to daily/weekly/monthly ≈ 02:xx Sydney
+backups-per-day: 3              # 3 a day, phased from anchor-hour-utc → 00/08/16 UTC; the scheduler dispatches on this
 
 dump:
   # Full custom-format dump, restorable into a vanilla Postgres. Exclude the PlanetScale-managed schema
@@ -23,9 +24,9 @@ dump:
 
 # GFS retention. INFORMATIONAL — R2 lifecycle rules do the actual deleting; these must MATCH them and
 # drive the dashboard's aging math. Matches the R2 lifecycle: daily 21d / weekly 91d / monthly 365d
-# (+ 2hourly 2d).
+# (+ intraday 2d).
 retention:
-  grandson: 2 days              # 2-hourly
+  grandson: 2 days              # intraday (every backup)
   son: 3 weeks                  # daily   — 21 days
   father: 13 weeks              # weekly  — 91 days
   grandfather: 12 months        # monthly — 365 days
@@ -38,8 +39,7 @@ drill:
   min-row-ratio: 0.95
 
 staleness:
-  slot-minutes: 480            # 8-hourly cadence (00/08/16 UTC) — MUST match the scheduler
-  max-age-hours: 10             # backstop: page if the newest 2hourly object is older than this (> 8h cadence + margin)
+  max-age-hours: 10             # backstop: page if the newest intraday object is older than this (> 8h cadence + margin)
   heal-workflow: pg-backup.yml  # self-heal re-triggers this caller workflow on a missed tick
 
 dashboard:
