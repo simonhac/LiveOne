@@ -170,10 +170,17 @@ export default function LoadProvenanceCard({
   );
 }
 
-/** Short human label for a source path used in the split line. */
+/**
+ * Short human label for a source path used in the split line.
+ *
+ * 🛑 A SUB-METERED SOURCE KEEPS ITS OWN NAME. `source.solar.local` and `source.solar.remote` used
+ * to be collapsed to the bare word "solar" alongside `source.solar`, which on an area with two
+ * arrays rendered as two identical rows — Kinkora read "25% solar  17% solar", which looks like a
+ * rendering fault rather than like two arrays. Only the EXACT `source.solar` is shortened; anything
+ * beneath it falls through to its own label ("Solar 1", "Solar 2").
+ */
 function shortSourceLabel(path: string, label: string): string {
-  if (path === "source.solar" || path.startsWith("source.solar."))
-    return "solar";
+  if (path === "source.solar") return "solar";
   if (path === "source.battery") return "battery";
   if (path === "source.grid") return "grid";
   return label.toLowerCase();

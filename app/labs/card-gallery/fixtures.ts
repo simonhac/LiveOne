@@ -856,6 +856,31 @@ export const EV_PROVENANCE_SCENARIOS: Record<
       { path: "source.battery", label: "Battery", energyKwh: 45.0 },
     ],
   },
+  // 🛑 TWO SOLAR ARRAYS. Kinkora meters `source.solar.local` and `source.solar.remote` separately,
+  // and `shortSourceLabel` used to collapse both to the bare word "solar" — so the real dashboard
+  // rendered "25% solar  17% solar", two identical rows that read as a rendering fault. A
+  // sub-metered source now keeps its own name. This is the shape that reproduces it.
+  "split solar": {
+    loadPath: "load.ev",
+    loadLabel: "EV Charging",
+    energyKwh: 275.3,
+    costC: 1121,
+    revenueC: null,
+    avgCentsPerKwh: 4.1,
+    pctRenewable: 87.0,
+    avgGramsPerKwh: 191,
+    kgCo2: 52.6,
+    pctEstimated: 30,
+    costKnownKwh: 192.7,
+    emissionsKnownKwh: 192.7,
+    revenueKnownKwh: 0,
+    sources: [
+      { path: "source.battery", label: "Battery Discharge", energyKwh: 82.3 },
+      { path: "source.grid", label: "Grid Import", energyKwh: 75.2 },
+      { path: "source.solar.local", label: "Solar 1", energyKwh: 69.9 },
+      { path: "source.solar.remote", label: "Solar 2", energyKwh: 47.9 },
+    ],
+  },
   // Renewable share at/below the 50% threshold, so the stat drops off `text-ok` back to plain ink —
   // the one conditional colour in the body.
   "grid heavy": {
