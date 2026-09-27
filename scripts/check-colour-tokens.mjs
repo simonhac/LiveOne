@@ -20,8 +20,8 @@
  * `next build` and `build:local`; unit-tested via scripts/__tests__/check-colour-tokens.test.ts.
  */
 
-import { readdirSync, readFileSync, statSync } from "node:fs";
-import { join, relative } from "node:path";
+import { readdirSync, readFileSync, statSync, existsSync } from "node:fs";
+import { join, relative, resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
 /** Directories and files the dashboard renders. Grows as later slices land; never shrinks. */
@@ -36,6 +36,10 @@ export const SCOPE = [
   "lib/charts/style.ts",
   "lib/role-chrome.ts",
   "lib/point/unit-typography.ts",
+  // The json/location metric renders its own <span>, so this is a render site, not a style module.
+  // It reached the dashboard through ChartTooltip, EnergyTable and dashboard/DailyStripes while
+  // sitting outside SCOPE — which is what the reachability check below now makes impossible.
+  "lib/point/format-value.tsx",
   // The card bodies and dashboard chrome that live at the top of components/.
   ...`AmberCard AmberNow AmberPriceIndicator AmberSmallCard BatteryContentsCard ChartTooltip
       CommandActivityLog ControlNotice DashboardChart DashboardClient DashboardSettingsDialog
@@ -79,6 +83,13 @@ export const ARBITRARY_COLOUR = new RegExp(
  * 🛑 THIS LIST MAY ONLY SHRINK. Every entry is a question someone still has to answer, not an
  * exemption someone may copy. Adding one means arguing in review that a NEW colour should not have
  * a meaning — which is nearly always the wrong answer.
+ *
+ * That is enforced, not merely asserted: `scripts/__tests__/check-colour-tokens.test.ts` §
+ * "the exemption list" pins the COUNT (lower it, never raise it), re-derives each entry's classes
+ * from its file via `--no-exemptions` so a stale entry fails the build, checks each file is
+ * actually in SCOPE, and holds the doc's "Deliberately left literal" section in lockstep. For most
+ * of this layer's life those four checks did not exist and this comment was the only thing holding
+ * the line — which is to say, nothing was.
  */
 export const EXEMPTIONS = [
   {
@@ -87,31 +98,24 @@ export const EXEMPTIONS = [
     why: "pre-tile-style surface + an EV icon on the pool series' hue; goes when the card moves onto TileSurface",
   },
   {
-    file: "components/DeviceMetricsCard.tsx",
-    classes: ["bg-gray-800/40"],
-    why: "same pre-tile-style surface family",
-  },
-  {
-    file: "components/AmberNow.tsx",
-    classes: ["bg-slate-200"],
-    why: "the one light-on-dark surface in the app",
-  },
-  {
-    file: "components/AmberSmallCard.tsx",
+    file: "components/ui/debug-size-badge.tsx",
     classes: ["bg-red-500"],
-    why: "a ?debug-only badge, not a danger state",
-  },
-  {
-    file: "components/TeslaSmallCard.tsx",
-    classes: ["bg-red-500"],
-    why: "a ?debug-only badge, not a danger state",
+    why: "a ?debug-only badge, not a danger state — and now in ONE place rather than copied into AmberSmallCard and TeslaSmallCard",
   },
 ];
 
-/** Strip `//`, block comments and JSX `{/* … *\/}` so prose about colours is not a finding. */
+/**
+ * Strip `//`, block comments and JSX `{/* … *\/}` so prose about colours is not a finding.
+ *
+ * 🛑 A block comment is blanked IN PLACE, newlines kept. Collapsing one to a single space shifts
+ * every line number after it, which this guard did until 2026-09-21: the `text-gray-400` in
+ * `lib/point/format-value.tsx` sits on line 53 and was reported as line 33, because the file's
+ * 20-line header comment had been eaten. Wrong enough to send you to the wrong function, and
+ * silently — the class name still matched, so nothing looked broken.
+ */
 export function stripComments(src) {
   return src
-    .replace(/\/\*[\s\S]*?\*\//g, " ")
+    .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, " "))
     .replace(/(^|[^:])\/\/.*$/gm, "$1 ");
 }
 
@@ -137,41 +141,145 @@ function filesUnder(root, target) {
   return out;
 }
 
+/** Every colour literal in one file, minus `allowed`. */
+function scanFile(root, file, allowed = new Set()) {
+  const out = [];
+  const lines = stripComments(readFileSync(join(root, file), "utf8")).split(
+    "\n",
+  );
+  lines.forEach((text, i) => {
+    for (const re of [PALETTE_CLASS, ARBITRARY_COLOUR]) {
+      re.lastIndex = 0;
+      for (const m of text.matchAll(re)) {
+        if (allowed.has(m[0])) continue;
+        out.push({ file, line: i + 1, cls: m[0] });
+      }
+    }
+  });
+  return out;
+}
+
 /**
  * @param {string} root repository root
  * @param {string[]} [scope] paths to scan, relative to `root`; defaults to {@link SCOPE}
+ * @param {{ exemptions?: boolean }} [opts] `exemptions: false` reports the exempted classes too.
+ *   That mode exists for the guard test, which asserts every {@link EXEMPTIONS} entry still
+ *   describes its file exactly — so deleting a literal without deleting its entry fails the build
+ *   rather than quietly leaving an exemption that covers nothing.
  * @returns {Array<{ file: string, line: number, cls: string }>} violations
  */
-export function findColourLiterals(root, scope = SCOPE) {
-  const exempt = new Map(EXEMPTIONS.map((e) => [e.file, new Set(e.classes)]));
+export function findColourLiterals(root, scope = SCOPE, opts = {}) {
+  const exempt =
+    opts.exemptions === false
+      ? new Map()
+      : new Map(EXEMPTIONS.map((e) => [e.file, new Set(e.classes)]));
   const out = [];
   for (const target of scope) {
     for (const file of filesUnder(root, target)) {
       // The token block itself is where the palette is allowed to be spelled out.
       if (file === "app/globals.css") continue;
       const allowed = exempt.get(file) ?? new Set();
-      const lines = stripComments(readFileSync(join(root, file), "utf8")).split(
-        "\n",
-      );
-      lines.forEach((text, i) => {
-        for (const re of [PALETTE_CLASS, ARBITRARY_COLOUR]) {
-          re.lastIndex = 0;
-          for (const m of text.matchAll(re)) {
-            if (allowed.has(m[0])) continue;
-            out.push({ file, line: i + 1, cls: m[0] });
-          }
-        }
-      });
+      out.push(...scanFile(root, file, allowed));
     }
   }
   return out;
 }
 
+/**
+ * Every module specifier a file pulls in: static `import`, `export … from`, `export * from`, and
+ * dynamic `import()` (which is also how `next/dynamic` loads a component).
+ *
+ * 🛑 Type-only imports are NOT skipped, deliberately. `import type X` is easy to spot but
+ * `import { type A, B }` is a value import, so a correct rule is fiddly — and skipping them was
+ * measured at 18 files out of 261 with zero difference in findings. An over-broad walk has no false
+ * negatives, which is the only direction that matters here. Do not "optimise" this.
+ */
+const SPECIFIER = /(?:\bfrom\s*|\bimport\s*\(\s*)["']([^"']+)["']/g;
+
+/** `@/x` and `./x` → a repo-relative `.ts`/`.tsx` path, or null (bare package, .css, .json, …). */
+function resolveSpecifier(root, spec, fromFile) {
+  let base;
+  if (spec.startsWith("@/")) base = join(root, spec.slice(2));
+  else if (spec.startsWith(".")) base = resolve(root, dirname(fromFile), spec);
+  else return null;
+  for (const ext of [".tsx", ".ts", "/index.tsx", "/index.ts"]) {
+    const p = base + ext;
+    if (existsSync(p) && statSync(p).isFile()) return relative(root, p);
+  }
+  // An exact hit only counts if it is code we could find a class in.
+  if (/\.tsx?$/.test(base) && existsSync(base) && statSync(base).isFile())
+    return relative(root, base);
+  return null;
+}
+
+/** A test cannot render to a user, so it is not part of the dashboard's frontier. */
+function isTestFile(file) {
+  return (
+    file.includes("__tests__/") ||
+    file.startsWith("e2e/") ||
+    /\.(test|spec)\.tsx?$/.test(file)
+  );
+}
+
+/**
+ * Files the scoped set imports, transitively, that are NOT themselves scoped.
+ *
+ * @param {string} root repository root
+ * @param {string[]} [scope] defaults to {@link SCOPE}
+ * @returns {string[]} repo-relative paths, sorted
+ */
+export function reachableFrom(root, scope = SCOPE) {
+  const scoped = new Set(scope.flatMap((t) => filesUnder(root, t)));
+  const seen = new Set(scoped);
+  const queue = [...scoped];
+  const external = [];
+  while (queue.length) {
+    const file = queue.pop();
+    let src;
+    try {
+      src = readFileSync(join(root, file), "utf8");
+    } catch {
+      continue;
+    }
+    SPECIFIER.lastIndex = 0;
+    for (const m of src.matchAll(SPECIFIER)) {
+      // A computed specifier — import(`./${name}`) — is unresolvable and silently skipped. That is
+      // a real hole; there are none in SCOPE today.
+      const dep = resolveSpecifier(root, m[1], file);
+      if (!dep || seen.has(dep) || isTestFile(dep)) continue;
+      seen.add(dep);
+      queue.push(dep);
+      if (!scoped.has(dep)) external.push(dep);
+    }
+  }
+  return external.sort();
+}
+
+/**
+ * 🛑 The invariant a hand-maintained allow-list cannot hold on its own: **nothing the scoped set
+ * imports may carry a colour literal without itself being scoped.**
+ *
+ * `lib/point/format-value.tsx` is why this exists. It renders its own `<span className="…
+ * text-gray-400">`, three scoped files import it, and because it was not itself listed in SCOPE the
+ * gate called the dashboard clean for the whole life of the token layer. A literal one import away
+ * from the thing you are guarding is still on the screen.
+ *
+ * This deliberately does NOT replace SCOPE with the closure. 255 of the ~261 files reached are pure
+ * server modules (`lib/db`, `lib/kv`, `lib/readings`), and calling those "files the dashboard
+ * renders" would turn the guard's own vocabulary into noise; a computed scope would also leave the
+ * fixture harness and the "never the admin screens" test with no source text to read. SCOPE growing
+ * by hand IS the ratchet — this check's job is to tell you which line to add, not to add it.
+ */
+export function findUnscopedReachableLiterals(root, scope = SCOPE) {
+  return reachableFrom(root, scope).flatMap((f) => scanFile(root, f));
+}
+
 const thisFile = fileURLToPath(import.meta.url);
 if (process.argv[1] === thisFile) {
-  // `node check-colour-tokens.mjs [--root DIR] [path ...]` — paths override SCOPE. Both exist for
-  // scripts/__tests__/check-colour-tokens.test.ts, which drives the real CLI over temp fixtures
-  // rather than importing from an .mjs (same reasoning as check-readings-boundary.test.ts).
+  // `node check-colour-tokens.mjs [--root DIR] [--no-exemptions] [path ...]` — paths override
+  // SCOPE. All three exist for scripts/__tests__/check-colour-tokens.test.ts, which drives the real
+  // CLI over temp fixtures rather than importing from an .mjs (same reasoning as
+  // check-readings-boundary.test.ts).
   const argv = process.argv.slice(2);
   const rootFlag = argv.indexOf("--root");
   const root =
@@ -179,12 +287,38 @@ if (process.argv[1] === thisFile) {
   const paths = argv.filter(
     (a, i) => !a.startsWith("--") && i !== rootFlag + 1,
   );
-  const bad = findColourLiterals(root, paths.length ? paths : undefined);
-  if (bad.length === 0) {
+  const exemptions = !argv.includes("--no-exemptions");
+  const scope = paths.length ? paths : undefined;
+  const bad = findColourLiterals(root, scope, { exemptions });
+
+  // The reachability half runs on the real SCOPE only. Over an explicit path list it would follow
+  // a one-file fixture's imports out into the repo and report findings nobody asked about — and
+  // `--closure` exists so the guard's own test can still exercise it over a fixture tree.
+  const closure =
+    paths.length && !argv.includes("--closure")
+      ? []
+      : findUnscopedReachableLiterals(root, scope);
+
+  if (bad.length === 0 && closure.length === 0) {
     console.log(
-      `✓ colour tokens: ${(paths.length ? paths : SCOPE).length} scoped paths carry no raw palette class`,
+      `✓ colour tokens: ${(scope ?? SCOPE).length} scoped paths carry no raw palette class`,
     );
     process.exit(0);
+  }
+  if (closure.length) {
+    console.error(
+      `\n✗ ${closure.length} colour ${closure.length === 1 ? "literal" : "literals"} in ${
+        new Set(closure.map((c) => c.file)).size
+      } file(s) the dashboard REACHES but does not scope.\n`,
+    );
+    for (const c of closure)
+      console.error(`  ${relative(".", c.file)}:${c.line}  ${c.cls}`);
+    console.error(
+      "\nThese render on the dashboard through an import, so the gate's allow-list cannot see" +
+        "\nthem. Tokenise the file and add it to SCOPE (scripts/check-colour-tokens.mjs) —" +
+        "\nreachable-and-dirty is exactly how a literal ships past a green gate.\n",
+    );
+    if (bad.length === 0) process.exit(1);
   }
   console.error(
     `\n✗ ${bad.length} raw colour ${bad.length === 1 ? "class" : "classes"} on the dashboard.\n`,

@@ -1,6 +1,7 @@
 "use client";
 
-import { useRef, useState, useEffect } from "react";
+import { useState } from "react";
+import { useDebugSizeBadge } from "@/components/ui/debug-size-badge";
 import { useQuery } from "@tanstack/react-query";
 import Value from "@/components/ui/value";
 import ProgressRing from "@/components/ui/progress-ring";
@@ -146,12 +147,7 @@ export default function TeslaSmallCard({
   canControl,
   areaId,
 }: TeslaSmallCardProps) {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const [containerSize, setContainerSize] = useState<{
-    width: number;
-    height: number;
-  }>({ width: 0, height: 0 });
-  const [showDebug, setShowDebug] = useState(false);
+  const { rootRef, badge } = useDebugSizeBadge();
   const [controlsOpen, setControlsOpen] = useState(false);
 
   const showControls = canControl && systemId != null;
@@ -163,42 +159,6 @@ export default function TeslaSmallCard({
     ...chargeAutomationsQuery(areaId),
     enabled: !!areaId && !!showControls,
   });
-
-  // Show debug indicator only when ?debug is in URL
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    setShowDebug(params.has("debug"));
-  }, []);
-
-  // Track container size for debugging
-  useEffect(() => {
-    const el = containerRef.current;
-    if (!el) return;
-    const style = getComputedStyle(el);
-    const rect = el.getBoundingClientRect();
-    const paddingX =
-      parseFloat(style.paddingLeft) + parseFloat(style.paddingRight);
-    const paddingY =
-      parseFloat(style.paddingTop) + parseFloat(style.paddingBottom);
-    const borderX =
-      parseFloat(style.borderLeftWidth) + parseFloat(style.borderRightWidth);
-    const borderY =
-      parseFloat(style.borderTopWidth) + parseFloat(style.borderBottomWidth);
-    setContainerSize({
-      width: Math.round(rect.width - paddingX - borderX),
-      height: Math.round(rect.height - paddingY - borderY),
-    });
-    const observer = new ResizeObserver((entries) => {
-      for (const entry of entries) {
-        setContainerSize({
-          width: Math.round(entry.contentRect.width),
-          height: Math.round(entry.contentRect.height),
-        });
-      }
-    });
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, []);
 
   // Extract values from latest store
   const batterySoc = getNumericValue(latest, "ev.battery/soc");
@@ -265,7 +225,7 @@ export default function TeslaSmallCard({
 
   return (
     <TileSurface
-      rootRef={containerRef}
+      rootRef={rootRef}
       className="min-w-[66px] self-stretch"
       surfaceClassName="flex flex-col min-h-[110px] @[180px]:min-h-[180px]"
       overlay={
@@ -280,13 +240,7 @@ export default function TeslaSmallCard({
         ) : undefined
       }
     >
-      {/* DEBUG: Container size indicator */}
-      {/* `bg-red-500` stays literal: a ?debug-only badge, not a `danger` state. */}
-      {showDebug && (
-        <div className="absolute top-0 right-0 bg-red-500 text-ink text-[10px] px-1 rounded-bl z-50">
-          {containerSize.width}w {containerSize.height}h
-        </div>
-      )}
+      {badge}
 
       {/* Title slot: the Tesla mark, white, a guest in the place a title goes. The charge-control
           cog takes the top-right corner as a grey disc — owner/admin only, once there is room. */}

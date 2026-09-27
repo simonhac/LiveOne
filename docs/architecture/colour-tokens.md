@@ -1,6 +1,7 @@
 # Colour Tokens — colour is meaning, not hue
 
-> **Status:** current — introduced 2026-09-20. Migration in progress; see "Where we are" below.
+> **Status:** current — introduced 2026-09-20. The dashboard is converted and gated; what remains
+> on literals is the admin and device-only screens, out of scope by design. See "Where we are".
 
 Every colour on the dashboard is reached for by **what it means**, not by which hue it happens to
 be: `text-ink-muted`, never `text-gray-400`; `bg-surface`, never `bg-[#1C1C1E]`.
@@ -72,7 +73,7 @@ and the stroke are one value, and the test now reads `app/globals.css` instead o
 
 | Group | Tokens |
 | --- | --- |
-| Canvas & surface | `canvas` `surface` `surface-raised` `surface-sunken` `surface-panel` `surface-overlay` `surface-control` `surface-control-hover` `scrim` `wash` `rail` |
+| Canvas & surface | `canvas` `surface` `surface-raised` `surface-sunken` `surface-panel` `surface-overlay` `surface-control` `surface-control-hover` `row-hover` `scrim` `wash` `rail` |
 | Ink (chrome ramp) | `ink` `ink-strong` `ink-secondary` `ink-muted` `ink-faint` `ink-disabled` `ink-inverse` |
 | Ink (tile ramp) | `tile-ink-dim` `tile-ink-muted` `tile-ink-idle` |
 | Line | `line` `line-strong` `line-soft` `line-hairline` `line-faint` |
@@ -137,8 +138,15 @@ scanned source. A `text-ok` that nothing uses simply does not exist in the built
 
 **The dashboard is done.** Every file it renders — `components/ui/**`, `components/dashboard/**`,
 the twelve card bodies, the charts, Sankey and tables, the chrome and every dialog,
-`components/area-builder/**`, `app/dashboard/**`, and the style-token modules — carries no raw
-palette class, bar the handful listed below that say why in place.
+`components/area-builder/**`, `app/dashboard/**`, the style-token modules, and the point-format
+modules (`lib/point/unit-typography.ts`, `lib/point/format-value.tsx`) — carries no raw palette
+class, bar the handful listed below that say why in place.
+
+🛑 **`lib/point/format-value.tsx` is the reason the gate grew a reachability check.** It renders its
+own `<span>` for the json/location metric, and `ChartTooltip`, `EnergyTable` and
+`dashboard/DailyStripes` all import it — so the dashboard shipped a `text-gray-400` for as long as
+the file sat outside `SCOPE`, with the gate reporting green the whole time. A hand-maintained
+allow-list cannot see a literal one import away from the thing it is guarding; see "The gate".
 
 Out of scope and still on literals: the admin and device-only screens (`app/admin/**`, the device
 settings and poll modals, `DeviceViewer` and its chrome). They render identically either way,
@@ -156,28 +164,63 @@ by file. So a literal ships silently and the vocabulary decays one dialog at a t
 it started from. The gate is the only thing that makes "done" a stable state rather than a
 high-water mark.
 
-It checks two things, and the second earned its keep on first run: a **palette class**
-(`text-gray-400`, `bg-black/50`) and a **hard-coded colour in an arbitrary value**
-(`bg-[#1C1C1E]`). Three surfaces were still hard-coded — the skeleton, the stale badge and Amber's
-panel — and no palette-class grep could ever have seen them.
+It checks three things, and each of the last two earned its keep by finding something on first run:
 
-`SCOPE` is an allow-list of paths, so the admin screens stay out; extending it is how a future
-slice ratchets forward. `EXEMPTIONS` is the list below, and
-`scripts/__tests__/check-colour-tokens.test.ts` pins its size so it can only shrink.
+1. a **palette class** — `text-gray-400`, `bg-black/50`;
+2. a **hard-coded colour in an arbitrary value** — `bg-[#1C1C1E]`. Three surfaces were still
+   hard-coded (the skeleton, the stale badge, Amber's panel) and no palette-class grep could ever
+   have seen them;
+3. 🛑 **reachability** — a literal in a file the scoped set *imports* but does not itself scope.
+
+**Why (3) exists.** `lib/point/format-value.tsx` renders its own `<span className="text-xs
+text-gray-400">` for the json/location metric, and `ChartTooltip`, `EnergyTable` and
+`dashboard/DailyStripes` all import it. Because the file was not itself listed, the gate reported a
+clean dashboard over a raw palette class for the entire life of the token layer. **An allow-list
+cannot see a literal one import away from the thing it is guarding** — so the guard now follows
+`import`, `export … from`, `export * from` and dynamic `import()` out of `SCOPE` and asserts that
+everything it reaches is either scoped or clean. Measured: ~261 files reached, 93 ms.
+
+It does **not** replace `SCOPE` with that closure, on purpose. 255 of those files are pure server
+modules (`lib/db`, `lib/kv`, `lib/readings`); calling them "files the dashboard renders" would turn
+this vocabulary into noise, and a computed scope would make the frontier implicit — one new
+`import` in an unrelated module silently conscripting a subtree, and a PR that touched nothing
+visual failing on a file it never opened. `SCOPE` growing by hand **is** the ratchet; the closure's
+job is to name the line you must add, not to add it behind your back.
+
+🛑 **What it still cannot see: an inline `style`.** Both checks match CLASSES, so
+`style={{ color: "rgb(0,0,0)" }}` is invisible to the gate. `AmberNow`'s price circle carries two
+(black text on the brand gradient), and `AmberSmallCard` several more. They are legitimate — an SVG
+fill and a gradient cannot be utility classes — but nothing stops a new one being wrong, so this is
+a real hole rather than a closed question.
+
+`SCOPE` is therefore still an allow-list, so the admin screens stay out. `EXEMPTIONS` is the list
+below, and `scripts/__tests__/check-colour-tokens.test.ts` § "the exemption list" holds it: the
+count may only fall, every entry is re-derived from its file (so a stale one fails the build), each
+file must be in `SCOPE`, and the "Deliberately left literal" section below is checked to name
+exactly those files and no others. None of that existed until 2026-09-21 — the rule lived only in a
+comment, which is to say it did not live anywhere.
 
 ## Deliberately left literal
 
 Not every colour should become a token, and these say so where they sit rather than silently:
 
-- **`LoadProvenanceCard`'s and `DeviceMetricsCard`'s own surfaces** — `gray-800/50`, `gray-800/40`,
-  `gray-700/60`. Both cards predate [tile-style.md](tile-style.md) and carry a fill and hairlines a
-  step off every other card's. Minting a token per accident is how a vocabulary stops being
-  navigable, and re-toning them is a decision rather than a rename. They go when those cards move
-  onto `TileSurface`.
+- **`LoadProvenanceCard`'s own surface** — `gray-800/50` and `gray-700/60`. The card predates
+  [tile-style.md](tile-style.md) and carries a fill and hairlines a step off every other card's.
+  Minting a token per accident is how a vocabulary stops being navigable, and re-toning it is a
+  decision rather than a rename. It goes when the card moves onto `TileSurface`.
+
+  🛑 `DeviceMetricsCard` was listed here too, as "the same pre-tile-style surface family". **It
+  never was one.** Its `gray-800/40` was a single `<tr>` hover inside a `CHART_HAIRLINE` table with
+  `divide-y divide-line-soft` — a table, not a slab — and its `grid` variant has always rendered
+  `<Tile>`, i.e. has always been on `TileSurface`. There was nothing to move. It is now
+  `hover:bg-row-hover`, byte-identical. A wrong reason on an exemption is worse than no reason:
+  it parks a question under a heading where nobody will look for it again.
 - **`LoadProvenanceCard`'s cyan car icon** — cyan is the POOL series and this is the EV card, so
   `series-pool` would encode a lie and `series-ev` is a re-tone. Left visible.
-- **`AmberNow`'s light panel** (`bg-slate-200`) — the one light-on-dark surface in the app.
-- **Two `?debug` badges** (`bg-red-500`) — dev-only affordances, not a `danger` state.
+- **The `?debug` size badge** (`bg-red-500`) — a dev-only affordance, not a `danger` state. It was
+  two entries until `AmberSmallCard` and `TeslaSmallCard` were found to be carrying verbatim copies
+  of the same badge, URL check and `ResizeObserver`; it now lives once, in
+  `components/ui/debug-size-badge.tsx`.
 
 Each is a *question*, not an oversight, which is why none of them is quietly mapped to the nearest
 token.
@@ -202,6 +245,7 @@ token that memorialises an accident.
 | `green-500` · `/90` | `ok` | ditto |
 | `yellow-500` | `warn` | `ServerErrorModal`'s warning triangle |
 | `accent-green-600` · `accent-amber-500` | `accent-ok` · `accent-warn` | a range input's native tint |
+| `text-ink-faint` on a LIGHT panel | `ink-inverse-secondary` (black/70) | `AmberNow`'s SUMMARY heading — gray-500, a dark-surface token, on the one light surface in the app. Legible by accident; the token asserted the opposite of the surface it sat on |
 
 None is larger than one palette step or a few percent of alpha, and all are inside the dashboard —
 nothing that only the admin screens render was re-toned.

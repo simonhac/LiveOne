@@ -50,7 +50,7 @@ export function formatValueParts(
       if (parsed.lat !== undefined && parsed.lon !== undefined) {
         return {
           value: (
-            <span className="text-xs text-gray-400">
+            <span className="text-xs text-ink-muted">
               {parsed.lat.toFixed(5)}, {parsed.lon.toFixed(5)}
             </span>
           ),
