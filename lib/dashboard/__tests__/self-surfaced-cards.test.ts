@@ -25,8 +25,10 @@ const CARDS = path.join(ROOT, "components", "dashboard", "cards");
  * `TILE_SURFACE`)?
  *
  * 🛑 Matched against the file's `import` statements only, never its whole text. Scanning the whole
- * file made a card that merely MENTIONS `TileSurface` in a comment — as LoadProvenanceCard does,
- * explaining that it has NOT moved onto one yet — read as though it drew one.
+ * file made a card that merely MENTIONS `TileSurface` in a comment read as though it drew one. The
+ * original offender was LoadProvenanceCard, whose comment explained that it had NOT moved onto one
+ * yet; it since has, so the example is gone but the hazard is not — any card whose comments discuss
+ * the surface it is or isn't on would trip a whole-file match.
  */
 const SURFACE_SYMBOLS =
   /\b(TileSurface|StatCardShell|TILE_ROOT|TILE_SURFACE)\b/;
@@ -76,11 +78,15 @@ describe("self-surfaced card plugins", () => {
     },
   );
 
-  it("names the two we know about, so a silent flip to zero is visible", () => {
+  it("names the ones we know about, so a silent flip to zero is visible", () => {
     const flagged = PLUGINS.filter((p) =>
       /selfSurfaced:\s*true/.test(p.src),
     ).map((p) => p.file);
-    expect(flagged.sort()).toEqual(["amber-now.tsx", "battery-contents.tsx"]);
+    expect(flagged.sort()).toEqual([
+      "amber-now.tsx",
+      "battery-contents.tsx",
+      "ev-provenance.tsx",
+    ]);
   });
 
   it("leaves the padded run to the things that need it — charts and tables", () => {

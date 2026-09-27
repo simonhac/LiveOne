@@ -52,6 +52,9 @@ function AreaLoadProvenance({ handle }: CardRenderProps) {
 export const evProvenancePlugin: CardPlugin = {
   kind: "card",
   type: "ev-provenance",
+  // `LoadProvenanceCard` paints a `StatCardShell` → `TileSurface`, so it states its own extent and
+  // the section must not inset it — or it sits narrower than the Home Energy card beside it.
+  selfSurfaced: true,
   footprint: () => CARD_FOOTPRINTS["ev-provenance"],
   Render: AreaLoadProvenance,
 };

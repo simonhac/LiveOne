@@ -14,13 +14,15 @@ import AmberNow from "@/components/AmberNow";
 import GridSignalsCard from "@/components/GridSignalsCard";
 import BatteryContentsCard from "@/components/BatteryContentsCard";
 import HomeEnergyCard from "@/components/HomeEnergyCard";
+import LoadProvenanceCard from "@/components/LoadProvenanceCard";
 import { CARD_RENDERERS } from "@/components/dashboard/registry";
 import type { TileId } from "@/lib/dashboard/card-types";
 import type { LatestPointValues } from "@/lib/types/api";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQueryClient, useIsFetching } from "@tanstack/react-query";
 import GeneratorControlDialog from "@/components/GeneratorControlDialog";
 import TeslaControlDialog from "@/components/TeslaControlDialog";
 import { installControlStub, type ControlScenarioName } from "./control-stub";
+import { scenariosOf, type SectionSlug } from "./sections";
 import {
   makeStale,
   SOLAR_SCENARIOS,
@@ -36,6 +38,7 @@ import {
   GRID_SIGNALS_SCENARIOS,
   BATTERY_CONTENTS_SCENARIOS,
   HOME_ENERGY_SCENARIOS,
+  EV_PROVENANCE_SCENARIOS,
 } from "./fixtures";
 
 // ---------------------------------------------------------------------------
@@ -127,6 +130,63 @@ function TileCell({
   );
 }
 
+/**
+ * `?scenario=<name>` / `?stale=1` for one section, so the census can pin a state by URL.
+ *
+ * Scoped by slug when `?section=` names a single section (the census always renders one at a time);
+ * an unscoped `?scenario=` would otherwise try to apply to all fourteen at once, and every section
+ * whose picker lacks that name would silently fall back to its default — a census that looked like
+ * it had covered a state it never rendered.
+ */
+function useSectionSeed(slug: string): {
+  scenario: string | null;
+  stale: boolean;
+  hidden: boolean;
+} {
+  const [seed] = useState(() => {
+    if (typeof window === "undefined")
+      return { scenario: null, stale: false, hidden: false };
+    const p = new URLSearchParams(window.location.search);
+    const only = p.get("section");
+    if (only != null && only !== slug)
+      return { scenario: null, stale: false, hidden: true };
+    if (only == null) return { scenario: null, stale: false, hidden: false };
+    return {
+      scenario: p.get("scenario"),
+      stale: p.get("stale") === "1",
+      hidden: false,
+    };
+  });
+  return seed;
+}
+
+/**
+ * True once the page has mounted AND nothing is in flight — the census's wait.
+ *
+ * 🛑 `useIsFetching() === 0` alone is not the answer, because it is ALSO 0 in the instant before
+ * the first query starts. The card gallery's fetch stub answers on a `setTimeout` (150ms for
+ * `/api/data`, 200ms for run-periods), and the generator tile's "Generated" row EXISTS only once
+ * those resolve — twelve tile instances across two generator sections whose row count flips on that
+ * race. That is the element-count drift (3186/3187/3190/3201 across loads) measured when the census
+ * was first run by hand. So: latch once fetching has been seen non-zero, and otherwise require a
+ * frame to have passed with nothing in flight.
+ */
+function useGalleryReady(mounted: boolean): boolean {
+  const fetching = useIsFetching();
+  const sawFetch = useRef(false);
+  const [settledOnce, setSettledOnce] = useState(false);
+
+  if (fetching > 0 && !sawFetch.current) sawFetch.current = true;
+
+  useEffect(() => {
+    if (!mounted) return;
+    const id = requestAnimationFrame(() => setSettledOnce(true));
+    return () => cancelAnimationFrame(id);
+  }, [mounted]);
+
+  return mounted && fetching === 0 && (sawFetch.current || settledOnce);
+}
+
 /** Segmented state picker. */
 function StatePicker({
   options,
@@ -157,18 +217,30 @@ function StatePicker({
   );
 }
 
-/** A width-fixed preset cell (height natural). Card fills the width as a block. */
+/**
+ * A width-fixed preset cell (height natural). Card fills the width as a block.
+ *
+ * 🛑 `data-card-case` marks THE CARD'S SUBTREE, and the colour census reads only inside it. That
+ * boundary is not cosmetic: this page's own chrome is deliberately NOT tokenised (it is not in the
+ * colour gate's SCOPE, and it is full of `bg-blue-600`, `text-gray-500`, `accent-amber-500`), so a
+ * census of the whole document would mix ~100 elements that are SUPPOSED to be raw literals in with
+ * the cards under test. The size label above is outside it for the same reason.
+ */
 function PresetCell({
   width,
+  caseId,
   children,
 }: {
   width: number;
+  caseId: string;
   children: React.ReactNode;
 }) {
   return (
     <div className="flex flex-col gap-1">
       <span className="text-[10px] text-gray-500">{width}px</span>
-      <div style={{ width }}>{children}</div>
+      <div data-card-case={caseId} style={{ width }}>
+        {children}
+      </div>
     </div>
   );
 }
@@ -240,18 +312,19 @@ function Resizable({
 
 /** One card family section: state picker + preset row + resizable playground. */
 function CardSection({
+  slug,
   title,
   note,
-  scenarios,
   defaultScenario,
   render,
   presetWidths,
   playground,
   onScenarioChange,
 }: {
+  /** Identifies the section to `?section=` and to the census; scenarios come from `SECTIONS`. */
+  slug: SectionSlug;
   title: string;
   note?: string;
-  scenarios: string[];
   defaultScenario: string;
   render: (scenario: string, stale: boolean) => React.ReactNode;
   presetWidths: number[];
@@ -259,14 +332,28 @@ function CardSection({
   /** Lets the page react to the picked state — the generator's stubbed run-periods follows it. */
   onScenarioChange?: (scenario: string) => void;
 }) {
-  const [scenario, setScenarioState] = useState(defaultScenario);
-  const [stale, setStale] = useState(false);
+  const scenarios = scenariosOf(slug);
+  // `?scenario=` / `?stale=1` seed the pickers, so the census can pin a state without clicking
+  // through a `<button>` row. Read once, as the initial state: a later manual click must win.
+  const seed = useSectionSeed(slug);
+  const [scenario, setScenarioState] = useState(
+    seed.scenario && scenarios.includes(seed.scenario)
+      ? seed.scenario
+      : defaultScenario,
+  );
+  const [stale, setStale] = useState(seed.stale);
+  // `?section=` renders one section alone. Filtered HERE rather than at the call sites so the
+  // fourteen JSX blocks stay untouched — and after every hook, so hook order cannot change.
+  if (seed.hidden) return null;
   const setScenario = (next: string) => {
     setScenarioState(next);
     onScenarioChange?.(next);
   };
   return (
-    <section className="mb-12 border-b border-gray-800 pb-10">
+    <section
+      data-section={slug}
+      className="mb-12 border-b border-gray-800 pb-10"
+    >
       <h2 className="text-lg font-semibold text-gray-100 mb-1">{title}</h2>
       {note && <p className="text-xs text-gray-500 mb-3">{note}</p>}
       <div className="flex flex-wrap items-start gap-x-4">
@@ -298,7 +385,7 @@ function CardSection({
           fit would be lying about the width printed above it. */}
       <div className="flex flex-wrap items-end gap-4 mb-8 overflow-x-auto">
         {presetWidths.map((w) => (
-          <PresetCell key={w} width={w}>
+          <PresetCell key={w} width={w} caseId={`${slug}/${w}`}>
             {render(scenario, stale)}
           </PresetCell>
         ))}
@@ -406,6 +493,7 @@ export default function CardGallery() {
    */
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
+  const ready = useGalleryReady(mounted);
   if (!mounted) return null;
 
   const toggleDebug = () => {
@@ -416,7 +504,10 @@ export default function CardGallery() {
   };
 
   return (
-    <div className="min-h-screen bg-black text-gray-200 p-6">
+    <div
+      data-gallery-ready={ready ? "true" : "false"}
+      className="min-h-screen bg-black text-gray-200 p-6"
+    >
       <div className="max-w-6xl mx-auto">
         <header className="mb-8">
           <h1 className="text-2xl font-bold text-white">Card Gallery</h1>
@@ -448,9 +539,9 @@ export default function CardGallery() {
         </header>
 
         <CardSection
+          slug="power-solar"
           title="Power — Solar"
           note="Tile. Hero in solar yellow (grey below 50 W); 'local + remote' adds the breakdown caption. The period bars need a subject, so they do not draw here."
-          scenarios={Object.keys(SOLAR_SCENARIOS)}
           defaultScenario="local + remote"
           presetWidths={TILE_WIDTHS_WIDE}
           playground={{ w: 200, h: 140 }}
@@ -460,9 +551,9 @@ export default function CardGallery() {
         />
 
         <CardSection
+          slug="power-load"
           title="Power — Load"
           note="Tile. 'with children' shows top-2 child loads + synthesized rest-of-house."
-          scenarios={Object.keys(LOAD_SCENARIOS)}
           defaultScenario="with children"
           presetWidths={TILE_WIDTHS_WIDE}
           playground={{ w: 200, h: 140 }}
@@ -472,9 +563,9 @@ export default function CardGallery() {
         />
 
         <CardSection
+          slug="power-battery"
           title="Power — Battery"
           note="Tile. SoC ring in battery green (red under 20%); the direction chip is up for discharge, down for charge, a dash when idle. Stale greys the values and shows the age."
-          scenarios={Object.keys(BATTERY_SCENARIOS)}
           defaultScenario="charging"
           presetWidths={TILE_WIDTHS_WIDE}
           playground={{ w: 200, h: 140 }}
@@ -484,9 +575,9 @@ export default function CardGallery() {
         />
 
         <CardSection
+          slug="power-grid"
           title="Power — Grid"
           note="Tile. Hero in grid magenta, grey when idle; the header chip is down for import, up for export, doubled above 5 kW."
-          scenarios={Object.keys(GRID_SCENARIOS)}
           defaultScenario="importing"
           presetWidths={TILE_WIDTHS_WIDE}
           playground={{ w: 200, h: 140 }}
@@ -496,9 +587,9 @@ export default function CardGallery() {
         />
 
         <CardSection
+          slug="generator"
           title="Generator"
           note="Tile as a viewer who canNOT control it: no cog in the top-right corner. Status copy comes from the hub's own vocabulary, except idle, which splits on the panel mode: Auto means ARMED, anything else means LOCKED OUT, and an unread panel says neither. The time row prefers OUR run's remaining minutes and falls back to elapsed. The Generated row reads 'Since h:mma' with THIS RUN's energy while a run is open, 'This period' between runs, and NOTHING at all while the engine turns but the detector has not opened a period yet — pick 'starting (ours)' to see that window."
-          scenarios={Object.keys(GENERATOR_SCENARIOS)}
           defaultScenario="running (ours)"
           onScenarioChange={(sc) => {
             genScenarioPlain.current = sc;
@@ -518,9 +609,9 @@ export default function CardGallery() {
         />
 
         <CardSection
+          slug="generator-controls"
           title="Generator — with controls"
           note="The same tile as a viewer who OWNS the generator: the cog moves into the top-right corner (where TeslaSmallCard puts its own) and opens the run controls. Same faked run-periods as the section above, on its own device handle so the two sections' pickers do not overwrite each other."
-          scenarios={Object.keys(GENERATOR_CONTROL_SCENARIOS)}
           defaultScenario="auto (armed)"
           onScenarioChange={(sc) => {
             genScenario.current = sc;
@@ -544,9 +635,9 @@ export default function CardGallery() {
         <GeneratorDialogSection scenarioRef={dialogScenario} />
 
         <CardSection
+          slug="hot-water"
           title="Hot Water"
           note="HwsSmallCard (a Tile). The only card with a TIGHT unit — '62.4°C' must read fused and UNMUTED, unlike '5.0 kW'. See docs/architecture/number-typography.md."
-          scenarios={Object.keys(HWS_SCENARIOS)}
           defaultScenario="hot"
           presetWidths={TILE_WIDTHS_WIDE}
           playground={{ w: 200, h: 140 }}
@@ -559,9 +650,9 @@ export default function CardGallery() {
         />
 
         <CardSection
+          slug="amber-small"
           title="Amber — small card"
           note="Two forms, switching at 180px of TILE width. Returns null if no import rate."
-          scenarios={Object.keys(AMBER_SCENARIOS)}
           defaultScenario="low"
           presetWidths={TILE_WIDTHS}
           playground={{ w: 200, h: 180 }}
@@ -571,9 +662,9 @@ export default function CardGallery() {
         />
 
         <CardSection
+          slug="tesla-small"
           title="Tesla — small card"
           note="One container-query layout, stepping up at 180px of TILE width. Fat SoC ring in the EV theme red, with the charge-limit notch and, while charging, chevrons on the arc's tip. Returns null if no SoC. Has NO staleness treatment — the stale box visibly does nothing here."
-          scenarios={Object.keys(TESLA_SCENARIOS)}
           defaultScenario="charging (high power)"
           presetWidths={TILE_WIDTHS}
           playground={{ w: 200, h: 180 }}
@@ -585,9 +676,9 @@ export default function CardGallery() {
         <TeslaDialogSection />
 
         <CardSection
+          slug="grid-signals"
           title="Local Grid (NEM) signals"
           note="GridSignalsCard (a small tile). From 180px: the renewable share as the shared 108px ring, Price and Emissions side by side underneath; narrower, the three as label-over-value rows. 'missing metric' shows an em-dash; stale dims the values."
-          scenarios={Object.keys(GRID_SIGNALS_SCENARIOS)}
           defaultScenario="high renewables"
           presetWidths={TILE_WIDTHS}
           playground={{ w: 200, h: 200 }}
@@ -600,9 +691,9 @@ export default function CardGallery() {
         />
 
         <CardSection
+          slug="amber-now"
           title="Amber — Now (large circle)"
           note="AmberNow. Large live-price circle (Amber dashboard hero)."
-          scenarios={Object.keys(AMBER_SCENARIOS)}
           defaultScenario="low"
           presetWidths={AMBERNOW_WIDTHS}
           playground={{ w: 320, h: 360 }}
@@ -610,9 +701,9 @@ export default function CardGallery() {
         />
 
         <CardSection
+          slug="battery-contents"
           title="Battery Contents"
           note="BatteryContentsCard. Labelled stat grid (2→3→4 cols). 'warm-up' shows em-dash totals; 'no tariff' hides the export/opportunity split; 'empty battery' reads 0.0 kWh; stale shows the age in the header."
-          scenarios={Object.keys(BATTERY_CONTENTS_SCENARIOS)}
           defaultScenario="typical"
           presetWidths={CARD_WIDTHS}
           playground={{ w: 380, h: 150 }}
@@ -624,9 +715,9 @@ export default function CardGallery() {
         />
 
         <CardSection
+          slug="home-energy"
           title="Home Energy"
           note="HomeEnergyCard. Same shape as Battery Contents, over the navigator's period. 'grid only' reads Self-use '—'; 'partial self-renewable' em-dashes BOTH ratios; 'no intensities' em-dashes the rate/emissions stats; 'no data' is the empty state."
-          scenarios={Object.keys(HOME_ENERGY_SCENARIOS)}
           defaultScenario="typical"
           presetWidths={CARD_WIDTHS}
           playground={{ w: 380, h: 200 }}
@@ -639,6 +730,22 @@ export default function CardGallery() {
               measurementTime={
                 st ? new Date(Date.now() - 20 * 60_000) : new Date()
               }
+            />
+          )}
+        />
+
+        <CardSection
+          slug="ev-provenance"
+          title="EV Charging (provenance)"
+          note="LoadProvenanceCard. A 30-day REPORT, not a reading, so the stale checkbox is deliberately a no-op — the card passes `periodReport` and shows no age badge. 'grid heavy' drops renewable off text-ok; 'estimated' shows the warn confidence chip; 'no intensities' em-dashes rate/emissions; 'no energy' and 'no load' are the two empty branches."
+          defaultScenario="typical"
+          presetWidths={CARD_WIDTHS}
+          playground={{ w: 380, h: 190 }}
+          render={(s) => (
+            <LoadProvenanceCard
+              summary={EV_PROVENANCE_SCENARIOS[s]}
+              periodLabel="last 30 days"
+              title="EV Charging"
             />
           )}
         />

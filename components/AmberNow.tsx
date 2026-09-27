@@ -137,14 +137,15 @@ export default function AmberNow({ latest }: AmberNowProps) {
         </div>
       </div>
 
-      {/* Summary card - light background like Amber */}
-      <div className="bg-slate-200 p-4 mb-4">
-        <h3 className="text-xs font-semibold text-ink-faint mb-1 tracking-wide">
+      {/* Summary card — the one light panel in the app, mirroring Amber's own.
+          🛑 Its text takes the INVERSE ink ramp. The heading read `text-ink-faint` (gray-500, a
+          DARK-surface token) on this light slab until 2026-09-21 — legible, but by accident, and
+          the token said the opposite of what the surface was. */}
+      <div className="bg-surface-inverse p-4 mb-4">
+        <h3 className="text-xs font-semibold text-ink-inverse-secondary mb-1 tracking-wide">
           SUMMARY
         </h3>
-        <p className="text-sm" style={{ color: "rgb(0, 0, 0)" }}>
-          {summaryMessage}
-        </p>
+        <p className="text-sm text-ink-inverse">{summaryMessage}</p>
       </div>
 
       {/* Feed-in section - only show when feed-in rate available */}

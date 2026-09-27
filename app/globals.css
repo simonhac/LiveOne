@@ -36,6 +36,11 @@
   --color-surface-panel-strong: oklch(21% 0.034 264.665 / 0.7);
   /* tw gray-800 — menus, modals, popovers: a floating surface, not an in-page panel */
   --color-surface-overlay: oklch(27.8% 0.033 256.848);
+  /* tw gray-800/40 — a table row under the pointer.
+     Its own token rather than `surface-overlay/40`: rule 3 says name the tone, don't spell the
+     alpha. Not `surface-control` (gray-700, opaque) or `wash` (white/8) — either would be a
+     visible re-tone in a card `/device/*` renders too. */
+  --color-row-hover: oklch(27.8% 0.033 256.848 / 0.4);
   /* tw gray-700 — a filled control: input, select trigger, secondary button */
   --color-surface-control: oklch(37.3% 0.034 259.733);
   /* tw gray-600 — that control, hovered or active */
@@ -106,6 +111,11 @@
   --color-ink-inverse-muted: rgb(0 0 0 / 0.55);
   /* tw white/25 — a heading's plate on a series fill */
   --color-plate-light: rgb(255 255 255 / 0.25);
+  /* tw slate-200 — the ONE light panel in the app: AmberNow's summary, a slab of the retailer's
+     own chrome rather than ours. Sits here, beside the inverse ink ramp, because that ramp is what
+     you must reach for on top of it — the ramp was minted for the Sankey tooltips, but this is the
+     other surface it was always for. */
+  --color-surface-inverse: oklch(92.9% 0.013 255.508);
   /* tw black/10 — a chip's fill on a series fill */
   --color-plate-dark: rgb(0 0 0 / 0.1);
   /* tw black/15 — that chip's edge */

@@ -43,9 +43,16 @@ export const CARD_FOOTPRINTS = {
   "device-metrics-table": 192,
   /** measured — Daylesford + Kinkora both settle here. */
   "battery-contents": 143,
-  /** estimated — `LoadProvenanceCard`: p-3/p-4 shell + header + one 4-stat row + the source split
-   *  + the confidence chip row. The same box model as `battery-contents`, one row shorter. */
-  "ev-provenance": 160,
+  /** measured — `LoadProvenanceCard` on `StatCardShell`, read in the card gallery at the 1247px
+   *  section width on 2026-09-27, after the card moved onto the shared tile surface (the previous
+   *  160 was an estimate against its own `p-3/p-4` shell, and 14px low).
+   *
+   *  174 is the settled card; it becomes 180 when the "% estimated" chip appears, because the chip's
+   *  `py-0.5` + border makes that row 6px taller than the bare avg line it shares. 174 is the right
+   *  default: `estimated > 0` gates the chip on a ROUNDED percentage, so a trailing 30-day window of
+   *  mostly-settled days shows none — and per the note on `runs`, under-reserving costs one shift on
+   *  the cards that grow, where over-reserving leaves dead space on every load. */
+  "ev-provenance": 174,
   /** estimated — the plugin renders TWO things: `AmberSmallCard` (180 at full card width, where its
    *  `@[180px]` step has fired) above `AmberNow` (p-6 48 + heading 20 + mb-6 24 + the 280px circle
    *  + mb-6 24 + the feed-in row ≈ 436). */

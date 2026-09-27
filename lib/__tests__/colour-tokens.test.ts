@@ -61,6 +61,7 @@ const ALIASES: Record<string, string> = {
   "--color-surface-overlay": "--color-gray-800",
   "--color-surface-control": "--color-gray-700",
   "--color-surface-control-hover": "--color-gray-600",
+  "--color-surface-inverse": "--color-slate-200",
   "--color-ink": "--color-white",
   "--color-ink-strong": "--color-gray-100",
   "--color-ink-secondary": "--color-gray-300",
@@ -110,6 +111,7 @@ const ALPHA_ALIASES: Record<string, [string, string]> = {
   "--color-warn-wash": ["--color-amber-500", "0.1"],
   "--color-warn-panel": ["--color-amber-900", "0.2"],
   "--color-warn-panel-line": ["--color-amber-700", "0.5"],
+  "--color-row-hover": ["--color-gray-800", "0.4"],
   "--color-veil": ["--color-gray-900", "0.8"],
 };
 

@@ -94,9 +94,7 @@ export default function DeviceMetricsCard({
                     row.logicalPath ??
                     `${row.physicalPath}-${i}`
                   }
-                  // Not tokenised: `gray-800/40` is this card's own pre-tile-style fill, a step off
-                  // LoadProvenanceCard's `gray-800/50`. See the note there.
-                  className="hover:bg-gray-800/40"
+                  className="hover:bg-row-hover"
                 >
                   <td className="px-3 py-1.5 text-ink-secondary">
                     {row.pointName}

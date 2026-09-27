@@ -17,6 +17,7 @@
 import type { LatestPointValue, LatestPointValues } from "@/lib/types/api";
 import type { LatestValue } from "@/lib/amber-utils";
 import type { GridLiveValues } from "@/lib/grid/latest";
+import type { LoadProvenanceSummary } from "@/lib/energy-flow-matrix";
 import {
   batteryContentsFromData,
   CONTENTS_LATEST_PATHS as CP,
@@ -821,4 +822,116 @@ export const HWS_SCENARIOS: Record<string, HwsScenario> = {
     measurementTime: new Date(Date.now() - FRESH * 1000),
     heating: false,
   },
+};
+
+/**
+ * EV provenance — `LoadProvenanceCard`, a 30-day report rather than a live reading.
+ *
+ * 🛑 No `measurementTime` anywhere, and that is correct: the card passes `periodReport` to
+ * `StatCardShell`, so it never shows a stale badge. The gallery's stale checkbox is therefore a
+ * no-op here, which is itself the thing worth eyeballing — an absent instant means "permanently
+ * stale" to `useStaleness`, so a period card that forgot the flag would read "no data" forever.
+ */
+export const EV_PROVENANCE_SCENARIOS: Record<
+  string,
+  LoadProvenanceSummary | null
+> = {
+  typical: {
+    loadPath: "load.ev",
+    loadLabel: "EV Charging",
+    energyKwh: 312.4,
+    costC: 4821,
+    revenueC: null,
+    avgCentsPerKwh: 15.4,
+    pctRenewable: 68.2,
+    avgGramsPerKwh: 214,
+    kgCo2: 66.9,
+    pctEstimated: 0,
+    costKnownKwh: 312.4,
+    emissionsKnownKwh: 312.4,
+    revenueKnownKwh: 0,
+    sources: [
+      { path: "source.solar", label: "Solar", energyKwh: 168.1 },
+      { path: "source.grid", label: "Grid", energyKwh: 99.3 },
+      { path: "source.battery", label: "Battery", energyKwh: 45.0 },
+    ],
+  },
+  // Renewable share at/below the 50% threshold, so the stat drops off `text-ok` back to plain ink —
+  // the one conditional colour in the body.
+  "grid heavy": {
+    loadPath: "load.ev",
+    loadLabel: "EV Charging",
+    energyKwh: 288.0,
+    costC: 9120,
+    revenueC: null,
+    avgCentsPerKwh: 31.7,
+    pctRenewable: 22.5,
+    avgGramsPerKwh: 640,
+    kgCo2: 184.3,
+    pctEstimated: 0,
+    costKnownKwh: 288.0,
+    emissionsKnownKwh: 288.0,
+    revenueKnownKwh: 0,
+    sources: [
+      { path: "source.grid", label: "Grid", energyKwh: 246.7 },
+      { path: "source.solar", label: "Solar", energyKwh: 41.3 },
+    ],
+  },
+  // Leaning on estimated inputs: the warn-toned confidence chip appears, right-aligned.
+  estimated: {
+    loadPath: "load.ev",
+    loadLabel: "EV Charging",
+    energyKwh: 141.8,
+    costC: 2210,
+    revenueC: null,
+    avgCentsPerKwh: 15.6,
+    pctRenewable: 57.0,
+    avgGramsPerKwh: 260,
+    kgCo2: 36.9,
+    pctEstimated: 34,
+    costKnownKwh: 93.6,
+    emissionsKnownKwh: 93.6,
+    revenueKnownKwh: 0,
+    sources: [
+      { path: "source.solar", label: "Solar", energyKwh: 80.8 },
+      { path: "source.grid", label: "Grid", energyKwh: 61.0 },
+    ],
+  },
+  // Intensities missing entirely — the rate and emissions stats em-dash, and the avg line vanishes.
+  "no intensities": {
+    loadPath: "load.ev",
+    loadLabel: "EV Charging",
+    energyKwh: 96.2,
+    costC: 0,
+    revenueC: null,
+    avgCentsPerKwh: null,
+    pctRenewable: null,
+    avgGramsPerKwh: null,
+    kgCo2: 0,
+    pctEstimated: 100,
+    costKnownKwh: 0,
+    emissionsKnownKwh: 0,
+    revenueKnownKwh: 0,
+    sources: [{ path: "source.grid", label: "Grid", energyKwh: 96.2 }],
+  },
+  // `energyKwh <= 0` takes the empty-state branch, not the stat grid.
+  "no energy": {
+    loadPath: "load.ev",
+    loadLabel: "EV Charging",
+    energyKwh: 0,
+    costC: 0,
+    revenueC: null,
+    avgCentsPerKwh: null,
+    pctRenewable: null,
+    avgGramsPerKwh: null,
+    kgCo2: 0,
+    pctEstimated: 0,
+    costKnownKwh: 0,
+    emissionsKnownKwh: 0,
+    revenueKnownKwh: 0,
+    sources: [],
+  },
+  // The null summary the card also has to survive (its query in flight is `loading`, but a resolved
+  // payload with no `load.ev` leg reduces to null).
+  "no load": null,
 };

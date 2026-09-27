@@ -1,6 +1,7 @@
 # Colour Tokens — colour is meaning, not hue
 
-> **Status:** current — introduced 2026-09-20. Migration in progress; see "Where we are" below.
+> **Status:** current — introduced 2026-09-20. The dashboard is converted and gated; what remains
+> on literals is the admin and device-only screens, out of scope by design. See "Where we are".
 
 Every colour on the dashboard is reached for by **what it means**, not by which hue it happens to
 be: `text-ink-muted`, never `text-gray-400`; `bg-surface`, never `bg-[#1C1C1E]`.
@@ -72,7 +73,7 @@ and the stroke are one value, and the test now reads `app/globals.css` instead o
 
 | Group | Tokens |
 | --- | --- |
-| Canvas & surface | `canvas` `surface` `surface-raised` `surface-sunken` `surface-panel` `surface-overlay` `surface-control` `surface-control-hover` `scrim` `wash` `rail` |
+| Canvas & surface | `canvas` `surface` `surface-raised` `surface-sunken` `surface-panel` `surface-overlay` `surface-control` `surface-control-hover` `row-hover` `scrim` `wash` `rail` |
 | Ink (chrome ramp) | `ink` `ink-strong` `ink-secondary` `ink-muted` `ink-faint` `ink-disabled` `ink-inverse` |
 | Ink (tile ramp) | `tile-ink-dim` `tile-ink-muted` `tile-ink-idle` |
 | Line | `line` `line-strong` `line-soft` `line-hairline` `line-faint` |
@@ -123,12 +124,36 @@ The rename is provable, not eyeballed:
 - `lib/__tests__/role-chrome.test.ts` — every role class resolves, through the shipped CSS, to the
   exact `CHART_COLORS` value its SVG uses.
 - `e2e/charts.spec.ts` — ~40 chart cases at two widths, zero-diff rule.
-- A **computed-colour census** is the portable proof, and catches what screenshots miss: walk the
-  DOM of `/labs/card-gallery` and record `getComputedStyle`'s `color` / `backgroundColor` /
-  `borderColor` / `fill` / `stroke` per element, before and after. Computed values are resolved
-  absolutes, so `oklch`, `rgb` and `color-mix` all normalise and a pure rename diffs to nothing.
-  🛑 That gallery's dev bundle is ~10 MB — give it several seconds to hydrate before reading the
-  DOM, or you will census an empty page and conclude the render broke.
+- **`npm run test:e2e:census`** — `e2e/cards.spec.ts`, the computed-colour census over
+  `/labs/card-gallery`. This is the portable proof, and catches what screenshots miss. Regenerate a
+  baseline with `npm run test:e2e:census:update` and read the diff.
+
+  It asserts **two different things**, and both are needed. **(A) every colour is a known value** —
+  a `--color-*` token or a listed literal. That is the claim this document actually makes, it is
+  immune to element-count drift, and it is the only check that sees an **inline `style`**, which the
+  `prebuild` gate structurally cannot. **(B) the set of `(property, colour)` pairs equals the
+  committed baseline** — the receipt for "my change was a pure rename". A alone passes a re-tone
+  from one legal token to another; B alone cannot tell "changed" from "changed correctly".
+
+  🛑 **Alpha is recovered with two backdrops, not one.** Compositing a colour onto a 1×1 canvas
+  PREMULTIPLIES it, so `rgba(255,255,255,0.55)` reads back as an opaque mid-grey and collides with a
+  genuinely opaque tone — destroying the distinction between `tile-ink-muted` and a solid colour.
+  Painting over black and over white and solving (`a = 1 − (white − black) / 255`) is what keeps the
+  ramp visible. Verified both ways: `color-mix(in oklab, #fff 55%, transparent)` and
+  `rgb(255 255 255 / 0.55)` compute to *different strings* and normalise identically, while
+  Tailwind's `oklch(70.7% 0.022 261.325)` and the v3 `rgb(156,163,175)` stay apart — so the census
+  can still see the drift this whole layer exists for.
+
+  🛑 Read the **four border longhands**, never `borderColor`: it is a shorthand that computes to
+  `""` whenever the sides differ, so an asymmetric border vanishes from the record silently.
+
+  Counts are recorded but **not** asserted (they follow render races); `elementCount` is asserted as
+  a tripwire. The gallery's readiness gate (`data-gallery-ready`, a `useIsFetching` latch) is what
+  makes that stable — measured at 10/10 identical on the generator section, which is where the
+  drift used to be.
+
+  **Blind spots, stated rather than discovered later:** `DeviceMetricsCard` has no gallery section;
+  the resizable playground is not censused (its size is user state behind a `ResizeObserver`).
 
 An unused token costs nothing: Tailwind only emits a utility for a token it sees referenced in the
 scanned source. A `text-ok` that nothing uses simply does not exist in the built CSS.
@@ -137,8 +162,15 @@ scanned source. A `text-ok` that nothing uses simply does not exist in the built
 
 **The dashboard is done.** Every file it renders — `components/ui/**`, `components/dashboard/**`,
 the twelve card bodies, the charts, Sankey and tables, the chrome and every dialog,
-`components/area-builder/**`, `app/dashboard/**`, and the style-token modules — carries no raw
-palette class, bar the handful listed below that say why in place.
+`components/area-builder/**`, `app/dashboard/**`, the style-token modules, and the point-format
+modules (`lib/point/unit-typography.ts`, `lib/point/format-value.tsx`) — carries no raw palette
+class, bar the handful listed below that say why in place.
+
+🛑 **`lib/point/format-value.tsx` is the reason the gate grew a reachability check.** It renders its
+own `<span>` for the json/location metric, and `ChartTooltip`, `EnergyTable` and
+`dashboard/DailyStripes` all import it — so the dashboard shipped a `text-gray-400` for as long as
+the file sat outside `SCOPE`, with the gate reporting green the whole time. A hand-maintained
+allow-list cannot see a literal one import away from the thing it is guarding; see "The gate".
 
 Out of scope and still on literals: the admin and device-only screens (`app/admin/**`, the device
 settings and poll modals, `DeviceViewer` and its chrome). They render identically either way,
@@ -156,31 +188,76 @@ by file. So a literal ships silently and the vocabulary decays one dialog at a t
 it started from. The gate is the only thing that makes "done" a stable state rather than a
 high-water mark.
 
-It checks two things, and the second earned its keep on first run: a **palette class**
-(`text-gray-400`, `bg-black/50`) and a **hard-coded colour in an arbitrary value**
-(`bg-[#1C1C1E]`). Three surfaces were still hard-coded — the skeleton, the stale badge and Amber's
-panel — and no palette-class grep could ever have seen them.
+It checks three things, and each of the last two earned its keep by finding something on first run:
 
-`SCOPE` is an allow-list of paths, so the admin screens stay out; extending it is how a future
-slice ratchets forward. `EXEMPTIONS` is the list below, and
-`scripts/__tests__/check-colour-tokens.test.ts` pins its size so it can only shrink.
+1. a **palette class** — `text-gray-400`, `bg-black/50`;
+2. a **hard-coded colour in an arbitrary value** — `bg-[#1C1C1E]`. Three surfaces were still
+   hard-coded (the skeleton, the stale badge, Amber's panel) and no palette-class grep could ever
+   have seen them;
+3. 🛑 **reachability** — a literal in a file the scoped set *imports* but does not itself scope.
+
+**Why (3) exists.** `lib/point/format-value.tsx` renders its own `<span className="text-xs
+text-gray-400">` for the json/location metric, and `ChartTooltip`, `EnergyTable` and
+`dashboard/DailyStripes` all import it. Because the file was not itself listed, the gate reported a
+clean dashboard over a raw palette class for the entire life of the token layer. **An allow-list
+cannot see a literal one import away from the thing it is guarding** — so the guard now follows
+`import`, `export … from`, `export * from` and dynamic `import()` out of `SCOPE` and asserts that
+everything it reaches is either scoped or clean. Measured: ~261 files reached, 93 ms.
+
+It does **not** replace `SCOPE` with that closure, on purpose. 255 of those files are pure server
+modules (`lib/db`, `lib/kv`, `lib/readings`); calling them "files the dashboard renders" would turn
+this vocabulary into noise, and a computed scope would make the frontier implicit — one new
+`import` in an unrelated module silently conscripting a subtree, and a PR that touched nothing
+visual failing on a file it never opened. `SCOPE` growing by hand **is** the ratchet; the closure's
+job is to name the line you must add, not to add it behind your back.
+
+🛑 **What it still cannot see: an inline `style`, or a gradient.** All three checks match CLASSES,
+so `style={{ color: "rgb(0,0,0)" }}` and `radial-gradient(..., rgb(255,198,36) ...)` are both
+invisible to the gate. `AmberNow`'s price circle carries the first; `lib/amber-utils.ts`'s five
+price-level gradients are the second, and the census found all five on its first real run. They are
+legitimate — a gradient stop cannot be a utility class — but nothing stops a NEW one being wrong.
+
+That hole is why the census is not optional: it reads computed style, so it sees both. Proven by
+putting `style={{ color: "rgb(1,2,3)" }}` in a card body — `check:colours` reported the dashboard
+clean, and the census named the element.
+
+`SCOPE` is therefore still an allow-list, so the admin screens stay out. `EXEMPTIONS` is the list
+below, and `scripts/__tests__/check-colour-tokens.test.ts` § "the exemption list" holds it: the
+count may only fall, every entry is re-derived from its file (so a stale one fails the build), each
+file must be in `SCOPE`, and the "Deliberately left literal" section below is checked to name
+exactly those files and no others. None of that existed until 2026-09-21 — the rule lived only in a
+comment, which is to say it did not live anywhere.
 
 ## Deliberately left literal
 
 Not every colour should become a token, and these say so where they sit rather than silently:
 
-- **`LoadProvenanceCard`'s and `DeviceMetricsCard`'s own surfaces** — `gray-800/50`, `gray-800/40`,
-  `gray-700/60`. Both cards predate [tile-style.md](tile-style.md) and carry a fill and hairlines a
-  step off every other card's. Minting a token per accident is how a vocabulary stops being
-  navigable, and re-toning them is a decision rather than a rename. They go when those cards move
-  onto `TileSurface`.
-- **`LoadProvenanceCard`'s cyan car icon** — cyan is the POOL series and this is the EV card, so
-  `series-pool` would encode a lie and `series-ev` is a re-tone. Left visible.
-- **`AmberNow`'s light panel** (`bg-slate-200`) — the one light-on-dark surface in the app.
-- **Two `?debug` badges** (`bg-red-500`) — dev-only affordances, not a `danger` state.
+One entry. It is a *question*, not an oversight, which is why it is not quietly mapped to the
+nearest token:
 
-Each is a *question*, not an oversight, which is why none of them is quietly mapped to the nearest
-token.
+- **The `?debug` size badge** (`bg-red-500`) — a dev-only affordance, not a `danger` state. It was
+  two entries until `AmberSmallCard` and `TeslaSmallCard` were found to be carrying verbatim copies
+  of the same badge, URL check and `ResizeObserver`; it now lives once, in
+  `components/ui/debug-size-badge.tsx`. A `--color-debug` would put "this colour means nothing" into
+  a vocabulary premised on every colour meaning something, and would invite reaching for red in real
+  UI. So it stays literal, and stays named here.
+
+The list has been 5. What retired the other four is worth keeping, because three of the four were
+answered by fixing something else rather than by choosing a token:
+
+- `DeviceMetricsCard` was filed as "the same pre-tile-style surface family" as `LoadProvenanceCard`.
+  **It never was one** — its `gray-800/40` was a single `<tr>` hover inside a `CHART_HAIRLINE` table,
+  and its `grid` variant has always rendered `<Tile>`. There was nothing to move; it is now
+  `hover:bg-row-hover`. A wrong reason is worse than no reason: it parks a question under a heading
+  where nobody will look for it again.
+- `AmberNow`'s `bg-slate-200` became `surface-inverse` once it was clear the `ink-inverse` ramp —
+  minted for the Sankey tooltips — was always this surface's ramp too.
+- `LoadProvenanceCard`'s surface and **its cyan car icon were one exemption wearing two hats.** The
+  icon could be neither `series-pool` (cyan is the POOL series; on the EV card that encodes a lie)
+  nor `series-ev` (a re-tone) *for as long as the card painted its own shell*. Moving it onto
+  `StatCardShell` → `TileHeader` dissolved the question instead of answering it: `tone` on a tile
+  header IS the role's colour, so the EV card takes the EV series by construction. See the re-tone
+  table below — this one is a real visual change.
 
 ## Deliberate re-tones
 
@@ -202,6 +279,8 @@ token that memorialises an accident.
 | `green-500` · `/90` | `ok` | ditto |
 | `yellow-500` | `warn` | `ServerErrorModal`'s warning triangle |
 | `accent-green-600` · `accent-amber-500` | `accent-ok` · `accent-warn` | a range input's native tint |
+| `text-ink-faint` on a LIGHT panel | `ink-inverse-secondary` (black/70) | `AmberNow`'s SUMMARY heading — gray-500, a dark-surface token, on the one light surface in the app. Legible by accident; the token asserted the opposite of the surface it sat on |
+| `text-cyan-400` | `series-ev` (red-600) | `LoadProvenanceCard`'s car icon — **and its title with it**, because `TileHeader` tones icon and title together. The largest re-tone in this layer, and not cosmetic: cyan was the POOL series on the EV card. Rule 5 (identity, not decoration) is the whole argument; the card simply could not obey it until it was on the shared header |
 
 None is larger than one palette step or a few percent of alpha, and all are inside the dashboard —
 nothing that only the admin screens render was re-toned.

@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState, useEffect } from "react";
+import { useDebugSizeBadge } from "@/components/ui/debug-size-badge";
 import Value from "@/components/ui/value";
 import { Zap } from "lucide-react";
 import TileSurface from "@/components/ui/tile-surface";
@@ -41,51 +41,7 @@ interface AmberSmallCardProps {
  * | 180px+ | 180px  | 108 (`TILE_RING`) | Full logo | bottom row        | bottom row |
  */
 export default function AmberSmallCard({ latest }: AmberSmallCardProps) {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const [containerSize, setContainerSize] = useState<{
-    width: number;
-    height: number;
-  }>({ width: 0, height: 0 });
-  const [showDebug, setShowDebug] = useState(false);
-
-  // Show debug indicator only when ?debug is in URL
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    setShowDebug(params.has("debug"));
-  }, []);
-
-  // Track container size for debugging
-  useEffect(() => {
-    const el = containerRef.current;
-    if (!el) return;
-    // Set initial size (content-box to match container queries)
-    const style = getComputedStyle(el);
-    const rect = el.getBoundingClientRect();
-    const paddingX =
-      parseFloat(style.paddingLeft) + parseFloat(style.paddingRight);
-    const paddingY =
-      parseFloat(style.paddingTop) + parseFloat(style.paddingBottom);
-    const borderX =
-      parseFloat(style.borderLeftWidth) + parseFloat(style.borderRightWidth);
-    const borderY =
-      parseFloat(style.borderTopWidth) + parseFloat(style.borderBottomWidth);
-    setContainerSize({
-      width: Math.round(rect.width - paddingX - borderX),
-      height: Math.round(rect.height - paddingY - borderY),
-    });
-    // Watch for changes
-    const observer = new ResizeObserver((entries) => {
-      for (const entry of entries) {
-        // Use contentRect - this matches what container queries measure
-        setContainerSize({
-          width: Math.round(entry.contentRect.width),
-          height: Math.round(entry.contentRect.height),
-        });
-      }
-    });
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, []);
+  const { rootRef, badge } = useDebugSizeBadge();
 
   // Extract values from latest store
   const importPrice = getNumericValue(latest, "bidi.grid.import/rate");
@@ -114,17 +70,11 @@ export default function AmberSmallCard({ latest }: AmberSmallCardProps) {
 
   return (
     <TileSurface
-      rootRef={containerRef}
+      rootRef={rootRef}
       className="min-w-[66px] self-stretch"
       surfaceClassName="min-h-[110px] @[180px]:min-h-[180px]"
     >
-      {/* DEBUG: Container size indicator - only shown when ?debug is in URL */}
-      {/* `bg-red-500` stays literal: a ?debug-only badge, not a `danger` state. */}
-      {showDebug && (
-        <div className="absolute top-0 right-0 bg-red-500 text-ink text-[10px] px-1 rounded-bl z-50">
-          {containerSize.width}w {containerSize.height}h
-        </div>
-      )}
+      {badge}
 
       {/* Compact layout - shown when card < 180px */}
       <div className="@[180px]:hidden h-full flex flex-col">

@@ -1,9 +1,10 @@
 "use client";
 
 import { Car } from "lucide-react";
-import { ttInterphases } from "@/lib/fonts/amber";
 import Stat from "@/components/ui/stat";
+import StatCardShell from "@/components/ui/stat-card-shell";
 import { StatGridSkeleton } from "@/components/ui/skeleton";
+import { ROLE_CHROME } from "@/lib/role-chrome";
 import type { LoadProvenanceSummary } from "@/lib/energy-flow-matrix";
 import {
   formatCentsPerKwh,
@@ -40,31 +41,25 @@ export default function LoadProvenanceCard({
 }: LoadProvenanceCardProps) {
   const heading = title ?? summary?.loadLabel ?? "Load";
 
+  // The shared tile surface (docs/architecture/tile-style.md), like every other card. This one
+  // carried its own shell — `gray-800/50` with a border and an 8px radius — until 2026-09-27, which
+  // is also what kept its icon on a literal `cyan-400`: cyan is the POOL series, so it could be
+  // neither `series-pool` (a lie) nor `series-ev` (a re-tone) while the card sat outside the system.
+  // On `TileHeader` the question answers itself — `tone` IS the role's colour, so the EV card takes
+  // the EV series, and the icon and the title take it together the way a tile's do.
+  //
+  // `periodReport`: this is a 30-day summary, not a reading, so it has no staleness. It must say so
+  // explicitly — an absent `measurementTime` means "permanently stale", not "not applicable".
   const shell = (children: React.ReactNode) => (
-    <div
-      // 🛑 NOT tokenised, deliberately. `gray-800/50` and the `gray-700/60` rules below are this
-      // card's own pre-tile-style surface — a fill and two hairlines a step off every other card's
-      // (`surface-overlay`, `line-soft`). Minting a token per accident is how a colour vocabulary
-      // becomes unnavigable, and re-toning them is a decision, not a rename. They go when this card
-      // moves onto `TileSurface` like the rest (docs/architecture/tile-style.md).
-      className={`bg-gray-800/50 border border-line rounded-lg p-3 md:p-4 ${ttInterphases.className}`}
+    <StatCardShell
+      title={heading}
+      titleSuffix={periodLabel}
+      icon={<Car size={16} />}
+      tone={ROLE_CHROME.ev.value}
+      periodReport
     >
-      <div className="mb-3 flex items-center gap-1.5">
-        {/* 🛑 NOT tokenised: cyan is the POOL series, and this is the EV card's icon. Calling it
-            `text-series-pool` would encode a lie, and `text-series-ev` is a re-tone (cyan → red),
-            which pass 1 does not do. Left literal so the question stays visible. */}
-        <span className="flex-shrink-0 text-cyan-400">
-          <Car size={16} />
-        </span>
-        <span className="truncate text-xs text-ink-secondary md:text-sm">
-          {heading}
-        </span>
-        <span className="ml-auto text-[10px] uppercase tracking-wide text-ink-faint md:text-xs">
-          {periodLabel}
-        </span>
-      </div>
       {children}
-    </div>
+    </StatCardShell>
   );
 
   if (loading) {
@@ -79,7 +74,7 @@ export default function LoadProvenanceCard({
         {/* Transparent text in the real classes rather than bars of a guessed height — see the
             note on the same pattern in HomeEnergyCard: only real glyphs reproduce a `normal`
             (fractional) line box exactly. */}
-        <div className="mt-3 border-t border-gray-700/60 pt-2" aria-hidden>
+        <div className="mt-3 border-t border-tile-line pt-2" aria-hidden>
           <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-transparent">
             <span className="animate-pulse rounded bg-skeleton-quiet">
               00% solar
@@ -144,7 +139,7 @@ export default function LoadProvenanceCard({
 
       {/* Source split (solar / battery / grid) */}
       {splitPct.length > 0 && (
-        <div className="mt-3 border-t border-gray-700/60 pt-2">
+        <div className="mt-3 border-t border-tile-line pt-2">
           <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-ink-muted">
             {splitPct.map((s) => (
               <span key={s.label}>
