@@ -124,12 +124,36 @@ The rename is provable, not eyeballed:
 - `lib/__tests__/role-chrome.test.ts` — every role class resolves, through the shipped CSS, to the
   exact `CHART_COLORS` value its SVG uses.
 - `e2e/charts.spec.ts` — ~40 chart cases at two widths, zero-diff rule.
-- A **computed-colour census** is the portable proof, and catches what screenshots miss: walk the
-  DOM of `/labs/card-gallery` and record `getComputedStyle`'s `color` / `backgroundColor` /
-  `borderColor` / `fill` / `stroke` per element, before and after. Computed values are resolved
-  absolutes, so `oklch`, `rgb` and `color-mix` all normalise and a pure rename diffs to nothing.
-  🛑 That gallery's dev bundle is ~10 MB — give it several seconds to hydrate before reading the
-  DOM, or you will census an empty page and conclude the render broke.
+- **`npm run test:e2e:census`** — `e2e/cards.spec.ts`, the computed-colour census over
+  `/labs/card-gallery`. This is the portable proof, and catches what screenshots miss. Regenerate a
+  baseline with `npm run test:e2e:census:update` and read the diff.
+
+  It asserts **two different things**, and both are needed. **(A) every colour is a known value** —
+  a `--color-*` token or a listed literal. That is the claim this document actually makes, it is
+  immune to element-count drift, and it is the only check that sees an **inline `style`**, which the
+  `prebuild` gate structurally cannot. **(B) the set of `(property, colour)` pairs equals the
+  committed baseline** — the receipt for "my change was a pure rename". A alone passes a re-tone
+  from one legal token to another; B alone cannot tell "changed" from "changed correctly".
+
+  🛑 **Alpha is recovered with two backdrops, not one.** Compositing a colour onto a 1×1 canvas
+  PREMULTIPLIES it, so `rgba(255,255,255,0.55)` reads back as an opaque mid-grey and collides with a
+  genuinely opaque tone — destroying the distinction between `tile-ink-muted` and a solid colour.
+  Painting over black and over white and solving (`a = 1 − (white − black) / 255`) is what keeps the
+  ramp visible. Verified both ways: `color-mix(in oklab, #fff 55%, transparent)` and
+  `rgb(255 255 255 / 0.55)` compute to *different strings* and normalise identically, while
+  Tailwind's `oklch(70.7% 0.022 261.325)` and the v3 `rgb(156,163,175)` stay apart — so the census
+  can still see the drift this whole layer exists for.
+
+  🛑 Read the **four border longhands**, never `borderColor`: it is a shorthand that computes to
+  `""` whenever the sides differ, so an asymmetric border vanishes from the record silently.
+
+  Counts are recorded but **not** asserted (they follow render races); `elementCount` is asserted as
+  a tripwire. The gallery's readiness gate (`data-gallery-ready`, a `useIsFetching` latch) is what
+  makes that stable — measured at 10/10 identical on the generator section, which is where the
+  drift used to be.
+
+  **Blind spots, stated rather than discovered later:** `DeviceMetricsCard` has no gallery section;
+  the resizable playground is not censused (its size is user state behind a `ResizeObserver`).
 
 An unused token costs nothing: Tailwind only emits a utility for a token it sees referenced in the
 scanned source. A `text-ok` that nothing uses simply does not exist in the built CSS.
@@ -187,11 +211,15 @@ this vocabulary into noise, and a computed scope would make the frontier implici
 visual failing on a file it never opened. `SCOPE` growing by hand **is** the ratchet; the closure's
 job is to name the line you must add, not to add it behind your back.
 
-🛑 **What it still cannot see: an inline `style`.** Both checks match CLASSES, so
-`style={{ color: "rgb(0,0,0)" }}` is invisible to the gate. `AmberNow`'s price circle carries two
-(black text on the brand gradient), and `AmberSmallCard` several more. They are legitimate — an SVG
-fill and a gradient cannot be utility classes — but nothing stops a new one being wrong, so this is
-a real hole rather than a closed question.
+🛑 **What it still cannot see: an inline `style`, or a gradient.** All three checks match CLASSES,
+so `style={{ color: "rgb(0,0,0)" }}` and `radial-gradient(..., rgb(255,198,36) ...)` are both
+invisible to the gate. `AmberNow`'s price circle carries the first; `lib/amber-utils.ts`'s five
+price-level gradients are the second, and the census found all five on its first real run. They are
+legitimate — a gradient stop cannot be a utility class — but nothing stops a NEW one being wrong.
+
+That hole is why the census is not optional: it reads computed style, so it sees both. Proven by
+putting `style={{ color: "rgb(1,2,3)" }}` in a card body — `check:colours` reported the dashboard
+clean, and the census named the element.
 
 `SCOPE` is therefore still an allow-list, so the admin screens stay out. `EXEMPTIONS` is the list
 below, and `scripts/__tests__/check-colour-tokens.test.ts` § "the exemption list" holds it: the

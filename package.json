@@ -32,6 +32,8 @@
     "test:e2e": "playwright test",
     "test:e2e:update": "playwright test --update-snapshots",
     "test:e2e:ui": "playwright test --ui",
+    "test:e2e:census": "playwright test cards --project=desktop",
+    "test:e2e:census:update": "UPDATE_CENSUS=1 playwright test cards --project=desktop",
     "db:psql": "scripts/utils/psql.sh",
     "db:pg:generate": "drizzle-kit generate --config=drizzle-planetscale.config.ts",
     "db:pg:migrate": "drizzle-kit migrate --config=drizzle-planetscale.config.ts",
