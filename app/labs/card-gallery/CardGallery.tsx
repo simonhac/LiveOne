@@ -14,6 +14,7 @@ import AmberNow from "@/components/AmberNow";
 import GridSignalsCard from "@/components/GridSignalsCard";
 import BatteryContentsCard from "@/components/BatteryContentsCard";
 import HomeEnergyCard from "@/components/HomeEnergyCard";
+import LoadProvenanceCard from "@/components/LoadProvenanceCard";
 import { CARD_RENDERERS } from "@/components/dashboard/registry";
 import type { TileId } from "@/lib/dashboard/card-types";
 import type { LatestPointValues } from "@/lib/types/api";
@@ -36,6 +37,7 @@ import {
   GRID_SIGNALS_SCENARIOS,
   BATTERY_CONTENTS_SCENARIOS,
   HOME_ENERGY_SCENARIOS,
+  EV_PROVENANCE_SCENARIOS,
 } from "./fixtures";
 
 // ---------------------------------------------------------------------------
@@ -639,6 +641,22 @@ export default function CardGallery() {
               measurementTime={
                 st ? new Date(Date.now() - 20 * 60_000) : new Date()
               }
+            />
+          )}
+        />
+
+        <CardSection
+          title="EV Charging (provenance)"
+          note="LoadProvenanceCard. A 30-day REPORT, not a reading, so the stale checkbox is deliberately a no-op — the card passes `periodReport` and shows no age badge. 'grid heavy' drops renewable off text-ok; 'estimated' shows the warn confidence chip; 'no intensities' em-dashes rate/emissions; 'no energy' and 'no load' are the two empty branches."
+          scenarios={Object.keys(EV_PROVENANCE_SCENARIOS)}
+          defaultScenario="typical"
+          presetWidths={CARD_WIDTHS}
+          playground={{ w: 380, h: 190 }}
+          render={(s) => (
+            <LoadProvenanceCard
+              summary={EV_PROVENANCE_SCENARIOS[s]}
+              periodLabel="last 30 days"
+              title="EV Charging"
             />
           )}
         />

@@ -93,11 +93,6 @@ export const ARBITRARY_COLOUR = new RegExp(
  */
 export const EXEMPTIONS = [
   {
-    file: "components/LoadProvenanceCard.tsx",
-    classes: ["bg-gray-800/50", "border-gray-700/60", "text-cyan-400"],
-    why: "pre-tile-style surface + an EV icon on the pool series' hue; goes when the card moves onto TileSurface",
-  },
-  {
     file: "components/ui/debug-size-badge.tsx",
     classes: ["bg-red-500"],
     why: "a ?debug-only badge, not a danger state — and now in ONE place rather than copied into AmberSmallCard and TeslaSmallCard",

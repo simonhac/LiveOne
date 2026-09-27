@@ -204,26 +204,32 @@ comment, which is to say it did not live anywhere.
 
 Not every colour should become a token, and these say so where they sit rather than silently:
 
-- **`LoadProvenanceCard`'s own surface** — `gray-800/50` and `gray-700/60`. The card predates
-  [tile-style.md](tile-style.md) and carries a fill and hairlines a step off every other card's.
-  Minting a token per accident is how a vocabulary stops being navigable, and re-toning it is a
-  decision rather than a rename. It goes when the card moves onto `TileSurface`.
+One entry. It is a *question*, not an oversight, which is why it is not quietly mapped to the
+nearest token:
 
-  🛑 `DeviceMetricsCard` was listed here too, as "the same pre-tile-style surface family". **It
-  never was one.** Its `gray-800/40` was a single `<tr>` hover inside a `CHART_HAIRLINE` table with
-  `divide-y divide-line-soft` — a table, not a slab — and its `grid` variant has always rendered
-  `<Tile>`, i.e. has always been on `TileSurface`. There was nothing to move. It is now
-  `hover:bg-row-hover`, byte-identical. A wrong reason on an exemption is worse than no reason:
-  it parks a question under a heading where nobody will look for it again.
-- **`LoadProvenanceCard`'s cyan car icon** — cyan is the POOL series and this is the EV card, so
-  `series-pool` would encode a lie and `series-ev` is a re-tone. Left visible.
 - **The `?debug` size badge** (`bg-red-500`) — a dev-only affordance, not a `danger` state. It was
   two entries until `AmberSmallCard` and `TeslaSmallCard` were found to be carrying verbatim copies
   of the same badge, URL check and `ResizeObserver`; it now lives once, in
-  `components/ui/debug-size-badge.tsx`.
+  `components/ui/debug-size-badge.tsx`. A `--color-debug` would put "this colour means nothing" into
+  a vocabulary premised on every colour meaning something, and would invite reaching for red in real
+  UI. So it stays literal, and stays named here.
 
-Each is a *question*, not an oversight, which is why none of them is quietly mapped to the nearest
-token.
+The list has been 5. What retired the other four is worth keeping, because three of the four were
+answered by fixing something else rather than by choosing a token:
+
+- `DeviceMetricsCard` was filed as "the same pre-tile-style surface family" as `LoadProvenanceCard`.
+  **It never was one** — its `gray-800/40` was a single `<tr>` hover inside a `CHART_HAIRLINE` table,
+  and its `grid` variant has always rendered `<Tile>`. There was nothing to move; it is now
+  `hover:bg-row-hover`. A wrong reason is worse than no reason: it parks a question under a heading
+  where nobody will look for it again.
+- `AmberNow`'s `bg-slate-200` became `surface-inverse` once it was clear the `ink-inverse` ramp —
+  minted for the Sankey tooltips — was always this surface's ramp too.
+- `LoadProvenanceCard`'s surface and **its cyan car icon were one exemption wearing two hats.** The
+  icon could be neither `series-pool` (cyan is the POOL series; on the EV card that encodes a lie)
+  nor `series-ev` (a re-tone) *for as long as the card painted its own shell*. Moving it onto
+  `StatCardShell` → `TileHeader` dissolved the question instead of answering it: `tone` on a tile
+  header IS the role's colour, so the EV card takes the EV series by construction. See the re-tone
+  table below — this one is a real visual change.
 
 ## Deliberate re-tones
 
@@ -246,6 +252,7 @@ token that memorialises an accident.
 | `yellow-500` | `warn` | `ServerErrorModal`'s warning triangle |
 | `accent-green-600` · `accent-amber-500` | `accent-ok` · `accent-warn` | a range input's native tint |
 | `text-ink-faint` on a LIGHT panel | `ink-inverse-secondary` (black/70) | `AmberNow`'s SUMMARY heading — gray-500, a dark-surface token, on the one light surface in the app. Legible by accident; the token asserted the opposite of the surface it sat on |
+| `text-cyan-400` | `series-ev` (red-600) | `LoadProvenanceCard`'s car icon — **and its title with it**, because `TileHeader` tones icon and title together. The largest re-tone in this layer, and not cosmetic: cyan was the POOL series on the EV card. Rule 5 (identity, not decoration) is the whole argument; the card simply could not obey it until it was on the shared header |
 
 None is larger than one palette step or a few percent of alpha, and all are inside the dashboard —
 nothing that only the admin screens render was re-toned.

@@ -301,7 +301,7 @@ describe("colour-token guard", () => {
   describe("the exemption list", () => {
     // 🛑 Lower this as entries go. NEVER raise it: an exemption says a colour has no meaning worth
     // naming, and a NEW one nearly always means the opposite argument lost.
-    const CEILING = 2;
+    const CEILING = 1;
 
     it(`holds at most ${CEILING} entries`, () => {
       expect(EXEMPTIONS.length).toBeLessThanOrEqual(CEILING);
