@@ -49,7 +49,7 @@ No local credentials needed — the runner holds the GitHub Actions secrets.
 
 **One message per Sydney day, edited in place, one tick per run** — the same pattern the 2-hourly
 PG backups use ([the-gitfather](https://github.com/simonhac/the-gitfather)), in the same channel,
-with the same `SLACK_BOT_TOKEN` + `SLACK_CHANNEL` pair `pg-backup.yml` already passes:
+using the `SLACK_BOT_TOKEN` secret and the `SLACK_CHANNEL` variable:
 
 ```
 *sync prod→dev — Tue 18 Aug 2026 (AEST)*
@@ -228,10 +228,14 @@ from prod"). Then run the KV rebuild to repopulate `dev:` KV from the restored D
 | `LIVEONE_DEV_DATABASE_URL`              |    ✓    | ✓ (as `PLANETSCALE_DATABASE_URL`) |           | dev write role                               |
 | `PLANETSCALE_PROD_BRANCH_ID`            |    ✓    |                 ✓                 |           | arms the prod guards                         |
 | `KV_REST_API_URL` / `KV_REST_API_TOKEN` |         |                 ✓                 |     ✓     | the shared KV store; also holds the day-state |
-| `SLACK_BOT_TOKEN`                       |         |                                   |     ✓     | secret — the same bot `pg-backup.yml` uses   |
-| `SLACK_CHANNEL`                         |         |                                   |     ✓     | repo **var** (not a secret) — channel id     |
+| `SLACK_BOT_TOKEN`                       |         |                                   |     ✓     | secret — LiveOne bot; keep (see above)       |
+| `SLACK_CHANNEL`                         |         |                                   |     ✓     | repo **var** (not a secret) — channel id; keep |
 
 Every Slack input is optional: unset any of them and the daily-row step logs and no-ops.
+
+**Keep `SLACK_BOT_TOKEN` and `SLACK_CHANNEL`.** The backups no longer read either (since
+the-gitfather #53 its scheduler posts them), so this workflow is now their only user. Because the
+step no-ops when either is unset, deleting one mutes these alerts silently: no failure, no warning.
 
 ## Related
 

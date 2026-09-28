@@ -1,7 +1,7 @@
 # the-gitfather profile for liveone — NON-SECRET config for the off-site Postgres → R2 backups.
 #
-# Credentials (PG_BACKUP_DATABASE_URL, R2_*, SLACK_BOT_TOKEN, HEARTBEAT_URL, ALERT_WEBHOOK_URL,
-# DASHBOARD_R2_*) come from GitHub secrets/vars via the caller workflows in .github/workflows/pg-*.yml
+# Credentials (PG_BACKUP_DATABASE_URL, R2_*, HEARTBEAT_URL, DASHBOARD_R2_*) come from GitHub
+# secrets/vars via the caller workflows in .github/workflows/pg-*.yml
 # — never from here. Engine + reference: https://github.com/simonhac/the-gitfather
 
 # Object-key layout: <backup-prefix>/<tier>/<name>-<stamp>.<ext>

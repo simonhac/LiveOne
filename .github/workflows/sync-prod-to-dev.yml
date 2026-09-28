@@ -85,7 +85,9 @@ jobs:
         run: npx tsx scripts/utils/run-workflow-step-with-diagnostics.ts "dev ownership remap" npm run db:reown-dev
 
       # ONE Slack message per Sydney day, edited in place, one tick per run — the same pattern the
-      # 2-hourly PG backups use (the-gitfather), in the same channel, with the same bot token. This
+      # PG backups use (the-gitfather), in the same channel. The backups no longer read
+      # SLACK_BOT_TOKEN / SLACK_CHANNEL (the-gitfather's scheduler posts them), so this step is their
+      # only user — keep both: unset either and this step no-ops silently. This
       # step replaces the old per-event webhook posts (over-target / recovered-dropouts / failure /
       # timeout / "recovered" ping): all of them are now folded into the row's glyph + parens, so a
       # ❌ followed by a ✅ *is* the recovery notice. OBSERVATIONS_ALERT_WEBHOOK_URL is deliberately
