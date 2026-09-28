@@ -23,6 +23,10 @@
  *
  * `forecasts` (./forecasts.ts) reads what Amber PUBLISHED (`amber_forecast_history`) and whether
  * the logger capturing it was alive — read-only, Amber devices only.
+ *
+ * `readings` (./readings.ts) exports a window of RAW, untransformed, µs-exact `point_readings` for
+ * evidence, and `commands` is the device's command audit trail — together with `session list
+ * --since/--until` they are what an incident acquisition used to mint a prod database role for.
  */
 import {
   defineCommand,
@@ -43,12 +47,15 @@ import {
   resolveDevice,
   runHistoryVerb,
   str,
+  toCsv,
   usage,
   type WireDevice,
 } from "../shared";
 import { configSpec, CONFIG_HANDLERS } from "./config";
 import { coverageSpec, runCoverage } from "./coverage";
 import { forecastsSpec, runForecasts } from "./forecasts";
+import { readingsSpec, runReadings } from "./readings";
+import { commandLine, type WireCommand } from "../automation/model";
 import {
   diagnosticsSpec,
   eventsSpec,
@@ -218,6 +225,47 @@ export const deviceCommand = defineCommand({
       examples: ["liveone device latest daylesford"],
     },
     coverage: coverageSpec,
+    readings: readingsSpec,
+    commands: {
+      name: "commands",
+      summary:
+        "The device's command audit trail — every start/stop/setpoint, its requester and its outcome.",
+      when:
+        "Use this for 'what was this device TOLD to do' around a time of interest — e.g. whether a\n" +
+        "generator stop was commanded or happened on its own. For one automation's commands use\n" +
+        "`automation commands`.",
+      description:
+        "Owner-only: the trail names the person or rule behind each command. Every command on the\n" +
+        "DEVICE, whichever point it addressed; each row names its point's physical path.\n" +
+        "\n" +
+        "With --since/--until (requested_at, half-open, either or both): every command in the\n" +
+        "window, newest first, fetched page by page. Without a window: the newest --limit.",
+      args: [DEVICE_ARG],
+      flags: {
+        ...BASE_URL_FLAG,
+        since: {
+          type: "string",
+          placeholder: "ISO",
+          help: "Only commands requested at or after this instant",
+        },
+        until: {
+          type: "string",
+          placeholder: "ISO",
+          help: "Only commands requested BEFORE this instant",
+        },
+        limit: {
+          type: "number",
+          placeholder: "n",
+          help: "Without a window: how many, newest first (default 20, max 50)",
+        },
+      },
+      formats: ["human", "json", "csv"],
+      exitCodes: { 1: "no commands (in the window)" },
+      examples: [
+        "liveone device commands 'Daylesford Generator'",
+        "liveone device commands 14 --since=2026-09-17T09:00:00Z --until=2026-09-17T11:00:00Z --format=json",
+      ],
+    },
     history: {
       name: "history",
       summary:
@@ -1025,10 +1073,141 @@ const HANDLERS: Record<string, (ctx: Ctx) => Promise<number>> = {
   latest: runLatest,
   history: runHistory,
   coverage: runCoverage,
+  readings: runReadings,
+  commands: runCommands,
   forecasts: runForecasts,
   recompute: runRecompute,
   "change-offset": runChangeOffset,
 };
+
+/** A command row as `GET /api/v4/points/{pt_}/commands` serves it (older origins omit the path). */
+type WireDeviceCommand = WireCommand & {
+  pointId?: string;
+  physicalPath?: string;
+  logicalPath?: string | null;
+};
+
+const COMMANDS_PAGE = 50;
+
+async function runCommands(ctx: Ctx): Promise<number> {
+  const since = str(ctx, "since");
+  const until = str(ctx, "until");
+  const limit = ctx.flags.limit as number | undefined;
+  const windowed = since !== undefined || until !== undefined;
+  for (const [flag, v] of [
+    ["since", since],
+    ["until", until],
+  ] as const)
+    if (v !== undefined && !Number.isFinite(Date.parse(v)))
+      throw usage(
+        `--${flag}=${v} is not a timestamp`,
+        "it must parse as an ISO instant",
+        `e.g. --${flag}=2026-09-17T09:00:00Z`,
+      );
+  if (windowed && limit !== undefined)
+    throw usage(
+      "--limit with a window",
+      "a windowed read returns EVERY command in the window",
+      "drop --limit, or drop the window for the newest-N list",
+    );
+  if (
+    limit !== undefined &&
+    !(Number.isInteger(limit) && limit >= 1 && limit <= 50)
+  )
+    throw usage(
+      `--limit=${limit} is out of range`,
+      "the trail is served in pages of at most 50",
+      "pass an integer 1–50, or a --since/--until window",
+    );
+
+  return withApiSession(ctx, async (s) => {
+    // The trail is DEVICE-scoped but point-addressed, so any point of the device names it. A
+    // controllable one is preferred only because it is the point a reader would expect to see.
+    const body = await fetchAggregate(s, ctx.args[0], {
+      includeInactive: true,
+    });
+    const pts = body.points ?? [];
+    const anchor = pts.find((p) => p.control) ?? pts[0];
+    if (!anchor)
+      throw usage(
+        `device ${ctx.args[0]} has no points`,
+        "the command trail is addressed through one of the device's points",
+        "run `liveone device points` to check the device",
+      );
+    const q = new URLSearchParams();
+    if (since !== undefined)
+      q.set("since", new Date(Date.parse(since)).toISOString());
+    if (until !== undefined)
+      q.set("until", new Date(Date.parse(until)).toISOString());
+    const path = `/api/v4/points/${encodeURIComponent(anchor.id)}/commands`;
+
+    const commands: WireDeviceCommand[] = [];
+    let offset = 0;
+    for (;;) {
+      const page = new URLSearchParams(q);
+      page.set("limit", String(windowed ? COMMANDS_PAGE : (limit ?? 20)));
+      page.set("offset", String(offset));
+      const r = await s.get<{
+        commands?: WireDeviceCommand[];
+        hasMore?: boolean;
+      }>(`${path}?${page}`);
+      commands.push(...(r.commands ?? []));
+      if (!windowed || !r.hasMore) break;
+      offset += COMMANDS_PAGE;
+    }
+
+    ctx.emit(
+      {
+        device: { id: body.id, name: body.name },
+        ...(windowed
+          ? { window: { since: q.get("since"), until: q.get("until") } }
+          : {}),
+        commands,
+      },
+      () =>
+        commands.length
+          ? commands
+              .map(
+                (c) =>
+                  `${commandLine(c)}  [${c.physicalPath ?? c.logicalPath ?? c.pointId ?? "?"}]`,
+              )
+              .join("\n")
+          : windowed
+            ? "no commands in the window."
+            : "no commands.",
+      () =>
+        toCsv(
+          [
+            "requested_at",
+            "completed_at",
+            "status",
+            "action",
+            "value",
+            "reason",
+            "error",
+            "requested_by",
+            "point_id",
+            "physical_path",
+          ],
+          commands.map((c) => [
+            c.requestedAt,
+            c.completedAt,
+            c.status,
+            c.action,
+            c.value,
+            c.reason,
+            c.error,
+            c.requestedBy?.kind === "automation"
+              ? `automation:${c.requestedBy.automationId ?? ""}`
+              : c.requestedBy?.kind,
+            c.pointId,
+            c.physicalPath,
+          ]),
+        ),
+    );
+    return commands.length ? EXIT.OK : EXIT.FINDINGS;
+  });
+}
 
 async function runVendorIdentity(ctx: Ctx): Promise<number> {
   return withApiSession(ctx, async (s) => {

@@ -235,7 +235,10 @@ and the HWS model: list, create, set, enable/disable, delete, recompute, interva
 `dx_`/name/role, never by an area; `create` names the DEVICE the detector is about), `sync` (re-fetch
 a window from a device's vendor), and `device` / `area` / `user` (list, show, latest values, history;
 `device coverage` reports per-day reading DENSITY and gap runs; `device events` and
-`device diagnostics` are the retained FAULT record, see below; `area lint` censuses wiring;
+`device diagnostics` are the retained FAULT record, see below; `device readings` exports a
+window of RAW, untransformed, µs-exact readings for evidence, with `device commands` (command
+audit trail) and `session list --since --until [--failed]` (poll record) as its incident siblings —
+no prod DB role needed; `area lint` censuses wiring;
 `area flows` downloads the rolled-up Sankey matrix for a period — read-only except
 `device recompute`, `device config clean`, `device diagnostics run`, `area purge` and
 `area archive`/`area delete`). Run

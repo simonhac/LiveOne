@@ -22,6 +22,7 @@ import {
 } from "../cli";
 
 const TTY: Tty = { stdoutIsTTY: true, stdinIsTTY: true };
+const WINDOW = ["--since=2026-09-17T09:21:00Z", "--until=2026-09-17T10:02:00Z"];
 
 /** Parse under the real ancestry, so error messages name a runnable command. */
 const at = (argv: string[]) => parse(deviceCommand, argv, TTY, ["liveone"]);
@@ -59,13 +60,24 @@ describe("the write gate", () => {
     expect(success([...args, "--apply"]).dryRun).toBe(false);
   });
 
-  it.each(["list", "show", "points", "latest", "history", "vendor-identity"])(
-    "%s has no write flags at all",
-    (verb) => {
-      const args = verb === "list" ? [verb] : [verb, "kutis"];
-      expect(failure([...args, "--apply"])).toMatch(/apply/i);
-    },
-  );
+  it.each([
+    "list",
+    "show",
+    "points",
+    "latest",
+    "history",
+    "vendor-identity",
+    "readings",
+    "commands",
+  ])("%s has no write flags at all", (verb) => {
+    const args =
+      verb === "list"
+        ? [verb]
+        : verb === "readings"
+          ? [verb, "kutis", ...WINDOW]
+          : [verb, "kutis"];
+    expect(failure([...args, "--apply"])).toMatch(/apply/i);
+  });
 
   it("refuses --apply and --dry-run together", () => {
     expect(
@@ -404,5 +416,47 @@ describe("device --include-inactive", () => {
     expect(help).not.toContain("removed");
     // and it says it widens, so the coupling is discoverable from --help alone
     expect(help).toMatch(/include-inactive/);
+  });
+});
+
+describe("device readings", () => {
+  // The window is REQUIRED, not defaulted: an evidence export over a window nobody typed is a
+  // record of the wrong thing, and the server refuses an unbounded read anyway.
+  it("requires --since and --until", () => {
+    expect(failure(["readings", "1", WINDOW[1]])).toMatch(/since/);
+    expect(failure(["readings", "1", WINDOW[0]])).toMatch(/until/);
+  });
+
+  it("takes repeatable --point/--series, --out, and json|csv", () => {
+    const r = success([
+      "readings",
+      "1",
+      ...WINDOW,
+      "--point=pt_a",
+      "--point=pt_b",
+      "--series=battery/*",
+      "--series=load/*",
+      "--format=csv",
+      "--out=x.csv",
+    ]);
+    expect(r.flags.point).toEqual(["pt_a", "pt_b"]);
+    expect(r.flags.series).toEqual(["battery/*", "load/*"]);
+    expect(r.flags.out).toBe("x.csv");
+    expect(r.format).toBe("csv");
+    expect(success(["readings", "1", ...WINDOW, "--format=json"]).format).toBe(
+      "json",
+    );
+  });
+});
+
+describe("device commands", () => {
+  it("takes an optional window, a limit and csv", () => {
+    const r = success(["commands", "14", ...WINDOW, "--format=csv"]);
+    expect(r.flags.since).toBe("2026-09-17T09:21:00Z");
+    expect(r.flags.until).toBe("2026-09-17T10:02:00Z");
+    expect(r.format).toBe("csv");
+    const bare = success(["commands", "14"]);
+    expect(bare.flags.since).toBeUndefined();
+    expect(success(["commands", "14", "--limit=5"]).flags.limit).toBe(5);
   });
 });

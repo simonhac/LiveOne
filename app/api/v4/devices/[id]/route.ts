@@ -139,6 +139,9 @@ export async function GET(
     model: row.model,
     serial: row.serial,
     commissionedOn: row.commissionedOn,
+    // The device's fixed local-day offset (minutes east of UTC) — the boundary its `agg_1d` rows
+    // roll up on, and what an evidence bundle needs to say which "day" a reading belongs to.
+    dayOffsetMin: row.dayOffsetMin,
     // The area the device is IN — nullable, because a device is in 0 or 1 area. This used to sit
     // beside a `primaryAreaId` naming the eagerly-minted area-of-one; that shell is no longer minted
     // and its column is dropped by migration 0073, so this is the only area a device has.

@@ -95,6 +95,8 @@ still reach stderr.
     - [liveone device points](../scripts/ops/CLI_README.md#liveone-device-points) — A device's point inventory: pt_… id, path, metric, unit.
     - [liveone device latest](../scripts/ops/CLI_README.md#liveone-device-latest) — The device's current values, from the serving cache.
     - [liveone device coverage](../scripts/ops/CLI_README.md#liveone-device-coverage) — How many 5-minute readings each of a device's points holds, per local day.
+    - [liveone device readings](../scripts/ops/CLI_README.md#liveone-device-readings) — A device's RAW readings over a window — every point, untransformed, µs timestamps — for evidence.
+    - [liveone device commands](../scripts/ops/CLI_README.md#liveone-device-commands) — The device's command audit trail — every start/stop/setpoint, its requester and its outcome.
     - [liveone device history](../scripts/ops/CLI_README.md#liveone-device-history) — Time series for a device, in the OpenNEM shape /api/history serves.
     - [liveone device config](../scripts/ops/CLI_README.md#liveone-device-config) — The stored DeviceConfig blob — read it, audit it for rot, normalise it.
       - [liveone device config show](../scripts/ops/CLI_README.md#liveone-device-config-show) — The device's stored config blob, verbatim.
@@ -177,7 +179,7 @@ still reach stderr.
   - [liveone session](../scripts/ops/CLI_README.md#liveone-session) — The provenance record a write is filed under — create one, and read it back.
     - [liveone session create](../scripts/ops/CLI_README.md#liveone-session-create) — Mint a session to file an import under.  _(writes)_
     - [liveone session show](../scripts/ops/CLI_README.md#liveone-session-show) — One session, with its manifest.
-    - [liveone session list](../scripts/ops/CLI_README.md#liveone-session-list) — A device's recent sessions — id, label, cause, rows.
+    - [liveone session list](../scripts/ops/CLI_README.md#liveone-session-list) — A device's sessions — recent ones, or every one in a window — id, label, cause, outcome.
   - [liveone api](../scripts/ops/CLI_README.md#liveone-api) — One authenticated request to the deployed API, as you.  _(writes)_
 - [cli-reference](../scripts/ops/CLI_README.md#cli-reference) — Regenerate the committed CLI documentation from the tools' own declarations.  _(writes)_
 - [cli-conformance](../scripts/ops/CLI_README.md#cli-conformance) — Check that every operator CLI is registered and on the shared harness.

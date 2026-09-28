@@ -104,6 +104,8 @@ describe("isCliTokenRoute — what the bypass is bounded to", () => {
       // in-handler, read-only, and deliberately NOT `devicesVisibleByUser` — coverage is what you
       // ask about a device that has STOPPED, so it must answer for an archived one.
       "/api/v4/devices/dv_x/coverage",
+      // The raw evidence export (`device readings`), same matcher, same read-level device gate.
+      "/api/v4/devices/dv_x/readings",
       "/api/v4/users",
       "/api/v4/users/user_x",
       // 🛑 The most consequential admitted route: the only one that can move an object OUT of a
