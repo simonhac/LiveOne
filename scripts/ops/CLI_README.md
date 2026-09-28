@@ -75,6 +75,8 @@ still reach stderr.
     - [liveone device points](#liveone-device-points)
     - [liveone device latest](#liveone-device-latest)
     - [liveone device coverage](#liveone-device-coverage)
+    - [liveone device readings](#liveone-device-readings)
+    - [liveone device commands](#liveone-device-commands)
     - [liveone device history](#liveone-device-history)
     - [liveone device config](#liveone-device-config)
       - [liveone device config show](#liveone-device-config-show)
@@ -2165,6 +2167,8 @@ Subcommands:
   points                 A device's point inventory: pt_… id, path, metric, unit.
   latest                 The device's current values, from the serving cache.
   coverage               How many 5-minute readings each of a device's points holds, per local day.
+  readings               A device's RAW readings over a window — every point, untransformed, µs timestamps — for evidence.
+  commands               The device's command audit trail — every start/stop/setpoint, its requester and its outcome.
   history                Time series for a device, in the OpenNEM shape /api/history serves.
   config                 The stored DeviceConfig blob — read it, audit it for rot, normalise it.
   diagnostics            Captures of the inverter's internal event logs — list them, read one, export one, ask for another.
@@ -2784,6 +2788,142 @@ Examples:
 Exit codes:
   0    success
   1    at least one day is short of expected, or (with --samples) folds under 80% of the best day's readings per row (or, with --against, the two devices differ)
+  2    usage error
+  3    authentication failure
+  5    upstream failure
+  130  interrupted
+```
+
+#### liveone device readings
+
+A device's RAW readings over a window — every point, untransformed, µs timestamps — for evidence.
+
+```
+A device's RAW readings over a window — every point, untransformed, µs timestamps — for evidence.
+
+When to use:
+  Use this to KEEP a record of what was stored (an incident bundle, a vendor dispute): the raw
+  rows, exactly as written, with their session ids. To LOOK at a series use `device history`;
+  to ask whether a series is complete use `device coverage`.
+
+--since/--until are ISO instants with a zone (half-open: since <= t < until), at most 7 days.
+Every point of the device is included, INACTIVE ones too, unless narrowed by --point (pt_…)
+or --series (a glob over the logical path, e.g. 'load/*', or the physical-path tail).
+
+Values are RAW-UNTRANSFORMED: a point's `transform` ('i' = stored inverted) is reported in
+the points block but not applied. measurementTime, receivedTime and createdAt (ingestion)
+are UTC strings with all six fractional digits.
+
+Pages are fetched until the server says done; the first page's `asOf` (the database clock)
+is echoed on every later one, so rows ingested mid-export are consistently excluded.
+
+--format json: {device, window, asOf, values, points, readings}. --format csv is LONG, one
+row per reading, with the point's logical path and unit. --out writes the payload (or the
+CSV) to a file and prints only a summary.
+
+Usage:
+  liveone device readings <device> [options]
+
+  Read-only. This command changes nothing.
+
+Arguments:
+  <device>               A device: its dv_… id, integer handle, slug, or name
+
+Options:
+  --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
+  --since <ISO>              Window start, inclusive — an ISO instant with a zone  (required)
+  --until <ISO>              Window end, EXCLUSIVE — at most 7 days after --since  (required)
+  --point <pt_…>             Only this point (repeatable)  (repeatable)
+  --series <glob>            Only points whose logical path matches, e.g. "load/*" (repeatable; `*` does not cross `/`)  (repeatable)
+  --out <path>               Write the full payload (or the CSV, under --format csv) here; print only a summary
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json, csv)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  --format csv     comma-separated rows on stdout — the columns are documented above
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
+
+Examples:
+  liveone device readings 1 --since=2026-09-17T09:21:00Z --until=2026-09-17T10:02:00Z --format=json --out=raw.json
+  liveone device readings daylesford --since=2026-09-17T09:00:00Z --until=2026-09-17T10:00:00Z --series='battery/*'
+  liveone device readings 14 --since=2026-09-17T09:00:00Z --until=2026-09-17T10:00:00Z --format=csv --out=gen.csv
+
+Exit codes:
+  0    success
+  1    no readings in the window
+  2    usage error
+  3    authentication failure
+  5    upstream failure
+  130  interrupted
+```
+
+#### liveone device commands
+
+The device's command audit trail — every start/stop/setpoint, its requester and its outcome.
+
+```
+The device's command audit trail — every start/stop/setpoint, its requester and its outcome.
+
+When to use:
+  Use this for 'what was this device TOLD to do' around a time of interest — e.g. whether a
+  generator stop was commanded or happened on its own. For one automation's commands use
+  `automation commands`.
+
+Owner-only: the trail names the person or rule behind each command. Every command on the
+DEVICE, whichever point it addressed; each row names its point's physical path.
+
+With --since/--until (requested_at, half-open, either or both): every command in the
+window, newest first, fetched page by page. Without a window: the newest --limit.
+
+Usage:
+  liveone device commands <device> [options]
+
+  Read-only. This command changes nothing.
+
+Arguments:
+  <device>               A device: its dv_… id, integer handle, slug, or name
+
+Options:
+  --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
+  --since <ISO>              Only commands requested at or after this instant
+  --until <ISO>              Only commands requested BEFORE this instant
+  --limit <n>                Without a window: how many, newest first (default 20, max 50)
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json, csv)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+  --admin                    Act as admin: read across every owner, not just your own (admins only)
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  --format csv     comma-separated rows on stdout — the columns are documented above
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
+
+Examples:
+  liveone device commands 'Daylesford Generator'
+  liveone device commands 14 --since=2026-09-17T09:00:00Z --until=2026-09-17T11:00:00Z --format=json
+
+Exit codes:
+  0    success
+  1    no commands (in the window)
   2    usage error
   3    authentication failure
   5    upstream failure
@@ -7679,7 +7819,7 @@ Usage:
 Subcommands:
   create                 Mint a session to file an import under.  (writes)
   show                   One session, with its manifest.
-  list                   A device's recent sessions — id, label, cause, rows.
+  list                   A device's sessions — recent ones, or every one in a window — id, label, cause, outcome.
 
 Run `liveone session <subcommand> --help` for a subcommand's own options.
 
@@ -7817,14 +7957,22 @@ Exit codes:
 
 #### liveone session list
 
-A device's recent sessions — id, label, cause, rows.
+A device's sessions — recent ones, or every one in a window — id, label, cause, outcome.
 
 ```
-A device's recent sessions — id, label, cause, rows.
+A device's sessions — recent ones, or every one in a window — id, label, cause, outcome.
 
 When to use:
-  For finding the id to `show`. The manifest is deliberately not here: it is unbounded, and
-  a list is for choosing.
+  For finding the id to `show`, or — with --since/--until — for the POLL RECORD of a
+  window: which polls ran, which failed and why, in evidence form. The manifest is
+  deliberately not here: it is unbounded, and a list is for choosing.
+
+Without a window: newest first, --limit (default 20, max 200).
+With --since and --until (ISO instants, half-open on created_at, at most 31 days): EVERY
+session in the window, oldest first, fetched page by page to the end; --limit is refused.
+--cause and --failed filter server-side in both modes. createdAt is µs-precise UTC.
+--format csv is one row per session; --out writes the payload (or CSV) to a file and
+prints only a summary.
 
 Usage:
   liveone session list <device> [options]
@@ -7836,11 +7984,15 @@ Arguments:
 
 Options:
   --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
-  --limit <n>                How many to return, newest first (default 20, max 200)
+  --limit <n>                Without a window: how many to return, newest first (default 20, max 200)
   --cause <cause>            Only sessions with this cause, e.g. ADMIN for the operator-driven ones
+  --since <ISO>              Window start (created_at, inclusive); needs --until
+  --until <ISO>              Window end (created_at, EXCLUSIVE); needs --since
+  --failed                   Only sessions that failed (successful = false)
+  --out <path>               Write the full payload (or the CSV, under --format csv) here; print only a summary
 
 Common options:
-  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json, csv)
   --quiet                    Suppress non-essential output on stderr
   --color                    Colourise human output (default: on a terminal)
   --help                     Show this help and exit
@@ -7849,6 +8001,7 @@ Common options:
 Output:
   --format human   aligned text — the default at a terminal
   --format json    JSON on stdout — the default when stdout is not a terminal
+  --format csv     comma-separated rows on stdout — the columns are documented above
   Data goes to stdout; all diagnostics go to stderr.
 
 External access:
@@ -7858,10 +8011,12 @@ External access:
 Examples:
   liveone session list 6
   liveone session list 6 --cause=ADMIN --limit=5
+  liveone session list 1 --since=2026-09-17T09:19:00Z --until=2026-09-17T10:04:00Z --format=json --out=sessions.json
+  liveone session list 1 --since=2026-09-17T00:00:00Z --until=2026-09-18T00:00:00Z --failed
 
 Exit codes:
   0    success
-  1    completed, with findings or no results
+  1    no sessions matched
   2    usage error
   3    authentication failure
   5    upstream failure

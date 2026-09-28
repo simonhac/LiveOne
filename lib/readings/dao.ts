@@ -2338,7 +2338,167 @@ async function readTrialReferencePage(
     .limit(window.limit + 1);
 }
 
+// ── Raw export (`GET /api/v4/devices/{id}/readings`) ───────────────────────────────────────────────
+
+/** A µs-exact UTC instant as `to_char` renders it — the only form a raw-export cursor/asOf takes. */
+const US_INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/;
+
+/** `to_char` pattern that keeps all six fractional digits (drizzle's `Date` would truncate to ms). */
+const usText = (col: unknown) =>
+  sql<string>`to_char(${col}, 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`;
+
+/** A raw-export cursor the server did not mint (or a client mangled). The route answers 400. */
+export class InvalidRawExportCursor extends Error {}
+
+/**
+ * The keyset cursor is `(measurement_time µs, point_rid)` — both halves are needed, because many
+ * points share one measurement instant. It is OPAQUE on the wire (base64url JSON) so the integer rid
+ * it carries is never a field a client could read, construct or come to depend on.
+ */
+function encodeRawExportCursor(t: string, rid: number): string {
+  return Buffer.from(JSON.stringify([t, rid])).toString("base64url");
+}
+
+function decodeRawExportCursor(cursor: string): { t: string; rid: number } {
+  try {
+    const v: unknown = JSON.parse(
+      Buffer.from(cursor, "base64url").toString("utf8"),
+    );
+    if (
+      Array.isArray(v) &&
+      v.length === 2 &&
+      typeof v[0] === "string" &&
+      US_INSTANT.test(v[0]) &&
+      Number.isInteger(v[1]) &&
+      v[1] > 0
+    )
+      return { t: v[0], rid: v[1] };
+  } catch {
+    // fall through
+  }
+  throw new InvalidRawExportCursor("cursor is not one this server issued");
+}
+
+/**
+ * One page of a device's RAW, UNTRANSFORMED `point_readings`, for evidence export — the http
+ * replacement for a minted prod read role.
+ *
+ * - ALL of the device's points, including inactive ones (`pointIds` narrows to a subset of them).
+ * - Values exactly as stored: `points.transform` is NOT applied, because an export whose sign
+ *   depends on today's transform column is not evidence of what was recorded.
+ * - All three timestamps as µs-exact UTC text, via `to_char`.
+ * - `asOf` fixes the ingestion cutoff (`created_at <= asOf`) so paging is a consistent snapshot; on
+ *   the first page it is omitted and the DATABASE's `now()` is minted and returned for the caller to
+ *   echo on every later page.
+ * - Keyset on `(measurement_time, point_rid)` with `limit + 1`: `nextCursor` is null on the last
+ *   page.
+ */
+async function readRawExportPage(
+  device: DeviceId,
+  window: {
+    since: string;
+    until: string;
+    asOf?: string;
+    cursor?: string;
+    limit: number;
+    pointIds?: readonly PointId[];
+  },
+  exec?: ReadingsExec,
+): Promise<{
+  asOf: string;
+  readings: {
+    pointId: PointId;
+    sessionId: string | null;
+    measurementTime: string;
+    receivedTime: string;
+    createdAt: string;
+    value: number | null;
+    valueStr: string | null;
+    error: string | null;
+    dataQuality: string;
+  }[];
+  nextCursor: string | null;
+}> {
+  const db = exec ?? requirePlanetscaleDb();
+  if (window.asOf !== undefined && !US_INSTANT.test(window.asOf))
+    throw new InvalidRawExportCursor("asOf is not one this server issued");
+  const cursor =
+    window.cursor === undefined
+      ? undefined
+      : decodeRawExportCursor(window.cursor);
+
+  let asOf = window.asOf;
+  if (asOf === undefined) {
+    // The DATABASE clock, not the lambda's: `created_at` is stamped by `DEFAULT now()`, so only the
+    // same clock makes "ingested at or before the first page" a real snapshot.
+    const res = await db.execute(
+      sql`SELECT to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS "asOf"`,
+    );
+    asOf = (res.rows?.[0] as { asOf?: string } | undefined)?.asOf;
+    if (!asOf) throw new Error("could not read the database clock");
+  }
+
+  // SEAM: device → its point rids (every status). The rid never leaves this function.
+  const pts = await db
+    .select({ id: points.id, rid: points.rid })
+    .from(points)
+    .where(eq(points.deviceId, Device.toUuid(device)));
+  const wanted = window.pointIds
+    ? new Set(window.pointIds.map((p) => Point.toUuid(p)))
+    : null;
+  const selected = pts.filter((p) => !wanted || wanted.has(p.id));
+  if (selected.length === 0) return { asOf, readings: [], nextCursor: null };
+  const idByRid = new Map(selected.map((p) => [p.rid, p.id]));
+
+  const rows = await db
+    .select({
+      pointRid: pointReadings.pointRid,
+      sessionId: pointReadings.sessionId,
+      measurementTime: usText(pointReadings.measurementTime),
+      receivedTime: usText(pointReadings.receivedTime),
+      createdAt: usText(pointReadings.createdAt),
+      value: pointReadings.value,
+      valueStr: pointReadings.valueStr,
+      error: pointReadings.error,
+      dataQuality: pointReadings.dataQuality,
+    })
+    .from(pointReadings)
+    .where(
+      and(
+        inArray(pointReadings.pointRid, [...idByRid.keys()]),
+        sql`${pointReadings.measurementTime} >= ${window.since}::timestamp`,
+        sql`${pointReadings.measurementTime} < ${window.until}::timestamp`,
+        sql`${pointReadings.createdAt} <= ${asOf}::timestamp`,
+        // The plain `>=` is redundant with the row comparison but SARGABLE — it lets the planner
+        // start the index scan at the cursor instead of re-reading every earlier row on every page.
+        cursor
+          ? sql`${pointReadings.measurementTime} >= ${cursor.t}::timestamp`
+          : undefined,
+        cursor
+          ? sql`(${pointReadings.measurementTime}, ${pointReadings.pointRid}) > (${cursor.t}::timestamp, ${cursor.rid})`
+          : undefined,
+      ),
+    )
+    .orderBy(pointReadings.measurementTime, pointReadings.pointRid)
+    .limit(window.limit + 1);
+
+  const page = rows.slice(0, window.limit);
+  const last = page[page.length - 1];
+  return {
+    asOf,
+    readings: page.map(({ pointRid, ...r }) => ({
+      pointId: Point.encode(idByRid.get(pointRid)!),
+      ...r,
+    })),
+    nextCursor:
+      rows.length > window.limit && last
+        ? encodeRawExportCursor(last.measurementTime, last.pointRid)
+        : null,
+  };
+}
+
 export const ReadingsDao = {
+  readRawExportPage,
   readTrialReferencePage,
   readRaw,
   read5m,

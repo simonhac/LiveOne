@@ -169,8 +169,14 @@ onboarding now suggests `Amber <distributor> NMI <nmi>`.
   that they are refused, and that no wildcard admits them by accident. A generic `point` domain is
   still deferred — build the verb for the question being asked, not the surface.
 - **`device poll-status`** — needs a v4 read over `device_state`.
-- **Session / raw-vendor-payload lookup** — `sessions.response` is the first stop for "does the
-  vendor actually send X?", but it is a large admin-shaped surface; decide transport when needed.
+- **Raw-vendor-payload lookup** — `sessions.response` is the first stop for "does the vendor
+  actually send X?", but it is a large admin-shaped surface; decide transport when needed. The
+  session *record* itself is no longer deferred: `session list <device> --since --until [--failed]`
+  returns every poll in a window (outcome, duration, error, µs `createdAt`) and `session show`
+  returns one with its manifest. What remains deferred is the vendor payload of a POLL session in
+  bulk. Its incident siblings shipped with it — `device readings` (raw, untransformed, µs-exact
+  `point_readings` for a window, every point incl. inactive) and `device commands` (the command
+  audit trail over a window) — so an incident acquisition no longer needs a minted prod DB role.
 - **`area recompute-provenance`** — the first mutating area verb, when needed.
 - **`area devices`** — inline each member's full device aggregate (the per-device-config question
   currently takes `area show` + N × `device show`).

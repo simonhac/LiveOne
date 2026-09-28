@@ -98,6 +98,9 @@ export const TIERS: TierManifest = {
     // `device forecasts` — Amber's published forecasts and the logger's capture health. Split out
     // for the same reason: its own window rules (AEST days), three read shapes and renderers.
     "scripts/ops/device/forecasts.ts",
+    // `device readings` — the raw, untransformed, µs-exact evidence export that replaced minting a
+    // prod database role. Split out for its own window rules, paging loop and long-CSV renderer.
+    "scripts/ops/device/readings.ts",
     "scripts/ops/user/cli.ts",
     "scripts/ops/queue/cli.ts",
     // The `sync` verb — the only WRITER among the composed http modules, so it carries the

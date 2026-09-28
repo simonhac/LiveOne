@@ -1,4 +1,4 @@
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq, gte, lt } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 import { requireDeviceAccess } from "@/lib/api-auth";
 import { getByIds } from "@/lib/automations/store";
@@ -11,8 +11,11 @@ import { Automation, Point } from "@/lib/ids";
  * The command AUDIT TRAIL, readable — "why did my car stop charging at 2am", answered over HTTP
  * instead of SQL.
  *
- *   GET /api/v4/points/{pt_…}/commands?limit=20&offset=0
+ *   GET /api/v4/points/{pt_…}/commands?limit=20&offset=0[&since=ISO&until=ISO]
  *     → 200 { commands: [...], hasMore, offset, limit }
+ *
+ * `since`/`until` (optional, each independently) bound `requested_at` half-open —
+ * `since <= requested_at < until` — for `liveone device commands`, which pages a window to its end.
  *
  * Offset paging rather than a cursor: the trail is append-only at the HEAD, so a page boundary can
  * only shift when a new command lands while the reader is paging — which shows them a row twice at
@@ -64,6 +67,23 @@ export async function GET(
     const limit = Number.isFinite(rawLimit)
       ? Math.min(Math.max(Math.trunc(rawLimit), 1), 50)
       : 20;
+    const window: { since?: Date; until?: Date } = {};
+    for (const key of ["since", "until"] as const) {
+      const raw = request.nextUrl.searchParams.get(key);
+      if (raw === null) continue;
+      const ms = Date.parse(raw);
+      if (!Number.isFinite(ms))
+        return NextResponse.json(
+          { error: `${key} must be an ISO timestamp` },
+          { status: 400 },
+        );
+      window[key] = new Date(ms);
+    }
+    if (window.since && window.until && window.until <= window.since)
+      return NextResponse.json(
+        { error: "until must be after since" },
+        { status: 400 },
+      );
     const rawOffset = Number(request.nextUrl.searchParams.get("offset") ?? "0");
     const offset =
       Number.isFinite(rawOffset) && rawOffset > 0 ? Math.trunc(rawOffset) : 0;
@@ -75,7 +95,17 @@ export async function GET(
       .select({ command: pointCommands, point: points })
       .from(pointCommands)
       .innerJoin(points, eq(points.id, pointCommands.pointId))
-      .where(eq(pointCommands.deviceId, resolved.point.deviceId))
+      .where(
+        and(
+          eq(pointCommands.deviceId, resolved.point.deviceId),
+          window.since
+            ? gte(pointCommands.requestedAt, window.since)
+            : undefined,
+          window.until
+            ? lt(pointCommands.requestedAt, window.until)
+            : undefined,
+        ),
+      )
       .orderBy(desc(pointCommands.requestedAt))
       .limit(limit + 1)
       .offset(offset);
@@ -111,6 +141,9 @@ export async function GET(
         ?.reason;
       return {
         pointId: Point.encode(command.pointId),
+        // The stored TAIL (e.g. `generator/control`), not the composed `liveone/{vendor}/…` form:
+        // every row here is on one device, so the prefix would repeat and say nothing.
+        physicalPath: point.physicalPath,
         logicalPath: point.logicalPath,
         metricType: point.metricType,
         action: command.action,
