@@ -6,6 +6,7 @@
  * Decoupling invariant: this reads only the serving store (`point_readings`) and writes only
  * `derived_intervals`. It is never wired into the queue receiver / hot ingest path.
  */
+import { debugLog } from "@/lib/debug-log";
 import { and, asc, eq, gte, inArray, isNotNull, lte } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import { derivedIntervals } from "@/lib/db/planetscale/schema";
@@ -161,7 +162,7 @@ export async function reconcileTrailingWindow(
     // Loud, and at error level: this pass derived nothing for those detectors.
     console.error(`${line}, ${summary.trackersFailed} FAILED`);
   } else {
-    console.log(line);
+    debugLog(line);
   }
   return summary;
 }

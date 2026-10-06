@@ -8,6 +8,7 @@
  * - Inserting point readings (insertPointReading, insertPointReadingsRaw, insertPointReadingsAgg5m)
  */
 
+import { debugLog } from "@/lib/debug-log";
 import { and, eq, inArray } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import {
@@ -268,7 +269,7 @@ export class PointManager {
 
     // Clear and reload if cache is stale (older than TTL)
     if (PointManager.instance && cacheAge > PointManager.CACHE_TTL_MS) {
-      console.log(
+      debugLog(
         `[PointManager] Cache expired (age: ${Math.round(cacheAge / 1000)}s), clearing...`,
       );
       PointManager.instance = new PointManager();

@@ -10,6 +10,7 @@
  * message per chunk (replacing the old per-insert + separate-session flow).
  */
 
+import { debugLog } from "@/lib/debug-log";
 import { qstash, getObservationsReceiverUrl } from "@/lib/qstash";
 import { ObservationLane, QueueMessage, Session } from "./types";
 import type { DeviceConfigView } from "@/lib/registry/device-config";
@@ -199,7 +200,7 @@ export async function publishPoll(
       (sum, message) => sum + (message.observations?.length ?? 0),
       0,
     );
-    console.log(
+    debugLog(
       `[PollCollector] Published poll for system ${device.id} on lane ${collector.lane}: ` +
         `${messages.length} message(s), ${totalObservations} observations, ` +
         // Two endpoints reporting one reading is expected for Amber and nothing else — so this

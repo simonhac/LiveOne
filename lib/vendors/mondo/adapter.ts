@@ -1,3 +1,4 @@
+import { debugLog } from "@/lib/debug-log";
 import { BaseVendorAdapter } from "../base-adapter";
 import type {
   TestConnectionResult,
@@ -204,7 +205,7 @@ export class MondoAdapter extends BaseVendorAdapter {
     context: FetchContext,
   ): Promise<FetchResult> {
     try {
-      console.log(`[Mondo] Fetching data for system ${device.id}`);
+      debugLog(`[Mondo] Fetching data for system ${device.id}`);
 
       // Authenticate
       const accessToken = await this.authenticate(credentials);
@@ -313,7 +314,7 @@ export class MondoAdapter extends BaseVendorAdapter {
       const extras = (live?.readings ?? [])
         .map((r) => `${r.pointMetadata.physicalPathTail}=${r.rawValue}`)
         .join(", ");
-      console.log(
+      debugLog(
         `[Mondo] Fetch complete: ${readings.length} readings` +
           (extras ? ` (${extras})` : " (no live-usage extras)"),
       );

@@ -11,6 +11,7 @@
  * `point_info` and the KV keyspace stay integer-addressed until Phase 13, so this still writes
  * under the detector's `legacyHandle` — byte-identical to the pre-derivations behaviour.
  */
+import { debugLog } from "@/lib/debug-log";
 import { findPointByStemMetric, mintPoint } from "@/lib/point/mint-point";
 import {
   refreshServingForMintedPoints,
@@ -89,8 +90,6 @@ export async function publishRunningLatest(
       );
     }
   }
-  console.log(
-    `[RunTracking] published running latest for ${updated} detector(s)`,
-  );
+  debugLog(`[RunTracking] published running latest for ${updated} detector(s)`);
   return { updated };
 }

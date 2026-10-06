@@ -1,3 +1,4 @@
+import { debugLog } from "@/lib/debug-log";
 import fetch from "node-fetch";
 import * as cheerio from "cheerio";
 import { ERROR_MESSAGES } from "@/config";
@@ -425,7 +426,7 @@ export class SelectronicFetchClient {
 
       // Fetch data
       const url = `${SELECTLIVE_API.baseUrl}${SELECTLIVE_API.dataEndpoint}/${this.credentials.systemNumber}`;
-      console.log(`[Selectronic] Fetching data from ${url}`);
+      debugLog(`[Selectronic] Fetching data from ${url}`);
 
       const response = await fetch(url, {
         headers: {
@@ -435,7 +436,7 @@ export class SelectronicFetchClient {
         },
       });
 
-      console.log(`[Selectronic] Response status: ${response.status}`);
+      debugLog(`[Selectronic] Response status: ${response.status}`);
 
       if (response.status === 401) {
         console.log("[Selectronic] Session expired, re-authenticating...");
@@ -465,7 +466,7 @@ export class SelectronicFetchClient {
 
       const responseText = await response.text();
       const data = JSON.parse(responseText);
-      console.log("[Selectronic] Data received successfully");
+      debugLog("[Selectronic] Data received successfully");
 
       // Transform the data - only fields that actually exist in the API.
       //
@@ -484,7 +485,7 @@ export class SelectronicFetchClient {
         const delaySeconds = Math.floor(
           (now.getTime() - dataTime.getTime()) / 1000,
         );
-        console.log(
+        debugLog(
           `[Selectronic] Data timestamp: ${dataTime.toLocaleTimeString()} (${delaySeconds}s delay from inverter)`,
         );
       }
