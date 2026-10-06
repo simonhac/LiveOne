@@ -35,6 +35,10 @@ import type {
 import { recompute5mForRawObservationsBestEffort } from "@/lib/db/planetscale/aggregate-points-pg";
 import { isFiveMinuteNativeVendor } from "@/lib/vendors/native-intervals";
 import { maxMessageObservations } from "@/lib/observations/chunk";
+import { debugLog } from "@/lib/debug-log";
+
+/** A batch at or past this is logged in production too: see the `Processed in` line. */
+const SLOW_BATCH_MS = 1000;
 
 type Db = NonNullable<typeof planetscaleDb>;
 
@@ -522,13 +526,6 @@ async function handler(request: NextRequest) {
     // clock rather than a delivery round-trip, so it excludes network and cold start.
     const startedAtMs = Date.now();
 
-    console.log(
-      `[ObservationsReceiver] Received: systemId=${body.systemId}, ` +
-        `observations=${observationCount}, ` +
-        `session=${body.session ? "yes" : "no"}, ` +
-        `batchTime=${body.batchTime}`,
-    );
-
     // 🛑 An oversized message is REPORTED, never REJECTED. A non-2xx here would still be retried by
     // QStash and would still hold the delivery slot for the whole schedule, so rejecting buys no
     // blast-radius reduction at all — and it would be worse than nothing, because by now this
@@ -550,10 +547,21 @@ async function handler(request: NextRequest) {
     // Read this against `waitMs` in `liveone queue timing`: a long wait with a short duration is
     // head-of-line blocking (something ahead held the slot), a long duration is this batch's own
     // work. Conflating them is what made 2026-09-09 look like a throughput deficit twice.
+    //
+    // ONE line per batch, and in production only for the batches worth reading: slow or oversized.
+    // A healthy batch takes ~10ms, arrives ~11k times a day, and each line costs ~850 bytes of
+    // drain quota (lib/debug-log.ts), so shipping every one was ~20 MB/day of "fine". The slow
+    // ones are the head-of-line evidence this line exists for, and they still land durably.
     const durationMs = Date.now() - startedAtMs;
-    console.log(
-      `[ObservationsReceiver] Processed in ${durationMs}ms: ${JSON.stringify(stats)}`,
-    );
+    const line =
+      `[ObservationsReceiver] Processed in ${durationMs}ms: systemId=${body.systemId}, ` +
+      `observations=${observationCount}, session=${body.session ? "yes" : "no"}, ` +
+      `batchTime=${body.batchTime} ${JSON.stringify(stats)}`;
+    if (durationMs >= SLOW_BATCH_MS || stats.oversized) {
+      console.log(line);
+    } else {
+      debugLog(line);
+    }
 
     // Once this message's raw readings have durably landed (tx committed above),
     // recompute the raw-vendor 5m aggregates for the touched intervals from PG's

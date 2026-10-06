@@ -1,3 +1,4 @@
+import { debugLog } from "@/lib/debug-log";
 import { BaseVendorAdapter } from "../base-adapter";
 import type {
   TestConnectionResult,
@@ -211,7 +212,7 @@ export class SelectronicAdapter extends BaseVendorAdapter {
         });
       }
 
-      console.log(
+      debugLog(
         `[Selectronic] Fetch successful -`,
         "Solar:",
         transformed.solarW,

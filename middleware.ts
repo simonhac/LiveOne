@@ -87,11 +87,18 @@ export default async function middleware(
   return res;
 }
 
+// 🛑 `/api/observations/receive` is kept OUT of middleware entirely. It is public-listed anyway
+// (QStash signature, not Clerk), so middleware decided nothing for it, yet every delivery (~20k a
+// day) cost an edge invocation and one `middleware-invocation` line in the Vercel log drain, about
+// 17 MB/day of the Better Stack free tier's 3 GB/month. The one thing lost is the route's `mw`
+// Server-Timing entry, which nothing reads for a queue receiver. Only `/receive` is excluded:
+// `receive-dev` and the admin observation routes still go through Clerk.
 export const config = {
   matcher: [
-    // Skip Next.js internals and all static files, unless found in search params
-    "/((?!_next|[^?]*\\.(?:html?|css|js(?!on)|jpe?g|webp|png|gif|svg|ttf|woff2?|ico|csv|docx?|xlsx?|zip|webmanifest)).*)",
-    // Always run for API routes
-    "/(api|trpc)(.*)",
+    // Skip Next.js internals, the observations receiver, and all static files, unless found in
+    // search params
+    "/((?!_next|api/observations/receive(?!-)|[^?]*\\.(?:html?|css|js(?!on)|jpe?g|webp|png|gif|svg|ttf|woff2?|ico|csv|docx?|xlsx?|zip|webmanifest)).*)",
+    // Always run for API routes, except the observations receiver
+    "/(api(?!/observations/receive(?!-))|trpc)(.*)",
   ],
 };

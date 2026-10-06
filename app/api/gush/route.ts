@@ -1,3 +1,4 @@
+import { debugLog } from "@/lib/debug-log";
 import { NextRequest, NextResponse } from "next/server";
 import {
   updatePollingStatusSuccess,
@@ -195,7 +196,7 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    console.log(
+    debugLog(
       `[gush] system ${device.id} (${device.displayName}) seq=${data.sessionLabel} ` +
         `readings=${data.readings?.length ?? 0} stored=${readingsToInsert.length}`,
     );

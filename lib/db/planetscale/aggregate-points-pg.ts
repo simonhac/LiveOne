@@ -21,6 +21,7 @@
  * ingestion.
  */
 
+import { debugLog } from "@/lib/debug-log";
 import { eq, sql } from "drizzle-orm";
 import { CalendarDate } from "@internationalized/date";
 import { planetscaleDb } from "./index";
@@ -408,7 +409,7 @@ export async function recompute5mForRawObservationsBestEffort(
     );
     const { intervalsProcessed, rowsUpserted } =
       await recomputeAgg5mForIntervals(planetscaleDb, systemId, intervals);
-    console.log(
+    debugLog(
       `[PG-Agg5m] system=${systemId} intervals=${intervalsProcessed} upserted=${rowsUpserted}`,
     );
   } catch (err) {

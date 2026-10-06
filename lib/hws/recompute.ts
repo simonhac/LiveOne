@@ -19,6 +19,7 @@
  * `[winStart − WARMUP_MS, winEnd]`, model across it, and UPSERT only the window's intervals — so a
  * re-run / late data resolves to the same values with no deletes.
  */
+import { debugLog } from "@/lib/debug-log";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import { ReadingsDao, type Agg5mInsert } from "@/lib/readings";
 import { modelHws, type HwsSample } from "@/lib/hws-model";
@@ -144,7 +145,7 @@ export async function reconcileTrailingWindow(
     }
   }
   if (pairs.length > 0) {
-    console.log(
+    debugLog(
       `[HWS] reconcile trailing ${Math.round(trailingMs / 3600000)}h: ${pairs.length} pairs, ${rowsWritten} rows`,
     );
   }

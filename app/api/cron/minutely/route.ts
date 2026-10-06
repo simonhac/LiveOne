@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { formatSystemId } from "@/lib/device-utils";
+import { debugLog } from "@/lib/debug-log";
 import { VendorRegistry } from "@/lib/vendors/registry";
 import { vendorUsesAppCredentials } from "@/lib/vendors/ownership";
 import { getDeviceCredentials } from "@/lib/secure-credentials";
@@ -139,7 +140,7 @@ async function pollAllDevices(params: {
       return null;
     }
 
-    console.log(
+    debugLog(
       `[Cron] Processing systemId=${device.id} (${device.vendorType}/${device.vendorSiteId} '${device.displayName}') with session ${sessionLabel}`,
     );
 
@@ -332,12 +333,12 @@ async function pollAllDevices(params: {
       // Log result
       switch (result.action) {
         case "POLLED":
-          console.log(
+          debugLog(
             `[Cron] ${formatSystemId(device)} - Success (${result.recordsProcessed} records)`,
           );
           break;
         case "SKIPPED":
-          console.log(
+          debugLog(
             `[Cron] ${formatSystemId(device)} - Skipped: ${result.reason}`,
           );
           break;
@@ -439,7 +440,7 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    console.log("[Cron] Starting system polling...");
+    debugLog("[Cron] Starting system polling...");
 
     // Config (incl. polling status) is loaded fresh per request, so no cache to clear.
 
@@ -659,10 +660,16 @@ export async function GET(request: NextRequest) {
     // 72.9 s against a 60 s budget, and nothing recorded it at the time.
     const budgetWarn =
       durationMs > 30_000 ? " ⚠ SLOW (>30s of a 60s budget)" : "";
+    // The summary ships every tick; the per-device array only for the failures. The full array ran
+    // ~4.5 KB a tick (6.5 MB/day of drain quota) restating what `sessions.response` already archives.
+    const failedForLogging = resultsForLogging.filter(
+      (r) => r?.action === "ERROR",
+    );
     console.log(
       `[Cron] Polling complete in ${durationMs} ms${budgetWarn}. success: ${successCount}, failed: ${failureCount}, skipped: ${skippedCount}`,
-      resultsForLogging,
+      ...(failedForLogging.length > 0 ? [failedForLogging] : []),
     );
+    debugLog("[Cron] Polling results:", resultsForLogging);
 
     const nowZoned = fromDate(new Date(), "Australia/Brisbane");
     const timestamp = formatTimeAEST(nowZoned);
