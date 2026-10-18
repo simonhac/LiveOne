@@ -6656,6 +6656,10 @@
               "both"
             ]
           },
+          "replace-derived": {
+            "type": "boolean",
+            "description": "SIGENERGY ONLY — first delete the power/SoC fills an earlier backfill wrote in the window (never a measured reading), then re-derive them. A plain re-run never rewrites a fill at equal quality, so this is how a fill written WRONG gets corrected (the 2026-10 DST hour). Refused for any other vendor."
+          },
           "verify": {
             "type": "boolean",
             "description": "After publishing, wait for the lane to drain and read the serving store back. --no-verify skips it, and the report then says the landing was NOT checked.",
@@ -6682,7 +6686,7 @@
           "device"
         ]
       },
-      "signature": "liveone sync <device> { --base-url?: string; --start?: string; --end?: string; --action?: \"usage\"|\"pricing\"|\"both\"; --verify?: boolean }",
+      "signature": "liveone sync <device> { --base-url?: string; --start?: string; --end?: string; --action?: \"usage\"|\"pricing\"|\"both\"; --replace-derived?: boolean; --verify?: bo …",
       "invocation": "npm run liveone -- sync",
       "file": "scripts/ops/liveone.ts",
       "writes": true,

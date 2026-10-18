@@ -62,6 +62,13 @@
  * charging, the split needs no inference, so the span cap does not apply and the vendor's own
  * exact total is kept rather than discarded alongside a split we could not make.
  *
+ * Its data-driven twin is the device's OBSERVED charge rate (`observedChargeRateW`). A charger
+ * draws its rate or nothing, and the EV is part of the total, so a total below
+ * `EV_NOT_CHARGING_FRACTION` of that rate means the EV is not charging either — an inference from
+ * the device's own history rather than a certainty, so it is marked `interpolated`, and it is what
+ * closes a long outage's split. Without it the 2026-10-17 Kutis outage left 11 slots of
+ * EV/rest-of-house empty, all with the house drawing 0.8–4.2 kW against a 6.8 kW charger.
+ *
  * ## Accuracy
  *
  * ## Counter dropouts
@@ -152,6 +159,42 @@ export const MAX_INTERP_INTERVALS = 3;
  * solar, grid and battery were filled from the same payload.
  */
 export const EV_SPLIT_CEILING_W = 500;
+
+/**
+ * Below this fraction of the device's observed charge rate the EV is taken as not charging.
+ *
+ * 90% leaves room for the rate to sag (a hot cable, a low phase voltage) without calling a real
+ * charge "idle", while still covering any ordinary household load beside a 6.8 kW charger.
+ */
+export const EV_NOT_CHARGING_FRACTION = 0.9;
+
+/** A measured EV sample at or above this is a charge sample; below it is idle noise. */
+const CHARGING_SAMPLE_MIN_W = 1000;
+
+/** Fewer charge samples than this (two hours) is not enough history to call a rate. */
+const MIN_CHARGE_SAMPLES = 24;
+
+/** How far back the charge rate is learned from. */
+const CHARGE_RATE_LOOKBACK_MS = 30 * 24 * 60 * 60 * 1000;
+
+/**
+ * The device's observed charge rate: the 10th percentile of its measured charge samples, or null
+ * when there are too few to say.
+ *
+ * A low percentile rather than the median so a charger that modulates (solar-follow, a lower
+ * current limit) pulls the threshold DOWN on its own, which is the safe direction: a lower
+ * threshold only means fewer intervals get called "not charging".
+ */
+export function observedChargeRateW(
+  samples: readonly MeasuredSample[],
+): number | null {
+  const charging = samples
+    .map((s) => s.value)
+    .filter((v) => v >= CHARGING_SAMPLE_MIN_W)
+    .sort((a, b) => a - b);
+  if (charging.length < MIN_CHARGE_SAMPLES) return null;
+  return charging[Math.floor(charging.length * 0.1)];
+}
 
 /** The six energy counters for one 5-minute interval, in Wh. `null` = not reported. */
 export interface IntervalEnergyWh {
@@ -335,6 +378,11 @@ export function computeDerivedPowerReadings(params: {
    */
   availableTails: ReadonlySet<string>;
   maxInterpIntervals?: number;
+  /**
+   * The device's observed charge rate (`observedChargeRateW`), or null/absent when unknown. A total
+   * below `EV_NOT_CHARGING_FRACTION` of it means the EV is not charging.
+   */
+  chargeRateW?: number | null;
 }): DerivedReading[] {
   const {
     energyByIntervalEnd,
@@ -344,7 +392,10 @@ export function computeDerivedPowerReadings(params: {
     availableTails,
     vendorPower,
     maxInterpIntervals = MAX_INTERP_INTERVALS,
+    chargeRateW,
   } = params;
+  const notChargingBelowW =
+    chargeRateW != null ? chargeRateW * EV_NOT_CHARGING_FRACTION : null;
 
   // A hole of N intervals has its anchors N+1 intervals apart.
   const maxSpanMs = (maxInterpIntervals + 1) * FIVE_MIN_MS;
@@ -501,6 +552,8 @@ export function computeDerivedPowerReadings(params: {
         if (shouldWrite("load_w", ms, "calculated"))
           push("load_w", ms, totalW, "calculated");
       } else {
+        // Nearby measured samples are the better evidence, so they go first; the charge-rate rule
+        // is for the hole they cannot bracket — a long outage.
         const evW = interpolateAt(measuredEv, ms, maxSpanMs);
         if (evW != null) {
           // EV power is a load: never negative, and never more than the whole house drew.
@@ -509,6 +562,17 @@ export function computeDerivedPowerReadings(params: {
             push("ev_w", ms, ev, "interpolated");
           if (shouldWrite("load_w", ms, "interpolated"))
             push("load_w", ms, totalW - ev, "interpolated");
+        } else if (
+          notChargingBelowW != null &&
+          totalW >= 0 &&
+          totalW < notChargingBelowW
+        ) {
+          // Too little for the EV to be charging at the rate this charger has been seen to charge
+          // at. An inference from history, not a certainty — hence `interpolated`. See the header.
+          if (shouldWrite("ev_w", ms, "interpolated"))
+            push("ev_w", ms, 0, "interpolated");
+          if (shouldWrite("load_w", ms, "interpolated"))
+            push("load_w", ms, totalW, "interpolated");
         }
       }
     }
@@ -596,6 +660,35 @@ function energyReadingsToIntervals(
  */
 const DERIVE_SETTLE_MS = 30 * 60 * 1000;
 
+/** The markers this module writes — and therefore the only rows it may ever delete. */
+const OUR_QUALITIES = ["good", "calculated", "interpolated"] as const;
+
+/**
+ * Delete the fill rows this module wrote for a device in `(fromMs, toMs]`, so a re-run can write
+ * them afresh. Returns how many went.
+ *
+ * Needed because a re-run never rewrites at equal rank (see `shouldWrite`), which is right for an
+ * idempotent backfill and wrong for a fill that was written at the WRONG INSTANT — the 2026-10 DST
+ * bug put every one an hour late, in slots the corrected run would never revisit. Only the six
+ * power/SoC tails, and only our markers: a measured row is `data_quality IS NULL` and cannot match.
+ */
+export async function deleteDerivedPowerRows(
+  systemId: number,
+  window: { fromMs: number; toMs: number },
+): Promise<number> {
+  if (window.toMs <= window.fromMs) return 0;
+  const pointMap = await PointManager.getInstance().loadPointInfoMap(systemId);
+  const points = SIGEN_DERIVED_TAILS.flatMap((tail) =>
+    pointMap[tail] ? [Point.encode(pointMap[tail].pointUid)] : [],
+  );
+  const { deleted } = await ReadingsDao.delete5mByQualityInWindow(
+    points,
+    window,
+    OUR_QUALITIES,
+  );
+  return deleted;
+}
+
 /**
  * Build the day's fill readings, reading current coverage from the serving store.
  *
@@ -651,6 +744,26 @@ export async function deriveDayPowerReadings(params: {
     window,
   );
 
+  // The EV's own history, for its charge rate. A separate, wider read of the one point; measured
+  // rows only, for the same reason the anchors below are — a rate learned from our own fills would
+  // feed itself.
+  const evRow = pointMap["ev_w"];
+  let chargeRateW: number | null = null;
+  if (evRow) {
+    const history = await ReadingsDao.read5m([Point.encode(evRow.pointUid)], {
+      fromMs: window.fromMs - CHARGE_RATE_LOOKBACK_MS,
+      toMs: window.toMs,
+      toInclusive: true,
+    });
+    chargeRateW = observedChargeRateW(
+      (history.get(Point.encode(evRow.pointUid)) ?? []).flatMap((r) => {
+        if (r.dataQuality != null && r.dataQuality !== "good") return [];
+        const v = r.avg ?? r.last;
+        return v == null ? [] : [{ intervalEndMs: r.intervalEndMs, value: v }];
+      }),
+    );
+  }
+
   const presentByTail = new Map<string, Map<number, string | null>>();
   const measuredEv: MeasuredSample[] = [];
   const measuredSoc: MeasuredSample[] = [];
@@ -687,5 +800,6 @@ export async function deriveDayPowerReadings(params: {
     availableTails: new Set(targets.map((x) => x.tail)),
     vendorPower: params.vendorPower,
     maxInterpIntervals: params.maxInterpIntervals,
+    chargeRateW,
   });
 }

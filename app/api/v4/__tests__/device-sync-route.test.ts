@@ -99,6 +99,7 @@ const deviceView: {
   vendorSiteId: string;
   displayName: string;
   timezoneOffsetMin: number;
+  displayTimezone: string;
   metadata: unknown;
 } = {
   id: 10002,
@@ -107,6 +108,7 @@ const deviceView: {
   vendorSiteId: "SITE",
   displayName: "Amber",
   timezoneOffsetMin: 600,
+  displayTimezone: "Australia/Melbourne",
   metadata: null,
 };
 
@@ -427,7 +429,37 @@ describe("POST /api/v4/devices/{id}/sync", () => {
         // 🛑 The DEVICE's offset, not the server's. The days a Sigenergy station reports are its
         // own, and UTC days would silently shift every window by ten hours.
         tzOffsetMin: 600,
+        // ...and the station's civil zone, which its `dataTime` is written in (DST included).
+        timeZone: "Australia/Melbourne",
+        replaceDerived: false,
       });
+    });
+
+    it("passes --replace-derived through to the Sigenergy backfill", async () => {
+      stubDevice(sigen);
+      const body = await (
+        await post({
+          start: "2026-09-10",
+          end: "2026-09-11",
+          replaceDerived: true,
+        })
+      ).json();
+      expect(mockSigen.mock.calls[0][0]).toMatchObject({
+        replaceDerived: true,
+      });
+      expect(body.replaceDerived).toBe(true);
+    });
+
+    it("refuses --replace-derived for a vendor with no derived fills", async () => {
+      // Refused, not ignored — for the action axis' reason.
+      stubDevice(oe);
+      const res = await post({
+        start: "2026-09-10",
+        end: "2026-09-11",
+        replaceDerived: true,
+      });
+      expect(res.status).toBe(422);
+      expect((await res.json()).error).toMatch(/replace-derived/);
     });
 
     it("chunks Sigenergy to keep one request inside the route's budget", async () => {

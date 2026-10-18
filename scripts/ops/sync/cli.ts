@@ -96,6 +96,8 @@ export interface WireSync {
   window: { start: string; end: string; days: number };
   /** Null for a vendor with one historical surface — see the `--action` flag. */
   action: string | null;
+  /** Whether earlier derived fills are deleted before re-deriving — `--replace-derived`. */
+  replaceDerived?: boolean;
   dryRun: boolean;
   vendorMaxDays: number;
   lane: string;
@@ -227,6 +229,10 @@ export const syncCommand = defineCommand({
       values: [...ACTIONS],
       help: "AMBER ONLY — which half to fetch: usage (energy + cost), pricing (rates), or both (default: both). Prefer the narrowest that covers the gap. Refused for a vendor with one historical surface.",
     },
+    "replace-derived": {
+      type: "boolean",
+      help: "SIGENERGY ONLY — first delete the power/SoC fills an earlier backfill wrote in the window (never a measured reading), then re-derive them. A plain re-run never rewrites a fill at equal quality, so this is how a fill written WRONG gets corrected (the 2026-10 DST hour). Refused for any other vendor.",
+    },
     verify: {
       type: "boolean",
       // 🛑 `default: true`, DECLARED — not inferred from `undefined` in the handler. The parser
@@ -261,6 +267,7 @@ export async function runSync(ctx: Ctx): Promise<number> {
   // has none, turning "you did not ask for this" into a 422 the caller did not cause. The parser has
   // already checked the value against ACTIONS.
   const action = str(ctx, "action");
+  const replaceDerived = bool(ctx, "replace-derived");
 
   return withApiSession(
     ctx,
@@ -281,6 +288,7 @@ export async function runSync(ctx: Ctx): Promise<number> {
         start,
         end,
         ...(action === undefined ? {} : { action }),
+        ...(replaceDerived ? { replaceDerived: true } : {}),
         dryRun: ctx.dryRun,
       });
 
@@ -298,6 +306,7 @@ export async function runSync(ctx: Ctx): Promise<number> {
           start: cursor,
           end,
           ...(action === undefined ? {} : { action }),
+          ...(replaceDerived ? { replaceDerived: true } : {}),
           dryRun: false,
         });
         runs.push(next);
@@ -450,6 +459,11 @@ export function renderPlan(w: WireSync): string {
     `device       ${w.device.systemId}  ${w.device.name}  (${w.device.vendor})`,
     `window       ${w.window.start} → ${w.window.end}   (${w.window.days} days)`,
     `action       ${w.action ?? "—  (this vendor has one historical surface)"}`,
+    ...(w.replaceDerived
+      ? [
+          "replace      earlier power/SoC fills in the window are DELETED, then re-derived (measured readings untouched)",
+        ]
+      : []),
     `chunks       ${n} × ≤${w.vendorMaxDays} days  — the vendor's own limit`,
     `lane         ${w.lane}  — cannot delay live ingest`,
     "",

@@ -17,6 +17,7 @@
  *     EXACTLY. Today (partial) gets no tail and is left un-reconciled until it completes.
  */
 
+import { DateTime } from "luxon";
 import { PointManager, type SessionInfo } from "@/lib/point/point-manager";
 import type { PollCollector } from "@/lib/observations/poll-collector";
 import type { SigenergyClient } from "./sigenergy-client";
@@ -26,7 +27,11 @@ import {
   type SigenergyEnergyCounterField,
 } from "./point-metadata";
 import type { SigenergyEnergyInterval, SigenergyEnergyTotals } from "./types";
-import { deriveDayPowerReadings, type VendorPowerSample } from "./derive-power";
+import {
+  deleteDerivedPowerRows,
+  deriveDayPowerReadings,
+  type VendorPowerSample,
+} from "./derive-power";
 
 const FIVE_MIN_MS = 5 * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -34,23 +39,82 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const RECONCILE_TOLERANCE_WH = 5;
 
 /**
- * Parse a local "YYYYMMDD HH:MM" wall-clock into a UTC epoch-ms instant, given the device's timezone
- * offset (minutes east of UTC — e.g. Melbourne AEST = +600). Returns null on an unparseable string.
+ * Every UTC instant at which the wall clock in `timeZone` reads `dataTime` ("YYYYMMDD HH:MM"),
+ * ascending. Usually one; two inside a DST fall-back hour (02:00–02:59 repeats); none inside a
+ * spring-forward gap. Returns null on an unparseable string.
+ *
+ * 🛑 **`dataTime` is the station's CIVIL time, daylight saving included** — it is not at the fixed
+ * day offset the rest of the app keys days on. This used to subtract `timezoneOffsetMin` (+600 for
+ * Melbourne), which is right for half the year and an hour wrong for the other half: from the
+ * 2026-10-04 transition every interval energy row Kutis had — this route is its ONLY source of
+ * interval energy — was labelled an hour late, as was every recovered power and SoC sample.
+ * Measured on 2026-10-17, |energy×12 − live solar| was 716 W aligned and 92 W shifted by an hour;
+ * the raw itemList's `pvTotalPower` against the live poll was 735 W parsed at +10 and 78 W at +11.
  */
-export function localDataTimeToUtcMs(
+export function dataTimeInstantsUtcMs(
   dataTime: string,
-  tzOffsetMin: number,
-): number | null {
+  timeZone: string,
+): number[] | null {
   const m = dataTime.match(/^(\d{4})(\d{2})(\d{2})\s+(\d{2}):(\d{2})$/);
   if (!m) return null;
   const [, y, mo, d, h, mi] = m;
   const wallMs = Date.UTC(+y, +mo - 1, +d, +h, +mi);
-  return wallMs - tzOffsetMin * 60 * 1000;
+  const offsetMinAt = (ms: number) =>
+    DateTime.fromMillis(ms, { zone: timeZone }).offset;
+  // A wall time can only be read at an offset the zone actually uses near it. Sample the offsets a
+  // day either side (no zone transitions twice in a day) and keep each candidate that round-trips.
+  const offsets = new Set([
+    offsetMinAt(wallMs - DAY_MS),
+    offsetMinAt(wallMs + DAY_MS),
+  ]);
+  const out: number[] = [];
+  for (const off of offsets) {
+    const instant = wallMs - off * 60 * 1000;
+    if (offsetMinAt(instant) === off) out.push(instant);
+  }
+  return out.sort((a, b) => a - b);
 }
 
-/** UTC-ms of local midnight starting the given YYYYMMDD, for the device's tz offset. */
-function dayStartUtcMs(date: string, tzOffsetMin: number): number | null {
-  return localDataTimeToUtcMs(`${date} 00:00`, tzOffsetMin);
+/**
+ * Resolve one day's time-ascending `dataTime`s to UTC instants, in order.
+ *
+ * A wall time read twice in a fall-back hour is the earlier instant the first time it appears and
+ * the later one the second, which is exactly "the first candidate after the previous row". So the
+ * result is strictly increasing whenever the input is, and `null` only for a time that cannot exist
+ * (a spring-forward gap) or does not parse.
+ */
+export function resolveDataTimes(
+  dataTimes: readonly string[],
+  timeZone: string,
+): (number | null)[] {
+  let prev = -Infinity;
+  return dataTimes.map((t) => {
+    const candidates = dataTimeInstantsUtcMs(t, timeZone);
+    const pick = candidates?.find((c) => c > prev) ?? null;
+    if (pick != null) prev = pick;
+    return pick;
+  });
+}
+
+/** UTC-ms of local midnight starting the given YYYYMMDD, in `timeZone`. */
+function dayStartUtcMs(date: string, timeZone: string): number | null {
+  return dataTimeInstantsUtcMs(`${date} 00:00`, timeZone)?.[0] ?? null;
+}
+
+/** UTC-ms of midnight starting YYYYMMDD at a FIXED offset — the app's own day boundary. */
+function fixedDayStartUtcMs(date: string, tzOffsetMin: number): number {
+  return (
+    Date.UTC(+date.slice(0, 4), +date.slice(4, 6) - 1, +date.slice(6, 8)) -
+    tzOffsetMin * 60 * 1000
+  );
+}
+
+/** The YYYYMMDD after `date`. */
+function nextDay(date: string): string {
+  const ms =
+    Date.UTC(+date.slice(0, 4), +date.slice(4, 6) - 1, +date.slice(6, 8)) +
+    DAY_MS;
+  return new Date(ms).toISOString().slice(0, 10).replace(/-/g, "");
 }
 
 export type Agg5mReading = {
@@ -68,6 +132,8 @@ export interface PullEnergyDayResult {
   empty: boolean; // no itemList rows (e.g. a pre-go-live day)
   /** Power/SoC rows recovered for intervals the live poll missed (see `derive-power.ts`). */
   derivedWritten: number;
+  /** Earlier fill rows deleted first, under `replaceDerived`. */
+  derivedReplaced?: number;
   /**
    * The vendor's verbatim `statistics/energy` response, when the caller asked for it.
    *
@@ -90,12 +156,16 @@ export interface PullEnergyDayResult {
 export function computeDayEnergyReadings(
   rows: SigenergyEnergyInterval[],
   totals: SigenergyEnergyTotals,
-  tzOffsetMin: number,
+  timeZone: string,
   isComplete: boolean,
   date = "",
 ): Agg5mReading[] {
   const readings: Agg5mReading[] = [];
   if (rows.length === 0) return readings;
+  const instants = resolveDataTimes(
+    rows.map((r) => r.dataTime),
+    timeZone,
+  );
 
   for (const { counterField, metadata } of SIGENERGY_ENERGY_POINTS) {
     const field: SigenergyEnergyCounterField = counterField;
@@ -105,7 +175,7 @@ export function computeDayEnergyReadings(
     for (let i = 0; i < rows.length - 1; i++) {
       const c0 = rows[i][field];
       const c1 = rows[i + 1][field];
-      const endMs = localDataTimeToUtcMs(rows[i + 1].dataTime, tzOffsetMin);
+      const endMs = instants[i + 1];
       if (c0 == null || c1 == null || endMs == null) continue;
       // SIGNED diff — do NOT clamp to ≥0. On low-volume metrics (e.g. a self-sufficient day's tiny
       // grid import) the 0.01-kWh-rounded counter FLICKERS (…0 → 0.01 → 0 → 0.01…); clamping the −0.01
@@ -126,8 +196,7 @@ export function computeDayEnergyReadings(
     // Completed day: put the residual (dayTotal − Σdeltas) in the final [last, last+5) interval so the
     // day reconstructs to the vendor headline exactly. Skip for today (no authoritative total yet).
     if (isComplete) {
-      const last = rows[rows.length - 1];
-      const lastEndMs = localDataTimeToUtcMs(last.dataTime, tzOffsetMin);
+      const lastEndMs = instants[rows.length - 1];
       const total = totals[field];
       if (lastEndMs != null && total != null) {
         const tailWh = Math.round(total * 1000) - sumWh;
@@ -153,6 +222,21 @@ export function computeDayEnergyReadings(
 }
 
 /**
+ * The day's rows in time order.
+ *
+ * Sorted by `dataTime` as a string — EXCEPT on a fall-back day, where 02:00–02:55 appears twice and a
+ * string sort would interleave the two hours (02:00, 02:00, 02:05, 02:05 …), leaving no order in
+ * which `resolveDataTimes` could tell daylight from standard time. There the vendor's own order,
+ * which is chronological, is the only one that means anything, so it is kept.
+ */
+export function orderedRows<T extends { dataTime: string }>(rows: T[]): T[] {
+  const repeats = new Set(rows.map((r) => r.dataTime)).size !== rows.length;
+  return repeats
+    ? rows
+    : [...rows].sort((a, b) => a.dataTime.localeCompare(b.dataTime));
+}
+
+/**
  * Fetch one day's statistics and publish its per-interval energy for all six metrics.
  *
  * `now` defaults to the wall clock; injectable for tests. Requires a `session` (5m-native publish is
@@ -162,22 +246,39 @@ async function pullEnergyDay(params: {
   client: SigenergyClient;
   systemId: number;
   stationId: string;
-  date: string; // YYYYMMDD
-  tzOffsetMin: number;
+  date: string; // YYYYMMDD — the vendor's (civil) day
+  /** The station's IANA zone, which `dataTime` is written in. */
+  timeZone: string;
+  /**
+   * Only readings whose interval ENDS in `(fromMs, toMs]` are written — the caller's fixed-offset
+   * window. A civil day and a fixed-offset day disagree by the DST hour, so one vendor day can
+   * straddle two of ours; clipping keeps a fetch from writing a day nobody asked to recompute.
+   */
+  clip: { fromMs: number; toMs: number };
   session: SessionInfo;
   collector?: PollCollector;
   now?: number;
   /** Return the vendor's verbatim response on the result — diagnostics only. */
   includeRaw?: boolean;
+  /** Delete this module's earlier power/SoC fills in the window before re-deriving them. */
+  replaceDerived?: boolean;
 }): Promise<PullEnergyDayResult> {
-  const { client, systemId, stationId, date, tzOffsetMin, session, collector } =
-    params;
+  const {
+    client,
+    systemId,
+    stationId,
+    date,
+    timeZone,
+    clip,
+    session,
+    collector,
+  } = params;
   const now = params.now ?? Date.now();
 
   const day = await client.getEnergyStatistics(stationId, date);
-  const rows = day.intervals
-    .filter((r) => /^\d{8}\s+\d{2}:\d{2}$/.test(r.dataTime))
-    .sort((a, b) => a.dataTime.localeCompare(b.dataTime));
+  const rows = orderedRows(
+    day.intervals.filter((r) => /^\d{8}\s+\d{2}:\d{2}$/.test(r.dataTime)),
+  );
 
   if (rows.length === 0) {
     return {
@@ -190,17 +291,31 @@ async function pullEnergyDay(params: {
     };
   }
 
-  // A day is "complete" once its local midnight-to-midnight window has fully elapsed.
-  const start = dayStartUtcMs(date, tzOffsetMin);
-  const isComplete = start != null && start + DAY_MS <= now;
+  // A day is "complete" once its local midnight-to-midnight window has fully elapsed. Measured to
+  // the NEXT midnight, not start + 24 h: a DST day is 23 or 25 hours long.
+  const start = dayStartUtcMs(date, timeZone);
+  const end = dayStartUtcMs(nextDay(date), timeZone);
+  const isComplete = end != null && end <= now;
 
   const readings = computeDayEnergyReadings(
     rows,
     day.totals,
-    tzOffsetMin,
+    timeZone,
     isComplete,
     date,
   );
+
+  // Under `replaceDerived`, clear our earlier fills for exactly the slots this vendor day can
+  // rewrite — the day ∩ the caller's window — and only once the vendor has answered, so a failed
+  // fetch never leaves a hole where a (wrong) fill used to be. Deleted BEFORE deriving: the derive
+  // pass reads the store to find what is missing, and must see these slots as missing.
+  let derivedReplaced: number | undefined;
+  if (params.replaceDerived && start != null && end != null) {
+    derivedReplaced = await deleteDerivedPowerRows(systemId, {
+      fromMs: Math.max(start, clip.fromMs),
+      toMs: Math.min(end, clip.toMs),
+    });
+  }
 
   // Recover the POWER + SoC intervals the live poll missed, from the energy we just differenced.
   // Sigenergy's cloud API serves no historical power, so this pass is the only thing that can close
@@ -213,11 +328,15 @@ async function pullEnergyDay(params: {
     // so the sample at T belongs to the interval ENDING at T+5min — the same interval our poll's
     // sample would have landed in.
     const vendorPower = new Map<number, VendorPowerSample>();
-    for (const r of rows) {
-      const startMs = localDataTimeToUtcMs(r.dataTime, tzOffsetMin);
-      if (startMs == null) continue;
+    const starts = resolveDataTimes(
+      rows.map((r) => r.dataTime),
+      timeZone,
+    );
+    rows.forEach((r, i) => {
+      const startMs = starts[i];
+      if (startMs == null) return;
       vendorPower.set(startMs + FIVE_MIN_MS, sigenergyIntervalPowerToW(r));
-    }
+    });
     derived = await deriveDayPowerReadings({
       systemId,
       energyReadings: readings,
@@ -230,20 +349,27 @@ async function pullEnergyDay(params: {
     );
   }
 
+  // Clip AFTER deriving: the counter-deficit guard and the interpolation anchors need the whole day.
+  const inClip = (r: { intervalEndMs: number }) =>
+    r.intervalEndMs > clip.fromMs && r.intervalEndMs <= clip.toMs;
+  const energyOut = readings.filter(inClip);
+  const derivedOut = derived.filter(inClip);
+
   await PointManager.getInstance().insertPointReadingsAgg5m(
     systemId,
     session,
-    [...readings, ...derived],
+    [...energyOut, ...derivedOut],
     collector,
   );
 
   return {
     date,
     intervalsFetched: rows.length,
-    readingsWritten: readings.length,
+    readingsWritten: energyOut.length,
     reconciled: isComplete,
     empty: false,
-    derivedWritten: derived.length,
+    derivedWritten: derivedOut.length,
+    ...(derivedReplaced !== undefined ? { derivedReplaced } : {}),
     ...(params.includeRaw ? { raw: day.raw } : {}),
   };
 }
@@ -269,26 +395,50 @@ export function enumerateDays(startDate: string, endDate: string): string[] {
 /**
  * Backfill a range of days (inclusive), one statistics call per day. Errors on a single day are
  * collected (not thrown) so one bad day doesn't abort the range.
+ *
+ * `startDate`/`endDate` name the app's FIXED-offset days (`tzOffsetMin`), which is what every caller
+ * means and what `agg_1d` rolls up on. The vendor's days are civil (`timeZone`), so while daylight
+ * saving is in force each of our days ends an hour into the vendor's next one — the 23:00–24:00
+ * standard-time hour lives in the vendor day after. So the vendor day after `endDate` is fetched too
+ * whenever it differs and has begun, and everything is clipped to the requested window.
  */
 export async function backfillEnergyRange(params: {
   client: SigenergyClient;
   systemId: number;
   stationId: string;
-  startDate: string; // YYYYMMDD
-  endDate: string; // YYYYMMDD
+  startDate: string; // YYYYMMDD, fixed-offset day
+  endDate: string; // YYYYMMDD, fixed-offset day
+  /** The app's fixed day offset (minutes east of UTC) — the window's day boundaries. */
   tzOffsetMin: number;
+  /** The station's IANA zone — what the vendor's `dataTime` is written in. */
+  timeZone: string;
   session: SessionInfo;
   collector?: PollCollector;
   now?: number;
   /** Return each day's verbatim vendor response — diagnostics only; see `PullEnergyDayResult.raw`. */
   includeRaw?: boolean;
+  /** See `pullEnergyDay`. `liveone sync --replace-derived`. */
+  replaceDerived?: boolean;
 }): Promise<{
   days: PullEnergyDayResult[];
   errors: string[];
 }> {
+  const now = params.now ?? Date.now();
+  const clip = {
+    fromMs: fixedDayStartUtcMs(params.startDate, params.tzOffsetMin),
+    toMs: fixedDayStartUtcMs(nextDay(params.endDate), params.tzOffsetMin),
+  };
+  const dates = enumerateDays(params.startDate, params.endDate);
+  // Does the window's last fixed-offset day run past the vendor's midnight? Only then is the next
+  // vendor day needed, and only once it has started can it hold anything.
+  const after = nextDay(params.endDate);
+  const afterStart = dayStartUtcMs(after, params.timeZone);
+  if (afterStart != null && afterStart < clip.toMs && afterStart <= now)
+    dates.push(after);
+
   const days: PullEnergyDayResult[] = [];
   const errors: string[] = [];
-  for (const date of enumerateDays(params.startDate, params.endDate)) {
+  for (const date of dates) {
     try {
       days.push(
         await pullEnergyDay({
@@ -296,11 +446,13 @@ export async function backfillEnergyRange(params: {
           systemId: params.systemId,
           stationId: params.stationId,
           date,
-          tzOffsetMin: params.tzOffsetMin,
+          timeZone: params.timeZone,
+          clip,
           session: params.session,
           collector: params.collector,
-          now: params.now,
+          now,
           includeRaw: params.includeRaw,
+          replaceDerived: params.replaceDerived,
         }),
       );
     } catch (err) {

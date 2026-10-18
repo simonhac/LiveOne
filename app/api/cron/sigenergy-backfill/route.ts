@@ -56,7 +56,9 @@ const MAX_RANGE_DAYS = 31;
  *   { systemId?: number, start?: "YYYY-MM-DD", end?: "YYYY-MM-DD", days?: number, dryRun?: boolean,
  *     raw?: boolean }
  *   - systemId: one sigenergy device; omit to run EVERY active sigenergy device (the cron default).
- *   - start/end: inclusive station-local calendar dates; if omitted, the last `days` (default 7).
+ *   - start/end: inclusive days at the device's FIXED day offset (what agg_1d rolls up on) — not
+ *     the vendor's civil days, which `backfillEnergyRange` maps onto them; if omitted, the last
+ *     `days` (default 7).
  *
  * The default 7-day window makes each run self-healing over the trailing week, so a single missed
  * run costs nothing. Overlapping windows upsert (idempotent receiver), they don't duplicate.
@@ -234,6 +236,7 @@ async function backfillOneDevice(
       startDate: startYmd,
       endDate: endYmd,
       tzOffsetMin: device.timezoneOffsetMin,
+      timeZone: device.displayTimezone,
       session,
       collector,
       includeRaw: params.raw ?? false,
