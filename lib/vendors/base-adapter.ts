@@ -14,6 +14,8 @@ import type {
   PollStage,
 } from "./types";
 import type { DeviceConfigView } from "@/lib/registry/device-config";
+import { announceRecovery } from "@/lib/monitoring/recovery";
+import type { StaleAdapter } from "@/lib/monitoring/device-staleness";
 import type { LatestReadingData } from "@/lib/types/readings";
 import type { ZonedDateTime } from "@internationalized/date";
 import { getNextMinuteBoundary } from "@/lib/date-utils";
@@ -358,7 +360,7 @@ export abstract class BaseVendorAdapter implements VendorAdapter {
 
       // 5. Complete session and update polling status
       await this.completeSessionSuccess(
-        device.id,
+        device,
         session,
         startedAt,
         recordsProcessed,
@@ -470,7 +472,7 @@ export abstract class BaseVendorAdapter implements VendorAdapter {
    * Complete session with success status and update polling status
    */
   private async completeSessionSuccess(
-    systemId: number,
+    device: DeviceConfigView,
     session: SessionInfo,
     startedAt: Date,
     numRows: number,
@@ -491,7 +493,18 @@ export abstract class BaseVendorAdapter implements VendorAdapter {
     // `startedAt`, NOT "now": the slot rule asks which slot this poll belongs to, and a poll that
     // began at 10:04:58 and finished at 10:05:02 belongs to 10:00. Stamping the completion time
     // recorded it into the 10:05 slot and suppressed that slot's poll.
-    await updatePollingStatusSuccess(systemId, rawResponse, startedAt);
+    const prev = await updatePollingStatusSuccess(
+      device.id,
+      rawResponse,
+      startedAt,
+    );
+    // The success that ends an outage the monitor was alerting on says so, once.
+    await announceRecovery({
+      device,
+      adapter: this as unknown as StaleAdapter,
+      prev,
+      recoveredAtMs: startedAt.getTime(),
+    });
   }
 
   /**

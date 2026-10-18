@@ -1897,6 +1897,43 @@ async function delete1dForPointsInRange(
   return { deleted: res.length };
 }
 
+/**
+ * Delete the 5m rows of `points` in `(fromMs, toMs]` whose `data_quality` is one of `qualities`.
+ * Returns how many went.
+ *
+ * The repair path for a DERIVED fill that was written wrong: the Sigenergy recovery
+ * (`lib/vendors/sigenergy/derive-power.ts`) never rewrites a row at equal quality, so a fill written
+ * at the wrong instant (the 2026-10 DST bug) cannot be corrected by re-running it — the stale rows
+ * must go first. `liveone sync --replace-derived` is the caller.
+ *
+ * 🛑 `qualities` must be non-empty and is matched EXACTLY: a measured row has `data_quality IS NULL`,
+ * and `NULL IN (…)` is never true, so this cannot reach a measured reading. That is the property the
+ * caller depends on, and why there is no "any quality" form.
+ */
+async function delete5mByQualityInWindow(
+  points: PointId[],
+  window: { fromMs: number; toMs: number },
+  qualities: readonly string[],
+  exec?: ReadingsExec,
+): Promise<{ deleted: number }> {
+  if (points.length === 0 || qualities.length === 0) return { deleted: 0 };
+  const db = exec ?? requirePlanetscaleDb();
+  const rids = [...(await RegistryCache.ridsForPoints(points)).values()];
+  if (rids.length === 0) return { deleted: 0 };
+  const res = await db
+    .delete(pointReadingsAgg5m)
+    .where(
+      and(
+        inArray(pointReadingsAgg5m.pointRid, rids),
+        gt(pointReadingsAgg5m.intervalEnd, new Date(window.fromMs)),
+        lte(pointReadingsAgg5m.intervalEnd, new Date(window.toMs)),
+        inArray(pointReadingsAgg5m.dataQuality, [...qualities]),
+      ),
+    )
+    .returning({ pointRid: pointReadingsAgg5m.pointRid });
+  return { deleted: res.length };
+}
+
 /** Count the aggregate rows `deleteAggsForPoints` would remove, without removing them. */
 async function countAggsForPoints(
   pointRids: number[],
@@ -2524,6 +2561,7 @@ export const ReadingsDao = {
   earliestAgg5mMs,
   deleteAggsForPoints,
   deleteRawForPoints,
+  delete5mByQualityInWindow,
   rawSpanMsForPoints,
   countAggsForPoints,
   deviceIdsWithAgg5mSince,

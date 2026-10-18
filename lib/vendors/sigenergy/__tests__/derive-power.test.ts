@@ -15,6 +15,8 @@ import {
   COUNTER_ULP_WH,
   MAX_INTERP_INTERVALS,
   EV_SPLIT_CEILING_W,
+  EV_NOT_CHARGING_FRACTION,
+  observedChargeRateW,
   type IntervalEnergyWh,
   type MeasuredSample,
   type VendorPowerSample,
@@ -280,6 +282,93 @@ describe("computeDerivedPowerReadings — the EV / rest-of-house split", () => {
     );
     expect(out.get("ev_w")![0].v).toBe(1200);
     expect(out.get("load_w")![0].v).toBe(0);
+  });
+});
+
+describe("computeDerivedPowerReadings — not charging below the observed charge rate", () => {
+  const RATE = 6800;
+  const below = (RATE * EV_NOT_CHARGING_FRACTION - 12) / 12; // Wh, just under the threshold
+  const above = (RATE * EV_NOT_CHARGING_FRACTION + 12) / 12;
+
+  it("calls an unbracketed hole under 90% of the rate not-charging, marked interpolated", () => {
+    // The 2026-10-17 shape: a long outage (no anchors anywhere near) with the house drawing kWs.
+    const out = byTail(
+      computeDerivedPowerReadings({
+        energyByIntervalEnd: new Map([[t(1), energy({ load: below })]]),
+        presentByTail: noneP(),
+        measuredEv: [],
+        measuredSoc: [],
+        chargeRateW: RATE,
+      }),
+    );
+    expect(out.get("ev_w")).toEqual([{ ms: t(1), v: 0, q: "interpolated" }]);
+    expect(out.get("load_w")).toEqual([
+      { ms: t(1), v: Math.round(below * 12), q: "interpolated" },
+    ]);
+  });
+
+  it("refuses at or above 90% of the rate — the EV could be charging", () => {
+    const out = byTail(
+      computeDerivedPowerReadings({
+        energyByIntervalEnd: new Map([[t(1), energy({ load: above })]]),
+        presentByTail: noneP(),
+        measuredEv: [],
+        measuredSoc: [],
+        chargeRateW: RATE,
+      }),
+    );
+    expect(out.has("ev_w")).toBe(false);
+    expect(out.has("load_w")).toBe(false);
+  });
+
+  it("with no known rate keeps the old behaviour", () => {
+    const out = byTail(
+      computeDerivedPowerReadings({
+        energyByIntervalEnd: new Map([[t(1), energy({ load: below })]]),
+        presentByTail: noneP(),
+        measuredEv: [],
+        measuredSoc: [],
+        chargeRateW: null,
+      }),
+    );
+    expect(out.has("ev_w")).toBe(false);
+  });
+
+  it("prefers bracketing measured samples over the rate rule", () => {
+    const out = byTail(
+      computeDerivedPowerReadings({
+        energyByIntervalEnd: new Map([[t(1), energy({ load: 400 })]]), // 4800 W
+        presentByTail: noneP(),
+        measuredEv: [
+          { intervalEndMs: t(0), value: 3000 },
+          { intervalEndMs: t(2), value: 3000 },
+        ],
+        measuredSoc: [],
+        chargeRateW: RATE,
+      }),
+    );
+    expect(out.get("ev_w")![0].v).toBe(3000);
+  });
+});
+
+describe("observedChargeRateW", () => {
+  const s = (vals: number[]): MeasuredSample[] =>
+    vals.map((value, i) => ({ intervalEndMs: t(i), value }));
+
+  it("is the 10th percentile of charge samples, ignoring idle readings", () => {
+    const vals = [
+      ...Array(100).fill(0),
+      ...Array(90).fill(6900),
+      ...Array(10).fill(6790),
+    ];
+    expect(observedChargeRateW(s(vals))).toBe(6900);
+    // A modulating charger pulls it down on its own.
+    const slow = [...Array(30).fill(6900), ...Array(20).fill(2000)];
+    expect(observedChargeRateW(s(slow))).toBe(2000);
+  });
+
+  it("is null with under two hours of charging", () => {
+    expect(observedChargeRateW(s(Array(23).fill(6900)))).toBeNull();
   });
 });
 

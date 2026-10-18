@@ -105,13 +105,17 @@ export const sigenergyProvider: CoverageRepairProvider<SigenCtx> = {
         startDate: ymd,
         endDate: ymd,
         tzOffsetMin: tz,
+        timeZone: device.displayTimezone,
         session,
         collector,
       });
       // Count the recovered power/SoC rows as published too — they are the point of the repair for
       // every tail that is not energy, and omitting them would report a genuine repair as a no-op.
-      const day0 = res.days?.[0];
-      const rows = (day0?.readingsWritten ?? 0) + (day0?.derivedWritten ?? 0);
+      // Summed over every vendor day fetched: in daylight time one of our days spans two of theirs.
+      const rows = (res.days ?? []).reduce(
+        (n, d) => n + d.readingsWritten + d.derivedWritten,
+        0,
+      );
       if (res.errors && res.errors.length > 0)
         return {
           systemId: device.id,

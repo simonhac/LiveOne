@@ -76,7 +76,7 @@ interface DeviceRow {
   consecutive_errors: number | null;
 }
 
-interface StaleAdapter {
+export interface StaleAdapter {
   dataSource?: string;
   pollIntervalMinutes?: number;
   staleBudgetMinutes?: number;
@@ -120,91 +120,128 @@ export async function evaluateDeviceHealth(
       row.vendor,
     ) as unknown as StaleAdapter | null;
     if (!adapter || adapter.dataSource === "push") continue;
-
-    const slot = adapter.pollIntervalMinutes ?? 5;
-    const declared = adapter.staleBudgetMinutes;
-    const budgetMin = declared ?? slot * DEVICE_STALE_SLOTS;
-    const staleMs = row.stale_ms === null ? null : Number(row.stale_ms);
-    const staleMin = staleMs === null ? null : Math.round(staleMs / 60_000);
-    const consecutiveErrors = Number(row.consecutive_errors ?? 0);
-    const window = adapter.maintenanceWindow;
-    // 🛑 A vendor's window excuses a failure young enough to have been CAUSED by it — not one that
-    // had been running long before it opened. Without this, a vendor dark for three hours would go
-    // from 503 to 200 at 00:05 and back at 00:35, resolving and reopening a live incident for a
-    // recovery that never happened.
-    //
-    // `staleMs - openForMs` is exactly how long BEFORE the window opened the last success was.
-    // Both terms are integers off the same clock, so it is the identical number at every instant
-    // inside the window and the verdict provably cannot flicker. The tolerance is one `budgetMin`
-    // (15 min for Amber): the last poll before a window legitimately predates it by up to a slot,
-    // plus slack for the ~3% of Vercel cron ticks that never fire. Deliberately not tighter — at
-    // one slot the ordinary night has zero margin and a single late poll re-creates the nightly
-    // page this whole mechanism exists to stop.
-    const openForMs = window
-      ? maintenanceWindowOpenForMs(window, new Date(Number(row.db_now_ms)))
-      : null;
-    const inMaintenance =
-      openForMs !== null &&
-      staleMs !== null &&
-      staleMs - openForMs <= budgetMin * 60_000;
-    const base = {
-      rid: row.rid,
-      name: row.name,
-      vendor: row.vendor,
-      staleMin,
-      budgetMin,
-      consecutiveErrors,
-    };
-
-    if (staleMin === null) {
-      out.push({
-        ...base,
-        code: "device_never_polled",
-        message: `${row.vendor} device ${row.rid} (${row.name}) has never recorded a successful poll.`,
-      });
-    } else if (
-      staleMin > budgetMin ||
-      consecutiveErrors >= DEVICE_FAILING_ERRORS
-    ) {
-      // One branch for "something is wrong", then one decision about whether it is NEWS. Splitting
-      // the maintenance test across the two verdicts instead would let a device inside its vendor's
-      // window fall through the stale branch into the failing one and alert anyway.
-      if (window && inMaintenance) {
-        out.push({
-          ...base,
-          code: "device_in_maintenance",
-          message:
-            `${row.vendor} device ${row.rid} (${row.name}) is unhealthy (last success ${staleMin} min ago, ` +
-            `${consecutiveErrors} consecutive failures) but inside ${row.vendor}'s declared maintenance ` +
-            `window (${window.start}–${window.end} ${window.timezone}, open ` +
-            `${Math.round(openForMs! / 60_000)} min) — not ` +
-            `alerting. The window closing is what re-arms this.`,
-        });
-      } else if (staleMin > budgetMin) {
-        out.push({
-          ...base,
-          code: "device_poll_stale",
-          message:
-            `${row.vendor} device ${row.rid} (${row.name}) last succeeded ${staleMin} min ago — over ` +
-            (declared !== undefined
-              ? `its declared ${declared} min staleness budget.`
-              : `${DEVICE_STALE_SLOTS}× its ${slot} min slot (${budgetMin} min).`),
-        });
-      } else {
-        // The window where it is still inside its budget but visibly going under.
-        out.push({
-          ...base,
-          code: "device_failing",
-          message:
-            `${row.vendor} device ${row.rid} (${row.name}) has failed ${consecutiveErrors} polls in a row ` +
-            `(last success ${staleMin} min ago, still inside its ${budgetMin} min budget) — failing but not yet stale.`,
-        });
-      }
-    } else {
-      out.push({ ...base, code: "ok", message: "" });
-    }
+    out.push(
+      classifyDeviceHealth(
+        {
+          rid: row.rid,
+          name: row.name,
+          vendor: row.vendor,
+          staleMs: row.stale_ms === null ? null : Number(row.stale_ms),
+          consecutiveErrors: Number(row.consecutive_errors ?? 0),
+          nowMs: Number(row.db_now_ms),
+        },
+        adapter,
+      ),
+    );
   }
   return out;
+}
+
+/** One device's state at an instant — what {@link classifyDeviceHealth} judges. */
+export interface DeviceHealthInput {
+  rid: number;
+  name: string;
+  vendor: string;
+  /** ms since the last successful poll at `nowMs`; null = never succeeded. */
+  staleMs: number | null;
+  consecutiveErrors: number;
+  /** The instant being judged, on the same clock as `staleMs`. */
+  nowMs: number;
+}
+
+/**
+ * The verdict for one POLL device, as a pure function of its state at an instant.
+ *
+ * Split out of `evaluateDeviceHealth` so the recovery notice (`lib/monitoring/recovery.ts`) can ask
+ * "was this device alerting just before the poll that succeeded?" with the SAME definition the
+ * monitor used to raise the alert. Two notions of "it was down" would let a recovery be announced
+ * for an outage nobody was told about, or an alerted one end in silence.
+ */
+export function classifyDeviceHealth(
+  input: DeviceHealthInput,
+  adapter: StaleAdapter,
+): DeviceHealth {
+  const { staleMs, consecutiveErrors } = input;
+  const slot = adapter.pollIntervalMinutes ?? 5;
+  const declared = adapter.staleBudgetMinutes;
+  const budgetMin = declared ?? slot * DEVICE_STALE_SLOTS;
+  const staleMin = staleMs === null ? null : Math.round(staleMs / 60_000);
+  const window = adapter.maintenanceWindow;
+  // 🛑 A vendor's window excuses a failure young enough to have been CAUSED by it — not one that
+  // had been running long before it opened. Without this, a vendor dark for three hours would go
+  // from 503 to 200 at 00:05 and back at 00:35, resolving and reopening a live incident for a
+  // recovery that never happened.
+  //
+  // `staleMs - openForMs` is exactly how long BEFORE the window opened the last success was.
+  // Both terms are integers off the same clock, so it is the identical number at every instant
+  // inside the window and the verdict provably cannot flicker. The tolerance is one `budgetMin`
+  // (15 min for Amber): the last poll before a window legitimately predates it by up to a slot,
+  // plus slack for the ~3% of Vercel cron ticks that never fire. Deliberately not tighter — at
+  // one slot the ordinary night has zero margin and a single late poll re-creates the nightly
+  // page this whole mechanism exists to stop.
+  const openForMs = window
+    ? maintenanceWindowOpenForMs(window, new Date(input.nowMs))
+    : null;
+  const inMaintenance =
+    openForMs !== null &&
+    staleMs !== null &&
+    staleMs - openForMs <= budgetMin * 60_000;
+  const base = {
+    rid: input.rid,
+    name: input.name,
+    vendor: input.vendor,
+    staleMin,
+    budgetMin,
+    consecutiveErrors,
+  };
+
+  if (staleMin === null) {
+    return {
+      ...base,
+      code: "device_never_polled",
+      message: `${input.vendor} device ${input.rid} (${input.name}) has never recorded a successful poll.`,
+    };
+  } else if (
+    staleMin > budgetMin ||
+    consecutiveErrors >= DEVICE_FAILING_ERRORS
+  ) {
+    // One branch for "something is wrong", then one decision about whether it is NEWS. Splitting
+    // the maintenance test across the two verdicts instead would let a device inside its vendor's
+    // window fall through the stale branch into the failing one and alert anyway.
+    if (window && inMaintenance) {
+      return {
+        ...base,
+        code: "device_in_maintenance",
+        message:
+          `${input.vendor} device ${input.rid} (${input.name}) is unhealthy (last success ${staleMin} min ago, ` +
+          `${consecutiveErrors} consecutive failures) but inside ${input.vendor}'s declared maintenance ` +
+          `window (${window.start}–${window.end} ${window.timezone}, open ` +
+          `${Math.round(openForMs! / 60_000)} min) — not ` +
+          `alerting. The window closing is what re-arms this.`,
+      };
+    } else if (staleMin > budgetMin) {
+      return {
+        ...base,
+        code: "device_poll_stale",
+        message:
+          `${input.vendor} device ${input.rid} (${input.name}) last succeeded ${staleMin} min ago — over ` +
+          (declared !== undefined
+            ? `its declared ${declared} min staleness budget.`
+            : `${DEVICE_STALE_SLOTS}× its ${slot} min slot (${budgetMin} min).`),
+      };
+    } else {
+      // The window where it is still inside its budget but visibly going under.
+      return {
+        ...base,
+        code: "device_failing",
+        message:
+          `${input.vendor} device ${input.rid} (${input.name}) has failed ${consecutiveErrors} polls in a row ` +
+          `(last success ${staleMin} min ago, still inside its ${budgetMin} min budget) — failing but not yet stale.`,
+      };
+    }
+  } else {
+    return { ...base, code: "ok", message: "" };
+  }
 }
 
 /** The subset worth telling someone about. */

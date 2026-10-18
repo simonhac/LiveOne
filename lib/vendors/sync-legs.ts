@@ -88,6 +88,8 @@ interface SyncChunkArgs {
   days: number;
   /** The selected action, or `null` for a vendor with no action axis. */
   action: string | null;
+  /** Delete the leg's own earlier derived fills in the window before re-deriving them. */
+  replaceDerived: boolean;
   session: SessionInfo;
   collector: PollCollector;
 }
@@ -123,6 +125,12 @@ export interface SyncLeg {
    */
   actions: readonly string[] | null;
   defaultAction: string | null;
+  /**
+   * Whether `replaceDerived` means anything for this vendor — true only where the leg writes
+   * derived fills a re-run cannot correct on its own. Anywhere else it is REFUSED, not ignored, for
+   * `actions`' reason: a flag that silently did nothing would look like a repair that ran.
+   */
+  supportsReplaceDerived?: boolean;
   /**
    * Resolve credentials and build whatever client the walk will reuse. Runs ONCE, before the first
    * chunk — a missing credential is worth learning before committing to minutes of fetching, and it
@@ -263,6 +271,9 @@ const sigenergyLeg: SyncLeg = {
   maxDays: SIGEN_CHUNK_DAYS,
   actions: null,
   defaultAction: null,
+  // The power/SoC recovery never rewrites a fill at equal rank, so a fill written wrong (the 2026-10
+  // DST hour) survives every plain re-run. See `deleteDerivedPowerRows`.
+  supportsReplaceDerived: true,
 
   async prepare(device) {
     if (!device.vendorSiteId)
@@ -294,7 +305,14 @@ const sigenergyLeg: SyncLeg = {
     const stationId = device.vendorSiteId;
 
     return {
-      run: async ({ device: d, start, end, session, collector }) => {
+      run: async ({
+        device: d,
+        start,
+        end,
+        replaceDerived,
+        session,
+        collector,
+      }) => {
         const result = await backfillEnergyRange({
           client,
           systemId: d.id,
@@ -302,10 +320,16 @@ const sigenergyLeg: SyncLeg = {
           startDate: ymd(start),
           endDate: ymd(end),
           tzOffsetMin: d.timezoneOffsetMin,
+          timeZone: d.displayTimezone,
+          replaceDerived,
           session,
           collector,
         });
 
+        const replaced = result.days.reduce(
+          (n, x) => n + (x.derivedReplaced ?? 0),
+          0,
+        );
         const written = result.days.reduce((n, x) => n + x.readingsWritten, 0);
         const derived = result.days.reduce((n, x) => n + x.derivedWritten, 0);
         const empty = result.days.every((x) => x.empty);
@@ -331,6 +355,9 @@ const sigenergyLeg: SyncLeg = {
               discovery:
                 `${result.days.length} day(s): ${written} energy reading(s), ` +
                 `${derived} derived power/SoC row(s)` +
+                (replaceDerived
+                  ? ` (replacing ${replaced} earlier fill(s))`
+                  : "") +
                 (empty ? ", every day empty at the vendor" : ""),
             },
           ],

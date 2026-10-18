@@ -168,6 +168,24 @@ describe("device_state polling writer (config-v4 Phase 12 slice C)", () => {
     ]);
   });
 
+  it("returns the state the success replaced, for the recovery notice", async () => {
+    const db = {
+      execute: () =>
+        Promise.resolve({
+          rows: [
+            { prev_success_ms: "1792198800000", prev_consecutive_errors: 116 },
+          ],
+        }),
+    };
+    mockDb = db;
+    await expect(
+      updatePollingStatusSuccess(7, null, POLL_START),
+    ).resolves.toEqual({
+      prevSuccessMs: 1792198800000,
+      prevConsecutiveErrors: 116,
+    });
+  });
+
   it("swallows a write failure instead of failing the poll", async () => {
     // LOG-BUT-DON'T-THROW: a throw here would make the caller treat the poll as failed and re-poll,
     // minting a duplicate session. Both entry points must hold that line.
@@ -175,7 +193,7 @@ describe("device_state polling writer (config-v4 Phase 12 slice C)", () => {
     mockDb = db;
     await expect(
       updatePollingStatusSuccess(7, null, POLL_START),
-    ).resolves.toBeUndefined();
+    ).resolves.toBeNull();
     await expect(
       updatePollingStatusError(7, "boom", null, POLL_START),
     ).resolves.toBeUndefined();

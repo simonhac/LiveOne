@@ -128,6 +128,7 @@ export async function POST(
     end?: unknown;
     action?: unknown;
     dryRun?: unknown;
+    replaceDerived?: unknown;
   } | null;
   if (!body) return err("Body must be JSON");
 
@@ -164,6 +165,12 @@ export async function POST(
     return err(`end (${body.end}) is before start (${body.start})`);
 
   const dryRun = body.dryRun === true;
+  const replaceDerived = body.replaceDerived === true;
+  if (replaceDerived && !leg.supportsReplaceDerived)
+    return err(
+      `vendor "${device.vendorType}" writes no derived fills a re-run cannot correct — ` +
+        `drop --replace-derived`,
+    );
 
   const totalDays = daysBetween(first, last);
 
@@ -188,6 +195,7 @@ export async function POST(
     },
     window: { start: first.toString(), end: last.toString(), days: totalDays },
     action,
+    replaceDerived,
     vendorMaxDays: leg.maxDays,
     lane: "backfill" as const,
     plan,
@@ -254,6 +262,7 @@ export async function POST(
         end: chunkEnd,
         days,
         action,
+        replaceDerived,
         session,
         collector,
       });

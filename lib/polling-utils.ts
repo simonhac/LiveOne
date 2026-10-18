@@ -36,7 +36,7 @@ export async function updatePollingStatusSuccess(
   systemId: number,
   responseData: any,
   pollStartedAt: Date,
-) {
+): Promise<PreviousPollState | null> {
   const now = pollStartedAt;
 
   // ⚠️  CRITICAL: Transform response data before storage
@@ -55,7 +55,18 @@ export async function updatePollingStatusSuccess(
 
   // The counter increment is ATOMIC in the upsert — `total_polls + 1` is computed from the existing
   // row inside ON CONFLICT (no read-then-write), so concurrent polls can't lose increments.
-  await writeDeviceStateSuccessPg(systemId, now, transformedResponse);
+  return writeDeviceStateSuccessPg(systemId, now, transformedResponse);
+}
+
+/**
+ * The device's state as it was just BEFORE a successful poll was recorded — what the recovery
+ * notice (`lib/monitoring/recovery.ts`) needs to tell "back after ten hours" from an ordinary poll.
+ */
+export interface PreviousPollState {
+  /** The previous successful poll, epoch-ms; null = this is the first one ever. */
+  prevSuccessMs: number | null;
+  /** Failed polls in a row before this success. */
+  prevConsecutiveErrors: number;
 }
 
 /**
@@ -122,39 +133,71 @@ function jsonbParam(transformedResponse: unknown) {
     : sql`${JSON.stringify(transformedResponse)}::jsonb`;
 }
 
-/** Record a successful poll. */
+/**
+ * Record a successful poll, returning the state it replaced (null when there was no prior row or the
+ * write failed).
+ *
+ * The previous values come from a CTE over the same statement's snapshot, so reading them costs no
+ * extra round trip. Deliberately no `FOR UPDATE`: locking a row the same statement then upserts
+ * risks "tuple already modified by an operation triggered by the current command". The cost is that
+ * two successful polls of one device racing each other could BOTH see the stale state — which the
+ * slot scheduler makes vanishingly rare, and whose only consequence is a duplicated recovery notice.
+ */
 async function writeDeviceStateSuccessPg(
   systemId: number,
   now: Date,
   transformedResponse: unknown,
-): Promise<void> {
+): Promise<PreviousPollState | null> {
   const ts = now.toISOString();
   const response = jsonbParam(transformedResponse);
   try {
-    await requirePlanetscaleDb().execute(sql`
-      INSERT INTO device_state (
-        device_id, last_poll_time, last_success_time, last_error, last_response,
-        consecutive_errors, total_polls, successful_polls, updated_at
+    const result = (await requirePlanetscaleDb().execute(sql`
+      WITH prev AS (
+        SELECT (extract(epoch FROM ds.last_success_time) * 1000)::bigint AS prev_success_ms,
+               ds.consecutive_errors AS prev_consecutive_errors
+        FROM device_state ds
+        JOIN devices d ON d.id = ds.device_id
+        WHERE d.rid = ${systemId}
+      ), upserted AS (
+        INSERT INTO device_state (
+          device_id, last_poll_time, last_success_time, last_error, last_response,
+          consecutive_errors, total_polls, successful_polls, updated_at
+        )
+        SELECT d.id, ${ts}::timestamp, ${ts}::timestamp, NULL, ${response}, 0, 1, 1, ${ts}::timestamp
+        FROM devices d
+        WHERE d.rid = ${systemId}
+        ON CONFLICT (device_id) DO UPDATE SET
+          last_poll_time = ${ts}::timestamp,
+          last_success_time = ${ts}::timestamp,
+          last_error = NULL,
+          last_response = ${response},
+          consecutive_errors = 0,
+          total_polls = device_state.total_polls + 1,
+          successful_polls = device_state.successful_polls + 1,
+          updated_at = ${ts}::timestamp
+        RETURNING 1
       )
-      SELECT d.id, ${ts}::timestamp, ${ts}::timestamp, NULL, ${response}, 0, 1, 1, ${ts}::timestamp
-      FROM devices d
-      WHERE d.rid = ${systemId}
-      ON CONFLICT (device_id) DO UPDATE SET
-        last_poll_time = ${ts}::timestamp,
-        last_success_time = ${ts}::timestamp,
-        last_error = NULL,
-        last_response = ${response},
-        consecutive_errors = 0,
-        total_polls = device_state.total_polls + 1,
-        successful_polls = device_state.successful_polls + 1,
-        updated_at = ${ts}::timestamp
-    `);
+      SELECT prev_success_ms, prev_consecutive_errors FROM prev
+    `)) as unknown as {
+      rows?: {
+        prev_success_ms: string | number | null;
+        prev_consecutive_errors: number | null;
+      }[];
+    };
+    const row = result.rows?.[0];
+    if (!row) return null;
+    return {
+      prevSuccessMs:
+        row.prev_success_ms == null ? null : Number(row.prev_success_ms),
+      prevConsecutiveErrors: Number(row.prev_consecutive_errors ?? 0),
+    };
   } catch (e) {
     console.error(
       `[DEVICE-STATE] success upsert systemId=${systemId} failed (swallowed): ${
         (e as Error)?.message ?? String(e)
       }`,
     );
+    return null;
   }
 }
 

@@ -7663,6 +7663,7 @@ Options:
   --start <YYYY-MM-DD>       First local day to re-fetch (inclusive)
   --end <YYYY-MM-DD>         Last local day to re-fetch (inclusive)
   --action <action>          AMBER ONLY — which half to fetch: usage (energy + cost), pricing (rates), or both (default: both). Prefer the narrowest that covers the gap. Refused for a vendor with one historical surface.  (one of: usage, pricing, both)
+  --replace-derived          SIGENERGY ONLY — first delete the power/SoC fills an earlier backfill wrote in the window (never a measured reading), then re-derive them. A plain re-run never rewrites a fill at equal quality, so this is how a fill written WRONG gets corrected (the 2026-10 DST hour). Refused for any other vendor.
   --verify                   After publishing, wait for the lane to drain and read the serving store back. --no-verify skips it, and the report then says the landing was NOT checked.  (default: true)
 
 Common options:
