@@ -14,7 +14,14 @@
  *    the walk therefore stay Amber's, and each other leg is tested for the one thing that is
  *    genuinely its own — the window it is handed, and the vocabulary it does or does not accept.
  */
-import { describe, it, expect, beforeEach, jest } from "@jest/globals";
+import {
+  describe,
+  it,
+  expect,
+  beforeEach,
+  afterEach,
+  jest,
+} from "@jest/globals";
 import { NextRequest, NextResponse } from "next/server";
 import { CalendarDate } from "@internationalized/date";
 
@@ -334,6 +341,55 @@ describe("POST /api/v4/devices/{id}/sync", () => {
     });
   });
 
+  describe("the wall-clock budget", () => {
+    let clock = 0;
+    beforeEach(() => {
+      clock = 1_000_000;
+      jest.spyOn(Date, "now").mockImplementation(() => clock);
+    });
+    afterEach(() => jest.mocked(Date.now).mockRestore());
+
+    /** Each vendor window takes `ms` of (fake) wall clock. */
+    const windowsTake = (ms: number) =>
+      mockUsage.mockImplementation(async () => {
+        clock += ms;
+        return audit();
+      });
+
+    it("does not START a chunk the slowest one so far says cannot finish", async () => {
+      // 🛑 2026-10-18: a chunk started with budget left and the platform killed it at 60 s.
+      // At 20 s per chunk, the third would start at 40 s (< 45) and end at 60 — so it must not.
+      windowsTake(20_000);
+      const body = await (
+        await post({ start: "2026-07-01", end: "2026-07-28", action: "usage" })
+      ).json();
+      expect(windowsAsked()).toEqual([
+        ["2026-07-01", 7],
+        ["2026-07-08", 7],
+      ]);
+      expect(body.done).toBe(false);
+      expect(body.nextStart).toBe("2026-07-15");
+    });
+
+    it("keeps walking while the projection fits", async () => {
+      windowsTake(10_000);
+      const body = await (
+        await post({ start: "2026-07-01", end: "2026-07-28", action: "usage" })
+      ).json();
+      expect(windowsAsked()).toHaveLength(4);
+      expect(body.done).toBe(true);
+    });
+
+    it("always runs the first chunk, however slow", async () => {
+      windowsTake(50_000);
+      const body = await (
+        await post({ start: "2026-07-01", end: "2026-07-14", action: "usage" })
+      ).json();
+      expect(windowsAsked()).toEqual([["2026-07-01", 7]]);
+      expect(body.nextStart).toBe("2026-07-08");
+    });
+  });
+
   it("stops the walk at a failed window rather than repeating the error", async () => {
     mockUsage
       .mockResolvedValueOnce(audit(true))
@@ -420,12 +476,16 @@ describe("POST /api/v4/devices/{id}/sync", () => {
     it("hands Sigenergy whole local days, in the vendor's own YYYYMMDD", async () => {
       stubDevice(sigen);
       await post({ start: "2026-09-10", end: "2026-09-11" });
-      expect(mockSigen).toHaveBeenCalledTimes(1);
+      expect(mockSigen).toHaveBeenCalledTimes(2); // one day per chunk
+      expect(mockSigen.mock.calls[1][0]).toMatchObject({
+        startDate: "20260911",
+        endDate: "20260911",
+      });
       expect(mockSigen.mock.calls[0][0]).toMatchObject({
         systemId: 10002,
         stationId: "STATION-1",
         startDate: "20260910",
-        endDate: "20260911",
+        endDate: "20260910",
         // 🛑 The DEVICE's offset, not the server's. The days a Sigenergy station reports are its
         // own, and UTC days would silently shift every window by ten hours.
         tzOffsetMin: 600,
@@ -462,17 +522,19 @@ describe("POST /api/v4/devices/{id}/sync", () => {
       expect((await res.json()).error).toMatch(/replace-derived/);
     });
 
-    it("chunks Sigenergy to keep one request inside the route's budget", async () => {
+    it("chunks Sigenergy ONE day at a time, so the budget decides how far a request walks", async () => {
+      // 🛑 Measured 8–13 s per day on prod. The old 7-day chunk ran past 60 s and 504'd mid-chunk,
+      // which under --replace-derived deletes fills whose replacements never publish.
       stubDevice(sigen);
       const body = await (
-        await post({ start: "2026-09-01", end: "2026-09-16" })
+        await post({ start: "2026-09-01", end: "2026-09-03" })
       ).json();
       expect(
         body.plan.map((p: { start: string; end: string }) => [p.start, p.end]),
       ).toEqual([
-        ["2026-09-01", "2026-09-07"],
-        ["2026-09-08", "2026-09-14"],
-        ["2026-09-15", "2026-09-16"],
+        ["2026-09-01", "2026-09-01"],
+        ["2026-09-02", "2026-09-02"],
+        ["2026-09-03", "2026-09-03"],
       ]);
     });
 
