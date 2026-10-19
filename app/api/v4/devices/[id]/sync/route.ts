@@ -43,6 +43,12 @@ import {
  * with no report of the chunks that DID publish — work done and invisible, which is worse than
  * refusing. The caller resumes from `nextStart`; `liveone sync` does this in a loop.
  *
+ * 🛑 The deadline is checked by PROJECTION: a chunk starts only if the slowest chunk so far would
+ * still finish inside the budget. Checking only "has the budget run out?" lets a 15 s chunk start at
+ * 44 s and the platform kill it at 60. The first chunk of a request always runs (nothing to project
+ * from), so a leg's `maxDays` must fit the budget on its own — Sigenergy's 7 did not, and 504'd on
+ * 2026-10-18 (see `SIGEN_CHUNK_DAYS`).
+ *
  * ## One verb, every backfillable vendor
  *
  * Everything above is the same whoever the vendor is, so it lives here and the per-vendor part lives
@@ -225,13 +231,15 @@ export async function POST(
 
   const chunks: ChunkResult[] = [];
   const deadline = Date.now() + BUDGET_MS;
+  let slowestMs = 0;
 
   let cursor = first;
   let done = true;
   while (cursor.compare(last) <= 0) {
     // Checked BEFORE starting a chunk, never mid-chunk: a partially-run vendor window would
-    // publish some of its observations and report none of them.
-    if (chunks.length > 0 && Date.now() >= deadline) {
+    // publish some of its observations and report none of them. Projected, not merely elapsed —
+    // see the 🛑 in the header.
+    if (chunks.length > 0 && Date.now() + slowestMs > deadline) {
       done = false;
       break;
     }
@@ -297,13 +305,15 @@ export async function POST(
       collector,
     );
 
+    const durationMs = Date.now() - startedAt;
+    slowestMs = Math.max(slowestMs, durationMs);
     chunks.push({
       start: cursor.toString(),
       end: chunkEnd.toString(),
       days,
       observations,
       merged,
-      durationMs: Date.now() - startedAt,
+      durationMs,
       ok,
       audits,
       ...(error ? { error } : {}),

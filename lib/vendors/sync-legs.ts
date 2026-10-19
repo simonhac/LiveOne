@@ -260,11 +260,17 @@ const ymd = (d: CalendarDate) => d.toString().replace(/-/g, "");
 
 /**
  * Sigenergy's `statistics/energy` is per calendar day, so a chunk is only a loop bound — there is no
- * vendor cap to respect. Seven days keeps one request inside the route's 45 s budget with room for
- * the response to serialise, which is what makes `nextStart` resumption meaningful rather than a
- * theoretical branch that only fires on a timeout.
+ * vendor cap to respect. ONE day, so the route's budget, not the chunk, decides how far a request
+ * walks: each of our days fetches two vendor days (DST pushes our +10 midnight into the vendor's next
+ * day) and runs the power/SoC derive, measured at 8–13 s per day on prod. The 7 this used to be was
+ * a guess — ~70 s, past the 60 s `maxDuration` — and on 2026-10-18 a 7-day chunk 504'd mid-chunk.
+ *
+ * 🛑 Under `replaceDerived` an overrun is not merely lost work: each day's old fills are DELETED as
+ * the day runs, while their replacements only publish when the chunk's session closes. A chunk the
+ * platform kills in between leaves holes where the fills were. So the chunk must fit with room to
+ * spare, and the route projects the next chunk against its budget before starting it.
  */
-const SIGEN_CHUNK_DAYS = 7;
+const SIGEN_CHUNK_DAYS = 1;
 
 const sigenergyLeg: SyncLeg = {
   vendor: "sigenergy",
