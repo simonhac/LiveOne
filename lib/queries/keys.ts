@@ -99,6 +99,12 @@ export const queryKeys = {
    */
   commands: (pointId: string) => ["commands", pointId] as const,
 
+  /**
+   * What is wrong with an area's generator (`/api/v4/areas/{ar_}/generator-health`), keyed by the
+   * `ar_` TypeID. Like `automations`: not handle-keyed, so NOT in `SYSTEM_RESOURCES`.
+   */
+  generatorHealth: (areaId: string) => ["generator-health", areaId] as const,
+
   /** Keyed by AREA uuid (not systemId) — battery-provenance daily history for the panel. */
   provenanceDaily: (areaId: string, rangeKey: string) =>
     ["provenanceDaily", areaId, rangeKey] as const,

@@ -14,6 +14,7 @@ import { sendAlert } from "@/lib/alerts";
 import {
   alertable,
   classifyDeviceHealth,
+  isMonitored,
   type StaleAdapter,
 } from "@/lib/monitoring/device-staleness";
 import type { PreviousPollState } from "@/lib/polling-utils";
@@ -49,7 +50,8 @@ export function recoveryNotice(params: {
   recoveredAtMs: number;
 }): string | null {
   const { device, adapter, prev, recoveredAtMs } = params;
-  if (adapter.dataSource === "push") return null;
+  // Only a device the monitor judges can have been alerted on — see `isMonitored`.
+  if (!isMonitored(adapter)) return null;
   // No previous success: a first-ever poll is an arrival, not a recovery.
   if (!prev || prev.prevSuccessMs == null) return null;
 

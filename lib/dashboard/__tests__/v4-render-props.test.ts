@@ -56,7 +56,7 @@
  *   - `next/font/local`   — only Next's compiler can evaluate it.
  *   - the leaf components — so we capture props rather than markup.
  */
-import { describe, it, expect, beforeAll } from "@jest/globals";
+import { describe, it, expect, beforeAll, afterAll } from "@jest/globals";
 import * as React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { readFileSync, writeFileSync } from "node:fs";
@@ -72,6 +72,7 @@ import {
   DEV_METRICS,
   DEV_MISSING,
   DEV_OE,
+  FIXTURE_TIME,
   leafCaptures,
   pluginCaptures,
   resetCaptures,
@@ -439,6 +440,19 @@ function renderPropsOnly(s: Snapshot): Record<string, unknown> {
     ]),
   );
 }
+
+/**
+ * The render's clock, pinned five minutes after the fixture's readings. The generator tile judges
+ * its controller against `Date.now()` (15 min without a reading ⇒ "Offline"), so an unpinned clock
+ * made its recorded props a function of the day the suite ran. Five minutes, not one, because the
+ * snapshot was recorded with every 60 s-threshold tile already STALE (the battery ring's dimmed
+ * `opacity-55`), and pinning inside that minute would rewrite props this change has nothing to do
+ * with.
+ */
+const nowSpy = jest
+  .spyOn(Date, "now")
+  .mockReturnValue(FIXTURE_TIME.getTime() + 5 * 60_000);
+afterAll(() => nowSpy.mockRestore());
 
 beforeAll(() => {
   resetCaptures();

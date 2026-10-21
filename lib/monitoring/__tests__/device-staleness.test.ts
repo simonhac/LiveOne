@@ -154,12 +154,23 @@ describe("evaluateDeviceHealth", () => {
   });
 
   // Push vendors have no schedule to be late against — their liveness is their own heartbeat's job.
-  it("skips push vendors entirely", async () => {
+  it("skips push vendors that declare no budget", async () => {
     getAdapter.mockReturnValue({ dataSource: "push" });
     const out = await evaluateDeviceHealth(
       dbWith([row({ vendor: "deepsea", staleMin: 9999 })]),
     );
     expect(out).toHaveLength(0);
+  });
+
+  // 🛑 Daylesford, October 2026: a generator controller with no power for three days, invisible
+  // here because the push path was skipped wholesale.
+  it("judges a push vendor that declares a staleness budget", async () => {
+    getAdapter.mockReturnValue({ dataSource: "push", staleBudgetMinutes: 20 });
+    const out = await evaluateDeviceHealth(
+      dbWith([row({ vendor: "deepsea", staleMin: 4300 })]),
+    );
+    expect(out).toHaveLength(1);
+    expect(out[0]).toMatchObject({ code: "device_poll_stale", budgetMin: 20 });
   });
 
   it("skips a vendor with no adapter", async () => {

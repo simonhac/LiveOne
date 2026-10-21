@@ -22,6 +22,7 @@ import { useQueryClient, useIsFetching } from "@tanstack/react-query";
 import GeneratorControlDialog from "@/components/GeneratorControlDialog";
 import TeslaControlDialog from "@/components/TeslaControlDialog";
 import { installControlStub, type ControlScenarioName } from "./control-stub";
+import { assessGeneratorHealth } from "@/lib/control/generator-health";
 import { scenariosOf, type SectionSlug } from "./sections";
 import {
   makeStale,
@@ -29,6 +30,7 @@ import {
   LOAD_SCENARIOS,
   GENERATOR_SCENARIOS,
   GENERATOR_CONTROL_SCENARIOS,
+  GENERATOR_EXERCISES,
   BATTERY_SCENARIOS,
   GRID_SCENARIOS,
   AMBER_SCENARIOS,
@@ -468,6 +470,23 @@ export default function CardGallery() {
             ? genScenario.current
             : genScenarioPlain.current,
         ),
+      // The REAL assessor over the picked scenario, so the chip shows what production would.
+      generatorHealth: (systemId) => {
+        const name =
+          systemId === GEN_HANDLE_CONTROL
+            ? genScenario.current
+            : genScenarioPlain.current;
+        return {
+          hasGenerator: true,
+          issues: assessGeneratorHealth({
+            nowMs: Date.now(),
+            timezone: "Australia/Melbourne",
+            latest: GENERATOR_SCENARIOS[name] ?? {},
+            exercises: GENERATOR_EXERCISES[name] ?? [],
+            lastCommand: null,
+          }),
+        };
+      },
     }),
   );
   useEffect(() => uninstall, [uninstall]);

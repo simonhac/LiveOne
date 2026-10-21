@@ -56,8 +56,151 @@ export const GENERATOR_HZ_PATHS = [
   "generator.output/frequency",
 ] as const;
 
+/**
+ * The controller's own supply — the engine's starter battery, which is also what keeps the DSE
+ * powered between runs. Same two-path story as {@link GENERATOR_RPM_PATHS}: prod's readings arrive at
+ * the legacy `generator.battery/voltage`.
+ */
+export const GENERATOR_BATTERY_PATHS = [
+  "source.generator.battery/voltage",
+  "generator.battery/voltage",
+] as const;
+
 /** The derived run-detector point, whose `sourceSystemId` names the device that owns the runs. */
 export const GENERATOR_RUNNING_PATH = "source.generator/running";
+
+/**
+ * Points the hub can only publish by actually READING the controller — as opposed to the
+ * `control.*` points, which are the hub's own state.
+ *
+ * 🛑 THIS SPLIT IS WHY THE TILE ONCE SAID "Auto · Ready to start" FOR THREE DAYS ABOUT A CONTROLLER
+ * WITH NO POWER. The hub merges its control-plane points into every tick, including the ticks whose
+ * device read FAILED (packages/usher/core/run.ts — deliberately, so a stop-retry loop during an
+ * outage stays visible). So `control.status/state` is always fresh and says nothing about whether
+ * the controller is answering, while `mode/state` simply stops updating and keeps its last word —
+ * "Auto" — in the latest map forever. Freshness of the CONTROLLER has to be judged on these.
+ */
+const GENERATOR_DEVICE_READING_PATHS = [
+  GENERATOR_MODE_PATH,
+  ...GENERATOR_RPM_PATHS,
+  ...GENERATOR_HZ_PATHS,
+  ...GENERATOR_BATTERY_PATHS,
+] as const;
+
+/**
+ * How long without a controller reading before it is called offline.
+ *
+ * Three idle pushes: the hub pushes every 5 min while the engine is stopped (usher.yaml), so a
+ * reading up to ~5 min old is the steady state, and one late or lost push must not flip a healthy
+ * generator to "Offline".
+ */
+export const GENERATOR_OFFLINE_AFTER_MS = 15 * 60_000;
+
+/**
+ * A latest-map entry as either side holds it: the browser's `/api/data` shape (`measurementTime`,
+ * a Date or ISO string) or the server's KV shape (`measurementTimeMs`).
+ */
+export type LatestWithTimes = Record<
+  string,
+  | {
+      value?: unknown;
+      measurementTime?: Date | string | null;
+      measurementTimeMs?: number | null;
+    }
+  | null
+  | undefined
+>;
+
+/** The entry's measurement instant, epoch ms, whichever shape it arrived in. */
+export function entryMs(
+  latest: LatestWithTimes | null | undefined,
+  path: string,
+): number | null {
+  const e = latest?.[path];
+  if (!e) return null;
+  if (typeof e.measurementTimeMs === "number")
+    return Number.isFinite(e.measurementTimeMs) ? e.measurementTimeMs : null;
+  const t = e.measurementTime;
+  const ms =
+    t instanceof Date
+      ? t.getTime()
+      : typeof t === "string"
+        ? Date.parse(t)
+        : NaN;
+  return Number.isFinite(ms) ? ms : null;
+}
+
+/**
+ * When the hub last actually read the controller (epoch ms), or null when no device reading has
+ * ever reached the latest map. See {@link GENERATOR_DEVICE_READING_PATHS} for why `control.*` is
+ * excluded.
+ */
+export function lastControllerReadingMs(
+  latest: LatestWithTimes | null | undefined,
+): number | null {
+  if (!latest) return null;
+  let newest: number | null = null;
+  for (const p of GENERATOR_DEVICE_READING_PATHS) {
+    const ms = entryMs(latest, p);
+    if (ms != null && (newest == null || ms > newest)) newest = ms;
+  }
+  return newest;
+}
+
+/**
+ * Whether the controller has stopped answering. Null reading time (never seen one) is NOT offline:
+ * a fixture or a freshly-provisioned site with only control points has nothing to judge, and
+ * calling it offline would be a claim we cannot back.
+ */
+export function controllerIsOffline(
+  lastReadingMs: number | null,
+  nowMs: number,
+): boolean {
+  return (
+    lastReadingMs != null && nowMs - lastReadingMs > GENERATOR_OFFLINE_AFTER_MS
+  );
+}
+
+/**
+ * How long a `control.error` stays worth flagging on the tile.
+ *
+ * 🛑 The hub's last error lingers in the latest map until something overwrites it, so without an
+ * age limit the tile's "!" kept pointing at an 18 September stop failure through an unrelated
+ * October outage — a signal that is always on is one nobody reads.
+ */
+const GENERATOR_ERROR_RECENT_MS = 24 * 3_600_000;
+
+export function controlErrorIsRecent(
+  errorMs: number | null,
+  nowMs: number,
+): boolean {
+  return errorMs != null && nowMs - errorMs <= GENERATOR_ERROR_RECENT_MS;
+}
+
+/** How worried to be about the starter battery. `ok` covers "no opinion" too. */
+type BatteryLevel = "ok" | "low" | "flat";
+
+/**
+ * The starter battery's state from one reading, judged AT REST.
+ *
+ * While the engine turns, the alternator holds the bus at ~14 V and the reading says nothing about
+ * the battery, so a running engine is always `ok`. Thresholds are for a 12 V lead-acid starter
+ * (≈12.7 V full at rest, ≈12.2 V half, below ~11.5 V it may not crank) and scale ×2 for a 24 V system,
+ * recognised by its reading. A healthy installation sits on a charger at ~13.3 V float, so `low` is
+ * already a sign the charger has stopped — at Daylesford in October 2026 it was the only warning
+ * before the battery collapsed and took the controller with it.
+ */
+export function batteryLevel(
+  volts: number | null | undefined,
+  isRunning: boolean,
+): BatteryLevel {
+  if (volts == null || !Number.isFinite(volts) || volts <= 0 || isRunning)
+    return "ok";
+  const scale = volts > 18 ? 2 : 1;
+  if (volts < 11.5 * scale) return "flat";
+  if (volts < 12.2 * scale) return "low";
+  return "ok";
+}
 
 /**
  * The paths the tile's control would COMMAND, most specific first — what `datumCanControlPoint`
@@ -232,6 +375,19 @@ const AUTO: GeneratorStatusCopy = {
   isRunning: false,
 };
 
+/**
+ * The hub says idle, but the controller has stopped answering — so the panel mode we would resolve
+ * `idle` against is a stale reading, and "Auto · Ready to start" would be a claim about a machine we
+ * cannot see. Whether it COULD start is exactly what is unknown, hence `warning`.
+ */
+const OFFLINE: GeneratorStatusCopy = {
+  label: "Offline",
+  detail: "Controller not responding",
+  tone: "warning",
+  isCommandedRun: false,
+  isRunning: false,
+};
+
 const LOCKED_OUT: GeneratorStatusCopy = {
   label: "Locked out",
   detail: "Panel not in Auto",
@@ -257,10 +413,18 @@ export function describeGeneratorState(
      * must not claim.
      */
     rpm?: number | null;
+    /**
+     * The controller has stopped answering ({@link controllerIsOffline}). Overrides only the IDLE
+     * case: every other state is the hub's own record of a run it is holding or watching, which
+     * stays true without the controller — and `stop-failing` during an outage is precisely the state
+     * that must not be hidden behind "Offline". The caller appends the outage to those instead.
+     */
+    controllerOffline?: boolean;
   },
 ): GeneratorStatusCopy {
-  if (!state) return UNKNOWN;
+  if (!state) return opts?.controllerOffline ? OFFLINE : UNKNOWN;
   if (state === "idle") {
+    if (opts?.controllerOffline) return OFFLINE;
     // Mode unknown (the point has not arrived) is NOT the same as "in Auto" — claiming a generator
     // is armed when we cannot see the panel would be the one lie that matters here.
     //
