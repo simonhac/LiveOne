@@ -8,6 +8,7 @@ import {
   type ProvenanceDailyResponse,
   type ProvenanceSeriesDef,
 } from "@/lib/battery-provenance/field-registry";
+import { Hint } from "@/components/ui/tooltip";
 
 const TOOLTIP_WIDTH = 320;
 
@@ -133,17 +134,20 @@ export default function ProvenanceValueTable({
                 return (
                   <div key={s.id} className="flex items-center">
                     <div className="flex items-center gap-2 flex-1 select-none">
-                      <div
-                        className="w-3 h-3 rounded-sm flex-shrink-0 border-2 cursor-pointer"
-                        onClick={(e) =>
-                          onSeriesToggle(chart.id, s.id, e.shiftKey)
-                        }
-                        title="Click to toggle visibility, shift-click to show only this series"
-                        style={{
-                          backgroundColor: isVisible ? s.color : "transparent",
-                          borderColor: s.color,
-                        }}
-                      />
+                      <Hint content="Click to toggle visibility, shift-click to show only this series">
+                        <div
+                          className="w-3 h-3 rounded-sm flex-shrink-0 border-2 cursor-pointer"
+                          onClick={(e) =>
+                            onSeriesToggle(chart.id, s.id, e.shiftKey)
+                          }
+                          style={{
+                            backgroundColor: isVisible
+                              ? s.color
+                              : "transparent",
+                            borderColor: s.color,
+                          }}
+                        />
+                      </Hint>
                       <LabelWithTooltip
                         label={s.label}
                         unit={s.unit || undefined}

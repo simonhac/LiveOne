@@ -4,6 +4,7 @@ import { useState } from "react";
 import { ChevronRight, ChevronDown, Copy, Check } from "lucide-react";
 import { JsonView, darkStyles } from "react-json-view-lite";
 import "react-json-view-lite/dist/index.css";
+import { Hint } from "@/components/ui/tooltip";
 
 interface JsonViewerProps {
   data: any;
@@ -46,17 +47,19 @@ export default function JsonViewer({
 
       {showJson && (
         <div className="mt-3 bg-gray-900 rounded-lg relative p-2">
-          <button
-            onClick={handleCopy}
-            className="absolute top-3 right-3 p-2 bg-gray-800/90 hover:bg-gray-700 border border-gray-600 rounded-md transition-colors z-20 shadow-lg"
-            title="Copy JSON"
-          >
-            {copied ? (
-              <Check className="w-4 h-4 text-green-400" />
-            ) : (
-              <Copy className="w-4 h-4 text-gray-400" />
-            )}
-          </button>
+          <Hint content="Copy JSON">
+            <button
+              onClick={handleCopy}
+              className="absolute top-3 right-3 p-2 bg-gray-800/90 hover:bg-gray-700 border border-gray-600 rounded-md transition-colors z-20 shadow-lg"
+              aria-label="Copy JSON"
+            >
+              {copied ? (
+                <Check className="w-4 h-4 text-green-400" />
+              ) : (
+                <Copy className="w-4 h-4 text-gray-400" />
+              )}
+            </button>
+          </Hint>
           <div className="overflow-x-auto font-mono text-xs whitespace-pre [&_.json-view]:whitespace-pre [&_*]:whitespace-pre">
             <JsonView
               data={data}

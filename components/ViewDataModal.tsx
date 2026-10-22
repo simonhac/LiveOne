@@ -24,6 +24,7 @@ import PointReadingInspectorModal from "./PointReadingInspectorModal";
 import { PointInfo, type PointInfoWire } from "@/lib/point/point-info";
 import { getContextualUnitDisplay } from "@/lib/point/unit-display";
 import { applyExcelFormat } from "@/lib/point/display/excel-format";
+import { Hint } from "@/components/ui/tooltip";
 
 // Group data rows by timestamp and combine session labels
 function groupDataByTimestamp(data: any[]): any[] {
@@ -628,25 +629,28 @@ export default function ViewDataModal({
       headerKey === "sessionLabel";
 
     return (
-      <th
-        key={`${headerKey}-${rowKey}`}
-        data-col={colIndex}
-        className={`py-1 ${isLastRow ? "pb-2" : ""} px-2 align-top bg-gray-900 ${
-          !isSpecialColumn ? "text-right" : "text-left"
-        } ${
-          !isSpecialColumn && pointInfo?.index ? "cursor-pointer" : ""
-        } ${isLastSeriesIdColumn ? "border-r border-gray-700" : ""} ${
-          !pointInfo?.active && !isSpecialColumn ? "opacity-50" : ""
-        }`}
-        onClick={() => handleColumnHeaderClick(headerKey, pointInfo)}
-        title={
+      <Hint
+        content={
           !isSpecialColumn && pointInfo?.index
             ? "Click to edit point info"
             : undefined
         }
       >
-        {children}
-      </th>
+        <th
+          key={`${headerKey}-${rowKey}`}
+          data-col={colIndex}
+          className={`py-1 ${isLastRow ? "pb-2" : ""} px-2 align-top bg-gray-900 ${
+            !isSpecialColumn ? "text-right" : "text-left"
+          } ${
+            !isSpecialColumn && pointInfo?.index ? "cursor-pointer" : ""
+          } ${isLastSeriesIdColumn ? "border-r border-gray-700" : ""} ${
+            !pointInfo?.active && !isSpecialColumn ? "opacity-50" : ""
+          }`}
+          onClick={() => handleColumnHeaderClick(headerKey, pointInfo)}
+        >
+          {children}
+        </th>
+      </Hint>
     );
   };
 
@@ -701,11 +705,12 @@ export default function ViewDataModal({
               )}
             {/* Pagination controls */}
             <div className="inline-flex rounded-md shadow-sm" role="group">
-              <button
-                onClick={handlePageOlder}
-                disabled={!pagination?.hasOlder || loading}
-                title="Older data (back in time)"
-                className={`
+              <Hint content="Older data (back in time)">
+                <button
+                  onClick={handlePageOlder}
+                  disabled={!pagination?.hasOlder || loading}
+                  aria-label="Older data (back in time)"
+                  className={`
                   px-3 py-1 text-xs font-medium transition-colors border rounded-l-md -ml-px
                   ${
                     pagination?.hasOlder && !loading
@@ -713,14 +718,16 @@ export default function ViewDataModal({
                       : "bg-gray-800 text-gray-600 border-gray-700 cursor-not-allowed"
                   }
                 `}
-              >
-                <ChevronLeft className="w-4 h-4" />
-              </button>
-              <button
-                onClick={handlePageNewer}
-                disabled={!pagination?.hasNewer || loading}
-                title="Newer data (forward in time)"
-                className={`
+                >
+                  <ChevronLeft className="w-4 h-4" />
+                </button>
+              </Hint>
+              <Hint content="Newer data (forward in time)">
+                <button
+                  onClick={handlePageNewer}
+                  disabled={!pagination?.hasNewer || loading}
+                  aria-label="Newer data (forward in time)"
+                  className={`
                   px-3 py-1 text-xs font-medium transition-colors border rounded-r-md -ml-px
                   ${
                     pagination?.hasNewer && !loading
@@ -728,9 +735,10 @@ export default function ViewDataModal({
                       : "bg-gray-800 text-gray-600 border-gray-700 cursor-not-allowed"
                   }
                 `}
-              >
-                <ChevronRight className="w-4 h-4" />
-              </button>
+                >
+                  <ChevronRight className="w-4 h-4" />
+                </button>
+              </Hint>
             </div>
             <button
               onClick={() => setShowExtras(!showExtras)}
@@ -740,15 +748,17 @@ export default function ViewDataModal({
             </button>
             {/* Data Source Toggle */}
             <div className="inline-flex rounded-md shadow-sm" role="group">
-              <button
-                onClick={() => handleSourceChange("raw")}
-                disabled={rawDataUnavailable}
-                title={
+              <Hint
+                content={
                   rawDataUnavailable
                     ? "No raw data available - this system only has aggregated 5-minute data"
                     : undefined
                 }
-                className={`
+              >
+                <button
+                  onClick={() => handleSourceChange("raw")}
+                  disabled={rawDataUnavailable}
+                  className={`
                   px-3 py-1 text-xs font-medium transition-colors border rounded-l-md -ml-px
                   ${
                     source === "raw"
@@ -758,9 +768,10 @@ export default function ViewDataModal({
                         : "bg-gray-700 text-gray-400 border-gray-600 hover:bg-gray-600 hover:text-gray-300"
                   }
                 `}
-              >
-                Raw
-              </button>
+                >
+                  Raw
+                </button>
+              </Hint>
               <button
                 onClick={() => handleSourceChange("5m")}
                 className={`

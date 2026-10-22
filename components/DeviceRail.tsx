@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import { Layers } from "lucide-react";
+import { Hint } from "@/components/ui/tooltip";
 
 /** Minimal device shape the rail needs — kept local so this client file never imports server types. */
 interface RailDevice {
@@ -145,18 +146,21 @@ export default function DeviceRail({
           {items.map((device) => {
             const active = isActive(device, pathname);
             return (
-              <Link
+              <Hint
                 key={device.id}
-                href={hrefFor(device)}
-                className={`block truncate rounded-md px-3 py-1.5 text-sm transition-colors ${
-                  active
-                    ? "bg-gray-800 font-medium text-white"
-                    : "text-gray-300 hover:bg-gray-800/60 hover:text-white"
-                }`}
-                title={device.displayName || device.vendorSiteId}
+                content={device.displayName || device.vendorSiteId}
               >
-                {device.displayName || `System ${device.vendorSiteId}`}
-              </Link>
+                <Link
+                  href={hrefFor(device)}
+                  className={`block truncate rounded-md px-3 py-1.5 text-sm transition-colors ${
+                    active
+                      ? "bg-gray-800 font-medium text-white"
+                      : "text-gray-300 hover:bg-gray-800/60 hover:text-white"
+                  }`}
+                >
+                  {device.displayName || `System ${device.vendorSiteId}`}
+                </Link>
+              </Hint>
             );
           })}
         </div>

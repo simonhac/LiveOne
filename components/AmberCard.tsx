@@ -11,6 +11,7 @@ import { formatInTimezone } from "@/lib/date-utils";
 import { fromDate, toZoned } from "@internationalized/date";
 import { amberQuery } from "@/lib/queries";
 import { ttInterphases } from "@/lib/fonts/amber";
+import { Hint } from "@/components/ui/tooltip";
 
 interface AmberCardProps {
   systemId: number;
@@ -357,26 +358,29 @@ export default function AmberCard({
                       </div>
 
                       {/* Price */}
-                      <div
-                        className="text-sm font-extrabold mb-2"
-                        title={
+                      <Hint
+                        content={
                           slot.isAmberForecast
                             ? `Amber forecast — the published price is ${slot.storedPriceInCents?.toFixed(1) ?? "—"}¢`
                             : undefined
                         }
-                        style={{
-                          color: slot.isMissing
-                            ? "rgb(156, 163, 175)"
-                            : "rgb(255, 255, 255)",
-                          opacity: slot.isPast ? 0.4 : 1,
-                          fontSize: "14.4px",
-                          lineHeight: "16px",
-                        }}
                       >
-                        {slot.isMissing
-                          ? "—"
-                          : `${slot.priceInCents?.toFixed(0)}¢`}
-                      </div>
+                        <div
+                          className="text-sm font-extrabold mb-2"
+                          style={{
+                            color: slot.isMissing
+                              ? "rgb(156, 163, 175)"
+                              : "rgb(255, 255, 255)",
+                            opacity: slot.isPast ? 0.4 : 1,
+                            fontSize: "14.4px",
+                            lineHeight: "16px",
+                          }}
+                        >
+                          {slot.isMissing
+                            ? "—"
+                            : `${slot.priceInCents?.toFixed(0)}¢`}
+                        </div>
+                      </Hint>
 
                       {/* Renewables % */}
                       <div
@@ -428,31 +432,32 @@ export default function AmberCard({
 
                       {/* Data Quality Badge */}
                       {slot.dataQuality && (
-                        <div
-                          className="mt-1"
-                          title={
+                        <Hint
+                          content={
                             (QUALITY_BADGE[slot.dataQuality]?.label ??
                               slot.dataQuality) +
                             (slot.isAmberForecast ? " · Amber forecast" : "")
                           }
                         >
-                          <span
-                            className="inline-block px-1 text-xs font-bold rounded"
-                            style={{
-                              backgroundColor:
-                                QUALITY_BADGE[slot.dataQuality]?.bg ??
-                                "rgba(107, 114, 128, 0.3)",
-                              color:
-                                QUALITY_BADGE[slot.dataQuality]?.fg ??
-                                "rgb(156, 163, 175)",
-                              opacity: slot.isPast ? 0.4 : 1,
-                              fontSize: "10px",
-                              lineHeight: "12px",
-                            }}
-                          >
-                            {slot.dataQuality.charAt(0).toUpperCase()}
-                          </span>
-                        </div>
+                          <div className="mt-1">
+                            <span
+                              className="inline-block px-1 text-xs font-bold rounded"
+                              style={{
+                                backgroundColor:
+                                  QUALITY_BADGE[slot.dataQuality]?.bg ??
+                                  "rgba(107, 114, 128, 0.3)",
+                                color:
+                                  QUALITY_BADGE[slot.dataQuality]?.fg ??
+                                  "rgb(156, 163, 175)",
+                                opacity: slot.isPast ? 0.4 : 1,
+                                fontSize: "10px",
+                                lineHeight: "12px",
+                              }}
+                            >
+                              {slot.dataQuality.charAt(0).toUpperCase()}
+                            </span>
+                          </div>
+                        </Hint>
                       )}
                     </div>
                   </td>

@@ -78,8 +78,9 @@ duplicated the same class string (`Tile`, `StatCardShell`, `AmberSmallCard`/`Tes
    icon's side of the header.
 11. **Stale is quiet.** No diagonal hatch, no dimmed box, and never a grey-out: LIVE values (a hero
     "now", a ring, a direction row) keep their hue and dim (`TILE_STALE`), and the header shows a
-    clock + the reading's age with the exact time on hover (`useStaleness` / `StaleBadge`, one
-    implementation for every shell). Greying erased what a tile IS — the renewables ring stopped
+    slowly pulsing clock, with the reading's age and exact time on hover (`useStaleness` /
+    `StaleBadge`, one implementation for every shell). The age is not printed: beside the title it
+    truncated the tile's name. Hover hints use `components/ui/tooltip.tsx`, never a native `title=`. Greying erased what a tile IS — the renewables ring stopped
     being green — exactly when the feed lagged, and on a dev machine (crons off) that is always.
     🛑 PERIOD data — the bars, the Grid/Generator totals, the Home Energy rings — is not dimmed at
     all: a total over the navigator's window is not made wrong by a lagging live feed.

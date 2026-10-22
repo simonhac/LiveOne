@@ -504,6 +504,28 @@
   animation: ring-tip-pulse 2s ease-in-out infinite;
 }
 
+/* A stale tile's header clock (StaleBadge) breathes slowly — slower than the ring tip, because it
+   reports an absence rather than a flow. */
+@keyframes stale-clock-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.3;
+  }
+}
+
+.stale-clock-pulse {
+  animation: stale-clock-pulse 3s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .stale-clock-pulse {
+    animation: none;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .ring-tip-pulse {
     animation: none;

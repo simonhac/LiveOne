@@ -7,6 +7,7 @@ import { formatRelativeTime, formatDateTime } from "@/lib/fe-date-format";
 import { formatValueWithUnit } from "@/lib/point/format-value";
 import { latestReadingsQuery } from "@/lib/queries";
 import SessionInfoModal from "@/components/SessionInfoModal";
+import { Hint } from "@/components/ui/tooltip";
 
 interface AvailableDevice {
   id: number;
@@ -205,12 +206,11 @@ export default function LatestReadingsClient({
                         );
                       })()
                     ) : (
-                      <span
-                        className="text-yellow-500"
-                        title="No source reference in cache"
-                      >
-                        <AlertTriangle className="w-4 h-4 inline" />
-                      </span>
+                      <Hint content="No source reference in cache">
+                        <span className="text-yellow-500">
+                          <AlertTriangle className="w-4 h-4 inline" />
+                        </span>
+                      </Hint>
                     )}
                   </td>
                   <td className="px-3 py-2 text-sm font-mono">

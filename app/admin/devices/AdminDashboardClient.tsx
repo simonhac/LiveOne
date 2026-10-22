@@ -24,6 +24,7 @@ import { PollAllModal } from "@/components/PollAllModal";
 import { formatDateTime, formatTime } from "@/lib/fe-date-format";
 import type { DeviceData as ServerDeviceData } from "@/lib/admin/get-devices-data";
 import { usePollingState } from "@/hooks/usePollingState";
+import { Hint } from "@/components/ui/tooltip";
 
 interface DeviceInfo {
   model?: string;
@@ -675,12 +676,11 @@ export default function AdminDashboardClient({
                                 </span>
                               )}
                               {device.polling.lastError && (
-                                <p
-                                  className="text-xs text-red-400 mt-1 max-w-xs truncate"
-                                  title={device.polling.lastError}
-                                >
-                                  {device.polling.lastError}
-                                </p>
+                                <Hint content={device.polling.lastError}>
+                                  <p className="text-xs text-red-400 mt-1 max-w-xs truncate">
+                                    {device.polling.lastError}
+                                  </p>
+                                </Hint>
                               )}
                             </div>
                           </div>

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Trash2, UserPlus } from "lucide-react";
 import { toast } from "sonner";
+import { Hint } from "@/components/ui/tooltip";
 
 /** A dashboard member as serialized by `GET /api/v4/dashboards/{id}/grants`. */
 interface Member {
@@ -211,14 +212,16 @@ export default function GrantsPanel({
                 </div>
                 <div className="text-xs text-ink-faint">{m.role}</div>
               </div>
-              <button
-                onClick={() => remove(m.clerkUserId)}
-                disabled={busy}
-                title="Remove member"
-                className="rounded p-1.5 text-ink-muted transition-colors hover:bg-danger-panel hover:text-danger disabled:opacity-50"
-              >
-                <Trash2 className="h-4 w-4" />
-              </button>
+              <Hint content="Remove member">
+                <button
+                  onClick={() => remove(m.clerkUserId)}
+                  disabled={busy}
+                  aria-label="Remove member"
+                  className="rounded p-1.5 text-ink-muted transition-colors hover:bg-danger-panel hover:text-danger disabled:opacity-50"
+                >
+                  <Trash2 className="h-4 w-4" />
+                </button>
+              </Hint>
             </li>
           ))}
         </ul>

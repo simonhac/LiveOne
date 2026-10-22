@@ -3,6 +3,7 @@
 import { Plus, X, Cpu, Wand2 } from "lucide-react";
 import type { CandidateDevice, MemberChip } from "./types";
 import type { DeviceId } from "@/lib/ids";
+import { Hint } from "@/components/ui/tooltip";
 
 /**
  * The member-devices editor for the Area builder (create + edit modes). Lists the area's current
@@ -84,21 +85,24 @@ export default function MembersTab({
                       ID: {m.legacySystemId}
                     </span>
                   </span>
-                  <button
-                    type="button"
-                    onClick={() => onRemove(m.id)}
-                    disabled={busy || isHelper || isLocked}
-                    title={
+                  <Hint
+                    content={
                       isHelper
                         ? "Derived device — managed automatically by this site"
                         : isLocked
                           ? "The device this site was created from"
                           : "Move out of this site — the device is kept, with no area"
                     }
-                    className="rounded p-1 text-ink-faint transition-colors hover:bg-surface-control hover:text-danger disabled:cursor-not-allowed disabled:opacity-30"
                   >
-                    <X className="h-4 w-4" />
-                  </button>
+                    <button
+                      type="button"
+                      onClick={() => onRemove(m.id)}
+                      disabled={busy || isHelper || isLocked}
+                      className="rounded p-1 text-ink-faint transition-colors hover:bg-surface-control hover:text-danger disabled:cursor-not-allowed disabled:opacity-30"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  </Hint>
                 </li>
               );
             })}

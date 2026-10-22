@@ -25,6 +25,7 @@ import {
 } from "@/lib/provenance-format";
 import { ShimmerBar } from "@/components/ui/skeleton";
 import { formatPercent } from "@/lib/point/format-value";
+import { Hint } from "@/components/ui/tooltip";
 
 /**
  * What the table's last column shows. `pct` is each row's share of the total (the original, and the
@@ -604,20 +605,21 @@ export default function EnergyTable({
           {tableData.map((item) => {
             return (
               <div key={item.id} className={LEGEND_ROW}>
-                <div
-                  className="flex items-center gap-2 flex-1 cursor-pointer select-none touch-none"
-                  onPointerDown={() => handlePointerDown(item.id)}
-                  onPointerUp={(e) => handlePointerUp(item.id, e)}
-                  onPointerLeave={handlePointerCancel}
-                  onPointerCancel={handlePointerCancel}
-                  title="Click to toggle visibility, Shift-click or long press to show only this series"
-                >
+                <Hint content="Click to toggle visibility, Shift-click or long press to show only this series">
                   <div
-                    className={LEGEND_SWATCH}
-                    style={legendSwatchStyle(item.color, item.isVisible)}
-                  />
-                  <span className={LEGEND_LABEL}>{item.label}</span>
-                </div>
+                    className="flex items-center gap-2 flex-1 cursor-pointer select-none touch-none"
+                    onPointerDown={() => handlePointerDown(item.id)}
+                    onPointerUp={(e) => handlePointerUp(item.id, e)}
+                    onPointerLeave={handlePointerCancel}
+                    onPointerCancel={handlePointerCancel}
+                  >
+                    <div
+                      className={LEGEND_SWATCH}
+                      style={legendSwatchStyle(item.color, item.isVisible)}
+                    />
+                    <span className={LEGEND_LABEL}>{item.label}</span>
+                  </div>
+                </Hint>
                 <span className={`${LEGEND_VALUE} w-20`}>
                   {item.isVisible
                     ? displayValue === "power"
@@ -680,31 +682,36 @@ export default function EnergyTable({
                 {/* Clickable like every series row above it — a legend entry you can see but not
                     switch off is the odd one out. No shift/long-press variant: "show only SoC"
                     would mean emptying a stack it was never part of. */}
-                <div
-                  className={`flex items-center gap-2 flex-1 ${
-                    onSocToggle ? "cursor-pointer select-none" : ""
-                  }`}
-                  onClick={onSocToggle}
-                  role={onSocToggle ? "button" : undefined}
-                  tabIndex={onSocToggle ? 0 : undefined}
-                  onKeyDown={(e) => {
-                    if (!onSocToggle) return;
-                    if (e.key === "Enter" || e.key === " ") {
-                      e.preventDefault();
-                      onSocToggle();
-                    }
-                  }}
-                  title={onSocToggle ? "Click to toggle visibility" : undefined}
+                <Hint
+                  content={
+                    onSocToggle ? "Click to toggle visibility" : undefined
+                  }
                 >
                   <div
-                    className={LEGEND_SWATCH}
-                    style={legendSwatchStyle(
-                      CHART_COLORS.battery.soc,
-                      socVisible,
-                    )}
-                  />
-                  <span className={LEGEND_LABEL}>Battery SoC</span>
-                </div>
+                    className={`flex items-center gap-2 flex-1 ${
+                      onSocToggle ? "cursor-pointer select-none" : ""
+                    }`}
+                    onClick={onSocToggle}
+                    role={onSocToggle ? "button" : undefined}
+                    tabIndex={onSocToggle ? 0 : undefined}
+                    onKeyDown={(e) => {
+                      if (!onSocToggle) return;
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        onSocToggle();
+                      }
+                    }}
+                  >
+                    <div
+                      className={LEGEND_SWATCH}
+                      style={legendSwatchStyle(
+                        CHART_COLORS.battery.soc,
+                        socVisible,
+                      )}
+                    />
+                    <span className={LEGEND_LABEL}>Battery SoC</span>
+                  </div>
+                </Hint>
                 <span className={`${LEGEND_VALUE} w-20`}>
                   {!socVisible
                     ? ""

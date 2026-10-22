@@ -31,6 +31,7 @@ import {
   ymdToLocalDate,
   zonedDateTimeToYMD,
 } from "@/lib/battery-provenance/panel-dates";
+import { Hint } from "@/components/ui/tooltip";
 
 /** The panel's periods: the trailing calendar year, with M as a calendar-month zoom over the same daily data. */
 const PANEL_PERIODS: readonly ChartTimeRange[] = ["M", "Y"];
@@ -214,24 +215,29 @@ function PanelInner({
           {rangeLabel}
         </span>
         <div className={SEGMENTED_TRACK} role="group">
-          <button
-            onClick={older}
-            disabled={isPending || atHistoryStart}
-            className={`${SEGMENTED_ICON_ITEM} ${SEGMENTED_ITEM_OFF}`}
-            title={
+          <Hint
+            content={
               atHistoryStart ? "No earlier history" : "Older (previous period)"
             }
           >
-            <ChevronLeft className="w-4 h-4" />
-          </button>
-          <button
-            onClick={newer}
-            disabled={isPending || olderSteps === 0}
-            className={`${SEGMENTED_ICON_ITEM} ${SEGMENTED_ITEM_OFF}`}
-            title="Newer (next period)"
-          >
-            <ChevronRight className="w-4 h-4" />
-          </button>
+            <button
+              onClick={older}
+              disabled={isPending || atHistoryStart}
+              className={`${SEGMENTED_ICON_ITEM} ${SEGMENTED_ITEM_OFF}`}
+            >
+              <ChevronLeft className="w-4 h-4" />
+            </button>
+          </Hint>
+          <Hint content="Newer (next period)">
+            <button
+              onClick={newer}
+              disabled={isPending || olderSteps === 0}
+              className={`${SEGMENTED_ICON_ITEM} ${SEGMENTED_ITEM_OFF}`}
+              aria-label="Newer (next period)"
+            >
+              <ChevronRight className="w-4 h-4" />
+            </button>
+          </Hint>
         </div>
         <PeriodSwitcher
           value={period}

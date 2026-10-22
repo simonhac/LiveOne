@@ -11,6 +11,7 @@ import { useModalContext } from "@/contexts/ModalContext";
 import { TILE_GRID_CONTAINER, tileGridClass } from "@/lib/dashboard/tile-grid";
 import { SKELETON_CLASS, TileSkeleton } from "@/components/ui/skeleton";
 import { CHART_HAIRLINE } from "@/lib/charts/style";
+import { Hint } from "@/components/ui/tooltip";
 
 /** Tiles drawn while the point list is in flight — see the note at the placeholder below. */
 const SKELETON_TILE_COUNT = 4;
@@ -99,18 +100,21 @@ export default function DeviceMetricsCard({
                   <td className="px-3 py-1.5 text-ink-secondary">
                     {row.pointName}
                   </td>
-                  <td
-                    className={`px-3 py-1.5 text-right font-mono tabular-nums ${
-                      missing || isStale ? "text-ink-faint" : "text-ink"
-                    }`}
-                    title={
+                  <Hint
+                    content={
                       isStale && row.measurementTime
                         ? `Last updated ${new Date(row.measurementTime).toLocaleString()}`
                         : undefined
                     }
                   >
-                    {value}
-                  </td>
+                    <td
+                      className={`px-3 py-1.5 text-right font-mono tabular-nums ${
+                        missing || isStale ? "text-ink-faint" : "text-ink"
+                      }`}
+                    >
+                      {value}
+                    </td>
+                  </Hint>
                 </tr>
               );
             })}
