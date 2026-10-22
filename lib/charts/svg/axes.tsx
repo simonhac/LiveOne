@@ -190,7 +190,20 @@ export interface FocusLineProps {
    * centre, read from the same numbers that placed the bar. `at` still decides *whether* to draw.
    */
   xPx?: number | null;
+  /**
+   * A bubble at the top of the line saying WHEN it points at (see `formatFocusLabel`). Needs
+   * `plotWidth` to keep the bubble inside the plot at either edge; omitted ⇒ a bare line.
+   */
+  label?: string | null;
+  plotWidth?: number;
 }
+
+/** The bubble's height, and how far it rises into the top margin (`DEFAULT_MARGIN.top` is 8). */
+const BUBBLE_H = 16;
+const BUBBLE_RISE = 6;
+/** No DOM measuring for one short label: DM Sans at 10px averages ~5.6px a glyph. */
+const BUBBLE_CHAR_PX = 5.6;
+const BUBBLE_PAD_X = 6;
 
 /**
  * The shared crosshair at `ChartFocusContext`'s focused instant.
@@ -203,10 +216,17 @@ export interface FocusLineProps {
  * for enter/leave therefore sees the pointer leave and re-enter on every single mouse move — which
  * made the run-period tooltip strobe while scrubbing across a charge session.
  */
-export function FocusLine({ at, x, plotHeight, xPx }: FocusLineProps) {
+export function FocusLine({
+  at,
+  x,
+  plotHeight,
+  xPx,
+  label,
+  plotWidth,
+}: FocusLineProps) {
   if (!at) return null;
   const px = xPx ?? x(at);
-  return (
+  const line = (
     <line
       data-testid="focus-line"
       x1={px}
@@ -217,5 +237,40 @@ export function FocusLine({ at, x, plotHeight, xPx }: FocusLineProps) {
       strokeWidth={CHART_INK.focusStroke}
       pointerEvents="none"
     />
+  );
+  if (!label || plotWidth == null) return line;
+  const w = Math.ceil(label.length * BUBBLE_CHAR_PX) + 2 * BUBBLE_PAD_X;
+  // Centred on the line, but slid inward at the plot's edges rather than clipped: the line still
+  // marks the exact instant, the bubble only has to be readable.
+  const cx = Math.min(Math.max(px, w / 2), Math.max(w / 2, plotWidth - w / 2));
+  return (
+    <>
+      {line}
+      <g
+        data-testid="focus-bubble"
+        transform={`translate(${cx} ${-BUBBLE_RISE})`}
+        pointerEvents="none"
+      >
+        <rect
+          x={-w / 2}
+          y={0}
+          width={w}
+          height={BUBBLE_H}
+          rx={BUBBLE_H / 2}
+          fill={CHART_COLORS.focusLine}
+        />
+        <text
+          y={BUBBLE_H / 2}
+          textAnchor="middle"
+          dominantBaseline="central"
+          fill="white"
+          fontSize={CHART_INK.fontSize}
+          fontFamily={CHART_INK.fontFamily}
+          fontWeight={600}
+        >
+          {label}
+        </text>
+      </g>
+    </>
   );
 }

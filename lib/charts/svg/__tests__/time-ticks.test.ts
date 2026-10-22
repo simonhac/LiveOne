@@ -1,5 +1,9 @@
 import { describe, it, expect } from "@jest/globals";
-import { buildShadingBands, buildTimeTicks } from "../time-ticks";
+import {
+  buildShadingBands,
+  buildTimeTicks,
+  formatFocusLabel,
+} from "../time-ticks";
 
 /**
  * A fixed LOCAL window, so day/weekday maths is deterministic whatever TZ the runner is in — the
@@ -283,5 +287,21 @@ describe("desktop density matches what the canvas charts shipped", () => {
     ["Y", 365, 13], // canvas: 13
   ] as const)("%s", (range, days, canvas) => {
     expect(Math.abs(n(range, days) - canvas)).toBeLessThanOrEqual(1);
+  });
+});
+
+describe("formatFocusLabel", () => {
+  // Local time, like the axis: built from parts so the test is zone-independent.
+  const at = new Date(2026, 9, 13, 9, 45); // Tue 13 Oct 2026, 9:45am local
+
+  it("spells the instant at the resolution each period plots", () => {
+    expect(formatFocusLabel("D", at)).toBe("9:45am");
+    expect(formatFocusLabel("W", at)).toBe("Tue 9:45am");
+    expect(formatFocusLabel("M", at)).toBe("13 Oct");
+    expect(formatFocusLabel("Y", at)).toBe("Oct");
+  });
+
+  it("keeps :00 on the hour — a lone time without minutes reads as truncated", () => {
+    expect(formatFocusLabel("D", new Date(2026, 9, 13, 0, 0))).toBe("12:00am");
   });
 });
