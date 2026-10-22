@@ -3,6 +3,7 @@
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { Settings, Check } from "lucide-react";
 import type { SankeyOptions } from "@/components/EnergyFlowSankey";
+import { Hint } from "@/components/ui/tooltip";
 
 /** Whether each option can meaningfully apply to the current site (else the toggle is disabled). */
 export interface SankeyCapabilities {
@@ -35,16 +36,17 @@ export default function FlowsSettingsMenu({
 }: FlowsSettingsMenuProps) {
   return (
     <DropdownMenu.Root>
-      <DropdownMenu.Trigger asChild>
-        <button
-          type="button"
-          className="rounded p-1 text-ink-faint outline-none transition-colors hover:bg-surface-control hover:text-ink-secondary"
-          title="Flow display options"
-          aria-label="Flow display options"
-        >
-          <Settings className="h-4 w-4" />
-        </button>
-      </DropdownMenu.Trigger>
+      <Hint content="Flow display options">
+        <DropdownMenu.Trigger asChild>
+          <button
+            type="button"
+            className="rounded p-1 text-ink-faint outline-none transition-colors hover:bg-surface-control hover:text-ink-secondary"
+            aria-label="Flow display options"
+          >
+            <Settings className="h-4 w-4" />
+          </button>
+        </DropdownMenu.Trigger>
+      </Hint>
 
       <DropdownMenu.Portal>
         <DropdownMenu.Content
@@ -57,43 +59,49 @@ export default function FlowsSettingsMenu({
             zIndex: 9999,
           }}
         >
-          <DropdownMenu.CheckboxItem
-            checked={options.combineSolar}
-            disabled={!capabilities.canCombineSolar}
-            onCheckedChange={(checked) =>
-              onChange({ ...options, combineSolar: checked === true })
-            }
-            onSelect={(e) => e.preventDefault()}
-            className={ITEM_CLASS}
-            title={
+          <Hint
+            content={
               capabilities.canCombineSolar
                 ? undefined
                 : "This site has only one solar array"
             }
           >
-            <DropdownMenu.ItemIndicator className="absolute left-2 inline-flex">
-              <Check className="h-4 w-4 text-accent-ink" />
-            </DropdownMenu.ItemIndicator>
-            Combine solar arrays
-          </DropdownMenu.CheckboxItem>
+            <DropdownMenu.CheckboxItem
+              checked={options.combineSolar}
+              disabled={!capabilities.canCombineSolar}
+              onCheckedChange={(checked) =>
+                onChange({ ...options, combineSolar: checked === true })
+              }
+              onSelect={(e) => e.preventDefault()}
+              className={ITEM_CLASS}
+            >
+              <DropdownMenu.ItemIndicator className="absolute left-2 inline-flex">
+                <Check className="h-4 w-4 text-accent-ink" />
+              </DropdownMenu.ItemIndicator>
+              Combine solar arrays
+            </DropdownMenu.CheckboxItem>
+          </Hint>
 
-          <DropdownMenu.CheckboxItem
-            checked={options.batteryMiddle}
-            disabled={!capabilities.hasBattery}
-            onCheckedChange={(checked) =>
-              onChange({ ...options, batteryMiddle: checked === true })
-            }
-            onSelect={(e) => e.preventDefault()}
-            className={ITEM_CLASS}
-            title={
+          <Hint
+            content={
               capabilities.hasBattery ? undefined : "This site has no battery"
             }
           >
-            <DropdownMenu.ItemIndicator className="absolute left-2 inline-flex">
-              <Check className="h-4 w-4 text-accent-ink" />
-            </DropdownMenu.ItemIndicator>
-            Battery in the middle
-          </DropdownMenu.CheckboxItem>
+            <DropdownMenu.CheckboxItem
+              checked={options.batteryMiddle}
+              disabled={!capabilities.hasBattery}
+              onCheckedChange={(checked) =>
+                onChange({ ...options, batteryMiddle: checked === true })
+              }
+              onSelect={(e) => e.preventDefault()}
+              className={ITEM_CLASS}
+            >
+              <DropdownMenu.ItemIndicator className="absolute left-2 inline-flex">
+                <Check className="h-4 w-4 text-accent-ink" />
+              </DropdownMenu.ItemIndicator>
+              Battery in the middle
+            </DropdownMenu.CheckboxItem>
+          </Hint>
         </DropdownMenu.Content>
       </DropdownMenu.Portal>
     </DropdownMenu.Root>

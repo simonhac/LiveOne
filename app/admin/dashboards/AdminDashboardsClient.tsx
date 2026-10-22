@@ -2,6 +2,7 @@
 
 import { LayoutDashboard, Share2, Users } from "lucide-react";
 import type { AdminDashboardRow } from "@/lib/admin/get-dashboards-data";
+import { Hint } from "@/components/ui/tooltip";
 
 function formatDateTime(iso: string): string {
   const d = new Date(iso);
@@ -102,20 +103,18 @@ export default function AdminDashboardsClient({
                       </td>
                       <td className="px-2 md:px-6 py-4 align-top">
                         <div className="flex items-center gap-3">
-                          <span
-                            className="flex items-center gap-1 text-xs text-gray-400"
-                            title="Share tokens"
-                          >
-                            <Share2 className="w-3.5 h-3.5" />
-                            {d.shareTokenCount}
-                          </span>
-                          <span
-                            className="flex items-center gap-1 text-xs text-gray-400"
-                            title="Grants"
-                          >
-                            <Users className="w-3.5 h-3.5" />
-                            {d.grantCount}
-                          </span>
+                          <Hint content="Share tokens">
+                            <span className="flex items-center gap-1 text-xs text-gray-400">
+                              <Share2 className="w-3.5 h-3.5" />
+                              {d.shareTokenCount}
+                            </span>
+                          </Hint>
+                          <Hint content="Grants">
+                            <span className="flex items-center gap-1 text-xs text-gray-400">
+                              <Users className="w-3.5 h-3.5" />
+                              {d.grantCount}
+                            </span>
+                          </Hint>
                         </div>
                       </td>
                       <td className="px-2 md:px-6 py-4 align-top whitespace-nowrap">

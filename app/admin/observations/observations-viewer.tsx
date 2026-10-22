@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { formatDateTime } from "@/lib/fe-date-format";
 import IngestionChart, { type IngestionSeries } from "./IngestionChart";
+import { Hint } from "@/components/ui/tooltip";
 
 interface MinuteBucket {
   minute: string;
@@ -370,15 +371,16 @@ export default function ObservationsViewer() {
                 Resume
               </button>
             ) : (
-              <button
-                onClick={togglePause}
-                disabled={actionLoading}
-                className="flex items-center justify-center gap-2 px-3 py-1.5 bg-yellow-700 hover:bg-yellow-600 rounded text-sm disabled:opacity-50"
-                title="Pauses every lane. Publishing continues — messages accumulate in the wait list."
-              >
-                <Pause className="w-4 h-4" />
-                Pause
-              </button>
+              <Hint content="Pauses every lane. Publishing continues — messages accumulate in the wait list.">
+                <button
+                  onClick={togglePause}
+                  disabled={actionLoading}
+                  className="flex items-center justify-center gap-2 px-3 py-1.5 bg-yellow-700 hover:bg-yellow-600 rounded text-sm disabled:opacity-50"
+                >
+                  <Pause className="w-4 h-4" />
+                  Pause
+                </button>
+              </Hint>
             ))}
           <button
             onClick={() => refetch()}
@@ -704,21 +706,22 @@ function LaneTable({
                     {lane.inFlight.toLocaleString()}
                   </td>
                   <td className="py-1.5 pr-4">
-                    <select
-                      value={lane.parallelism}
-                      onChange={(e) =>
-                        onSetParallelism(lane.lane, Number(e.target.value))
-                      }
-                      disabled={actionLoading}
-                      className="bg-gray-700 text-white rounded px-1.5 py-0.5 text-sm disabled:opacity-50"
-                      title="Pins this lane's cap. The SUM across lanes must stay within the Postgres pool (10) — every in-flight delivery holds a connection."
-                    >
-                      {[1, 2, 3, 4, 5, 6, 8, 10].map((n) => (
-                        <option key={n} value={n}>
-                          {n}
-                        </option>
-                      ))}
-                    </select>
+                    <Hint content="Pins this lane's cap. The SUM across lanes must stay within the Postgres pool (10) — every in-flight delivery holds a connection.">
+                      <select
+                        value={lane.parallelism}
+                        onChange={(e) =>
+                          onSetParallelism(lane.lane, Number(e.target.value))
+                        }
+                        disabled={actionLoading}
+                        className="bg-gray-700 text-white rounded px-1.5 py-0.5 text-sm disabled:opacity-50"
+                      >
+                        {[1, 2, 3, 4, 5, 6, 8, 10].map((n) => (
+                          <option key={n} value={n}>
+                            {n}
+                          </option>
+                        ))}
+                      </select>
+                    </Hint>
                     {lane.pinned && (
                       <span className="ml-1.5 text-xs text-amber-400">
                         pinned
@@ -727,9 +730,9 @@ function LaneTable({
                   </td>
                   <td className="py-1.5 pr-4 whitespace-nowrap">
                     {lane.error ? (
-                      <span className="text-red-400" title={lane.error}>
-                        unreadable
-                      </span>
+                      <Hint content={lane.error}>
+                        <span className="text-red-400">unreadable</span>
+                      </Hint>
                     ) : lane.stuck ? (
                       <span className="text-red-400">STUCK</span>
                     ) : lane.paused ? (
@@ -833,18 +836,19 @@ function BatchTable({
                   <td className="py-1.5 pr-4 text-right font-mono text-gray-500">
                     {b.attempts.length}
                   </td>
-                  <td
-                    className={`py-1.5 whitespace-nowrap ${
-                      b.state === "DELIVERED"
-                        ? "text-green-400"
-                        : b.settled
-                          ? "text-red-400"
-                          : "text-gray-400"
-                    }`}
-                    title={b.error}
-                  >
-                    {b.state}
-                  </td>
+                  <Hint content={b.error}>
+                    <td
+                      className={`py-1.5 whitespace-nowrap ${
+                        b.state === "DELIVERED"
+                          ? "text-green-400"
+                          : b.settled
+                            ? "text-red-400"
+                            : "text-gray-400"
+                      }`}
+                    >
+                      {b.state}
+                    </td>
+                  </Hint>
                 </tr>
               ))}
             </tbody>

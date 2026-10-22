@@ -5,11 +5,7 @@
  */
 import type React from "react";
 import { TILE_CAPTION, TILE_LABEL, TILE_VALUE_2 } from "@/lib/tile-style";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
+import { Hint } from "@/components/ui/tooltip";
 
 export default function TrendRow({
   chip,
@@ -46,11 +42,5 @@ export default function TrendRow({
       </div>
     </div>
   );
-  if (!title) return row;
-  return (
-    <Tooltip>
-      <TooltipTrigger asChild>{row}</TooltipTrigger>
-      <TooltipContent>{title}</TooltipContent>
-    </Tooltip>
-  );
+  return <Hint content={title}>{row}</Hint>;
 }

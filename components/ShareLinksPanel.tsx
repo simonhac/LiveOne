@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { formatRelativeTime, formatDate } from "@/lib/fe-date-format";
+import { Hint } from "@/components/ui/tooltip";
 
 /**
  * Reusable read-only share-link manager (the rich table + composer formerly inside
@@ -278,23 +279,26 @@ export default function ShareLinksPanel({
             </select>
           </label>
 
-          <button
-            onClick={mint}
-            disabled={!canCreate}
-            title={
+          <Hint
+            content={
               trimmedName.length === 0 ? "Enter a name first" : "Create link"
             }
-            className="ml-auto inline-flex items-center gap-1.5 rounded-md bg-accent px-3.5 py-2 text-sm font-medium text-ink shadow-sm transition-colors hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-40"
           >
-            {minting ? (
-              "Creating…"
-            ) : (
-              <>
-                <Plus className="h-4 w-4" />
-                Create link
-              </>
-            )}
-          </button>
+            <button
+              onClick={mint}
+              disabled={!canCreate}
+              className="ml-auto inline-flex items-center gap-1.5 rounded-md bg-accent px-3.5 py-2 text-sm font-medium text-ink shadow-sm transition-colors hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              {minting ? (
+                "Creating…"
+              ) : (
+                <>
+                  <Plus className="h-4 w-4" />
+                  Create link
+                </>
+              )}
+            </button>
+          </Hint>
         </div>
       </div>
 
@@ -392,14 +396,17 @@ export default function ShareLinksPanel({
                       ) : (
                         <>
                           <td className="max-w-0 py-2 pl-3 pr-2">
-                            <span
-                              className={`block truncate font-medium ${
-                                hasName ? "text-ink" : "italic text-ink-faint"
-                              }`}
-                              title={`${displayName} — ${shareUrl(t.token)}`}
+                            <Hint
+                              content={`${displayName} — ${shareUrl(t.token)}`}
                             >
-                              {displayName}
-                            </span>
+                              <span
+                                className={`block truncate font-medium ${
+                                  hasName ? "text-ink" : "italic text-ink-faint"
+                                }`}
+                              >
+                                {displayName}
+                              </span>
+                            </Hint>
                           </td>
                           <td
                             className={`hidden whitespace-nowrap px-2 py-2 text-xs sm:table-cell ${
@@ -419,38 +426,41 @@ export default function ShareLinksPanel({
                           </td>
                           <td className="py-2 pl-2 pr-3">
                             <div className="flex items-center justify-end gap-0.5">
-                              <button
-                                onClick={() => copyToken(t.token)}
-                                className={`rounded-md p-1.5 transition-colors ${
-                                  isCopied
-                                    ? "text-ok"
-                                    : "text-ink-muted hover:bg-surface-control hover:text-ink"
-                                }`}
-                                aria-label={`Copy link for ${displayName}`}
-                                title="Copy link"
-                              >
-                                {isCopied ? (
-                                  <Check className="h-4 w-4" />
-                                ) : (
-                                  <Copy className="h-4 w-4" />
-                                )}
-                              </button>
-                              <button
-                                onClick={() => startEdit(t)}
-                                className="rounded-md p-1.5 text-ink-muted transition-colors hover:bg-surface-control hover:text-ink"
-                                aria-label={`Rename ${displayName}`}
-                                title="Rename link"
-                              >
-                                <Pencil className="h-4 w-4" />
-                              </button>
-                              <button
-                                onClick={() => revoke(t.token)}
-                                className="rounded-md p-1.5 text-ink-muted transition-colors hover:bg-danger-wash hover:text-danger"
-                                aria-label={`Revoke ${displayName}`}
-                                title="Revoke link"
-                              >
-                                <Trash2 className="h-4 w-4" />
-                              </button>
+                              <Hint content="Copy link">
+                                <button
+                                  onClick={() => copyToken(t.token)}
+                                  className={`rounded-md p-1.5 transition-colors ${
+                                    isCopied
+                                      ? "text-ok"
+                                      : "text-ink-muted hover:bg-surface-control hover:text-ink"
+                                  }`}
+                                  aria-label={`Copy link for ${displayName}`}
+                                >
+                                  {isCopied ? (
+                                    <Check className="h-4 w-4" />
+                                  ) : (
+                                    <Copy className="h-4 w-4" />
+                                  )}
+                                </button>
+                              </Hint>
+                              <Hint content="Rename link">
+                                <button
+                                  onClick={() => startEdit(t)}
+                                  className="rounded-md p-1.5 text-ink-muted transition-colors hover:bg-surface-control hover:text-ink"
+                                  aria-label={`Rename ${displayName}`}
+                                >
+                                  <Pencil className="h-4 w-4" />
+                                </button>
+                              </Hint>
+                              <Hint content="Revoke link">
+                                <button
+                                  onClick={() => revoke(t.token)}
+                                  className="rounded-md p-1.5 text-ink-muted transition-colors hover:bg-danger-wash hover:text-danger"
+                                  aria-label={`Revoke ${displayName}`}
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </button>
+                              </Hint>
                             </div>
                           </td>
                         </>

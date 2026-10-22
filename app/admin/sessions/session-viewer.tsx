@@ -27,6 +27,7 @@ import {
   flexRender,
 } from "@tanstack/react-table";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
+import { Hint } from "@/components/ui/tooltip";
 
 // Extend ColumnMeta type for custom metadata
 declare module "@tanstack/react-table" {
@@ -94,18 +95,20 @@ function HeaderFilter({
 
   return (
     <DropdownMenu.Root>
-      <DropdownMenu.Trigger asChild>
-        <button
-          className={`p-0.5 rounded hover:bg-gray-700 transition-colors ${
-            hasActiveFilter ? "text-white font-bold" : "text-gray-500"
-          }`}
-          title="Filter column"
-        >
-          <ChevronDown
-            className={`h-3 w-3 ${hasActiveFilter ? "stroke-[2.5]" : ""}`}
-          />
-        </button>
-      </DropdownMenu.Trigger>
+      <Hint content="Filter column">
+        <DropdownMenu.Trigger asChild>
+          <button
+            className={`p-0.5 rounded hover:bg-gray-700 transition-colors ${
+              hasActiveFilter ? "text-white font-bold" : "text-gray-500"
+            }`}
+            aria-label="Filter column"
+          >
+            <ChevronDown
+              className={`h-3 w-3 ${hasActiveFilter ? "stroke-[2.5]" : ""}`}
+            />
+          </button>
+        </DropdownMenu.Trigger>
+      </Hint>
       <DropdownMenu.Portal>
         <DropdownMenu.Content
           className="min-w-[200px] bg-gray-800 border border-gray-700 rounded-lg shadow-xl p-1 max-h-[400px] overflow-y-auto"
@@ -169,16 +172,18 @@ function TimeFilter({
 
   return (
     <DropdownMenu.Root>
-      <DropdownMenu.Trigger asChild>
-        <button
-          className={`p-0.5 rounded hover:bg-gray-700 transition-colors ${
-            hasActiveFilter ? "text-blue-400" : "text-gray-500"
-          }`}
-          title="Filter time range"
-        >
-          <ChevronDown className="h-3 w-3" />
-        </button>
-      </DropdownMenu.Trigger>
+      <Hint content="Filter time range">
+        <DropdownMenu.Trigger asChild>
+          <button
+            className={`p-0.5 rounded hover:bg-gray-700 transition-colors ${
+              hasActiveFilter ? "text-blue-400" : "text-gray-500"
+            }`}
+            aria-label="Filter time range"
+          >
+            <ChevronDown className="h-3 w-3" />
+          </button>
+        </DropdownMenu.Trigger>
+      </Hint>
       <DropdownMenu.Portal>
         <DropdownMenu.Content
           className="min-w-[120px] bg-gray-800 border border-gray-700 rounded-lg shadow-xl p-1 z-50"
@@ -686,78 +691,86 @@ export default function ActivityViewer() {
 
           {/* Right side: Pagination controls */}
           <div className="flex items-center gap-2">
-            <button
-              onClick={handleRefresh}
-              disabled={refreshing}
-              className="text-gray-500 hover:text-gray-300 transition-colors disabled:opacity-50"
-              title="Refresh"
-            >
-              <RefreshCw
-                className="h-4 w-4"
-                style={{
-                  transform: `rotate(${rotateKey * 180}deg)`,
-                  transition: "transform 500ms ease",
-                }}
-              />
-            </button>
+            <Hint content="Refresh">
+              <button
+                onClick={handleRefresh}
+                disabled={refreshing}
+                className="text-gray-500 hover:text-gray-300 transition-colors disabled:opacity-50"
+                aria-label="Refresh"
+              >
+                <RefreshCw
+                  className="h-4 w-4"
+                  style={{
+                    transform: `rotate(${rotateKey * 180}deg)`,
+                    transition: "transform 500ms ease",
+                  }}
+                />
+              </button>
+            </Hint>
             {(totalPages !== undefined
               ? totalPages > 1
               : currentPage > 0 || hasMorePages) && (
               <>
-                <button
-                  onClick={(e) => {
-                    if (e.metaKey || e.shiftKey || modifierHeld) {
-                      setCurrentPage(0);
-                    } else {
-                      setCurrentPage((p) => Math.max(0, p - 1));
-                    }
-                  }}
-                  disabled={currentPage === 0}
-                  className="p-1 rounded transition-colors disabled:opacity-30 disabled:cursor-not-allowed text-gray-400 hover:text-gray-200 hover:bg-gray-700"
-                  title={
+                <Hint
+                  content={
                     modifierHeld
                       ? "First page"
                       : "Previous page (hold ⇧/⌘ for first)"
                   }
                 >
-                  {modifierHeld ? (
-                    <ChevronsLeft className="h-4 w-4" />
-                  ) : (
-                    <ChevronLeft className="h-4 w-4" />
-                  )}
-                </button>
-                <button
-                  onClick={() => setCurrentPage(0)}
-                  disabled={currentPage === 0}
-                  className="text-xs text-gray-400 hover:text-gray-200 disabled:hover:text-gray-400 transition-colors"
-                  title="Go to first page"
-                >
-                  {totalPages !== undefined ? (
-                    <>
-                      Page {currentPage + 1} of {totalPages}
-                    </>
-                  ) : (
-                    <>Page {currentPage + 1}</>
-                  )}
-                </button>
-                <button
-                  onClick={() => {
-                    setCurrentPage((p) =>
+                  <button
+                    onClick={(e) => {
+                      if (e.metaKey || e.shiftKey || modifierHeld) {
+                        setCurrentPage(0);
+                      } else {
+                        setCurrentPage((p) => Math.max(0, p - 1));
+                      }
+                    }}
+                    disabled={currentPage === 0}
+                    className="p-1 rounded transition-colors disabled:opacity-30 disabled:cursor-not-allowed text-gray-400 hover:text-gray-200 hover:bg-gray-700"
+                  >
+                    {modifierHeld ? (
+                      <ChevronsLeft className="h-4 w-4" />
+                    ) : (
+                      <ChevronLeft className="h-4 w-4" />
+                    )}
+                  </button>
+                </Hint>
+                <Hint content="Go to first page">
+                  <button
+                    onClick={() => setCurrentPage(0)}
+                    disabled={currentPage === 0}
+                    className="text-xs text-gray-400 hover:text-gray-200 disabled:hover:text-gray-400 transition-colors"
+                  >
+                    {totalPages !== undefined ? (
+                      <>
+                        Page {currentPage + 1} of {totalPages}
+                      </>
+                    ) : (
+                      <>Page {currentPage + 1}</>
+                    )}
+                  </button>
+                </Hint>
+                <Hint content="Next page">
+                  <button
+                    onClick={() => {
+                      setCurrentPage((p) =>
+                        totalPages !== undefined
+                          ? Math.min(totalPages - 1, p + 1)
+                          : p + 1,
+                      );
+                    }}
+                    disabled={
                       totalPages !== undefined
-                        ? Math.min(totalPages - 1, p + 1)
-                        : p + 1,
-                    );
-                  }}
-                  disabled={
-                    totalPages !== undefined
-                      ? currentPage >= totalPages - 1
-                      : !hasMorePages
-                  }
-                  className="p-1 rounded transition-colors disabled:opacity-30 disabled:cursor-not-allowed text-gray-400 hover:text-gray-200 hover:bg-gray-700"
-                  title="Next page"
-                >
-                  <ChevronRight className="h-4 w-4" />
-                </button>
+                        ? currentPage >= totalPages - 1
+                        : !hasMorePages
+                    }
+                    className="p-1 rounded transition-colors disabled:opacity-30 disabled:cursor-not-allowed text-gray-400 hover:text-gray-200 hover:bg-gray-700"
+                    aria-label="Next page"
+                  >
+                    <ChevronRight className="h-4 w-4" />
+                  </button>
+                </Hint>
               </>
             )}
           </div>

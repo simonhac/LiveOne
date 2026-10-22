@@ -7,11 +7,7 @@ import Tile from "@/components/Tile";
 import Value from "@/components/ui/value";
 import ProgressRing from "@/components/ui/progress-ring";
 import TrendRow from "@/components/ui/trend-row";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
+import { Hint } from "@/components/ui/tooltip";
 import { TILE_CHIP } from "@/lib/tile-style";
 import GeneratorControlDialog from "@/components/GeneratorControlDialog";
 import { subjectOf, useAreaDatum } from "@/components/dashboard/cards/shared";
@@ -460,18 +456,15 @@ function GeneratorTile({
             showError && (
               // The sentence itself, not a pointer to it: a reader without control rights has no
               // dialog to open, and this tooltip was their only way to learn what went wrong.
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <span
-                    className={`${TILE_CHIP} cursor-help text-[13px] font-bold text-danger`}
-                  >
-                    !
-                  </span>
-                </TooltipTrigger>
-                <TooltipContent>
-                  {`Generator error${errorTime ? ` (${formatLastUpdate(new Date(errorTime))})` : ""}: ${lastError}`}
-                </TooltipContent>
-              </Tooltip>
+              <Hint
+                content={`Generator error${errorTime ? ` (${formatLastUpdate(new Date(errorTime))})` : ""}: ${lastError}`}
+              >
+                <span
+                  className={`${TILE_CHIP} cursor-help text-[13px] font-bold text-danger`}
+                >
+                  !
+                </span>
+              </Hint>
             )
           )}
           {showControls && (

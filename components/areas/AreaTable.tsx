@@ -5,6 +5,7 @@ import type {
   AdminAreaData,
   AreaSourceDevice,
 } from "@/lib/admin/get-areas-data";
+import { Hint } from "@/components/ui/tooltip";
 
 /**
  * The Areas table — the presentational surface shared by the admin view (`/admin/areas`, all owners)
@@ -175,14 +176,16 @@ export function AreaTable({
                       </span>
                     </td>
                     <td className="px-2 md:px-6 py-4 align-top text-right">
-                      <button
-                        onClick={() => onEdit(area.id)}
-                        title="Area settings"
-                        className="inline-flex items-center gap-1 rounded-md border border-gray-600 px-2 py-1 text-xs text-gray-300 transition-colors hover:text-white hover:border-gray-500"
-                      >
-                        <Settings className="w-3 h-3" />
-                        Settings
-                      </button>
+                      <Hint content="Area settings">
+                        <button
+                          onClick={() => onEdit(area.id)}
+                          aria-label="Area settings"
+                          className="inline-flex items-center gap-1 rounded-md border border-gray-600 px-2 py-1 text-xs text-gray-300 transition-colors hover:text-white hover:border-gray-500"
+                        >
+                          <Settings className="w-3 h-3" />
+                          Settings
+                        </button>
+                      </Hint>
                     </td>
                   </tr>
                 );

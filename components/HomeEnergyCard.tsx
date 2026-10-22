@@ -16,6 +16,7 @@ import {
   formatGramsPerKwh,
   formatKwh,
 } from "@/lib/provenance-format";
+import { Hint } from "@/components/ui/tooltip";
 
 export interface HomeEnergyCardProps {
   summary: RenewablesSummary | null;
@@ -192,12 +193,14 @@ export default function HomeEnergyCard({
             value={formatDollarsBare(summary.costC)}
           />{" "}
           ·{" "}
-          <span title={RATE_TIP} className="cursor-help">
-            <Value
-              value={formatCentsPerKwh(summary.avgCentsPerKwh)}
-              unit={summary.avgCentsPerKwh != null ? "¢/kWh" : undefined}
-            />
-          </span>{" "}
+          <Hint content={RATE_TIP}>
+            <span className="cursor-help">
+              <Value
+                value={formatCentsPerKwh(summary.avgCentsPerKwh)}
+                unit={summary.avgCentsPerKwh != null ? "¢/kWh" : undefined}
+              />
+            </span>
+          </Hint>{" "}
           · <Value {...carbonTotalParts(summary.emissionsG)} /> ·{" "}
           <Value
             value={formatGramsPerKwh(summary.avgGramsPerKwh)}

@@ -28,6 +28,7 @@ import { useHideOnScroll } from "@/lib/dashboard/useHideOnScroll";
 import type { ReadableArea } from "@/lib/areas/list";
 import type { ReadableDevice } from "@/lib/devices/list";
 import type { ResolvedDevice } from "@/lib/dashboard/resolve-shell";
+import { Hint } from "@/components/ui/tooltip";
 
 // Shared styling for the header cog menu's action items (mirrors FlowsSettingsMenu's ITEM_CLASS).
 const MENU_ITEM_CLASS =
@@ -244,16 +245,17 @@ export default function DashboardClient({
                 )}
                 {canEdit && (
                   <DropdownMenu.Root onOpenChange={setActionsOpen}>
-                    <DropdownMenu.Trigger asChild>
-                      <button
-                        type="button"
-                        title="Dashboard actions"
-                        aria-label="Dashboard actions"
-                        className="inline-flex items-center gap-1.5 rounded-md border border-line px-2.5 py-1.5 text-sm text-ink-secondary outline-none transition-colors hover:bg-surface-overlay hover:text-ink data-[state=open]:bg-surface-overlay data-[state=open]:text-ink"
-                      >
-                        <Settings className="h-4 w-4" />
-                      </button>
-                    </DropdownMenu.Trigger>
+                    <Hint content="Dashboard actions">
+                      <DropdownMenu.Trigger asChild>
+                        <button
+                          type="button"
+                          aria-label="Dashboard actions"
+                          className="inline-flex items-center gap-1.5 rounded-md border border-line px-2.5 py-1.5 text-sm text-ink-secondary outline-none transition-colors hover:bg-surface-overlay hover:text-ink data-[state=open]:bg-surface-overlay data-[state=open]:text-ink"
+                        >
+                          <Settings className="h-4 w-4" />
+                        </button>
+                      </DropdownMenu.Trigger>
+                    </Hint>
                     <DropdownMenu.Portal>
                       <DropdownMenu.Content
                         align="end"

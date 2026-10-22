@@ -17,6 +17,7 @@ import {
   formatHoverTimestamp,
 } from "@/lib/charts/temporal";
 import { useChartFocus } from "@/lib/charts/ChartFocusContext";
+import { Hint } from "@/components/ui/tooltip";
 
 interface TemporalNavigatorProps {
   /** Device/area timezone offset (minutes) — used to format the range label and encode prev/next URLs. */
@@ -141,21 +142,25 @@ export default function TemporalNavigator({
           className={`${SEGMENTED_TRACK} ${axisNavExpected ? "coarse-nav-hidden" : ""}`}
           role="group"
         >
-          <button
-            onClick={older}
-            className={`${SEGMENTED_ICON_ITEM} ${SEGMENTED_ITEM_OFF}`}
-            title="Older (Previous)"
-          >
-            <ChevronLeft className="w-4 h-4" />
-          </button>
-          <button
-            onClick={newer}
-            disabled={isLatest}
-            className={`${SEGMENTED_ICON_ITEM} ${SEGMENTED_ITEM_OFF}`}
-            title="Newer (Next)"
-          >
-            <ChevronRight className="w-4 h-4" />
-          </button>
+          <Hint content="Older (Previous)">
+            <button
+              onClick={older}
+              className={`${SEGMENTED_ICON_ITEM} ${SEGMENTED_ITEM_OFF}`}
+              aria-label="Older (Previous)"
+            >
+              <ChevronLeft className="w-4 h-4" />
+            </button>
+          </Hint>
+          <Hint content="Newer (Next)">
+            <button
+              onClick={newer}
+              disabled={isLatest}
+              className={`${SEGMENTED_ICON_ITEM} ${SEGMENTED_ITEM_OFF}`}
+              aria-label="Newer (Next)"
+            >
+              <ChevronRight className="w-4 h-4" />
+            </button>
+          </Hint>
         </div>
         <PeriodSwitcher value={period} onChange={setPeriod} />
       </div>

@@ -53,4 +53,29 @@ function TooltipContent({
   );
 }
 
-export { Tooltip, TooltipTrigger, TooltipContent };
+/**
+ * The common case: hang a hint on one element. Renders the child untouched when there is nothing to
+ * say, so a conditional `title={cond ? "…" : undefined}` ports over as-is. The child must accept a
+ * ref and spread props (a DOM element, or a Radix part such as `DropdownMenu.Trigger asChild`) —
+ * put `Hint` OUTSIDE other `asChild` wrappers, never inside them. It replaces a native `title=`, so
+ * an icon-only control should carry its own `aria-label`.
+ */
+function Hint({
+  content,
+  side,
+  children,
+}: {
+  content: React.ReactNode;
+  side?: React.ComponentProps<typeof TooltipPrimitive.Content>["side"];
+  children: React.ReactElement;
+}) {
+  if (content == null || content === false || content === "") return children;
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>{children}</TooltipTrigger>
+      <TooltipContent side={side}>{content}</TooltipContent>
+    </Tooltip>
+  );
+}
+
+export { Tooltip, TooltipTrigger, TooltipContent, Hint };

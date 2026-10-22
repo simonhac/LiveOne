@@ -30,6 +30,7 @@ import MobileHeaderMenu from "@/components/MobileHeaderMenu";
 import DevicesMenu from "@/components/DevicesMenu";
 import { usePrefetchDashboardsMenu } from "@/components/DashboardsMenu";
 import { HeaderTemporalNav } from "@/components/dashboard/HeaderTemporalNav";
+import { Hint } from "@/components/ui/tooltip";
 
 interface DeviceInfo {
   model?: string;
@@ -402,13 +403,17 @@ export default function DashboardHeader({
             {/* Settings dropdown - Only show for admin or non-archived devices */}
             {(isAdmin || deviceStatus !== "archived") && (
               <div className="relative" ref={settingsDropdownRef}>
-                <button
-                  onClick={() => setShowSettingsDropdown(!showSettingsDropdown)}
-                  className="p-2 text-gray-400 hover:text-white hover:bg-gray-700 rounded-lg transition-colors"
-                  title="Settings"
-                >
-                  <SettingsIcon className="w-5 h-5" />
-                </button>
+                <Hint content="Settings">
+                  <button
+                    onClick={() =>
+                      setShowSettingsDropdown(!showSettingsDropdown)
+                    }
+                    className="p-2 text-gray-400 hover:text-white hover:bg-gray-700 rounded-lg transition-colors"
+                    aria-label="Settings"
+                  >
+                    <SettingsIcon className="w-5 h-5" />
+                  </button>
+                </Hint>
 
                 {showSettingsDropdown && (
                   <div className="absolute right-0 mt-2 w-48 bg-gray-800 border border-gray-700 rounded-lg shadow-lg z-[1001]">
