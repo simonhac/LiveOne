@@ -1,13 +1,20 @@
-import React from "react";
+import React, { useRef } from "react";
 import Value from "@/components/ui/value";
 import TileSurface, { TileHeader } from "@/components/ui/tile-surface";
 import { useStaleness } from "@/components/ui/tile-stale";
+import { useFitText } from "@/components/ui/use-fit-text";
 import {
   TILE_CAPTION,
   TILE_HERO,
   TILE_LABEL,
   TILE_STALE,
 } from "@/lib/tile-style";
+
+/**
+ * The smallest a hero may shrink to before it truncates instead. Still clearly the largest type on
+ * the tile (captions are 13px), and 71% of the 28px base — "Flat battery" fits a 150px tile at ~21px.
+ */
+const HERO_MIN_PX = 20;
 
 interface TileProps {
   title: string;
@@ -69,6 +76,10 @@ export default function Tile({
   valueClassName,
 }: TileProps) {
   const staleness = useStaleness(measurementTime, staleThresholdSeconds);
+  // A word hero ("Flat battery", "Locked out") can outgrow a narrow tile; shrink it to fit, then
+  // truncate — see useFitText. Re-fit when the words or their unit change.
+  const heroRef = useRef<HTMLParagraphElement>(null);
+  useFitText(heroRef, HERO_MIN_PX, [value, unit]);
   const heroColor = `${valueColor ?? "text-ink"} ${staleness.isStale ? TILE_STALE : ""}`;
 
   return (
@@ -85,7 +96,10 @@ export default function Tile({
       <div
         className={`flex items-center justify-between gap-2 ${label ? "mt-0.5" : "mt-1.5"}`}
       >
-        <p className={`${TILE_HERO} ${heroColor} min-w-0`}>
+        <p
+          ref={heroRef}
+          className={`${TILE_HERO} ${heroColor} min-w-0 whitespace-nowrap`}
+        >
           <Value value={value} unit={unit} className={valueClassName} />
         </p>
         {heroAside}

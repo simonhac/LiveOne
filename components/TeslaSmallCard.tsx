@@ -5,6 +5,7 @@ import { useDebugSizeBadge } from "@/components/ui/debug-size-badge";
 import { useQuery } from "@tanstack/react-query";
 import Value from "@/components/ui/value";
 import ProgressRing from "@/components/ui/progress-ring";
+import { FLOW_DEAD_BAND_W } from "@/components/ui/direction-chip";
 import { ChevronRight, ChevronsRight, Settings } from "lucide-react";
 import TileSurface from "@/components/ui/tile-surface";
 import {
@@ -266,6 +267,11 @@ export default function TeslaSmallCard({
           color={batteryColor}
           gradientTo={batteryLight}
           notch={chargeLimit != null ? chargeLimit / 100 : null}
+          tipPulse={
+            isCharging &&
+            chargePower !== null &&
+            chargePower * 1000 > FLOW_DEAD_BAND_W
+          }
           tip={
             isCharging ? (
               isHighPower ? (
@@ -290,8 +296,11 @@ export default function TeslaSmallCard({
       </div>
 
       {/* Status in the caption slot under the ring. The charging detail (kW, ETA) waits for a card
-          wide enough to hold it on one line. */}
-      <div className={`mt-1 text-center ${TILE_CAPTION}`}>
+          wide enough to hold it on one line. The slot reserves the most lines it can show at each
+          width, so the ring above it stays put when charging starts and the ETA/limit lines appear. */}
+      <div
+        className={`mt-1 text-center ${TILE_CAPTION} min-h-[1lh] @[180px]:min-h-[2lh] @[220px]:min-h-[3lh]`}
+      >
         <div className="truncate">
           {statusWords.join(" ")}
           {powerText && (
