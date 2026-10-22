@@ -5,13 +5,17 @@
  * copy (Tile, StatCardShell, GridSignalsCard, and the formatter all three duplicated).
  *
  * "Stale is quiet" (docs/architecture/tile-style.md, rule 10): no diagonal hatch, no dimmed box. A
- * stale tile's VALUES fall to `TILE_STALE`, and a clock + the reading's age sits in the caption slot
- * ("12 min ago"), with the exact time on hover.
+ * stale tile's VALUES fall to `TILE_STALE`, and a slowly pulsing clock sits in the header, with the
+ * reading's age and exact time on hover.
  */
-import { useEffect, useRef, useState } from "react";
-import { createPortal } from "react-dom";
+import { useEffect, useState } from "react";
 import { Clock } from "lucide-react";
 import { TILE_CAPTION } from "@/lib/tile-style";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 
 /** "just now" / "4 min ago" / "3 h ago" / "2 d ago" — compact, because it shares a row with a title. */
 export function formatAge(ageSeconds: number): string {
@@ -97,8 +101,9 @@ export function useStaleness(
 }
 
 /**
- * The stale marker for a tile's header: clock + age, with the exact last-update time in a portal
- * tooltip (portal, because the tile clips its overflow at the rounded corner).
+ * The stale marker for a tile's header: a slowly pulsing clock, with the age and the exact
+ * last-update time in a tooltip. The age itself is not printed — beside the title it crowded the
+ * tile's name into truncation, and the pulse alone says "stale".
  */
 export function StaleBadge({
   ageLabel,
@@ -107,8 +112,6 @@ export function StaleBadge({
   ageLabel: string;
   measurementTime?: Date | number | null;
 }) {
-  const [tip, setTip] = useState<{ x: number; y: number } | null>(null);
-  const ref = useRef<HTMLSpanElement>(null);
   const when =
     measurementTime == null
       ? null
@@ -116,41 +119,27 @@ export function StaleBadge({
         ? new Date(measurementTime)
         : measurementTime;
 
-  const show = () => {
-    const rect = ref.current?.getBoundingClientRect();
-    if (!rect) return;
-    // Rough width of the tooltip; keep it on-screen at the right edge.
-    const x = Math.min(rect.left, window.innerWidth - 210);
-    setTip({ x, y: rect.bottom + 8 });
-  };
-
   return (
-    <>
-      <span
-        ref={ref}
-        onMouseEnter={when ? show : undefined}
-        onMouseLeave={() => setTip(null)}
-        className={`${TILE_CAPTION} inline-flex shrink-0 items-center gap-1 whitespace-nowrap ${
-          when ? "cursor-help" : ""
-        }`}
-      >
-        <Clock className="h-3 w-3" aria-hidden />
-        {/* The age waits for room: in a narrow tile it would push the title into truncation, and
-            the clock alone still says "stale" (the exact time is on hover). */}
-        <span className="hidden @[200px]:inline">{ageLabel}</span>
-      </span>
-      {tip &&
-        when &&
-        typeof document !== "undefined" &&
-        createPortal(
-          <div
-            className="pointer-events-none fixed z-[9999] whitespace-nowrap rounded-xl bg-surface-raised px-3 py-2 text-xs text-ink shadow-xl"
-            style={{ left: tip.x, top: tip.y }}
-          >
-            Last update: {formatLastUpdate(when)}
-          </div>,
-          document.body,
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span
+          role="img"
+          aria-label={`Stale: last update ${ageLabel}`}
+          className={`${TILE_CAPTION} inline-flex shrink-0 cursor-help items-center`}
+        >
+          <Clock className="stale-clock-pulse h-3 w-3" aria-hidden />
+        </span>
+      </TooltipTrigger>
+      <TooltipContent>
+        {when ? (
+          <>
+            Last update: {formatLastUpdate(when)}{" "}
+            <span className="text-ink-muted">({ageLabel})</span>
+          </>
+        ) : (
+          "No data"
         )}
-    </>
+      </TooltipContent>
+    </Tooltip>
   );
 }

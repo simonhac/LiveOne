@@ -5,6 +5,11 @@
  */
 import type React from "react";
 import { TILE_CAPTION, TILE_LABEL, TILE_VALUE_2 } from "@/lib/tile-style";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 
 export default function TrendRow({
   chip,
@@ -20,13 +25,12 @@ export default function TrendRow({
   /** Tailwind text colour for the value — the series colour. */
   valueColor?: string;
   caption?: React.ReactNode;
-  /** Native tooltip — the Home Energy ratios explain themselves on hover. */
+  /** Hover hint — the Home Energy ratios explain themselves on hover. */
   title?: string;
 }) {
-  return (
+  const row = (
     <div
       className={`flex min-w-0 items-center gap-2 ${title ? "cursor-help" : ""}`}
-      title={title}
     >
       {chip && <span className="shrink-0">{chip}</span>}
       <div className="min-w-0 flex-1">
@@ -41,5 +45,12 @@ export default function TrendRow({
         </p>
       </div>
     </div>
+  );
+  if (!title) return row;
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>{row}</TooltipTrigger>
+      <TooltipContent>{title}</TooltipContent>
+    </Tooltip>
   );
 }
