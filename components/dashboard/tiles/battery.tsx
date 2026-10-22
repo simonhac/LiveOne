@@ -1,10 +1,17 @@
 "use client";
 
-import { Battery } from "lucide-react";
+import {
+  Battery,
+  ChevronLeft,
+  ChevronRight,
+  ChevronsLeft,
+  ChevronsRight,
+} from "lucide-react";
 import TileSurface, { TileHeader } from "@/components/ui/tile-surface";
 import { useStaleness } from "@/components/ui/tile-stale";
 import ProgressRing from "@/components/ui/progress-ring";
 import DirectionChip, {
+  FLOW_DEAD_BAND_W,
   FLOW_DOUBLE_W,
   flowDirection,
 } from "@/components/ui/direction-chip";
@@ -29,6 +36,10 @@ const BATTERY_LIGHT_RGB = "rgb(134, 239, 172)";
  * on the chip (up = discharge, down = charge; see `DirectionChip`), never on the colour, which used
  * to make green mean "charging" here and "exporting" on the Grid tile. The one exception is a low
  * charge: under 20% the ring goes red, because that is the fact the reader most needs from it.
+ *
+ * The ring's tip carries the same chevrons as the EV ring: pointing on along the arc while charging,
+ * back along it while discharging, doubled over `FLOW_DOUBLE_W`, and pulsing slowly while the flow
+ * is above the idle dead band.
  */
 function BatteryTile({ latest, staleThresholdSeconds }: TileRenderProps) {
   const batterySoc = getPointValue(latest, "bidi.battery/soc") ?? 0;
@@ -44,6 +55,19 @@ function BatteryTile({ latest, staleThresholdSeconds }: TileRenderProps) {
   // Stale dims the live readings and keeps their colour — see `TILE_STALE`.
   const staleClass = staleness.isStale ? TILE_STALE : "";
 
+  const double = Math.abs(batteryPower) > FLOW_DOUBLE_W;
+  const tipClass = "w-3 h-3 @[180px]:w-4 @[180px]:h-4 text-ink";
+  const TipGlyph =
+    direction === "down"
+      ? double
+        ? ChevronsRight
+        : ChevronRight
+      : direction === "up"
+        ? double
+          ? ChevronsLeft
+          : ChevronLeft
+        : null;
+
   return (
     <TileSurface surfaceClassName="flex flex-col">
       <TileHeader
@@ -58,6 +82,12 @@ function BatteryTile({ latest, staleThresholdSeconds }: TileRenderProps) {
           fraction={batterySoc / 100}
           color={ringColor}
           gradientTo={low ? undefined : BATTERY_LIGHT_RGB}
+          tip={
+            TipGlyph ? (
+              <TipGlyph className={tipClass} strokeWidth={3} />
+            ) : undefined
+          }
+          tipPulse={Math.abs(batteryPower) > FLOW_DEAD_BAND_W}
           className={`${TILE_RING} ${staleClass}`}
         >
           <span className={`${TILE_RING_VALUE} text-ink`}>
@@ -71,7 +101,7 @@ function BatteryTile({ latest, staleThresholdSeconds }: TileRenderProps) {
             <DirectionChip
               direction={direction}
               color={ROLE_CHROME.battery.rgb}
-              double={Math.abs(batteryPower) > FLOW_DOUBLE_W}
+              double={double}
             />
           }
           label={

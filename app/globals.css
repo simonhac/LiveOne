@@ -488,6 +488,28 @@
   }
 }
 
+/* A ring's tip arrow breathes while something is actually flowing (see ProgressRing `tipPulse`).
+   Opacity only: the tip's inline transform carries its position and tangent. */
+@keyframes ring-tip-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.ring-tip-pulse {
+  animation: ring-tip-pulse 2s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ring-tip-pulse {
+    animation: none;
+  }
+}
+
 /* Hide scrollbar but keep scroll functionality */
 .scrollbar-hide {
   -ms-overflow-style: none; /* IE and Edge */

@@ -25,9 +25,15 @@ export interface ProgressRingProps {
   trackOpacity?: number;
   /**
    * A glyph centred on the arc's leading tip — Activity's → / ». Drawn pointing RIGHT; it is turned
-   * to the arc's tangent. Size it yourself.
+   * to the arc's tangent, so a LEFT-pointing glyph points back along the arc (a battery
+   * discharging). Size it yourself.
    */
   tip?: React.ReactNode;
+  /**
+   * Slowly pulse the tip — set while the flow it marks is above the idle dead band. Off under
+   * `prefers-reduced-motion`.
+   */
+  tipPulse?: boolean;
   /** A 0..1 position to mark across the ring (a target, e.g. the charge limit). */
   notch?: number | null;
   /** Sizes the ring — e.g. `w-[140px] h-[140px]`. */
@@ -101,6 +107,7 @@ export default function ProgressRing({
   strokeRatio = 0.14,
   trackOpacity = 0.25,
   tip,
+  tipPulse = false,
   notch,
   className,
   children,
@@ -153,7 +160,7 @@ export default function ProgressRing({
       </svg>
       {tip && filled > 0 && (
         <span
-          className="pointer-events-none absolute leading-none"
+          className={`pointer-events-none absolute leading-none ${tipPulse ? "ring-tip-pulse" : ""}`}
           style={{
             left: `${tipAt.x}%`,
             top: `${tipAt.y}%`,
