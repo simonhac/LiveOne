@@ -14,7 +14,11 @@
  */
 export { buildGeometry, niceDomain } from "./geometry";
 
-export { buildTimeTicks, buildShadingBands } from "./time-ticks";
+export {
+  buildTimeTicks,
+  buildShadingBands,
+  formatFocusLabel,
+} from "./time-ticks";
 
 export { bandPath, linePath, stackedBands } from "./paths";
 

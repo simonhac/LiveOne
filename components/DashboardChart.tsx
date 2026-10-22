@@ -9,6 +9,7 @@ import {
   bandPath,
   buildGeometry,
   buildShadingBands,
+  formatFocusLabel,
   buildTimeTicks,
   indexForSpan,
   linePath,
@@ -930,7 +931,13 @@ export default function DashboardChart(props: DashboardChartProps) {
             at={hoveredTimestamp}
             x={geo.x}
             plotHeight={geo.plot.height}
+            plotWidth={geo.plot.width}
             xPx={focusPx}
+            label={
+              hoveredTimestamp
+                ? formatFocusLabel(timeRange, hoveredTimestamp)
+                : null
+            }
           />
           {/* The axis-tap badge: a translucent disc carrying `‹`, `›` or an X, hard against the edge
               of the chart on the side the tap was for. The plot's own `<g>` is offset by

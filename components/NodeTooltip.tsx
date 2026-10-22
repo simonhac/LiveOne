@@ -135,9 +135,14 @@ interface NodeTooltipProps {
    *  the node, else pulled back onto the node (see EnergyFlowSankey's `compute`). */
   beakTop?: number;
   width?: number;
-  /** Show the node-type heading chip at the top. Omitted (false) when the node box itself is tall
-   *  enough to already render its own title — no point repeating it. */
+  /** Show the node-type heading chip at the top. */
   showHeading?: boolean;
+  /**
+   * The node's share of the diagram's total, in percent, shown under the heading. The Sankey's node
+   * boxes print it only when tall enough, so the small contributors — whose share is the one you
+   * cannot eyeball — had no way to show it at all.
+   */
+  sharePct?: number | null;
   /** Beak shape. "diamond" = the square-on-point centred at `beakTop` — the default, including for a
    *  thin node mid-column (the panel extends past it both ways, so the whole diamond still lands on
    *  the panel). The "half beak" — a triangle with a flat horizontal edge (running toward the node)
@@ -172,6 +177,11 @@ interface NodeTooltipProps {
    * panel at a different subject.
    */
   onDismiss?: () => void;
+}
+
+/** "65%", and "<1%" rather than a "0%" that says the node is not there. */
+function shareWords(pct: number): string {
+  return pct > 0 && pct < 1 ? "<1%" : `${Math.round(pct)}%`;
 }
 
 /** One value column — a bold number with its unit rendered beneath (mirrors the Sankey node's "58.4"
@@ -254,6 +264,7 @@ export default function NodeTooltip({
   beakTop = 20,
   width = PANEL_WIDTH,
   showHeading = true,
+  sharePct = null,
   beakVariant = "diamond",
   hidden = false,
   positioning = "fixed",
@@ -361,6 +372,11 @@ export default function NodeTooltip({
                 Their own container, set SOLID (`leading-none` + no gap): they are two halves of one
                 sentence broken by hand, so the space between them must be smaller than the `gap-1`
                 separating the whole thing from the name — otherwise they read as three peers. */}
+            {sharePct != null && (
+              <p className="text-sm font-semibold leading-none text-ink-inverse">
+                {shareWords(sharePct)}
+              </p>
+            )}
             {data.subheading && (
               <div className="flex flex-col items-center gap-0.5 leading-none">
                 {data.subheading.map((line) => (

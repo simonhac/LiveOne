@@ -177,9 +177,12 @@ interface HoveredNode {
     | { left: SankeyNodeTooltip; right: SankeyNodeTooltip };
   /** The node's SVG-space box at hover time (layout is invalidated on every effect re-run). */
   geomSvg: { x0: number; x1: number; y0: number; y1: number };
-  /** Whether the node box is tall enough to render its own title chip — when true the tooltip omits
-   *  the (redundant) heading. */
-  titleVisibleInNode: boolean;
+  /**
+   * The node's share of the diagram's total, in percent — the same number the node box prints at its
+   * foot. Carried into the tooltip because a short node has no room to print it, and those are
+   * exactly the small contributors whose share is the question (a 3% grid sliver under a 65% solar).
+   */
+  sharePct: number | null;
   /** Which discovered column the node sits in — drives which side(s) the panel(s) appear on. */
   columnPos: "left" | "right" | "interior";
   /** The node's vertical position within its column — "top"/"bottom" anchor the panel to that edge of
@@ -1132,7 +1135,10 @@ export default function EnergyFlowSankey({
             key: nodeKey,
             content,
             geomSvg: { x0: node.x0, x1: node.x1, y0: node.y0, y1: node.y1 },
-            titleVisibleInNode: node.y1 - node.y0 >= MIN_HEIGHT_FOR_LABEL,
+            sharePct:
+              leftColumnTotal > 0
+                ? ((node.total ?? 0) / leftColumnTotal) * 100
+                : null,
             columnPos,
             vertPos,
             color: node.color,
@@ -1652,8 +1658,7 @@ export default function EnergyFlowSankey({
     placement: PanelPlacement | null;
     ref: React.RefObject<HTMLDivElement | null>;
     color: string;
-    /** Omit the heading when the node box already shows its own title (see `titleVisibleInNode`). */
-    showHeading: boolean;
+    sharePct: number | null;
   }[] = hovered
     ? isDualTooltip(hovered.content)
       ? [
@@ -1663,7 +1668,7 @@ export default function EnergyFlowSankey({
             placement: placementL,
             ref: panelRefL,
             color: hovered.color,
-            showHeading: !hovered.titleVisibleInNode,
+            sharePct: hovered.sharePct,
           },
           {
             key: "right" as const,
@@ -1671,7 +1676,7 @@ export default function EnergyFlowSankey({
             placement: placementR,
             ref: panelRefR,
             color: hovered.color,
-            showHeading: !hovered.titleVisibleInNode,
+            sharePct: hovered.sharePct,
           },
         ]
       : hovered.columnPos === "right"
@@ -1682,7 +1687,7 @@ export default function EnergyFlowSankey({
               placement: placementR,
               ref: panelRefR,
               color: hovered.color,
-              showHeading: !hovered.titleVisibleInNode,
+              sharePct: hovered.sharePct,
             },
           ]
         : [
@@ -1692,7 +1697,7 @@ export default function EnergyFlowSankey({
               placement: placementL,
               ref: panelRefL,
               color: hovered.color,
-              showHeading: !hovered.titleVisibleInNode,
+              sharePct: hovered.sharePct,
             },
           ]
     : [];
@@ -1729,7 +1734,9 @@ export default function EnergyFlowSankey({
                 top={p.placement.top}
                 beakTop={p.placement.beakTop}
                 beakVariant={p.placement.beakVariant}
-                showHeading={p.showHeading}
+                // ALWAYS named, even when the node box shows its own title: the panel sits beside
+                // a column of same-coloured boxes and must say which one it describes.
+                sharePct={p.sharePct}
                 // PAGE coordinates (see `toPagePosition`) — absolute, not fixed, so the panel
                 // travels with the diagram instead of hanging in the viewport when it scrolls.
                 positioning="absolute"

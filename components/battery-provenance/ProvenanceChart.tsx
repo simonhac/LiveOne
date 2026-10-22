@@ -7,6 +7,7 @@ import {
   ValueAxis,
   buildGeometry,
   buildTimeTicks,
+  formatFocusLabel,
   linePath,
   useContainerSize,
   usePointerIndex,
@@ -237,6 +238,12 @@ export default function ProvenanceChart({
                 at={hoveredTimestamp}
                 x={geo.x}
                 plotHeight={geo.plot.height}
+                plotWidth={geo.plot.width}
+                label={
+                  hoveredTimestamp
+                    ? formatFocusLabel(timeRange, hoveredTimestamp)
+                    : null
+                }
               />
             </g>
           </svg>

@@ -88,6 +88,30 @@ function intervalFor(range: ChartTimeRange): CountableTimeInterval {
 }
 
 /**
+ * The crosshair's bubble: WHEN the reader is pointing at, at the resolution the period plots.
+ *
+ *  - **D** — `9:45am`
+ *  - **W** — `Tue 9:45am`
+ *  - **M** — `13 Oct` (one bar per day)
+ *  - **Y** — `Oct` (one bar per month)
+ *
+ * Browser-local, like every tick label above — the bubble must agree with the axis under it.
+ */
+export function formatFocusLabel(range: ChartTimeRange, at: Date): string {
+  const time = formatTime12h({ hour: at.getHours(), minute: at.getMinutes() });
+  switch (range) {
+    case "D":
+      return time;
+    case "W":
+      return `${format(at, "EEE")} ${time}`;
+    case "M":
+      return format(at, "d MMM");
+    case "Y":
+      return format(at, "MMM");
+  }
+}
+
+/**
  * Ticks for `[windowStart, windowEnd]`, gridlines and labels together.
  *
  * Per period, matching what the Chart.js axis renders today:
