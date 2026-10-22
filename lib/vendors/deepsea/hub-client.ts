@@ -94,6 +94,8 @@ export interface HubProbeResult {
   requestedAt: string | null;
   lastCommandAt: string | null;
   lastError: string | null;
+  /** ISO — when the current run of errors began. Absent from a hub older than the field. */
+  lastErrorSince?: string | null;
   /** The authoritative deadline bound — the only `maxRuntimeSec` actually enforced (the point's
    *  `control` descriptor is a separate, independent bound). A caller sizes its own offer against
    *  this rather than proposing a length and asking the hub whether it fits. */
@@ -119,6 +121,30 @@ function accessHeaders(): Record<string, string> {
   return id && secret
     ? { "CF-Access-Client-Id": id, "CF-Access-Client-Secret": secret }
     : {};
+}
+
+/**
+ * A non-JSON body never came from the hub — the hub only speaks JSON. It is Cloudflare's own HTML
+ * page from the edge in front of it, and the status says which failure that is.
+ *
+ * 🛑 530 is the one that matters: Cloudflare error 1033, "the tunnel has no connector". The hub's
+ * `cloudflared` is not connected, so NOTHING reaches the hub — every start, stop and engine check
+ * fails, whatever state the generator is in. On 2026-10-22 it read as "a non-JSON 530 response"
+ * through 181 failed exercise starts, which named the symptom and hid the fix (restart the hub).
+ */
+function nonJsonMessage(
+  res: { status: number; headers: Headers },
+  body: string,
+): string {
+  const fromEdge = res.headers.has("cf-ray");
+  if (
+    res.status === 530 ||
+    (fromEdge && res.status >= 520 && res.status < 530)
+  ) {
+    return `The generator hub is offline — its Cloudflare tunnel is not connected (HTTP ${res.status}). The hub (liveone-flyhub) needs a restart.`;
+  }
+  const title = /<title[^>]*>([^<]*)<\/title>/i.exec(body)?.[1]?.trim();
+  return `The generator hub returned a non-JSON ${res.status} response${title ? ` (“${title}”)` : ""}`;
 }
 
 async function call<T>(
@@ -164,10 +190,7 @@ async function call<T>(
   try {
     parsed = text ? JSON.parse(text) : {};
   } catch {
-    throw new ControlDispatchError(
-      `The generator hub returned a non-JSON ${res.status} response`,
-      503,
-    );
+    throw new ControlDispatchError(nonJsonMessage(res, text), 503);
   }
 
   if (!res.ok) {

@@ -28,6 +28,7 @@
             "requestedAt": null,
             "lastCommandAt": null,
             "lastError": null,
+            "lastErrorSince": null,
             "maxRuntimeSec": 600
           },
           "status": {
@@ -38,6 +39,7 @@
             "requestedAt": null,
             "lastCommandAt": null,
             "lastError": null,
+            "lastErrorSince": null,
             "maxRuntimeSec": 600
           },
           "values": {
@@ -46,6 +48,7 @@
             "controlStopAt": null,
             "controlState": "idle",
             "controlLastError": null,
+            "controlLastErrorSince": null,
             "controlRunRequestMin": 0
           },
           "transition": false,
@@ -80,6 +83,7 @@
             "requestedAt": "2026-09-12T00:00:00.000Z",
             "lastCommandAt": "2026-09-12T00:00:00.000Z",
             "lastError": null,
+            "lastErrorSince": null,
             "maxRuntimeSec": 600
           },
           "values": {
@@ -88,6 +92,7 @@
             "controlStopAt": 1789171260,
             "controlState": "running:hub",
             "controlLastError": null,
+            "controlLastErrorSince": null,
             "controlRunRequestMin": 1
           },
           "transition": true,
@@ -111,6 +116,7 @@
             "requestedAt": "2026-09-12T00:00:00.000Z",
             "lastCommandAt": "2026-09-12T00:00:00.000Z",
             "lastError": null,
+            "lastErrorSince": null,
             "maxRuntimeSec": 600
           },
           "values": {
@@ -119,6 +125,7 @@
             "controlStopAt": 1789171260,
             "controlState": "running:hub",
             "controlLastError": null,
+            "controlLastErrorSince": null,
             "controlRunRequestMin": 1
           },
           "transition": true,
@@ -158,6 +165,7 @@
             "requestedAt": "2026-09-12T00:00:00.000Z",
             "lastCommandAt": "2026-09-12T00:00:00.000Z",
             "lastError": null,
+            "lastErrorSince": null,
             "maxRuntimeSec": 600
           },
           "status": {
@@ -168,6 +176,7 @@
             "requestedAt": "2026-09-12T00:00:00.000Z",
             "lastCommandAt": "2026-09-12T00:00:00.000Z",
             "lastError": null,
+            "lastErrorSince": null,
             "maxRuntimeSec": 600
           },
           "values": {
@@ -176,6 +185,7 @@
             "controlStopAt": 1789171260,
             "controlState": "running:hub",
             "controlLastError": null,
+            "controlLastErrorSince": null,
             "controlRunRequestMin": 1
           },
           "transition": true,
@@ -203,6 +213,7 @@
             "requestedAt": "2026-09-12T00:00:02.000Z",
             "lastCommandAt": "2026-09-12T00:00:00.000Z",
             "lastError": null,
+            "lastErrorSince": null,
             "maxRuntimeSec": 600
           },
           "values": {
@@ -211,6 +222,7 @@
             "controlStopAt": 1789171322,
             "controlState": "running:hub",
             "controlLastError": null,
+            "controlLastErrorSince": null,
             "controlRunRequestMin": 2
           },
           "transition": true,
@@ -240,6 +252,7 @@
             "requestedAt": null,
             "lastCommandAt": "2026-09-12T00:00:03.000Z",
             "lastError": null,
+            "lastErrorSince": null,
             "maxRuntimeSec": 600
           },
           "values": {
@@ -248,6 +261,7 @@
             "controlStopAt": null,
             "controlState": "stopping",
             "controlLastError": null,
+            "controlLastErrorSince": null,
             "controlRunRequestMin": 0
           },
           "transition": true,
@@ -281,6 +295,7 @@
             "requestedAt": null,
             "lastCommandAt": "2026-09-12T00:00:03.000Z",
             "lastError": null,
+            "lastErrorSince": null,
             "maxRuntimeSec": 600
           },
           "status": {
@@ -291,6 +306,7 @@
             "requestedAt": null,
             "lastCommandAt": "2026-09-12T00:00:03.000Z",
             "lastError": null,
+            "lastErrorSince": null,
             "maxRuntimeSec": 600
           },
           "values": {
@@ -299,6 +315,7 @@
             "controlStopAt": null,
             "controlState": "stopping",
             "controlLastError": null,
+            "controlLastErrorSince": null,
             "controlRunRequestMin": 0
           },
           "transition": true,
@@ -321,6 +338,7 @@
             "requestedAt": null,
             "lastCommandAt": "2026-09-12T00:00:03.000Z",
             "lastError": null,
+            "lastErrorSince": null,
             "maxRuntimeSec": 600
           },
           "values": {
@@ -329,6 +347,7 @@
             "controlStopAt": null,
             "controlState": "idle",
             "controlLastError": null,
+            "controlLastErrorSince": null,
             "controlRunRequestMin": 0
           },
           "transition": true,
@@ -362,6 +381,7 @@
             "requestedAt": null,
             "lastCommandAt": "2026-09-12T00:00:03.000Z",
             "lastError": null,
+            "lastErrorSince": null,
             "maxRuntimeSec": 600
           },
           "status": {
@@ -372,6 +392,7 @@
             "requestedAt": null,
             "lastCommandAt": "2026-09-12T00:00:03.000Z",
             "lastError": null,
+            "lastErrorSince": null,
             "maxRuntimeSec": 600
           },
           "values": {
@@ -380,6 +401,7 @@
             "controlStopAt": null,
             "controlState": "idle",
             "controlLastError": null,
+            "controlLastErrorSince": null,
             "controlRunRequestMin": 0
           },
           "transition": true,
@@ -422,6 +444,7 @@
             "requestedAt": null,
             "lastCommandAt": null,
             "lastError": null,
+            "lastErrorSince": null,
             "maxRuntimeSec": 600
           },
           "status": {
@@ -432,6 +455,7 @@
             "requestedAt": null,
             "lastCommandAt": null,
             "lastError": null,
+            "lastErrorSince": null,
             "maxRuntimeSec": 600
           },
           "values": {
@@ -440,6 +464,7 @@
             "controlStopAt": null,
             "controlState": "idle",
             "controlLastError": null,
+            "controlLastErrorSince": null,
             "controlRunRequestMin": 0
           },
           "transition": false,
@@ -475,6 +500,7 @@
             "requestedAt": null,
             "lastCommandAt": null,
             "lastError": null,
+            "lastErrorSince": null,
             "maxRuntimeSec": 600
           },
           "values": {
@@ -483,6 +509,7 @@
             "controlStopAt": null,
             "controlState": "idle",
             "controlLastError": null,
+            "controlLastErrorSince": null,
             "controlRunRequestMin": 0
           },
           "transition": false,
@@ -525,6 +552,7 @@
             "requestedAt": null,
             "lastCommandAt": null,
             "lastError": null,
+            "lastErrorSince": null,
             "maxRuntimeSec": 600
           },
           "status": {
@@ -535,6 +563,7 @@
             "requestedAt": null,
             "lastCommandAt": null,
             "lastError": null,
+            "lastErrorSince": null,
             "maxRuntimeSec": 600
           },
           "values": {
@@ -543,6 +572,7 @@
             "controlStopAt": null,
             "controlState": "idle",
             "controlLastError": null,
+            "controlLastErrorSince": null,
             "controlRunRequestMin": 0
           },
           "transition": false,
@@ -578,6 +608,7 @@
             "requestedAt": null,
             "lastCommandAt": null,
             "lastError": null,
+            "lastErrorSince": null,
             "maxRuntimeSec": 600
           },
           "values": {
@@ -586,6 +617,7 @@
             "controlStopAt": null,
             "controlState": "idle",
             "controlLastError": null,
+            "controlLastErrorSince": null,
             "controlRunRequestMin": 0
           },
           "transition": false,
@@ -628,6 +660,7 @@
             "requestedAt": null,
             "lastCommandAt": null,
             "lastError": null,
+            "lastErrorSince": null,
             "maxRuntimeSec": 600
           },
           "status": {
@@ -638,6 +671,7 @@
             "requestedAt": null,
             "lastCommandAt": null,
             "lastError": null,
+            "lastErrorSince": null,
             "maxRuntimeSec": 600
           },
           "values": {
@@ -646,6 +680,7 @@
             "controlStopAt": null,
             "controlState": "idle",
             "controlLastError": null,
+            "controlLastErrorSince": null,
             "controlRunRequestMin": 0
           },
           "transition": false,
@@ -681,6 +716,7 @@
             "requestedAt": null,
             "lastCommandAt": null,
             "lastError": null,
+            "lastErrorSince": null,
             "maxRuntimeSec": 600
           },
           "values": {
@@ -689,6 +725,7 @@
             "controlStopAt": null,
             "controlState": "idle",
             "controlLastError": null,
+            "controlLastErrorSince": null,
             "controlRunRequestMin": 0
           },
           "transition": false,
@@ -717,6 +754,7 @@
             "requestedAt": null,
             "lastCommandAt": null,
             "lastError": null,
+            "lastErrorSince": null,
             "maxRuntimeSec": 600
           },
           "values": {
@@ -725,6 +763,7 @@
             "controlStopAt": null,
             "controlState": "running:sp-pro",
             "controlLastError": null,
+            "controlLastErrorSince": null,
             "controlRunRequestMin": 0
           },
           "transition": false,
@@ -758,6 +797,7 @@
             "requestedAt": null,
             "lastCommandAt": null,
             "lastError": null,
+            "lastErrorSince": null,
             "maxRuntimeSec": 600
           },
           "status": {
@@ -768,6 +808,7 @@
             "requestedAt": null,
             "lastCommandAt": null,
             "lastError": null,
+            "lastErrorSince": null,
             "maxRuntimeSec": 600
           },
           "values": {
@@ -776,6 +817,7 @@
             "controlStopAt": null,
             "controlState": "running:sp-pro",
             "controlLastError": null,
+            "controlLastErrorSince": null,
             "controlRunRequestMin": 0
           },
           "transition": false,
@@ -810,6 +852,7 @@
             "requestedAt": null,
             "lastCommandAt": null,
             "lastError": null,
+            "lastErrorSince": null,
             "maxRuntimeSec": 600
           },
           "values": {
@@ -818,6 +861,7 @@
             "controlStopAt": null,
             "controlState": "running:sp-pro",
             "controlLastError": null,
+            "controlLastErrorSince": null,
             "controlRunRequestMin": 0
           },
           "transition": false,
@@ -853,6 +897,7 @@
             "requestedAt": "2026-09-12T00:00:00.000Z",
             "lastCommandAt": "2026-09-12T00:00:00.000Z",
             "lastError": null,
+            "lastErrorSince": null,
             "maxRuntimeSec": 600
           },
           "values": {
@@ -861,6 +906,7 @@
             "controlStopAt": 1789171260,
             "controlState": "running:hub",
             "controlLastError": null,
+            "controlLastErrorSince": null,
             "controlRunRequestMin": 1
           },
           "transition": true,
@@ -889,6 +935,7 @@
             "requestedAt": null,
             "lastCommandAt": "2026-09-12T00:00:00.000Z",
             "lastError": null,
+            "lastErrorSince": null,
             "maxRuntimeSec": 600
           },
           "values": {
@@ -897,6 +944,7 @@
             "controlStopAt": null,
             "controlState": "stopping",
             "controlLastError": null,
+            "controlLastErrorSince": null,
             "controlRunRequestMin": 0
           },
           "transition": true,
@@ -925,6 +973,7 @@
             "requestedAt": null,
             "lastCommandAt": null,
             "lastError": null,
+            "lastErrorSince": null,
             "maxRuntimeSec": 600
           },
           "values": {
@@ -933,6 +982,7 @@
             "controlStopAt": null,
             "controlState": "running:other",
             "controlLastError": null,
+            "controlLastErrorSince": null,
             "controlRunRequestMin": 0
           },
           "transition": false,
@@ -966,6 +1016,7 @@
             "requestedAt": null,
             "lastCommandAt": null,
             "lastError": null,
+            "lastErrorSince": null,
             "maxRuntimeSec": 600
           },
           "status": {
@@ -976,6 +1027,7 @@
             "requestedAt": null,
             "lastCommandAt": null,
             "lastError": null,
+            "lastErrorSince": null,
             "maxRuntimeSec": 600
           },
           "values": {
@@ -984,6 +1036,7 @@
             "controlStopAt": null,
             "controlState": "running:other",
             "controlLastError": null,
+            "controlLastErrorSince": null,
             "controlRunRequestMin": 0
           },
           "transition": false,
@@ -1018,6 +1071,7 @@
             "requestedAt": null,
             "lastCommandAt": null,
             "lastError": null,
+            "lastErrorSince": null,
             "maxRuntimeSec": 600
           },
           "values": {
@@ -1026,6 +1080,7 @@
             "controlStopAt": null,
             "controlState": "running:other",
             "controlLastError": null,
+            "controlLastErrorSince": null,
             "controlRunRequestMin": 0
           },
           "transition": false,
@@ -1061,6 +1116,7 @@
             "requestedAt": "2026-09-12T00:00:00.000Z",
             "lastCommandAt": "2026-09-12T00:00:00.000Z",
             "lastError": null,
+            "lastErrorSince": null,
             "maxRuntimeSec": 600
           },
           "values": {
@@ -1069,6 +1125,7 @@
             "controlStopAt": 1789171260,
             "controlState": "running:hub",
             "controlLastError": null,
+            "controlLastErrorSince": null,
             "controlRunRequestMin": 1
           },
           "transition": true,
@@ -1097,6 +1154,7 @@
             "requestedAt": null,
             "lastCommandAt": "2026-09-12T00:00:00.000Z",
             "lastError": null,
+            "lastErrorSince": null,
             "maxRuntimeSec": 600
           },
           "values": {
@@ -1105,6 +1163,7 @@
             "controlStopAt": null,
             "controlState": "stopping",
             "controlLastError": null,
+            "controlLastErrorSince": null,
             "controlRunRequestMin": 0
           },
           "transition": true,
@@ -1133,6 +1192,7 @@
             "requestedAt": null,
             "lastCommandAt": null,
             "lastError": null,
+            "lastErrorSince": null,
             "maxRuntimeSec": 600
           },
           "values": {
@@ -1141,6 +1201,7 @@
             "controlStopAt": null,
             "controlState": "running:other",
             "controlLastError": null,
+            "controlLastErrorSince": null,
             "controlRunRequestMin": 0
           },
           "transition": false,
@@ -1174,6 +1235,7 @@
             "requestedAt": null,
             "lastCommandAt": null,
             "lastError": null,
+            "lastErrorSince": null,
             "maxRuntimeSec": 600
           },
           "status": {
@@ -1184,6 +1246,7 @@
             "requestedAt": null,
             "lastCommandAt": null,
             "lastError": null,
+            "lastErrorSince": null,
             "maxRuntimeSec": 600
           },
           "values": {
@@ -1192,6 +1255,7 @@
             "controlStopAt": null,
             "controlState": "running:other",
             "controlLastError": null,
+            "controlLastErrorSince": null,
             "controlRunRequestMin": 0
           },
           "transition": false,
@@ -1226,6 +1290,7 @@
             "requestedAt": null,
             "lastCommandAt": null,
             "lastError": null,
+            "lastErrorSince": null,
             "maxRuntimeSec": 600
           },
           "values": {
@@ -1234,6 +1299,7 @@
             "controlStopAt": null,
             "controlState": "running:other",
             "controlLastError": null,
+            "controlLastErrorSince": null,
             "controlRunRequestMin": 0
           },
           "transition": false,
@@ -1269,6 +1335,7 @@
             "requestedAt": "2026-09-12T00:00:00.000Z",
             "lastCommandAt": "2026-09-12T00:00:00.000Z",
             "lastError": null,
+            "lastErrorSince": null,
             "maxRuntimeSec": 600
           },
           "values": {
@@ -1277,6 +1344,7 @@
             "controlStopAt": 1789171260,
             "controlState": "running:hub",
             "controlLastError": null,
+            "controlLastErrorSince": null,
             "controlRunRequestMin": 1
           },
           "transition": true,
@@ -1305,6 +1373,7 @@
             "requestedAt": null,
             "lastCommandAt": "2026-09-12T00:00:00.000Z",
             "lastError": null,
+            "lastErrorSince": null,
             "maxRuntimeSec": 600
           },
           "values": {
@@ -1313,6 +1382,7 @@
             "controlStopAt": null,
             "controlState": "stopping",
             "controlLastError": null,
+            "controlLastErrorSince": null,
             "controlRunRequestMin": 0
           },
           "transition": true,
@@ -1356,6 +1426,7 @@
             "requestedAt": null,
             "lastCommandAt": null,
             "lastError": null,
+            "lastErrorSince": null,
             "maxRuntimeSec": 600
           },
           "status": {
@@ -1366,6 +1437,7 @@
             "requestedAt": null,
             "lastCommandAt": null,
             "lastError": null,
+            "lastErrorSince": null,
             "maxRuntimeSec": 600
           },
           "values": {
@@ -1374,6 +1446,7 @@
             "controlStopAt": null,
             "controlState": "idle",
             "controlLastError": null,
+            "controlLastErrorSince": null,
             "controlRunRequestMin": 0
           },
           "transition": false,
@@ -1408,6 +1481,7 @@
             "requestedAt": null,
             "lastCommandAt": null,
             "lastError": null,
+            "lastErrorSince": null,
             "maxRuntimeSec": 600
           },
           "values": {
@@ -1416,6 +1490,7 @@
             "controlStopAt": null,
             "controlState": "idle",
             "controlLastError": null,
+            "controlLastErrorSince": null,
             "controlRunRequestMin": 0
           },
           "transition": false,
@@ -1459,6 +1534,7 @@
             "requestedAt": null,
             "lastCommandAt": null,
             "lastError": null,
+            "lastErrorSince": null,
             "maxRuntimeSec": 600
           },
           "status": {
@@ -1469,6 +1545,7 @@
             "requestedAt": null,
             "lastCommandAt": null,
             "lastError": null,
+            "lastErrorSince": null,
             "maxRuntimeSec": 600
           },
           "values": {
@@ -1477,6 +1554,7 @@
             "controlStopAt": null,
             "controlState": "idle",
             "controlLastError": null,
+            "controlLastErrorSince": null,
             "controlRunRequestMin": 0
           },
           "transition": false,
@@ -1511,6 +1589,7 @@
             "requestedAt": null,
             "lastCommandAt": null,
             "lastError": null,
+            "lastErrorSince": null,
             "maxRuntimeSec": 600
           },
           "values": {
@@ -1519,6 +1598,7 @@
             "controlStopAt": null,
             "controlState": "idle",
             "controlLastError": null,
+            "controlLastErrorSince": null,
             "controlRunRequestMin": 0
           },
           "transition": false,
@@ -1562,6 +1642,7 @@
             "requestedAt": null,
             "lastCommandAt": null,
             "lastError": null,
+            "lastErrorSince": null,
             "maxRuntimeSec": 600
           },
           "status": {
@@ -1572,6 +1653,7 @@
             "requestedAt": null,
             "lastCommandAt": null,
             "lastError": null,
+            "lastErrorSince": null,
             "maxRuntimeSec": 600
           },
           "values": {
@@ -1580,6 +1662,7 @@
             "controlStopAt": null,
             "controlState": "idle",
             "controlLastError": null,
+            "controlLastErrorSince": null,
             "controlRunRequestMin": 0
           },
           "transition": false,
@@ -1606,6 +1689,7 @@
             "requestedAt": null,
             "lastCommandAt": null,
             "lastError": null,
+            "lastErrorSince": null,
             "maxRuntimeSec": 600
           },
           "status": {
@@ -1616,6 +1700,7 @@
             "requestedAt": null,
             "lastCommandAt": null,
             "lastError": null,
+            "lastErrorSince": null,
             "maxRuntimeSec": 600
           },
           "values": {
@@ -1624,6 +1709,7 @@
             "controlStopAt": null,
             "controlState": "idle",
             "controlLastError": null,
+            "controlLastErrorSince": null,
             "controlRunRequestMin": 0
           },
           "transition": false,
@@ -1650,6 +1736,7 @@
             "requestedAt": null,
             "lastCommandAt": null,
             "lastError": null,
+            "lastErrorSince": null,
             "maxRuntimeSec": 600
           },
           "values": {
@@ -1658,6 +1745,7 @@
             "controlStopAt": null,
             "controlState": "idle",
             "controlLastError": null,
+            "controlLastErrorSince": null,
             "controlRunRequestMin": 0
           },
           "transition": false,
@@ -1704,6 +1792,7 @@
             "requestedAt": "2026-09-12T00:00:00.000Z",
             "lastCommandAt": "2026-09-12T00:00:00.000Z",
             "lastError": "start write failed (may still have taken effect): write timeout",
+            "lastErrorSince": "2026-09-12T00:00:00.000Z",
             "maxRuntimeSec": 600
           },
           "values": {
@@ -1712,6 +1801,7 @@
             "controlStopAt": 1789171260,
             "controlState": "running:hub",
             "controlLastError": "start write failed (may still have taken effect): write timeout",
+            "controlLastErrorSince": 1789171200,
             "controlRunRequestMin": 1
           },
           "transition": true,
@@ -1739,6 +1829,7 @@
             "requestedAt": "2026-09-12T00:00:01.000Z",
             "lastCommandAt": "2026-09-12T00:00:00.000Z",
             "lastError": "start write failed (may still have taken effect): write timeout",
+            "lastErrorSince": "2026-09-12T00:00:00.000Z",
             "maxRuntimeSec": 600
           },
           "values": {
@@ -1747,6 +1838,7 @@
             "controlStopAt": 1789171321,
             "controlState": "running:hub",
             "controlLastError": "start write failed (may still have taken effect): write timeout",
+            "controlLastErrorSince": 1789171200,
             "controlRunRequestMin": 2
           },
           "transition": true,
@@ -1767,6 +1859,7 @@
             "requestedAt": null,
             "lastCommandAt": "2026-09-12T00:02:01.000Z",
             "lastError": null,
+            "lastErrorSince": null,
             "maxRuntimeSec": 600
           },
           "values": {
@@ -1775,6 +1868,7 @@
             "controlStopAt": null,
             "controlState": "idle",
             "controlLastError": null,
+            "controlLastErrorSince": null,
             "controlRunRequestMin": 0
           },
           "transition": true,
@@ -1814,6 +1908,7 @@
             "requestedAt": "2026-09-12T00:00:00.000Z",
             "lastCommandAt": "2026-09-12T00:00:00.000Z",
             "lastError": null,
+            "lastErrorSince": null,
             "maxRuntimeSec": 600
           },
           "values": {
@@ -1822,6 +1917,7 @@
             "controlStopAt": 1789171260,
             "controlState": "running:hub",
             "controlLastError": null,
+            "controlLastErrorSince": null,
             "controlRunRequestMin": 1
           },
           "transition": true,
@@ -1850,6 +1946,7 @@
             "requestedAt": "2026-09-12T00:00:00.000Z",
             "lastCommandAt": "2026-09-12T00:00:00.000Z",
             "lastError": "stop write failed: write timeout",
+            "lastErrorSince": "2026-09-12T00:00:00.000Z",
             "maxRuntimeSec": 600
           },
           "values": {
@@ -1858,6 +1955,7 @@
             "controlStopAt": 1789171260,
             "controlState": "stop-failing",
             "controlLastError": "stop write failed: write timeout",
+            "controlLastErrorSince": 1789171200,
             "controlRunRequestMin": 1
           },
           "transition": true,
@@ -1884,6 +1982,7 @@
             "requestedAt": "2026-09-12T00:00:00.000Z",
             "lastCommandAt": "2026-09-12T00:00:00.000Z",
             "lastError": "stop write failed: write timeout",
+            "lastErrorSince": "2026-09-12T00:00:00.000Z",
             "maxRuntimeSec": 600
           },
           "values": {
@@ -1892,6 +1991,7 @@
             "controlStopAt": 1789171320,
             "controlState": "stop-failing",
             "controlLastError": "stop write failed: write timeout",
+            "controlLastErrorSince": 1789171200,
             "controlRunRequestMin": 2
           },
           "transition": true,
@@ -1913,6 +2013,7 @@
             "requestedAt": null,
             "lastCommandAt": "2026-09-12T00:02:00.000Z",
             "lastError": null,
+            "lastErrorSince": null,
             "maxRuntimeSec": 600
           },
           "values": {
@@ -1921,6 +2022,7 @@
             "controlStopAt": null,
             "controlState": "idle",
             "controlLastError": null,
+            "controlLastErrorSince": null,
             "controlRunRequestMin": 0
           },
           "transition": true,
@@ -1960,6 +2062,7 @@
             "requestedAt": "2026-09-12T00:00:00.000Z",
             "lastCommandAt": "2026-09-12T00:00:00.000Z",
             "lastError": null,
+            "lastErrorSince": null,
             "maxRuntimeSec": 600
           },
           "values": {
@@ -1968,6 +2071,7 @@
             "controlStopAt": 1789171260,
             "controlState": "running:hub",
             "controlLastError": null,
+            "controlLastErrorSince": null,
             "controlRunRequestMin": 1
           },
           "transition": true,
@@ -1988,6 +2092,7 @@
             "requestedAt": "2026-09-12T00:00:00.000Z",
             "lastCommandAt": "2026-09-12T00:00:00.000Z",
             "lastError": null,
+            "lastErrorSince": null,
             "maxRuntimeSec": 600
           },
           "values": {
@@ -1996,6 +2101,7 @@
             "controlStopAt": 1789171260,
             "controlState": "running:hub",
             "controlLastError": null,
+            "controlLastErrorSince": null,
             "controlRunRequestMin": 0
           },
           "transition": true,
@@ -2016,6 +2122,7 @@
             "requestedAt": null,
             "lastCommandAt": "2026-09-12T00:01:00.000Z",
             "lastError": null,
+            "lastErrorSince": null,
             "maxRuntimeSec": 600
           },
           "values": {
@@ -2024,6 +2131,7 @@
             "controlStopAt": null,
             "controlState": "idle",
             "controlLastError": null,
+            "controlLastErrorSince": null,
             "controlRunRequestMin": 0
           },
           "transition": true,
@@ -2055,6 +2163,7 @@
             "requestedAt": null,
             "lastCommandAt": null,
             "lastError": null,
+            "lastErrorSince": null,
             "maxRuntimeSec": 600
           },
           "values": {
@@ -2063,6 +2172,7 @@
             "controlStopAt": null,
             "controlState": "idle",
             "controlLastError": null,
+            "controlLastErrorSince": null,
             "controlRunRequestMin": 0
           },
           "transition": false,
@@ -2089,6 +2199,7 @@
             "requestedAt": null,
             "lastCommandAt": null,
             "lastError": null,
+            "lastErrorSince": null,
             "maxRuntimeSec": 600
           },
           "values": {
@@ -2097,6 +2208,7 @@
             "controlStopAt": null,
             "controlState": "idle",
             "controlLastError": null,
+            "controlLastErrorSince": null,
             "controlRunRequestMin": 0
           },
           "transition": false,
@@ -2136,6 +2248,7 @@
             "requestedAt": "2026-09-12T00:00:00.000Z",
             "lastCommandAt": "2026-09-12T00:00:00.000Z",
             "lastError": null,
+            "lastErrorSince": null,
             "maxRuntimeSec": 600
           },
           "values": {
@@ -2144,6 +2257,7 @@
             "controlStopAt": 1789171260,
             "controlState": "running:hub",
             "controlLastError": null,
+            "controlLastErrorSince": null,
             "controlRunRequestMin": 1
           },
           "transition": true,
@@ -2164,6 +2278,7 @@
             "requestedAt": "2026-09-12T00:00:00.000Z",
             "lastCommandAt": null,
             "lastError": null,
+            "lastErrorSince": null,
             "maxRuntimeSec": 600
           },
           "values": {
@@ -2172,6 +2287,7 @@
             "controlStopAt": 1789171260,
             "controlState": "running:hub",
             "controlLastError": null,
+            "controlLastErrorSince": null,
             "controlRunRequestMin": 1
           },
           "transition": false,
@@ -2192,6 +2308,7 @@
             "requestedAt": null,
             "lastCommandAt": "2026-09-12T00:01:00.000Z",
             "lastError": null,
+            "lastErrorSince": null,
             "maxRuntimeSec": 600
           },
           "values": {
@@ -2200,6 +2317,7 @@
             "controlStopAt": null,
             "controlState": "idle",
             "controlLastError": null,
+            "controlLastErrorSince": null,
             "controlRunRequestMin": 0
           },
           "transition": true,
@@ -2239,6 +2357,7 @@
             "requestedAt": "2026-09-12T00:00:00.000Z",
             "lastCommandAt": "2026-09-12T00:00:00.000Z",
             "lastError": null,
+            "lastErrorSince": null,
             "maxRuntimeSec": 600
           },
           "values": {
@@ -2247,6 +2366,7 @@
             "controlStopAt": 1789171260,
             "controlState": "running:hub",
             "controlLastError": null,
+            "controlLastErrorSince": null,
             "controlRunRequestMin": 1
           },
           "transition": true,
@@ -2267,6 +2387,7 @@
             "requestedAt": null,
             "lastCommandAt": "2026-09-12T00:01:01.000Z",
             "lastError": null,
+            "lastErrorSince": null,
             "maxRuntimeSec": 600
           },
           "values": {
@@ -2275,6 +2396,7 @@
             "controlStopAt": null,
             "controlState": "idle",
             "controlLastError": null,
+            "controlLastErrorSince": null,
             "controlRunRequestMin": 0
           },
           "transition": true,
@@ -2299,6 +2421,7 @@
             "requestedAt": null,
             "lastCommandAt": null,
             "lastError": null,
+            "lastErrorSince": null,
             "maxRuntimeSec": 600
           },
           "values": {
@@ -2307,6 +2430,7 @@
             "controlStopAt": null,
             "controlState": "idle",
             "controlLastError": null,
+            "controlLastErrorSince": null,
             "controlRunRequestMin": 0
           },
           "transition": false,
@@ -2332,6 +2456,7 @@
             "requestedAt": null,
             "lastCommandAt": null,
             "lastError": null,
+            "lastErrorSince": null,
             "maxRuntimeSec": 600
           },
           "values": {
@@ -2340,6 +2465,7 @@
             "controlStopAt": null,
             "controlState": "idle",
             "controlLastError": null,
+            "controlLastErrorSince": null,
             "controlRunRequestMin": 0
           },
           "transition": false,
@@ -2365,6 +2491,7 @@
             "requestedAt": null,
             "lastCommandAt": null,
             "lastError": null,
+            "lastErrorSince": null,
             "maxRuntimeSec": 600
           },
           "values": {
@@ -2373,6 +2500,7 @@
             "controlStopAt": null,
             "controlState": "idle",
             "controlLastError": null,
+            "controlLastErrorSince": null,
             "controlRunRequestMin": 0
           },
           "transition": false,
@@ -2401,6 +2529,7 @@
             "requestedAt": null,
             "lastCommandAt": null,
             "lastError": "module is in STOP mode at boot with no persisted reason — auto-start is DISABLED; check the panel (possible crash mid-inhibit)",
+            "lastErrorSince": "2026-09-12T00:00:00.000Z",
             "maxRuntimeSec": 600
           },
           "values": {
@@ -2409,6 +2538,7 @@
             "controlStopAt": null,
             "controlState": "idle",
             "controlLastError": "module is in STOP mode at boot with no persisted reason — auto-start is DISABLED; check the panel (possible crash mid-inhibit)",
+            "controlLastErrorSince": 1789171200,
             "controlRunRequestMin": 0
           },
           "transition": false,
@@ -2434,6 +2564,7 @@
             "requestedAt": null,
             "lastCommandAt": null,
             "lastError": null,
+            "lastErrorSince": null,
             "maxRuntimeSec": 600
           },
           "values": {
@@ -2442,6 +2573,7 @@
             "controlStopAt": null,
             "controlState": "idle",
             "controlLastError": null,
+            "controlLastErrorSince": null,
             "controlRunRequestMin": 0
           },
           "transition": false,

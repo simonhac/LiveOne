@@ -238,13 +238,9 @@ export function AddDeviceDialog({ open, onOpenChange }: AddDeviceDialogProps) {
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent
-        className="sm:max-w-[560px] max-h-[calc(100vh-100px)] flex flex-col"
-        style={{
-          maxHeight: "min(900px, calc(100vh - 100px))",
-          minHeight: "540px",
-        }}
-      >
+      {/* Height is the primitive's (capped to the viewport, content scrolls); the footer below is
+          sticky inside that scroller so the actions stay in reach. */}
+      <DialogContent className="sm:max-w-[560px] min-h-[min(540px,calc(100dvh-2rem))]">
         <DialogHeader>
           <DialogTitle>Add Device</DialogTitle>
           <DialogDescription>
@@ -252,7 +248,7 @@ export function AddDeviceDialog({ open, onOpenChange }: AddDeviceDialogProps) {
           </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-4 overflow-y-auto flex-1 min-h-0 px-6 py-2">
+        <div className="space-y-4 py-2">
           {/* Vendor Selection */}
           <div>
             <Label htmlFor="vendor" className="block mb-[10px]">
@@ -346,7 +342,7 @@ export function AddDeviceDialog({ open, onOpenChange }: AddDeviceDialogProps) {
           )}
         </div>
 
-        <div className="flex justify-end gap-2 mt-6 flex-shrink-0 px-6 pt-4 border-t border-gray-700">
+        <div className="sticky bottom-0 -mx-6 -mb-6 mt-6 flex justify-end gap-2 border-t border-gray-700 bg-surface-overlay px-6 pt-4 pb-6">
           <Button
             variant="outline"
             onClick={() => onOpenChange(false)}

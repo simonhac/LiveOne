@@ -28,6 +28,11 @@ import type {
 } from "../core/source";
 import { DiagJournal } from "../core/diag-journal";
 import { delay, withTimeout } from "../lib/async";
+import {
+  createTunnelProbe,
+  diagnoseConnectError,
+  type TunnelProbe,
+} from "../core/tunnel";
 
 /**
  * The curated set musher pushes to gusher — the live-proven Page-4 engine points. `key` matches a
@@ -201,6 +206,8 @@ export interface MusherOptions {
   dataDir?: string;
   /** attach the write surface (Source.control); set only when usher.yaml carries a control block */
   enableControl?: boolean;
+  /** WireGuard handshake reader for connect-failure diagnosis; tests inject one */
+  tunnel?: TunnelProbe;
 }
 
 /** Lock-HOLD budgets: how long an op may keep the device once it has the lock. */
@@ -219,6 +226,7 @@ const CONTROL_QUEUE_MS = READ_LOCK_MS + CLOSE_LOCK_MS + 2_000; // ~33 s: long en
 const RESET_QUEUE_MS = 2_000; // it sits on the run loop's error path — must not hold the tick
 
 export function createMusher(opts: MusherOptions): Source {
+  const tunnel = opts.tunnel ?? createTunnelProbe();
   const dse = new DseClient({
     host: opts.host,
     port: opts.port,
@@ -312,7 +320,14 @@ export function createMusher(opts: MusherOptions): Source {
       delay(ms + CLOSE_LOCK_MS + 1_000, { unref: true }),
     ]);
 
-    return Promise.race([run, queued]).finally(() => clearTimeout(queueTimer!));
+    // A connect failure leaves here as a DIAGNOSIS ("VPN up, controller unreachable"), not a bare
+    // errno — for the poll's tick-error log, a failed stop's lastError and the probe's verdict
+    // alike. Outside the lock: the handshake lookup is a process spawn and must not hold the device.
+    return Promise.race([run, queued])
+      .finally(() => clearTimeout(queueTimer!))
+      .catch(async (e: unknown) => {
+        throw await diagnoseConnectError(e, opts.siteId, tunnel);
+      });
   }
 
   // ── Diagnostics (temporary, env-gated) ──────────────────────────────────────

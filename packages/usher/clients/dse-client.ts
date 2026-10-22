@@ -30,6 +30,7 @@
 
 import ModbusRTU from "modbus-serial";
 import { settledWithin, withTimeout } from "../lib/async";
+import { DeviceConnectError } from "../lib/connect-error";
 
 export const DEFAULT_HOST = "10.0.1.244";
 export const DEFAULT_PORT = 502;
@@ -1383,24 +1384,40 @@ export class DseClient {
     // No log on a SUCCESSFUL connect. musher deliberately reconnects every tick
     // (sources/musher.ts), so success is the expected case and carries no information — measured at
     // 47 lines / 75 s, which was 63% of this app's non-diag log volume. The signal is the failure
-    // path below: the timeout, with the "is the Teleport VPN up?" hint. Keep that one.
+    // path below: a DeviceConnectError carrying the errno, which the caller (musher, which knows the
+    // site) turns into "VPN down" vs "VPN up, controller not answering" — see core/tunnel.ts. This
+    // client does not guess: it used to append "is the Teleport VPN up?" to every timeout, and was
+    // wrong for the three days in October 2026 the tunnel was fine and the controller unpowered.
     //
     // Not demoted to debug because this logger has no levels — it is a bare (m: string) => void
     // handed in by the caller. Adding levels to carry one line of noise is the wrong trade.
     // modbus-serial's setTimeout only bounds Modbus request time, not the initial
-    // TCP handshake — race a manual timeout so a down VPN fails fast with a hint.
+    // TCP handshake — race a manual timeout so an unreachable target fails fast.
+    const timedOut = `TCP connect to ${this.host}:${this.port} timed out after ${this.timeoutMs}ms`;
     try {
       await withTimeout(
         this.client.connectTCP(this.host, { port: this.port }),
         this.timeoutMs,
-        `TCP connect to ${this.host}:${this.port} timed out after ${this.timeoutMs}ms — is the Teleport VPN up?`,
+        timedOut,
       );
     } catch (e) {
       // The race abandoned connectTCP, but its socket is still attached and may yet come up —
       // and `connected` is false, so close() would no-op and nothing would ever reap it. Discard
       // the whole client so the next connect() starts from a clean one.
       this.discardClient();
-      throw e;
+      const err = e as NodeJS.ErrnoException;
+      const code =
+        typeof err?.code === "string"
+          ? err.code
+          : err?.message === timedOut
+            ? "ETIMEDOUT"
+            : "ECONNECT";
+      throw new DeviceConnectError(
+        err?.message ?? String(e),
+        this.host,
+        this.port,
+        code,
+      );
     }
     this.client.setTimeout(this.timeoutMs);
     this.connected = true;

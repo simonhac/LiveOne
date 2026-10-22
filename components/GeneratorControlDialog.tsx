@@ -27,6 +27,7 @@ import { describeDecline } from "@/lib/control/decline-copy";
 import { GENERATOR_RUN_REQUEST_ADDRESS } from "@/lib/control/addresses";
 import {
   GENERATOR_ERROR_PATH,
+  GENERATOR_ERROR_SINCE_PATH,
   GENERATOR_MODE_PATH,
   GENERATOR_STATUS_PATH,
   GENERATOR_STOP_AT_PATH,
@@ -43,7 +44,11 @@ import {
   renderMessageLike,
   type StructuredMessage,
 } from "@/lib/control/message-format";
-import { formatSecondsAsDuration, formatTime12h } from "@/lib/fe-date-format";
+import {
+  formatDateTime,
+  formatSecondsAsDuration,
+  formatTime12h,
+} from "@/lib/fe-date-format";
 
 /** The `POST …/preflight` body — mirrors `ControlPreflightResult` (lib/vendors/types.ts). */
 interface PreflightJson {
@@ -126,6 +131,15 @@ function clockWords(ms: number): string {
   return formatTime12h({ hour: d.getHours(), minute: d.getMinutes() });
 }
 
+/** "just now", "12m ago", "3d7h ago" — days past 24 h, because a hub error can last that long. */
+function agoWords(sec: number): string {
+  if (sec < 60) return "just now";
+  if (sec < 86_400) return `${formatSecondsAsDuration(sec)} ago`;
+  const d = Math.floor(sec / 86_400);
+  const h = Math.floor((sec % 86_400) / 3600);
+  return `${d}d${h > 0 ? `${h}h` : ""} ago`;
+}
+
 function text(latest: LatestPointValues | null, path: string): string | null {
   const v = latest?.[path]?.value as unknown;
   return typeof v === "string" && v.length > 0 ? v : null;
@@ -180,6 +194,7 @@ export default function GeneratorControlDialog({
   const state = text(latest, GENERATOR_STATUS_PATH);
   const mode = text(latest, GENERATOR_MODE_PATH);
   const lastError = text(latest, GENERATOR_ERROR_PATH);
+  const lastErrorSinceSec = num(latest, GENERATOR_ERROR_SINCE_PATH);
   const stopAtSec = num(latest, GENERATOR_STOP_AT_PATH);
   const statusMs = measurementMsOf(latest, GENERATOR_STATUS_PATH);
 
@@ -442,6 +457,20 @@ export default function GeneratorControlDialog({
               {/* A text POINT value, so there is no template to carry — the instant localizer is
                   the only lever, and it is enough: it rewrites the ISO and nothing else. */}
               {renderMessageLike(lastError)}
+              {/* WHEN it began, from the hub's own streak start — not the point's timestamp, which
+                  is its latest push and so always "now". With the date unless today: these errors
+                  can run for days, and a bare "3:12pm" would hide that. */}
+              {lastErrorSinceSec != null && (
+                <div className="mt-1 text-danger-ink/70">
+                  since{" "}
+                  {
+                    formatDateTime(new Date(lastErrorSinceSec * 1000), {
+                      includeSeconds: false,
+                    }).display
+                  }{" "}
+                  ({agoWords(nowMs / 1000 - lastErrorSinceSec)})
+                </div>
+              )}
             </div>
           )}
 

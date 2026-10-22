@@ -42,7 +42,9 @@ type ControlStatus struct {
 	Latched       bool       `json:"latched"`
 	StopAt        *time.Time `json:"stopAt"`
 	LastError     string     `json:"lastError,omitempty"`
-	ReleasedAt    *time.Time `json:"releasedAt"`
+	// When the current run of errors began — kept across stop retries, cleared with LastError.
+	LastErrorSince *time.Time `json:"lastErrorSince,omitempty"`
+	ReleasedAt     *time.Time `json:"releasedAt"`
 }
 type Supervisor struct {
 	wake         chan struct{}
@@ -184,11 +186,11 @@ func (s *Supervisor) request(ctx context.Context, seconds float64, override bool
 	}
 	s.transitionAt = &now
 	if err := s.target.Start(ctx); err != nil {
-		s.status.LastError = "start write failed (may still have taken effect): " + err.Error()
+		s.setLastError(now, "start write failed (may still have taken effect): "+err.Error())
 		_ = s.persist(s.status)
 		return s.result(now, 500, map[string]any{"reason": fmt.Sprintf("start may have taken effect (write failed after delivery was possible); a stop is scheduled for %s", controlInstant(s.status.StopAt)), "reasonMessage": map[string]any{"template": "start may have taken effect (write failed after delivery was possible); a stop is scheduled for {stopAt, time, short}", "values": map[string]any{"stopAt": controlInstant(s.status.StopAt)}}, "ownership": ownership.wire()})
 	}
-	s.status.LastError = ""
+	s.setLastError(now, "")
 	_ = s.persist(s.status)
 	return s.result(now, 200, map[string]any{"action": "started", "ownership": ownership.wire()})
 }
@@ -196,7 +198,7 @@ func (s *Supervisor) stop(ctx context.Context, now time.Time) error {
 	s.status.LastCommandAt = &now
 	s.transitionAt = &now
 	if e := s.target.Stop(ctx); e != nil {
-		s.status.LastError = "stop write failed: " + e.Error()
+		s.setLastError(now, "stop write failed: "+e.Error())
 		s.status.StopFailing = true
 		retry := s.monotonic() + 15*time.Second
 		s.retryAt = &retry
@@ -205,7 +207,7 @@ func (s *Supervisor) stop(ctx context.Context, now time.Time) error {
 	}
 	next := ControlStatus{ReleasedAt: &now, LastCommandAt: &now}
 	if e := s.persist(next); e != nil {
-		s.status.LastError = "latch released but persistence failed; retry pending"
+		s.setLastError(now, "latch released but persistence failed; retry pending")
 		s.status.StopFailing = true
 		retry := s.monotonic() + 15*time.Second
 		s.retryAt = &retry
@@ -328,6 +330,19 @@ func (s *Supervisor) state(now time.Time) string {
 	}
 	return "idle"
 }
+
+// setLastError keeps LastErrorSince at the START of an error run: set on the first error, kept while
+// retries rewrite the message, cleared with it. Caller holds mu.
+func (s *Supervisor) setLastError(now time.Time, msg string) {
+	if msg == "" {
+		s.status.LastErrorSince = nil
+	} else if s.status.LastError == "" {
+		at := now
+		s.status.LastErrorSince = &at
+	}
+	s.status.LastError = msg
+}
+
 func (s *Supervisor) View(now time.Time) map[string]any {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -342,7 +357,7 @@ func (s *Supervisor) view(now time.Time) map[string]any {
 	if s.status.LastError != "" {
 		lastError = s.status.LastError
 	}
-	return map[string]any{"latched": s.status.Latched, "state": s.state(now), "stopAt": controlInstant(s.status.StopAt), "remainingSec": remaining, "requestedAt": controlInstant(s.status.RequestedAt), "lastCommandAt": controlInstant(s.status.LastCommandAt), "lastError": lastError, "maxRuntimeSec": s.maxSeconds}
+	return map[string]any{"latched": s.status.Latched, "state": s.state(now), "stopAt": controlInstant(s.status.StopAt), "remainingSec": remaining, "requestedAt": controlInstant(s.status.RequestedAt), "lastCommandAt": controlInstant(s.status.LastCommandAt), "lastError": lastError, "lastErrorSince": controlInstant(s.status.LastErrorSince), "maxRuntimeSec": s.maxSeconds}
 }
 func (s *Supervisor) SyntheticValues(now time.Time) map[string]any {
 	s.mu.Lock()
@@ -360,10 +375,14 @@ func (s *Supervisor) SyntheticValues(now time.Time) map[string]any {
 			minutes = int(math.Ceil(float64(s.remainingSeconds(now)) / 60))
 		}
 	}
+	var lastErrorSince any
 	if s.status.LastError != "" {
 		lastError = s.status.LastError
 	}
-	return map[string]any{"controlRunActive": active, "controlInhibitActive": 0, "controlStopAt": stopAt, "controlState": s.state(now), "controlLastError": lastError, "controlRunRequestMin": minutes}
+	if s.status.LastErrorSince != nil {
+		lastErrorSince = int64(math.Floor(float64(s.status.LastErrorSince.UnixMilli())/1000 + 0.5))
+	}
+	return map[string]any{"controlLastErrorSince": lastErrorSince, "controlRunActive": active, "controlInhibitActive": 0, "controlStopAt": stopAt, "controlState": s.state(now), "controlLastError": lastError, "controlRunRequestMin": minutes}
 }
 
 // TypeScript rounds seconds before deriving the remaining-minute reading.
@@ -508,21 +527,21 @@ func (s *Supervisor) Resume(ctx context.Context, now time.Time) error {
 		}
 		// A process restart does not constitute a new command or engine transition.
 		s.status.LastCommandAt = nil
-		s.status.LastError = ""
+		s.setLastError(now, "")
 		return nil
 	}
 	if err := s.target.Stop(ctx); err != nil {
-		s.status.LastError = "defensive stop at boot failed: " + err.Error()
+		s.setLastError(now, "defensive stop at boot failed: "+err.Error())
 		s.status.StopFailing = true
 		s.status.LastCommandAt = &now
 	}
 	if o, err := s.readOwnership(ctx); err == nil && !o.ModeUnknown && o.Mode == 0 {
-		s.status.LastError = "module is in STOP mode at boot with no persisted reason — auto-start is DISABLED; check the panel (possible crash mid-inhibit)"
+		s.setLastError(now, "module is in STOP mode at boot with no persisted reason — auto-start is DISABLED; check the panel (possible crash mid-inhibit)")
 	}
 	if err := s.persist(s.status); err != nil {
 		s.status.StopFailing = true
 		s.status.LastCommandAt = &now
-		s.status.LastError = "defensive stop persistence failed; retry pending"
+		s.setLastError(now, "defensive stop persistence failed; retry pending")
 		retry := s.monotonic() + 15*time.Second
 		s.retryAt = &retry
 		return err
