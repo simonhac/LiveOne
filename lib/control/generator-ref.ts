@@ -261,6 +261,10 @@ export interface GeneratorStatusCopy {
   isCommandedRun: boolean;
   /** True ⇒ the engine is turning (or cooling), so the rpm/Hz row is worth showing. */
   isRunning: boolean;
+  /** True ⇒ the hero IS the outage (Offline / Flat battery), so the caller adds "last heard …". */
+  controllerOffline?: boolean;
+  /** True ⇒ the hero already names the starter battery, so the caller must not say it again. */
+  batteryIsHero?: boolean;
 }
 
 const UNKNOWN: GeneratorStatusCopy = {
@@ -389,7 +393,39 @@ const OFFLINE: GeneratorStatusCopy = {
   tone: "warning",
   isCommandedRun: false,
   isRunning: false,
+  controllerOffline: true,
 };
+
+/**
+ * Offline, and the last starter-battery reading was flat: the battery is what powers the DSE, so it
+ * is the likely CAUSE, and naming it is what tells the reader what to fix. Daylesford, October 2026:
+ * the tile read "Offline" for three days over a 3.5 V battery row.
+ */
+const FLAT_BATTERY_OFFLINE: GeneratorStatusCopy = {
+  ...OFFLINE,
+  label: "Flat battery",
+  batteryIsHero: true,
+};
+
+/**
+ * Idle, the controller still answering, but the starter battery would struggle to crank it — so
+ * "Auto · Ready to start" would be the wrong reassurance. The hero names the battery because that is
+ * the thing to fix; the panel state is still worth a word underneath. A low battery is also the
+ * only warning before a flat one takes the controller down with it (Daylesford, October 2026).
+ */
+function batteryCopy(
+  level: "low" | "flat",
+  mode: string | null | undefined,
+): GeneratorStatusCopy {
+  return {
+    label: level === "flat" ? "Flat battery" : "Low battery",
+    detail: mode != null ? "Auto · may not start" : "May not start",
+    tone: "warning",
+    isCommandedRun: false,
+    isRunning: false,
+    batteryIsHero: true,
+  };
+}
 
 const LOCKED_OUT: GeneratorStatusCopy = {
   label: "Locked out",
@@ -423,11 +459,23 @@ export function describeGeneratorState(
      * that must not be hidden behind "Offline". The caller appends the outage to those instead.
      */
     controllerOffline?: boolean;
+    /**
+     * The last starter-battery reading, judged AT REST ({@link batteryLevel}). Only ever changes
+     * the IDLE hero: offline + flat names the likely cause of the outage, and an answering
+     * controller over a low or flat battery is not "Ready to start". A locked-out panel keeps its
+     * hero (that is the more fundamental "it will not start"), and a run the hub holds is untouched.
+     */
+    starterBattery?: "ok" | "low" | "flat";
   },
 ): GeneratorStatusCopy {
-  if (!state) return opts?.controllerOffline ? OFFLINE : UNKNOWN;
+  const battery = opts?.starterBattery ?? "ok";
+  const offline = battery === "flat" ? FLAT_BATTERY_OFFLINE : OFFLINE;
+  if (!state) return opts?.controllerOffline ? offline : UNKNOWN;
   if (state === "idle") {
-    if (opts?.controllerOffline) return OFFLINE;
+    if (opts?.controllerOffline) return offline;
+    if (battery !== "ok" && (mode == null || panelIsAuto(mode))) {
+      return batteryCopy(battery, mode);
+    }
     // Mode unknown (the point has not arrived) is NOT the same as "in Auto" — claiming a generator
     // is armed when we cannot see the panel would be the one lie that matters here.
     //
