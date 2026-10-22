@@ -666,12 +666,95 @@ describe("GET …/calendar.ics — what actually happened", () => {
     );
 
     const body = await (await feed(AREA, `?token=${TOKEN}`)).text();
-    expect(past(body)).toEqual([]);
+    expect(body).not.toContain("⛔️");
+    // It is ⏳ instead — under the UID the ⛔️ would take, so the client replaces it in place.
+    const uid = `UID:slot-${AU_UUID}-${SLOT_17_SEP}@liveone.energy`;
+    expect(past(body)).toHaveLength(1);
+    expect(past(body)[0]).toContain("SUMMARY:⏳ Generator exercise");
+    expect(past(body)[0]).toContain(uid);
 
     // …and once the window has closed with still nothing detected, it IS a failure.
     setNow(SLOT_17_SEP + 200 * 60_000);
     const later = await (await feed(AREA, `?token=${TOKEN}`)).text();
+    expect(past(later)).toHaveLength(1);
     expect(past(later)[0]).toContain("SUMMARY:⛔️ Generator exercise");
+    expect(past(later)[0]).toContain(uid);
+  });
+
+  it("⏳ a slot inside its grace window with NOTHING recorded yet — not a silence", async () => {
+    // 2026-10-22: every dispatch 530'd for three hours and the feed showed nothing at all — the
+    // master had EXDATEd the occurrence and the ⛔️ was (rightly) held until the window closed.
+    setNow(SLOT_17_SEP + 30 * 60_000);
+
+    const body = await (await feed(AREA, `?token=${TOKEN}`)).text();
+    // Exactly one VEVENT for the instant: the master still EXDATEs it.
+    const events = past(body);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toContain(`DTSTART;TZID=${TZ}:20260917T090000`);
+    expect(events[0]).toContain("SUMMARY:⏳ Generator exercise");
+    expect(events[0]).toContain("Due: waiting for the scheduler to start it.");
+    expect(events[0]).toContain("Still due until 12:00 PM");
+    expect(exdatesOf(master(body)!)).toContain("20260917T090000");
+  });
+
+  it("⏳ says WHY it has not started yet, from the rule's decision log", async () => {
+    setNow(SLOT_17_SEP + 45 * 60_000);
+    mockStore.listForArea.mockResolvedValue([
+      exerciseRow({
+        armedContext: {
+          kind: "exercise",
+          slotAt: SLOT_17_SEP,
+          outcome: "waiting",
+          at: SLOT_17_SEP + 44 * 60_000,
+          reason: "dispatch failed: hub returned 530",
+          firstSeenAt: SLOT_17_SEP,
+          ticks: 45,
+        },
+      }),
+    ]);
+
+    const [event] = past(await (await feed(AREA, `?token=${TOKEN}`)).text());
+    expect(event).toContain("SUMMARY:⏳ Generator exercise");
+    expect(event).toContain(
+      "Trying to start (45 tries since 9:00 AM). Last try at 9:44 AM: dispatch failed: hub " +
+        "returned 530.",
+    );
+    expect(event).toContain("Criteria:\\nScheduled to run for 30 minutes.");
+  });
+
+  it("⏳ ignores a decision log about a DIFFERENT slot", async () => {
+    setNow(SLOT_17_SEP + 10 * 60_000);
+    mockStore.listForArea.mockResolvedValue([
+      exerciseRow({
+        armedContext: {
+          kind: "exercise",
+          slotAt: SLOT_17_SEP - 7 * 86_400_000,
+          outcome: "waiting",
+          at: SLOT_17_SEP - 7 * 86_400_000,
+          reason: "last week's problem",
+        },
+      }),
+    ]);
+    const [event] = past(await (await feed(AREA, `?token=${TOKEN}`)).text());
+    expect(event).toContain("SUMMARY:⏳ Generator exercise");
+    expect(event).not.toContain("last week's problem");
+  });
+
+  it("⏳ is not published for a DISABLED rule's unrecorded slot — nothing will try it", async () => {
+    setNow(SLOT_17_SEP + 10 * 60_000);
+    mockStore.listForArea.mockResolvedValue([exerciseRow({ enabled: false })]);
+    expect(past(await (await feed(AREA, `?token=${TOKEN}`)).text())).toEqual(
+      [],
+    );
+  });
+
+  it("⏳ is not published while a run answers for the slot", async () => {
+    setNow(SLOT_17_SEP + 10 * 60_000);
+    mockStore.intervalsOverlapping.mockResolvedValue([
+      { ...runRow(SLOT_17_SEP + 60_000), endTime: null } as DerivedInterval,
+    ]);
+    const body = await (await feed(AREA, `?token=${TOKEN}`)).text();
+    expect(body).not.toContain("⏳");
   });
 
   it("🛑 a ⏭️ needs no such wait — it is a decision, not an absence of evidence", async () => {
@@ -710,7 +793,7 @@ describe("GET …/calendar.ics — what actually happened", () => {
 
   it("🛑 …and still published once its NEW occurrence arrives but is undecided", async () => {
     // `accountedFor` is keyed by OCCURRENCE, not by rule. Keyed by rule, the 17 Sep record would
-    // suppress the master the moment the 25 Sep occurrence came round — and with its own ⛔️ still
+    // suppress the 25 Sep occurrence the moment it came round — and with its own ⛔️ still
     // correctly withheld inside grace, the rule would vanish from the feed entirely.
     setNow(Date.parse("2026-09-25T09:01:00+10:00"));
     const newSlot = Date.parse("2026-09-25T09:00:00+10:00");
@@ -735,11 +818,16 @@ describe("GET …/calendar.ics — what actually happened", () => {
     );
 
     const body = await (await feed(AREA, `?token=${TOKEN}`)).text();
-    expect(body).toContain(`UID:${AU_UUID}@liveone.energy`);
-    expect(body).toContain(`DTSTART;TZID=${TZ}:20260925T090000`);
-    // The 17 Sep miss is published; the 25 Sep dispatch is still inside grace, so it is not.
-    expect(past(body)).toHaveLength(1);
-    expect(past(body)[0]).toContain(`DTSTART;TZID=${TZ}:20260917T090000`);
+    // The 17 Sep miss is published; the 25 Sep dispatch is still inside grace, so it is ⏳ — and
+    // that ⏳ stands for the one-off's occurrence, so the master is not ALSO published beside it.
+    const events = past(body);
+    expect(events).toHaveLength(2);
+    const miss = events.find((ve) => ve.includes("SUMMARY:⛔️"));
+    const pending = events.find((ve) => ve.includes("SUMMARY:⏳"));
+    expect(miss).toContain(`DTSTART;TZID=${TZ}:20260917T090000`);
+    expect(pending).toContain(`DTSTART;TZID=${TZ}:20260925T090000`);
+    expect(pending).toContain("Starting: the start was sent");
+    expect(body).not.toContain(`UID:${AU_UUID}@liveone.energy`);
   });
 
   it("🛑 an edited SPENT one-off does not reappear beside its own run", async () => {

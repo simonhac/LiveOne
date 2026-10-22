@@ -19,12 +19,36 @@ import { ATTRIBUTION_LEAD_MS, ATTRIBUTION_TAIL_MS } from "./exercise";
 import type { ExerciseOutcome } from "@/lib/db/planetscale/schema";
 
 /**
- * ✅ it ran · ⏭️ it was deliberately not started · ⛔️ it should have started and did not.
+ * ✅ it ran · ⏭️ it was deliberately not started · ⛔️ it should have started and did not ·
+ * ⏳ it is due and its grace window is still open (being started, or still being tried).
  *
- * `null` means "nothing to say", and is NOT a fourth verdict: no past event is published at all,
+ * ⏳ is NOT a verdict and `markForOutcome` never returns it: the route publishes it only while
+ * `slotWindow` is open, under the same UID the ⛔️ would take, so the client replaces it in place
+ * once the evaluator decides.
+ *
+ * `null` means "nothing to say", and is NOT a further verdict: no past event is published at all,
  * so the occurrence simply does not appear.
  */
-export type SlotMark = "✅" | "⏭️" | "⛔️" | null;
+export type SlotMark = "✅" | "⏭️" | "⛔️" | "⏳" | null;
+
+/**
+ * Whether a slot with no run yet should be published as ⏳ — due, and still being started.
+ *
+ * Only for an outcome that leaves the slot UNRESOLVED: nothing recorded yet (`undefined`), a
+ * `waiting` (never stored, but a hand-written row could carry one), or a `fired` the detector has
+ * not caught up with. A terminal ⛔️ written in the attribution tail (`missed` at grace + 1 min)
+ * keeps today's hold rather than reading "trying to start" after the evaluator has given up.
+ */
+export function isInProgress(
+  outcome: ExerciseOutcome | undefined,
+  slotAtMs: number,
+  graceMinutes: number,
+  nowMs: number,
+): boolean {
+  if (nowMs < slotAtMs || nowMs > slotWindow(slotAtMs, graceMinutes).toMs)
+    return false;
+  return outcome === undefined || outcome === "waiting" || outcome === "fired";
+}
 
 /** Everything the marker needs about a run. A real `derived_intervals` row satisfies it. */
 export interface RunLike {

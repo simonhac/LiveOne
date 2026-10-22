@@ -52,7 +52,8 @@ jest.mock("@/lib/db/planetscale", () => ({
   }),
 }));
 
-const invoke = jest.fn<(ctx: any) => Promise<{ ok: boolean; reason?: string }>>();
+const invoke =
+  jest.fn<(ctx: any) => Promise<{ ok: boolean; reason?: string }>>();
 const getControlCapability = jest.fn<(v: string) => any>();
 jest.mock("@/lib/vendors/registry", () => ({
   VendorRegistry: {

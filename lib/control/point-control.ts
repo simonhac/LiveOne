@@ -119,7 +119,11 @@ export function pointControlEquals(
   if (x === null || y === null) return x === y;
   if (x.kind !== y.kind) return false;
   if (x.kind === "number" && y.kind === "number") {
-    return x.min === y.min && x.max === y.max && (x.step ?? undefined) === (y.step ?? undefined);
+    return (
+      x.min === y.min &&
+      x.max === y.max &&
+      (x.step ?? undefined) === (y.step ?? undefined)
+    );
   }
   // switch / button carry no further fields.
   return true;

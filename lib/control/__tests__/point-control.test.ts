@@ -73,11 +73,15 @@ describe("validatePointAction", () => {
 
   describe("number", () => {
     it("accepts set_value at min, at max and in between", () => {
-      expect(validatePointAction(NUMBER, "set_value", 50)).toEqual({ ok: true });
+      expect(validatePointAction(NUMBER, "set_value", 50)).toEqual({
+        ok: true,
+      });
       expect(validatePointAction(NUMBER, "set_value", 100)).toEqual({
         ok: true,
       });
-      expect(validatePointAction(NUMBER, "set_value", 80)).toEqual({ ok: true });
+      expect(validatePointAction(NUMBER, "set_value", 80)).toEqual({
+        ok: true,
+      });
     });
 
     it("does NOT enforce step — the vendor client rounds anyway", () => {
@@ -114,7 +118,8 @@ describe("validatePointAction", () => {
 
 describe("isPointActionName", () => {
   it("accepts exactly the four names", () => {
-    for (const name of POINT_ACTION_NAMES) expect(isPointActionName(name)).toBe(true);
+    for (const name of POINT_ACTION_NAMES)
+      expect(isPointActionName(name)).toBe(true);
     expect(isPointActionName("toggle")).toBe(false);
     expect(isPointActionName(7)).toBe(false);
   });
@@ -140,23 +145,50 @@ describe("pointControlEquals", () => {
   });
 
   it("compares number bounds field-wise", () => {
-    expect(pointControlEquals(NUMBER, { kind: "number", min: 50, max: 100, step: 1 })).toBe(true);
-    expect(pointControlEquals(NUMBER, { kind: "number", min: 0, max: 100, step: 1 })).toBe(false);
-    expect(pointControlEquals(NUMBER, { kind: "number", min: 50, max: 90, step: 1 })).toBe(false);
-    expect(pointControlEquals(NUMBER, { kind: "number", min: 50, max: 100, step: 5 })).toBe(false);
+    expect(
+      pointControlEquals(NUMBER, {
+        kind: "number",
+        min: 50,
+        max: 100,
+        step: 1,
+      }),
+    ).toBe(true);
+    expect(
+      pointControlEquals(NUMBER, { kind: "number", min: 0, max: 100, step: 1 }),
+    ).toBe(false);
+    expect(
+      pointControlEquals(NUMBER, { kind: "number", min: 50, max: 90, step: 1 }),
+    ).toBe(false);
+    expect(
+      pointControlEquals(NUMBER, {
+        kind: "number",
+        min: 50,
+        max: 100,
+        step: 5,
+      }),
+    ).toBe(false);
   });
 
   it("treats an absent step as undefined", () => {
     const a: PointControl = { kind: "number", min: 0, max: 48 };
-    const b: PointControl = { kind: "number", min: 0, max: 48, step: undefined };
+    const b: PointControl = {
+      kind: "number",
+      min: 0,
+      max: 48,
+      step: undefined,
+    };
     expect(pointControlEquals(a, b)).toBe(true);
-    expect(pointControlEquals(a, { kind: "number", min: 0, max: 48, step: 1 })).toBe(false);
+    expect(
+      pointControlEquals(a, { kind: "number", min: 0, max: 48, step: 1 }),
+    ).toBe(false);
   });
 
   it("🛑 is insensitive to key order — the jsonb round-trip case", () => {
     // Postgres returns jsonb with its own key order. A JSON.stringify comparison would call
     // these two different and re-upsert the point on EVERY poll, forever.
-    const fromPg = JSON.parse('{"max":100,"min":50,"kind":"number","step":1}') as PointControl;
+    const fromPg = JSON.parse(
+      '{"max":100,"min":50,"kind":"number","step":1}',
+    ) as PointControl;
     expect(pointControlEquals(fromPg, NUMBER)).toBe(true);
     expect(JSON.stringify(fromPg)).not.toBe(JSON.stringify(NUMBER)); // the trap is real
   });
