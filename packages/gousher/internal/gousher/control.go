@@ -376,9 +376,9 @@ func (s *Supervisor) SyntheticValues(now time.Time) map[string]any {
 		}
 	}
 	var lastErrorSince any
-	if s.status.LastError != "" {
-		lastError = s.status.LastError
-	}
+	// "" when clear, never nil: a nil reading is not pushed, so the stale error would never be
+	// overwritten in LiveOne (see controlLastError in packages/usher/core/control.ts).
+	lastError = s.status.LastError
 	if s.status.LastErrorSince != nil {
 		lastErrorSince = int64(math.Floor(float64(s.status.LastErrorSince.UnixMilli())/1000 + 0.5))
 	}

@@ -875,7 +875,12 @@ export class RunSupervisor {
       controlStopAt:
         this.stopAtMs != null ? Math.round(this.stopAtMs / 1000) : null,
       controlState: this.state(),
-      controlLastError: this.lastError,
+      // 🛑 "" when clear, NEVER null. A null reading is skipped at build time (build.ts), so it
+      // sends nothing — and LiveOne's latest map is only ever overwritten, so a cleared error would
+      // stay "current" forever. It did: a hub restart cleared this 2026-10-22, and the dialog still
+      // showed the September "is the Teleport VPN up?" error. "" is stored as-is all the way to the
+      // browser, where every reader already treats an empty text value as "no error".
+      controlLastError: this.lastError ?? "",
       controlLastErrorSince:
         this.lastErrorSinceMs != null
           ? Math.round(this.lastErrorSinceMs / 1000)
