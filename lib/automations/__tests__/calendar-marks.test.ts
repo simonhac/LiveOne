@@ -16,6 +16,7 @@ import {
 import {
   attributeRuns,
   attributionSlackMs,
+  isInProgress,
   markForOutcome,
   slotWindow,
 } from "@/lib/automations/calendar-marks";
@@ -173,5 +174,34 @@ describe("attributeRuns", () => {
     const later = slot(SLOT + 7 * 86_400_000);
     const run = { startMs: later.atMs + 60_000 };
     expect(attributeRuns([run], [slots[0], later]).size).toBe(1);
+  });
+});
+
+describe("isInProgress", () => {
+  const AT = Date.parse("2026-10-22T07:00:00+11:00");
+  const min = 60_000;
+
+  it("is ⏳ only inside the slot's own window", () => {
+    expect(isInProgress(undefined, AT, 180, AT - min)).toBe(false);
+    expect(isInProgress(undefined, AT, 180, AT)).toBe(true);
+    expect(isInProgress(undefined, AT, 180, AT + 180 * min)).toBe(true);
+    const closes = slotWindow(AT, 180).toMs;
+    expect(isInProgress(undefined, AT, 180, closes)).toBe(true);
+    expect(isInProgress(undefined, AT, 180, closes + 1)).toBe(false);
+  });
+
+  it("only for an UNRESOLVED outcome", () => {
+    const now = AT + 10 * min;
+    expect(isInProgress("fired", AT, 180, now)).toBe(true);
+    expect(isInProgress("waiting", AT, 180, now)).toBe(true);
+    for (const done of [
+      "missed",
+      "missed-running",
+      "satisfied",
+      "skipped-full",
+      "aborted-unloaded",
+      "aborted-complete",
+    ] as const)
+      expect(isInProgress(done, AT, 180, now)).toBe(false);
   });
 });

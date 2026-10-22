@@ -56,7 +56,7 @@ sentence with it.
 ## What actually happened
 
 Every past event carries one glyph: **✅** it ran · **⏭️** it was deliberately not started · **⛔️**
-it should have started and did not.
+it should have started and did not · **⏳** it is due and still being started (grace window open).
 
 The sources are records, and only records:
 
@@ -65,6 +65,7 @@ The sources are records, and only records:
 | ✅ | a row in `derived_intervals` | the run's own `start_time`/`end_time` |
 | ⏭️ | `automation_slot_outcomes` — `satisfied` or `skipped-full` | the recorded `slot_at` |
 | ⛔️ | `automation_slot_outcomes` — anything else terminal | the recorded `slot_at` |
+| ⏳ | an occurrence inside its grace window that no run answers yet — nothing recorded, or `fired`; the body comes from `automations.armed_context` | the occurrence's instant |
 
 **Every generator start is published**, scheduled or not. A run is titled for the rule whose slot
 claims it, and `<detector> run (unscheduled)` otherwise — so a start from the generator's own panel
@@ -84,6 +85,16 @@ dispatch, and the detector needs samples before it opens an interval — so for 
 there is a recorded start and no run, which is exactly the shape of a failure. Publishing then would
 put *"Did not run"* on the feed while the engine was turning over. A ⏭️ needs no such wait: it is a
 decision that nothing *will* run, not an absence of evidence.
+
+🛑 **…and while it waits, the slot is ⏳ rather than nothing.** The master EXDATEs an occurrence the
+instant it passes, so before ⏳ a slot spent its whole grace window as *silence* — on 2026-10-22 every
+dispatch failed for three hours and the calendar showed nothing until the ⛔️. The ⏳ uses the UID the
+⛔️ will take (`slot-<rule>-<instant>`), so a client replaces it in place. Its body is the rule's own
+decision log (`armed_context`, matched on `slotAt`): "Starting: the start was sent at …", or "Trying
+to start (N tries since …). Last try at …: <the dispatcher's error>", and when it will give up. This
+is the one exception to "nothing from silence", and a narrow one: only the occurrence the evaluator
+is acting on *now*, and only for an enabled rule. A terminal ⛔️ written in the attribution tail
+(`missed`, at grace + 1 min) keeps the hold rather than reading "trying to start".
 
 🛑 **A recorded slot left empty takes its run back from an expansion of its own rule.** When a rule
 is edited, the recorded instant and the occurrence today's schedule expands to are two versions of

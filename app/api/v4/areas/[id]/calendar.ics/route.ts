@@ -47,6 +47,7 @@ import {
 import {
   attributeRuns,
   attributionSlackMs,
+  isInProgress,
   markForOutcome,
   slotWindow,
   type MarkableSlot,
@@ -421,6 +422,45 @@ export async function GET(
       const plan = slotRules.get(key);
       if (!plan || plan.derivationId !== derivationId) continue;
       const outcome = outcomes.get(plan.row.id)?.get(atMs);
+      const grace = plan.trigger.schedule.graceMinutes;
+      // ⏳ while the grace window is open and no run has answered. Before this, a slot spent its
+      // whole window — three hours on 2026-10-22, every dispatch 530ing — as NOTHING in the feed:
+      // the master EXDATEs an occurrence the instant it passes, and the ⛔️ below waits for the
+      // window to close. Same UID as that ⛔️, so the client swaps it in place when it lands.
+      //
+      // An unrecorded slot is published here despite "no record, no event" below: that rule guards
+      // against a schedule edit moving the expansion under history, and an occurrence still inside
+      // its own window is the one the evaluator is about to act on. A disabled rule's unrecorded
+      // slot is not — nothing will try it.
+      if (
+        isInProgress(outcome, atMs, grace, nowMs) &&
+        (outcome !== undefined || plan.row.enabled)
+      ) {
+        const at = DateTime.fromMillis(atMs, { zone: timezone });
+        if (!at.isValid) continue;
+        accountedFor.add(key);
+        noteAccounted(plan.row.id, atMs);
+        past.push({
+          uid: `slot-${plan.row.id}-${atMs}@liveone.energy`,
+          start: at,
+          end: at.plus({ minutes: plan.minutes }),
+          summary: `⏳ ${plan.row.name}`,
+          description: describeRule(plan.row, plan.trigger, plan.minutes, {
+            mark: "⏳",
+            outcome: outcome ?? null,
+            run: null,
+            progress: describeProgress(
+              plan.row,
+              atMs,
+              outcome,
+              grace,
+              timezone,
+            ),
+          }),
+          sequence: Math.floor(plan.row.updatedAt.getTime() / 1000),
+        });
+        continue;
+      }
       // 🛑 No record, no event. An occurrence that today's schedule expands to but the evaluator
       // never wrote about cannot be placed truthfully — the expansion moves when the schedule is
       // edited — so it is simply absent rather than published at a time it may never have had.
@@ -432,11 +472,7 @@ export async function GET(
       // in between there is a recorded start and no run, which is exactly the shape of a failure.
       // Publishing then would put "Did not run" on the feed while the engine was turning over.
       // A ⏭️ needs no such wait: it is a decision that nothing WILL run, not an absence of evidence.
-      if (
-        mark === "⛔️" &&
-        nowMs <= slotWindow(atMs, plan.trigger.schedule.graceMinutes).toMs
-      )
-        continue;
+      if (mark === "⛔️" && nowMs <= slotWindow(atMs, grace).toMs) continue;
       const at = DateTime.fromMillis(atMs, { zone: timezone });
       if (!at.isValid) continue;
       accountedFor.add(key);
@@ -854,6 +890,7 @@ function describeOutcome(args: {
   outcome: ExerciseOutcome | null;
   run: ClosedRun | null;
   graceMinutes: number;
+  progress?: string;
 }): string | null {
   switch (args.mark) {
     case "✅":
@@ -867,9 +904,61 @@ function describeOutcome(args: {
         `Did not run: no start was detected within ${args.graceMinutes} minutes ` +
         "of the scheduled time."
       );
+    case "⏳":
+      return args.progress ?? null;
     default:
       return null;
   }
+}
+
+/**
+ * Where a ⏳ slot has got to, from the rule's own decision log (`armed_context`) — the only place
+ * an in-window dispatch failure is recorded, since `waiting` never reaches `automation_slot_outcomes`.
+ *
+ * 🛑 The reason is the hub's or the dispatcher's own text, trimmed: it is the whole value of the
+ * event ("dispatch failed: 530" is what tells a subscriber to go and look), but it is not ours to
+ * let grow without bound in a body Calendar.app shows inline.
+ */
+function describeProgress(
+  row: AutomationRow,
+  slotAtMs: number,
+  /** The slot's RECORDED outcome — `fired` stands even when the log has moved on or is absent. */
+  outcome: ExerciseOutcome | undefined,
+  graceMinutes: number,
+  timezone: string,
+): string {
+  const clock = (ms: number) =>
+    DateTime.fromMillis(ms, { zone: timezone }).toFormat("h:mm a");
+  const raw = row.armedContext;
+  const ctx =
+    raw && "kind" in raw && raw.kind === "exercise" && raw.slotAt === slotAtMs
+      ? raw
+      : null;
+  let status: string;
+  if (ctx?.outcome === "fired" || outcome === "fired") {
+    const sent = ctx?.outcome === "fired" ? ` at ${clock(ctx.at)}` : "";
+    status = `Starting: the start was sent${sent}; waiting for the engine to be detected running.`;
+  } else if (ctx?.outcome === "waiting") {
+    const reason = ctx.reason
+      ? ctx.reason.length > 200
+        ? `${ctx.reason.slice(0, 199)}…`
+        : ctx.reason
+      : null;
+    const tries =
+      ctx.ticks !== undefined && ctx.ticks > 1
+        ? ` (${ctx.ticks} tries since ${clock(ctx.firstSeenAt ?? slotAtMs)})`
+        : "";
+    status =
+      `Trying to start${tries}. Last try at ${clock(ctx.at)}` +
+      (reason ? `: ${reason}.` : ".");
+  } else {
+    status = "Due: waiting for the scheduler to start it.";
+  }
+  return (
+    `${status}\n` +
+    `Still due until ${clock(slotAtMs + graceMinutes * 60_000)}; ` +
+    "after that it is marked as not run."
+  );
 }
 
 /** The event body: what it does, what would stop it doing it, and — once past — what happened. */
@@ -881,6 +970,8 @@ function describeRule(
     mark: SlotMark;
     outcome: ExerciseOutcome | null;
     run: ClosedRun | null;
+    /** The ⏳ body — see `describeProgress`. */
+    progress?: string;
   },
 ): string {
   // 🛑 FIRST. On a past occurrence the outcome is the whole reason a subscriber opened the event,
@@ -912,7 +1003,12 @@ function describeRule(
       `A missed start will stay due for ${trigger.schedule.graceMinutes} minutes.`,
     );
   } else {
-    lines.push("Criteria:", `Was scheduled to run for ${minutes} minutes.`);
+    lines.push(
+      "Criteria:",
+      decided.mark === "⏳"
+        ? `Scheduled to run for ${minutes} minutes.`
+        : `Was scheduled to run for ${minutes} minutes.`,
+    );
     if (trigger.unless)
       lines.push(
         `Would have been skipped if it had already run for ${trigger.unless.minMinutes} minutes ` +
