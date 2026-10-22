@@ -117,6 +117,8 @@ function GeneratorTile({
   const status = describeGeneratorState(state, mode, {
     rpm,
     controllerOffline: offline,
+    // At rest by construction: it only matters in the idle-and-offline case, where nothing turns.
+    starterBattery: batteryLevel(batteryV, false),
   });
   // A stale battery reading is still the last thing we know — it is how the outage is explained —
   // but it is judged only while the engine is stopped (the alternator masks it while running).
@@ -340,7 +342,7 @@ function GeneratorTile({
       ? `last heard ${formatAge((nowMs - lastReadMs) / 1000)}`
       : null;
   const detailWords = offline
-    ? status.label === "Offline"
+    ? status.controllerOffline
       ? // The age IS the news: "not responding" for a minute and for three days are different
         // problems.
         [status.detail, lastHeard].filter(Boolean).join(" · ")
@@ -349,7 +351,7 @@ function GeneratorTile({
         `${status.detail ? `${status.detail} · ` : ""}controller not responding`
     : status.isRunning && mode && !panelIsAuto(mode)
       ? `${status.detail ? `${status.detail} · ` : ""}panel in ${mode}`
-      : !status.isRunning && battery !== "ok"
+      : !status.isRunning && battery !== "ok" && !status.batteryIsHero
         ? // "Ready to start" over a battery that may not crank it would be the wrong reassurance.
           battery === "flat"
           ? "Starter battery flat"

@@ -233,7 +233,7 @@ export const GENERATOR_SCENARIOS: Record<string, LatestPointValues> = {
    * Daylesford, 22 October 2026, frozen: the starter battery collapsed and took the controller's
    * power with it on the 19th. The hub kept publishing its OWN points every tick (fresh `idle`), so
    * the tile read "Auto · Ready to start", never stale, for three days — under an "!" that was a
-   * month-old, unrelated error. Must render "Offline", "last heard 3 d ago", a flat battery, and no
+   * month-old, unrelated error. Must render "Flat battery", "last heard 3 d ago", a flat battery, and no
    * "!".
    */
   "controller offline (flat battery)": {

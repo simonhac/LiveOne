@@ -451,6 +451,55 @@ describe("a controller that has stopped answering", () => {
     ).toBe("Offline");
   });
 
+  it("names a flat starter battery as the reason it is offline", () => {
+    expect(
+      describeGeneratorState("idle", "Auto", {
+        controllerOffline: true,
+        starterBattery: "flat",
+      }),
+    ).toMatchObject({
+      label: "Flat battery",
+      detail: "Controller not responding",
+      tone: "warning",
+      controllerOffline: true,
+    });
+    // A merely LOW battery is not why a controller goes silent — still just Offline.
+    expect(
+      describeGeneratorState("idle", "Auto", {
+        controllerOffline: true,
+        starterBattery: "low",
+      }).label,
+    ).toBe("Offline");
+  });
+
+  it("an answering controller over a weak battery is not 'Ready to start'", () => {
+    expect(
+      describeGeneratorState("idle", "Auto", { starterBattery: "low" }),
+    ).toMatchObject({
+      label: "Low battery",
+      detail: "Auto · may not start",
+      tone: "warning",
+      batteryIsHero: true,
+    });
+    expect(
+      describeGeneratorState("idle", "Auto", { starterBattery: "flat" }).label,
+    ).toBe("Flat battery");
+    expect(
+      describeGeneratorState("idle", null, { starterBattery: "low" }).detail,
+    ).toBe("May not start");
+    // A locked-out panel is the more fundamental reason it will not start.
+    expect(
+      describeGeneratorState("idle", "Stop", { starterBattery: "low" }).label,
+    ).toBe("Locked out");
+    // …and a battery never hides a run the hub is holding.
+    expect(
+      describeGeneratorState("stop-failing", "Auto", {
+        controllerOffline: true,
+        starterBattery: "flat",
+      }).label,
+    ).toBe("Stop failing");
+  });
+
   it("keeps the hub's own run states — stop-failing must never hide behind Offline", () => {
     expect(
       describeGeneratorState("stop-failing", "Auto", {
