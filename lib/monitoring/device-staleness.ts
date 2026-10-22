@@ -84,11 +84,26 @@ export interface StaleAdapter {
 }
 
 /**
- * Evaluate every active POLL device's health.
+ * Whether the monitor judges this vendor's devices at all.
  *
- * Push vendors (the Fly hub's deepsea/fusher sites) are skipped: they have no schedule to be late
- * against, so their freshness is the pusher's problem and is covered by their own external
- * heartbeats. Derived `helper` devices are skipped for the same reason — nothing polls them.
+ * Every POLL vendor. A PUSH vendor only when it declares a `staleBudgetMinutes`: it has no schedule
+ * to be late against, so the budget is the one fact that says how long silence may last. Undeclared
+ * push vendors stay skipped — their freshness is their own external heartbeat's job.
+ *
+ * 🛑 DeepSea declares one since October 2026, when its controller had no power for three days and
+ * nothing here noticed. That only works because gusher records a control-plane-only batch as a
+ * FAILED read (`lib/push/control-plane.ts`); before that, the hub's own points made every batch a
+ * "success" and `last_success_time` could never go stale.
+ */
+export function isMonitored(adapter: StaleAdapter): boolean {
+  return (
+    adapter.dataSource !== "push" || adapter.staleBudgetMinutes !== undefined
+  );
+}
+
+/**
+ * Evaluate every active monitored device's health — see {@link isMonitored}. Derived `helper`
+ * devices are skipped: nothing polls them, and they have no adapter.
  *
  * 🛑 **The database's clock is the only clock.** Staleness and the maintenance-window position get
  * subtracted from each other, so they must be sampled at the same instant: `now()` in the query
@@ -119,7 +134,7 @@ export async function evaluateDeviceHealth(
     const adapter = VendorRegistry.getAdapter(
       row.vendor,
     ) as unknown as StaleAdapter | null;
-    if (!adapter || adapter.dataSource === "push") continue;
+    if (!adapter || !isMonitored(adapter)) continue;
     out.push(
       classifyDeviceHealth(
         {

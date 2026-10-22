@@ -403,9 +403,19 @@ export function decideExercise(
           // 🛑 A `missed` used to carry no reason at all, which is what made the 2026-09-12 slot
           // opaque for days. Say how long the grace window was, how far past it we are, and — with
           // `ticks` — whether anything ever looked at the slot while it was still actionable.
+          //
+          // And WHY it never fired, when a retry loop is what used up the grace: the `waiting` this
+          // replaces carried the dispatch failure ("hub returned a non-JSON 530 response"), and
+          // overwriting it with "grace expired" erased the one fact that said what to fix — the
+          // 22 Oct 2026 slot read as a bare timeout after 181 failed starts.
           reason:
             `grace of ${input.graceMinutes} min expired; ${lateBy} min past the slot` +
-            (input.openRun ? ", and a run was in progress" : ""),
+            (input.openRun ? ", and a run was in progress" : "") +
+            (input.prior?.slotAt === slot.atMs &&
+            input.prior.outcome === "waiting" &&
+            input.prior.reason
+              ? `; last attempt: ${input.prior.reason}`
+              : ""),
         },
       ),
     };

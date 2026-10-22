@@ -95,6 +95,18 @@ describe("recoveryNotice", () => {
   });
 });
 
+describe("recoveryNotice for a monitored push device", () => {
+  it("announces the end of an outage the monitor alerted on", () => {
+    const text = recoveryNotice({
+      device: KUTIS,
+      adapter: { dataSource: "push", staleBudgetMinutes: 20 },
+      prev: { prevSuccessMs: RECOVERED - 600 * MIN, prevConsecutiveErrors: 0 },
+      recoveredAtMs: RECOVERED,
+    });
+    expect(text).toContain("recovered");
+  });
+});
+
 describe("formatOutage", () => {
   it("reads like a person would say it", () => {
     expect(formatOutage(40 * MIN)).toBe("40 m");

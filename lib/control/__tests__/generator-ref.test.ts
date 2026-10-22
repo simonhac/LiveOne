@@ -8,8 +8,13 @@
  */
 import { describe, it, expect } from "@jest/globals";
 import {
+  batteryLevel,
+  controlErrorIsRecent,
+  controllerIsOffline,
   CRANK_RPM,
   describeGeneratorState,
+  GENERATOR_OFFLINE_AFTER_MS,
+  lastControllerReadingMs,
   firstPresentPath,
   GENERATOR_RPM_PATHS,
   openRunIsLive,
@@ -394,5 +399,99 @@ describe("openRunIsLive", () => {
 
   it("stays false when neither source reports a run", () => {
     expect(openRunIsLive(false, 0)).toBe(false);
+  });
+});
+
+/**
+ * Daylesford, 19–22 October 2026: the starter battery's charger stopped after an exercise run, the
+ * battery collapsed, and the controller lost power. The hub kept publishing its own control points
+ * every tick, so the tile read "Auto · Ready to start" — never stale — for three days, under an "!"
+ * that was a month-old, unrelated error.
+ */
+describe("a controller that has stopped answering", () => {
+  const NOW_OCT = Date.parse("2026-10-21T23:00:00.000Z");
+  const DEAD_AT = "2026-10-18T18:28:00.000Z";
+  const at = (iso: string) => ({ measurementTime: iso });
+  const latest = {
+    // The hub's own points: fresh every tick, whatever the controller is doing.
+    "source.generator.control.status/state": at("2026-10-21T22:59:45.000Z"),
+    "source.generator.control.error/state": at("2026-09-18T02:09:25.000Z"),
+    // The controller's readings: frozen at its last breath.
+    "source.generator.mode/state": at(DEAD_AT),
+    "generator.engine/speed": at(DEAD_AT),
+    "generator.battery/voltage": at(DEAD_AT),
+  };
+
+  it("🛑 judges freshness on the controller's readings, never on control.*", () => {
+    expect(lastControllerReadingMs(latest)).toBe(Date.parse(DEAD_AT));
+    expect(controllerIsOffline(lastControllerReadingMs(latest), NOW_OCT)).toBe(
+      true,
+    );
+  });
+
+  it("does not call a healthy stopped generator offline between 5-minute pushes", () => {
+    const fresh = Date.parse("2026-10-21T22:50:00.000Z");
+    expect(controllerIsOffline(fresh, NOW_OCT)).toBe(false);
+    expect(
+      controllerIsOffline(NOW_OCT - GENERATOR_OFFLINE_AFTER_MS - 1, NOW_OCT),
+    ).toBe(true);
+  });
+
+  it("has no opinion when no controller reading has ever arrived", () => {
+    expect(lastControllerReadingMs({})).toBeNull();
+    expect(controllerIsOffline(null, NOW_OCT)).toBe(false);
+  });
+
+  it("🛑 says Offline rather than resolving idle against a stale panel mode", () => {
+    expect(
+      describeGeneratorState("idle", "Auto", { controllerOffline: true }),
+    ).toMatchObject({ label: "Offline", tone: "warning", isRunning: false });
+    expect(
+      describeGeneratorState(null, null, { controllerOffline: true }).label,
+    ).toBe("Offline");
+  });
+
+  it("keeps the hub's own run states — stop-failing must never hide behind Offline", () => {
+    expect(
+      describeGeneratorState("stop-failing", "Auto", {
+        controllerOffline: true,
+      }).label,
+    ).toBe("Stop failing");
+    expect(
+      describeGeneratorState("running:hub", "Auto", {
+        controllerOffline: true,
+      }).label,
+    ).toBe("Running");
+  });
+
+  it("drops a month-old control error instead of flagging it forever", () => {
+    const errMs = Date.parse("2026-09-18T02:09:25.000Z");
+    expect(controlErrorIsRecent(errMs, NOW_OCT)).toBe(false);
+    expect(controlErrorIsRecent(NOW_OCT - 3_600_000, NOW_OCT)).toBe(true);
+    expect(controlErrorIsRecent(null, NOW_OCT)).toBe(false);
+  });
+});
+
+describe("batteryLevel", () => {
+  it("reads the Daylesford collapse at rest", () => {
+    expect(batteryLevel(13.3, false)).toBe("ok"); // on its charger
+    expect(batteryLevel(12.7, false)).toBe("ok"); // charger gone, not yet low
+    expect(batteryLevel(12.1, false)).toBe("low");
+    expect(batteryLevel(3.6, false)).toBe("flat");
+  });
+
+  it("has no opinion while the alternator holds the bus", () => {
+    expect(batteryLevel(11.0, true)).toBe("ok");
+  });
+
+  it("scales for a 24 V system", () => {
+    expect(batteryLevel(26.6, false)).toBe("ok");
+    expect(batteryLevel(24.0, false)).toBe("low");
+    expect(batteryLevel(22.0, false)).toBe("flat");
+  });
+
+  it("has no opinion without a reading", () => {
+    expect(batteryLevel(null, false)).toBe("ok");
+    expect(batteryLevel(0, false)).toBe("ok");
   });
 });

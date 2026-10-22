@@ -12,6 +12,10 @@ import { getDeviceCredentials } from "@/lib/secure-credentials";
 import type { PointReadingInput } from "@/lib/vendors/types";
 import type { GushRequestBody } from "@/lib/push/types";
 import { DeviceConfigRegistry } from "@/lib/registry/device-config";
+import { isControlOnlyBatch } from "@/lib/push/control-plane";
+import { announceRecovery } from "@/lib/monitoring/recovery";
+import type { StaleAdapter } from "@/lib/monitoring/device-staleness";
+import { VendorRegistry } from "@/lib/vendors/registry";
 
 /**
  * gusher — the generic push receiver.
@@ -249,14 +253,48 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      await updatePollingStatusSuccess(
-        device.id,
-        {
-          sessionLabel: data.sessionLabel,
-          readings: readingsToInsert.length,
-        },
-        sessionStart,
-      );
+      // 🛑 A batch of nothing but the hub's own control-plane points is a FAILED device read, not a
+      // successful poll: the hub merges those points into every tick, including the ones where the
+      // device did not answer (lib/push/control-plane.ts). Recording it as a success is how a
+      // generator controller with no power looked current for three days in October 2026 — to
+      // `device_state`, to the staleness monitor, and to `/api/health/devices`. The readings are
+      // still stored; only the verdict about the DEVICE changes.
+      if (
+        isControlOnlyBatch(
+          readingsToInsert.map((r) => r.pointMetadata.logicalPathStem),
+        )
+      ) {
+        await updatePollingStatusError(
+          device.id,
+          "The hub could not read the device: this batch carried only its own control-plane points",
+          {
+            sessionLabel: data.sessionLabel,
+            readings: readingsToInsert.length,
+            controlOnly: true,
+          },
+          sessionStart,
+        );
+      } else {
+        const prev = await updatePollingStatusSuccess(
+          device.id,
+          {
+            sessionLabel: data.sessionLabel,
+            readings: readingsToInsert.length,
+          },
+          sessionStart,
+        );
+        // The batch that ends an outage the monitor was alerting on says so, once — the push twin
+        // of the poll path's notice (lib/vendors/base-adapter.ts). A no-op for a push vendor that
+        // declares no staleness budget, since the monitor never alerted on it.
+        const adapter = VendorRegistry.getAdapter(device.vendorType);
+        if (adapter)
+          await announceRecovery({
+            device,
+            adapter: adapter as unknown as StaleAdapter,
+            prev,
+            recoveredAtMs: sessionStart.getTime(),
+          });
+      }
 
       await sessionManager.updateSessionResult(
         session.id,

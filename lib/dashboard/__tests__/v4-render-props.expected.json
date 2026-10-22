@@ -623,7 +623,7 @@
           "accessory": {
             "$element": "Fragment",
             "$props": {
-              "children": [null, false]
+              "children": [false, false]
             }
           },
           "extraInfo": "Ready to start",
@@ -631,7 +631,7 @@
             "$element": "Gauge"
           },
           "measurementTime": "<Date 2026-07-30T04:05:00.000Z>",
-          "staleThresholdSeconds": 60,
+          "staleThresholdSeconds": 900,
           "title": "Generator",
           "value": "Auto",
           "valueColor": "text-tile-ink-idle"

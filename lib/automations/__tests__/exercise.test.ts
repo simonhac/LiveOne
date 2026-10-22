@@ -519,6 +519,54 @@ describe("decideExercise", () => {
     expect(d.kind !== "dispatch" && d.context.reason).toContain("200 min past");
   });
 
+  // 22 Oct 2026: 181 dispatches failed on a dead control tunnel, and the record that survived said
+  // only "grace expired". The failure that used up the grace must outlive it.
+  it("🛑 a missed slot keeps the reason its last attempt failed", () => {
+    const d = decideExercise(
+      {
+        ...base,
+        evidence: null,
+        openRun: false,
+        prior: {
+          kind: "exercise",
+          slotAt: slot.atMs,
+          at: slot.atMs + 179 * MIN,
+          outcome: "waiting",
+          reason:
+            "dispatch unavailable: The generator hub returned a non-JSON 530 response",
+          ticks: 180,
+          firstSeenAt: slot.atMs,
+        },
+      },
+      slot.atMs + 181 * MIN,
+    );
+    expect(d.kind !== "dispatch" && d.context.reason).toContain(
+      "last attempt: dispatch unavailable: The generator hub returned a non-JSON 530 response",
+    );
+    expect(d.kind !== "dispatch" && d.context.ticks).toBe(181);
+  });
+
+  it("does not borrow a reason from a different slot", () => {
+    const d = decideExercise(
+      {
+        ...base,
+        evidence: null,
+        openRun: false,
+        prior: {
+          kind: "exercise",
+          slotAt: slot.atMs - 7 * 24 * 60 * MIN,
+          at: slot.atMs - 7 * 24 * 60 * MIN,
+          outcome: "waiting",
+          reason: "an old failure",
+        },
+      },
+      slot.atMs + 200 * MIN,
+    );
+    expect(d.kind !== "dispatch" && d.context.reason).not.toContain(
+      "last attempt",
+    );
+  });
+
   it("consumes as satisfied when a long enough loaded run already happened", () => {
     const d = decideExercise(
       { ...base, evidence: loaded(45), openRun: false },

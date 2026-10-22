@@ -23,6 +23,9 @@
  *      recent estimated fraction (attribution leaning on estimated/missing inputs). Skipped where no
  *      helper devices exist. A faithful "runaway segment" alert needs the fold's segment age persisted
  *      (see docs/architecture/battery-provenance.md, follow-ups) — deferred.
+ *   2c. GENERATORS — every area with an exercise rule, through the same `assessGeneratorHealth` list
+ *      the tile's issues chip shows (controller offline, starter battery, exercise failing/missed).
+ *      Sends its OWN messages, throttled per episode — see lib/monitoring/generator-alerts.ts.
  *   5c. Battery SoC ↔ METER reconciliation — per area and complete day, ΔSoC·C must match the metered
  *      registers through the three-term loss model (η_c·chg − dis − idle). A residual above tolerance =
  *      a REAL meter/SoC feed failure (or a flagged, benign BMS recal snap) — the thing the loss model
@@ -53,6 +56,7 @@ import {
   evaluateDeviceHealth,
   unhealthy,
 } from "@/lib/monitoring/device-staleness";
+import { checkGeneratorAlerts } from "@/lib/monitoring/generator-alerts";
 
 export const maxDuration = 30;
 
@@ -297,6 +301,22 @@ export async function GET(request: NextRequest) {
       severity: "alert",
       code: "device_staleness_check_failed",
       message: `Could not evaluate per-device poll staleness: ${String(err)}`,
+    });
+  }
+
+  // ── 2c: generators ──
+  // Separate try, and its own messages (throttled per episode) rather than this route's banner: a
+  // flat starter battery is not an "observations mirror" fault, and repeating it every 15 min for
+  // the days it takes someone to reach the site would only teach the channel to be muted.
+  try {
+    const generators = await checkGeneratorAlerts();
+    checks.generators = generators;
+  } catch (err) {
+    console.error("[MonitorObservations] generator check failed:", err);
+    issues.push({
+      severity: "warn",
+      code: "generator_check_failed",
+      message: `Could not evaluate generator health: ${String(err)}`,
     });
   }
 

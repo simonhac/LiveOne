@@ -14,6 +14,7 @@
  * gallery renders client-side only (see CardGallery's mounted gate): an SSR pass would bake a
  * different "now" into the HTML than the browser computes, and every relative time would mismatch.
  */
+import type { ExerciseRuleState } from "@/lib/control/generator-health";
 import type { LatestPointValue, LatestPointValues } from "@/lib/types/api";
 import type { LatestValue } from "@/lib/amber-utils";
 import type { GridLiveValues } from "@/lib/grid/latest";
@@ -176,6 +177,10 @@ const genRpm = (rpm: number) =>
 const genHz = (hz: number) =>
   mk(hz, "generator.output/frequency", "Hz", "Generator Frequency");
 
+/** The starter battery — legacy path, like rpm/Hz, because that is what prod carries. */
+const genBattery = (volts: number, ageSeconds?: number) =>
+  mk(volts, "generator.battery/voltage", "V", "Battery Voltage", ageSeconds);
+
 /** The engine, turning: rpm + Hz together, since the tile shows them as one row. */
 const engine = (rpm: number, hz: number) => ({
   "generator.engine/speed": genRpm(rpm),
@@ -203,7 +208,43 @@ export const GENERATOR_SCENARIOS: Record<string, LatestPointValues> = {
     "source.generator.control.status/state": genState("idle"),
     "source.generator.mode/state": genMode("Auto"),
     "source.generator/running": genRunning(0),
+    "generator.battery/voltage": genBattery(13.3),
     ...engine(0, 0),
+  },
+  // The charger has stopped: the controller still answers, but "Ready to start" over a battery that
+  // may not crank the engine would be the wrong reassurance.
+  "auto, battery low": {
+    "source.generator.control.status/state": genState("idle"),
+    "source.generator.mode/state": genMode("Auto"),
+    "source.generator/running": genRunning(0),
+    "generator.battery/voltage": genBattery(12.1),
+    ...engine(0, 0),
+  },
+  /**
+   * Daylesford, 22 October 2026, frozen: the starter battery collapsed and took the controller's
+   * power with it on the 19th. The hub kept publishing its OWN points every tick (fresh `idle`), so
+   * the tile read "Auto · Ready to start", never stale, for three days — under an "!" that was a
+   * month-old, unrelated error. Must render "Offline", "last heard 3 d ago", a flat battery, and no
+   * "!".
+   */
+  "controller offline (flat battery)": {
+    "source.generator.control.status/state": genState("idle"),
+    "source.generator.control.error/state": mkText(
+      "stop write failed: TCP connect to 10.0.1.244:502 timed out after 5000ms",
+      "source.generator.control.error/state",
+      "Control Last Error",
+      34 * 86_400,
+    ),
+    "source.generator.mode/state": genMode("Auto", 3 * 86_400),
+    "source.generator/running": genRunning(0),
+    "generator.battery/voltage": genBattery(3.6, 3 * 86_400),
+    "generator.engine/speed": mk(
+      0,
+      "generator.engine/speed",
+      "rpm",
+      "Engine Speed",
+      3 * 86_400,
+    ),
   },
   // The first ~10 s of our own run: the hub has latched, so it reports `running:hub`, but the
   // starter is still turning the engine. Below CRANK_RPM the hero must read "Starting" — this used
@@ -222,6 +263,7 @@ export const GENERATOR_SCENARIOS: Record<string, LatestPointValues> = {
     "source.generator.control.stop_at/time": stopAt(23),
     "source.generator.mode/state": genMode("Auto"),
     "source.generator/running": genRunning(1),
+    "generator.battery/voltage": genBattery(14.4),
     ...engine(1502, 50.1),
   },
   "running (inverter)": {
@@ -316,6 +358,31 @@ const RUN_REQUEST: LatestPointValue = {
  * Every generator scenario again, with the control point added — the shape a viewer who OWNS the
  * generator sees. Derived rather than hand-written so the two can never describe different engines.
  */
+/**
+ * The exercise rules behind a scenario's issues chip — what `GET …/generator-health` reads besides
+ * the latest map. Only the October 2026 outage has one: its exercise was mid-way through 181 failed
+ * dispatches, which is the line the chip existed to show and the old "!" could not.
+ */
+export const GENERATOR_EXERCISES: Partial<Record<string, ExerciseRuleState[]>> =
+  {
+    "controller offline (flat battery)": [
+      {
+        name: "Generator exercise",
+        enabled: true,
+        context: {
+          kind: "exercise",
+          slotAt: Date.now() - 175 * 60_000,
+          outcome: "waiting",
+          at: Date.now() - 60_000,
+          reason:
+            "dispatch unavailable: The generator hub returned a non-JSON 530 response",
+          ticks: 175,
+          firstSeenAt: Date.now() - 175 * 60_000,
+        },
+      },
+    ],
+  };
+
 export const GENERATOR_CONTROL_SCENARIOS: Record<string, LatestPointValues> =
   Object.fromEntries(
     Object.entries(GENERATOR_SCENARIOS).map(([name, latest]) => [

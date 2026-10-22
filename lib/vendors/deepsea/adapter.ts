@@ -14,6 +14,13 @@ export class DeepSeaAdapter extends BaseVendorAdapter {
   readonly dataSource = "push" as const;
 
   /**
+   * Opts the generator into the device-health monitor (`isMonitored`): four missed 5-minute idle
+   * pushes. Meaningful only because gusher counts a control-plane-only batch — the hub reporting on
+   * itself while the controller does not answer — as a FAILED read; see lib/push/control-plane.ts.
+   */
+  override readonly staleBudgetMinutes = 20;
+
+  /**
    * Commands the generator's run-request point by forwarding to the usher hub, which holds the
    * DSE's start latch and owns the run deadline. Present only because one deepsea point is
    * writable (see lib/control/control-registry.ts); the poll/push path is untouched by it.

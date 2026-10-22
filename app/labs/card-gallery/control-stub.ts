@@ -28,6 +28,7 @@
  * thing the real dialog is written never to have.
  */
 
+import type { GeneratorHealth } from "@/lib/control/generator-health";
 import type { StructuredMessage } from "@/lib/control/message-format";
 
 interface PreflightBody {
@@ -271,6 +272,12 @@ export function installControlStub(opts: {
    * pickers. Sharing one answer would let a pick in one section rewrite the other's data.
    */
   runOpen?: (systemId: number) => boolean;
+  /**
+   * The generator tile's issues list for this handle — `/api/v4/areas/{ar_}/generator-health`. The
+   * stubbed `/api/data` names an area per handle (`ar_gallery{N}`) so the tile has an area to ask
+   * about; absent ⇒ the route 404s and the tile falls back to its bare "!".
+   */
+  generatorHealth?: (systemId: number) => GeneratorHealth;
 }): () => void {
   const real = globalThis.fetch;
 
@@ -285,6 +292,7 @@ export function installControlStub(opts: {
     const handled =
       url.includes("/api/v4/points/") ||
       url.includes("/run-periods") ||
+      url.includes("/generator-health") ||
       url.includes("/api/data");
     if (!handled) return real(input, init);
 
@@ -371,9 +379,31 @@ export function installControlStub(opts: {
       });
     }
 
+    if (url.includes("/generator-health")) {
+      const systemId = Number(url.match(/ar_gallery(\d+)/)?.[1] ?? 0);
+      await wait(150);
+      const health = opts.generatorHealth?.(systemId);
+      return health ? json(health) : json({ error: "not stubbed" }, 404);
+    }
+
     if (url.includes("/api/data")) {
       await wait(150);
-      return json({ latest: {}, canControl: true, canControlDevices: [14] });
+      const systemId = Number(
+        new URL(url, "http://localhost").searchParams.get("systemId") ?? 0,
+      );
+      return json({
+        latest: {},
+        canControl: true,
+        canControlDevices: [14],
+        // An area per handle, so area-scoped reads (the generator's issues list) have a subject.
+        area: {
+          id: systemId,
+          areaId: `ar_gallery${systemId}`,
+          timezoneOffsetMin: 600,
+          dayOffsetMin: 600,
+          displayTimezone: "Australia/Melbourne",
+        },
+      });
     }
 
     return real(input, init);

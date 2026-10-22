@@ -14,18 +14,27 @@ import { useTemporalRange } from "@/lib/charts/useTemporalRange";
 import { getPeriodDuration } from "@/lib/charts/temporal";
 import { formatDollars, formatKwh, pricedTotal } from "@/lib/provenance-format";
 import { runPeriodsQuery } from "@/lib/queries/runPeriods";
+import { generatorHealthQuery } from "@/lib/queries/generatorHealth";
+import GeneratorIssuesChip from "./generator-issues";
 import { queryKeys } from "@/lib/queries/keys";
 import { IDLE_CHROME, ROLE_CHROME } from "@/lib/role-chrome";
+import { formatAge, formatLastUpdate } from "@/components/ui/tile-stale";
 import {
+  GENERATOR_BATTERY_PATHS,
   GENERATOR_CONTROL_PATHS,
   GENERATOR_HZ_PATHS,
+  GENERATOR_OFFLINE_AFTER_MS,
   GENERATOR_MODE_PATH,
   GENERATOR_RPM_PATHS,
   GENERATOR_RUNNING_PATH,
   GENERATOR_STATUS_PATH,
   GENERATOR_STOP_AT_PATH,
   GENERATOR_ERROR_PATH,
+  batteryLevel,
+  controlErrorIsRecent,
+  controllerIsOffline,
   describeGeneratorState,
+  lastControllerReadingMs,
   firstPresentPath,
   openRunIsLive,
   panelIsAuto,
@@ -82,18 +91,41 @@ function GeneratorTile({
   const rpm = rpmPath ? getPointValue(latest, rpmPath) : null;
   const hzPath = firstPresentPath(latest, GENERATOR_HZ_PATHS);
   const hz = hzPath ? getPointValue(latest, hzPath) : null;
-
-  // rpm splits a commanded run into Starting and Running — the hub reports `running:hub` the instant
-  // it latches, which put the hero "Running" over an "Engine 0 rpm 0.0 Hz" row for the first ~10 s.
-  const status = describeGeneratorState(state, mode, { rpm });
+  const batteryPath = firstPresentPath(latest, GENERATOR_BATTERY_PATHS);
+  const batteryV = batteryPath ? getPointValue(latest, batteryPath) : null;
 
   // A commanded run's countdown must tick without waiting for the next 15 s push, and `stop_at` is
-  // an absolute instant, so re-rendering on a clock is enough — there is nothing to re-fetch.
+  // an absolute instant, so re-rendering on a clock is enough — there is nothing to re-fetch. The
+  // same clock is what lets a controller that stops answering turn "Offline" with no new data.
   const [nowMs, setNowMs] = useState(() => Date.now());
   useEffect(() => {
     const t = setInterval(() => setNowMs(Date.now()), 10_000);
     return () => clearInterval(t);
   }, []);
+
+  /**
+   * 🛑 Judged on the controller's OWN readings, never on `control.status/state` — the hub publishes
+   * that every tick whether or not it reached the controller, which is how a DSE with a flat battery
+   * and no power read "Auto · Ready to start", never stale, for three days. See
+   * `lastControllerReadingMs`.
+   */
+  const lastReadMs = lastControllerReadingMs(latest);
+  const offline = controllerIsOffline(lastReadMs, nowMs);
+
+  // rpm splits a commanded run into Starting and Running — the hub reports `running:hub` the instant
+  // it latches, which put the hero "Running" over an "Engine 0 rpm 0.0 Hz" row for the first ~10 s.
+  const status = describeGeneratorState(state, mode, {
+    rpm,
+    controllerOffline: offline,
+  });
+  // A stale battery reading is still the last thing we know — it is how the outage is explained —
+  // but it is judged only while the engine is stopped (the alternator masks it while running).
+  const battery = batteryLevel(batteryV, status.isRunning);
+
+  // Only a RECENT error earns the chip; the hub's last error otherwise lingers indefinitely.
+  const errorTime = getMeasurementTime(latest, GENERATOR_ERROR_PATH);
+  const errorMs = errorTime ? new Date(errorTime).getTime() : null;
+  const showError = lastError != null && controlErrorIsRecent(errorMs, nowMs);
 
   // Period totals under the hero: what the generator produced, and what the fuel cost, over the
   // DASHBOARD's selected period — so this tile follows the shared temporal navigator like the
@@ -116,6 +148,18 @@ function GeneratorTile({
     enabled: systemId != null,
   });
   const tz = subjectOf(datum)?.timezoneOffsetMin ?? 600;
+
+  /**
+   * Everything else that is wrong — the exercise that did not start, the slot that was missed, the
+   * command that failed — decided server-side by the same `assessGeneratorHealth` the Slack monitor
+   * runs. Area-scoped, so absent when the tile is rendered under a bare device; and absent for a
+   * share-token viewer, who cannot authenticate to it — the tile then falls back to the "!" below.
+   */
+  const { data: health, isSuccess: healthKnown } = useQuery(
+    generatorHealthQuery(datum?.area?.areaId),
+  );
+  const issues = health?.issues ?? [];
+  const worstIssue = issues[0] ?? null;
   const { period, start, end, isHistoricalMode } = useTemporalRange({
     timezoneOffsetMin: tz,
   });
@@ -291,10 +335,32 @@ function GeneratorTile({
   const showControls = canControl && systemId != null;
   // The lockout is appended rather than replacing the hero when the engine is turning: a running
   // engine is the more urgent fact, but the panel state still has to be visible.
-  const detailWords =
-    status.isRunning && mode && !panelIsAuto(mode)
+  const lastHeard =
+    lastReadMs != null
+      ? `last heard ${formatAge((nowMs - lastReadMs) / 1000)}`
+      : null;
+  const detailWords = offline
+    ? status.label === "Offline"
+      ? // The age IS the news: "not responding" for a minute and for three days are different
+        // problems.
+        [status.detail, lastHeard].filter(Boolean).join(" · ")
+      : // A run the hub is still holding (or failing to stop) keeps its own words, with the outage
+        // appended rather than hidden.
+        `${status.detail ? `${status.detail} · ` : ""}controller not responding`
+    : status.isRunning && mode && !panelIsAuto(mode)
       ? `${status.detail ? `${status.detail} · ` : ""}panel in ${mode}`
-      : status.detail;
+      : !status.isRunning && battery !== "ok"
+        ? // "Ready to start" over a battery that may not crank it would be the wrong reassurance.
+          battery === "flat"
+          ? "Starter battery flat"
+          : "Starter battery low"
+        : !status.isRunning &&
+            status.tone === "idle" &&
+            worstIssue?.severity === "critical"
+          ? // "Ready to start" under an exercise that just failed to start it is the reassurance this
+            // whole list exists to withdraw.
+            worstIssue.title
+          : status.detail;
 
   /**
    * A run WE commanded counts down as a ring: the fraction of the requested run still to go, with
@@ -346,6 +412,9 @@ function GeneratorTile({
         : IDLE_CHROME.value;
 
   const showEngine = status.isRunning && (rpm != null || hz != null);
+  // Always, not only when it is bad: a starter battery sitting at 12.7 V instead of its ~13.3 V
+  // float is the early sign that the charger has stopped, days before it is "low".
+  const showBattery = batteryV != null;
   const showScope =
     scope != null &&
     scope.energyKwh != null &&
@@ -378,13 +447,19 @@ function GeneratorTile({
         <>
           {/* The error TEXT lives in the dialog, where there is room for a sentence; out here it
               is only a signal that there is something to go and read. */}
-          {lastError && (
-            <span
-              className={`${TILE_CHIP} text-[13px] font-bold text-danger`}
-              title="The generator reported an error — open the controls to read it"
-            >
-              !
-            </span>
+          {healthKnown ? (
+            <GeneratorIssuesChip issues={issues} />
+          ) : (
+            showError && (
+              <span
+                className={`${TILE_CHIP} text-[13px] font-bold text-danger`}
+                // The sentence itself, not a pointer to it: a reader without control rights has no
+                // dialog to open, and this tooltip was their only way to learn what went wrong.
+                title={`Generator error${errorTime ? ` (${formatLastUpdate(new Date(errorTime))})` : ""}: ${lastError}`}
+              >
+                !
+              </span>
+            )
           )}
           {showControls && (
             // Top-right, exactly where TeslaSmallCard puts its charge-control cog — the corner a
@@ -400,9 +475,17 @@ function GeneratorTile({
           )}
         </>
       }
-      staleThresholdSeconds={staleThresholdSeconds}
+      // Stale is judged on the CONTROLLER's last reading (see `lastReadMs`), and not before it has
+      // been missing long enough to be called offline — the idle push cadence is 5 min, so the
+      // generic 5-min threshold would flash the clock on a healthy, stopped generator.
+      staleThresholdSeconds={Math.max(
+        staleThresholdSeconds,
+        GENERATOR_OFFLINE_AFTER_MS / 1000,
+      )}
       measurementTime={
-        getMeasurementTime(latest, GENERATOR_STATUS_PATH) ?? undefined
+        lastReadMs != null
+          ? new Date(lastReadMs)
+          : (getMeasurementTime(latest, GENERATOR_STATUS_PATH) ?? undefined)
       }
       extraInfo={heroDetail ?? undefined}
       overlay={
@@ -416,7 +499,7 @@ function GeneratorTile({
         ) : undefined
       }
       extra={
-        showEngine || showScope ? (
+        showEngine || showScope || showBattery ? (
           <div className="mt-auto space-y-2">
             {/* Engine vitals, only while it is turning — 0 rpm on a stopped engine is noise. */}
             {showEngine && (
@@ -432,6 +515,23 @@ function GeneratorTile({
                 caption={
                   hz != null ? <Value value={hz.toFixed(1)} unit="Hz" /> : null
                 }
+              />
+            )}
+            {showBattery && (
+              <TrendRow
+                label="Battery"
+                value={<Value value={(batteryV ?? 0).toFixed(1)} unit="V" />}
+                valueColor={battery === "ok" ? "text-ink" : "text-danger"}
+                caption={
+                  battery === "flat"
+                    ? "Flat"
+                    : battery === "low"
+                      ? "Low"
+                      : status.isRunning
+                        ? "Charging"
+                        : null
+                }
+                title="Starter battery — also powers the controller between runs. About 13.3 V on its charger; below 12.2 V at rest it is not being charged."
               />
             )}
             {showScope && scope && (
