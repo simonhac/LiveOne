@@ -11,7 +11,13 @@ import { describe, it, expect, beforeEach, afterEach } from "@jest/globals";
 import os from "node:os";
 import path from "node:path";
 import { promises as fs } from "node:fs";
-import { RunSupervisor, gateStart, type ControlClock } from "../control";
+import {
+  CONTROL_MANIFEST,
+  RunSupervisor,
+  gateStart,
+  type ControlClock,
+} from "../control";
+import { buildReadings } from "../build";
 import type {
   SourceControl,
   ControlOwnership,
@@ -528,7 +534,27 @@ describe("RunSupervisor", () => {
       expect(v.controlRunActive).toBe(1);
       expect(v.controlStopAt).toBe(Math.round((clock.wallMs + 600_000) / 1000));
       expect(v.controlState).toBe("running:hub");
-      expect(v.controlLastError).toBeNull();
+      // "" not null: null is never pushed, so a cleared error would linger in LiveOne forever.
+      expect(v.controlLastError).toBe("");
+    });
+
+    it("pushes the CLEARING of an error, not just the error", async () => {
+      await sup.request(600);
+      target.failStop = true;
+      clock.tick(601_000);
+      await sup.reconcile();
+      expect(
+        buildReadings(CONTROL_MANIFEST, sup.syntheticValues()).find(
+          (r) => r.physicalPathTail === "control_last_error",
+        )?.value,
+      ).toMatch(/^stop write failed/);
+      target.failStop = false;
+      await sup.reconcile();
+      expect(
+        buildReadings(CONTROL_MANIFEST, sup.syntheticValues()).find(
+          (r) => r.physicalPathTail === "control_last_error",
+        )?.value,
+      ).toBe("");
     });
 
     it("stateVersion bumps on command edges (the delivery trigger)", async () => {
