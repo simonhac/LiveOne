@@ -121,9 +121,9 @@ describe("datumCanControlPoint", () => {
         latest: { "ev.charge/active": {} },
       };
       expect(datumCanControlPoint(datum, PATHS)).toBe(true);
-      expect(
-        datumCanControlPoint({ ...datum, canControl: false }, PATHS),
-      ).toBe(false);
+      expect(datumCanControlPoint({ ...datum, canControl: false }, PATHS)).toBe(
+        false,
+      );
     });
 
     it("🛑 on an AREA subject, stays FALSE — that is the ambiguity this exists to refuse", () => {
