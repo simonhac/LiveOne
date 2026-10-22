@@ -130,6 +130,17 @@ export const CONTROL_MANIFEST: Manifest = [
     subsystem: "generator",
   },
   {
+    // When the error above began — NOT when it was last pushed (that is every tick). See
+    // RunSupervisor.lastErrorSinceMs.
+    key: "controlLastErrorSince",
+    physicalPathTail: "control_last_error_since",
+    logicalPathStem: "source.generator.control.error_since",
+    metricType: "time",
+    metricUnit: "epoch_s",
+    defaultName: "Control Last Error Since",
+    subsystem: "generator",
+  },
+  {
     // The WRITABLE point (LiveOne mints its control descriptor server-side — see
     // lib/control/control-registry.ts; a pusher never asserts its own writability).
     //
@@ -183,6 +194,8 @@ export interface ControlStatus {
   requestedAt: string | null;
   lastCommandAt: string | null;
   lastError: string | null;
+  /** ISO — when the current run of errors began; null when there is no error */
+  lastErrorSince: string | null;
   maxRuntimeSec: number;
 }
 
@@ -226,6 +239,8 @@ export interface ControlProbeResult {
   requestedAt: string | null;
   lastCommandAt: string | null;
   lastError: string | null;
+  /** ISO — when the current run of errors began; null when there is no error */
+  lastErrorSince: string | null;
   /** The cap actually ENFORCED on a run. A caller sizes its own offer against this rather than
    *  proposing a length and asking whether it fits — see `RunSupervisor.probe()`. */
   maxRuntimeSec: number;
@@ -271,6 +286,13 @@ export class RunSupervisor {
   // ── derived / observational ──────────────────────────────────────────────
   private stopFailing = false;
   private lastError: string | null = null;
+  /**
+   * When the CURRENT run of errors began — set on the first, kept across every 15 s stop retry that
+   * rewrites `lastError`, cleared with it. Without it the error reached LiveOne undated: it is
+   * re-pushed every tick, so the point's own timestamp only ever said "now", and a stop that had
+   * been failing for three days looked the same as one that failed a second ago.
+   */
+  private lastErrorSinceMs: number | null = null;
   private lastCommandAt: string | null = null;
   private releasedAtMs: number | null = null;
   private lastObs: {
@@ -386,12 +408,14 @@ export class RunSupervisor {
 
     try {
       await this.target.start();
-      this.lastError = null;
+      this.setLastError(null);
     } catch (e) {
       // Ambiguous outcome: the FC16 may have been actioned with only the response lost. State is
       // NOT rolled back — stopAt stays armed, the next poll reveals the truth, and the deadline
       // stop fires either way (fn 33 is harmless if the start never took).
-      this.lastError = `start write failed (may still have taken effect): ${msg(e)}`;
+      this.setLastError(
+        `start write failed (may still have taken effect): ${msg(e)}`,
+      );
       this.log(
         `[control] ⚠️ ${this.lastError} — deadline stays armed for ${this.stopAtIso()}`,
       );
@@ -426,7 +450,7 @@ export class RunSupervisor {
       await this.target.stop();
     } catch (e) {
       // Could not confirm the release — keep everything armed and enter the retry loop.
-      this.lastError = `stop write failed: ${msg(e)}`;
+      this.setLastError(`stop write failed: ${msg(e)}`);
       this.stopFailing = true;
       this.log(
         `[control] 🛑 ${this.lastError} — retrying every ${STOP_RETRY_MS / 1000}s`,
@@ -444,7 +468,7 @@ export class RunSupervisor {
     // Confirmed: only now is the persisted latch cleared.
     this.latched = false;
     this.stopFailing = false;
-    this.lastError = null;
+    this.setLastError(null);
     this.stopAtMs = null;
     this.monoDeadline = null;
     this.requestedAt = null;
@@ -686,14 +710,15 @@ export class RunSupervisor {
     try {
       await this.target.stop();
     } catch (e) {
-      this.lastError = `defensive stop at boot failed: ${msg(e)}`;
+      this.setLastError(`defensive stop at boot failed: ${msg(e)}`);
       this.log(`[control] ⚠️ ${this.lastError}`);
     }
     try {
       const own = await this.target.readOwnership();
       if (own.mode === 0) {
-        this.lastError =
-          "module is in STOP mode at boot with no persisted reason — auto-start is DISABLED; check the panel (possible crash mid-inhibit)";
+        this.setLastError(
+          "module is in STOP mode at boot with no persisted reason — auto-start is DISABLED; check the panel (possible crash mid-inhibit)",
+        );
         this.log(`[control] 🛑 ${this.lastError}`);
       }
     } catch {
@@ -819,6 +844,12 @@ export class RunSupervisor {
     return "idle";
   }
 
+  private setLastError(e: string | null): void {
+    if (e == null) this.lastErrorSinceMs = null;
+    else if (this.lastError == null) this.lastErrorSinceMs = this.clock.now();
+    this.lastError = e;
+  }
+
   status(): ControlStatus {
     return {
       latched: this.latched,
@@ -828,6 +859,10 @@ export class RunSupervisor {
       requestedAt: this.requestedAt,
       lastCommandAt: this.lastCommandAt,
       lastError: this.lastError,
+      lastErrorSince:
+        this.lastErrorSinceMs != null
+          ? new Date(this.lastErrorSinceMs).toISOString()
+          : null,
       maxRuntimeSec: this.config.maxRuntimeSec,
     };
   }
@@ -841,6 +876,10 @@ export class RunSupervisor {
         this.stopAtMs != null ? Math.round(this.stopAtMs / 1000) : null,
       controlState: this.state(),
       controlLastError: this.lastError,
+      controlLastErrorSince:
+        this.lastErrorSinceMs != null
+          ? Math.round(this.lastErrorSinceMs / 1000)
+          : null,
       // Minutes remaining, rounded UP so a run with 20 s left reads 1 rather than 0 — 0 is the
       // command value for "stop" and must mean "no run in progress", never "nearly done".
       controlRunRequestMin:

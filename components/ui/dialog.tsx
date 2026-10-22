@@ -64,15 +64,30 @@ const DialogContent = React.forwardRef<
        * while a `z-[60]` in the very same string survived. A style property has no group to lose.
        */
       style={nested ? { marginLeft: 12, marginTop: 12, ...style } : style}
+      /**
+       * 🛑 Capped to the viewport, and the CONTENT scrolls — never the panel. A control dialog's
+       * length is data-driven (an error banner, the engine-check list, Tesla's charge limits, an
+       * expanded activity trail), and on a phone an uncapped panel ran off both ends of the screen:
+       * centred by translate, so its top — and the close button with it — sat above the viewport
+       * where no scroll could reach. Outside clicks are disabled below, so that left no way out.
+       *
+       * So the panel is a fixed-height frame (`dvh`, not `vh`: iOS Safari's `vh` is the height
+       * WITHOUT its toolbar, which is exactly the overflow this cap exists to prevent), the close
+       * button is pinned to the frame, and everything the caller passes scrolls inside it.
+       */
       className={cn(
-        "fixed left-[50%] top-[50%] z-50 grid w-full max-w-lg translate-x-[-50%] translate-y-[-50%] gap-4 border border-line bg-surface-overlay p-6 shadow-lg duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[state=closed]:slide-out-to-left-1/2 data-[state=closed]:slide-out-to-top-[48%] data-[state=open]:slide-in-from-left-1/2 data-[state=open]:slide-in-from-top-[48%] sm:rounded-lg text-ink",
+        "fixed left-[50%] top-[50%] z-50 flex max-h-[calc(100dvh-2rem)] w-full max-w-lg translate-x-[-50%] translate-y-[-50%] flex-col overflow-hidden border border-line bg-surface-overlay shadow-lg duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[state=closed]:slide-out-to-left-1/2 data-[state=closed]:slide-out-to-top-[48%] data-[state=open]:slide-in-from-left-1/2 data-[state=open]:slide-in-from-top-[48%] sm:rounded-lg text-ink",
         nested && "z-[60]",
         className,
       )}
       {...props}
     >
-      {children}
-      <DialogPrimitive.Close className="absolute right-4 top-4 rounded-sm opacity-70 transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-line-strong focus:ring-offset-2 disabled:pointer-events-none text-ink-muted hover:text-ink">
+      <div className="grid min-h-0 flex-1 gap-4 overflow-y-auto overscroll-contain p-6">
+        {children}
+      </div>
+      {/* After the scroller, on the frame: it never scrolls away. The bg keeps scrolled content
+          from showing through behind the icon. */}
+      <DialogPrimitive.Close className="absolute right-4 top-4 rounded-sm bg-surface-overlay opacity-70 transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-line-strong focus:ring-offset-2 disabled:pointer-events-none text-ink-muted hover:text-ink">
         <X className="h-4 w-4" />
         <span className="sr-only">Close</span>
       </DialogPrimitive.Close>

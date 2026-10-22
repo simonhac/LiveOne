@@ -225,6 +225,28 @@ describe("RunSupervisor", () => {
     expect(sup.status().latched).toBe(false);
   });
 
+  it("dates an error from when it BEGAN, not from each retry, and clears it with the error", async () => {
+    await sup.request(600);
+    target.failStop = true;
+    clock.tick(601_000);
+    await sup.reconcile();
+    const began = clock.wallMs;
+    expect(sup.status().lastErrorSince).toBe(new Date(began).toISOString());
+    expect(sup.syntheticValues().controlLastErrorSince).toBe(
+      Math.round(began / 1000),
+    );
+    // Fifteen-second retries rewrite lastError; the streak start must not move with them.
+    clock.tick(45_000);
+    await sup.reconcile();
+    expect(sup.status().lastError).toMatch(/^stop write failed/);
+    expect(sup.status().lastErrorSince).toBe(new Date(began).toISOString());
+    target.failStop = false;
+    await sup.reconcile();
+    expect(sup.status().lastError).toBeNull();
+    expect(sup.status().lastErrorSince).toBeNull();
+    expect(sup.syntheticValues().controlLastErrorSince).toBeNull();
+  });
+
   it("released ≠ stopped: input A can keep the engine running after our latch clears", async () => {
     await sup.request(600);
     sup.observeValues({ engineRpm: 1500, genFreqHz: 500, remoteStartInput: 1 });

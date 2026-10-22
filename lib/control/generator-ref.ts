@@ -27,6 +27,9 @@ export const GENERATOR_STATUS_PATH = "source.generator.control.status/state";
 export const GENERATOR_STOP_AT_PATH = "source.generator.control.stop_at/time";
 /** The supervisor's last error, as text. Empty/absent when healthy. */
 export const GENERATOR_ERROR_PATH = "source.generator.control.error/state";
+/** When that error BEGAN, epoch seconds — the error point's own timestamp is just its latest push. */
+export const GENERATOR_ERROR_SINCE_PATH =
+  "source.generator.control.error_since/time";
 /** DSE control/operating mode as text — "Auto", "Stop", "Manual"… */
 export const GENERATOR_MODE_PATH = "source.generator.mode/state";
 /**

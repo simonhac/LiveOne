@@ -158,6 +158,15 @@ const stopAt = (minutesAhead: number): LatestPointValue =>
     "Commanded Stop At",
   );
 
+/** `error_since` as the hub pushes it: epoch SECONDS when the error run BEGAN, `secondsAgo` back. */
+const errorSince = (secondsAgo: number): LatestPointValue =>
+  mk(
+    Math.round(Date.now() / 1000 - secondsAgo),
+    "source.generator.control.error_since/time",
+    "epoch_s",
+    "Control Last Error Since",
+  );
+
 const genState = (state: string, ageSeconds?: number) =>
   mkText(
     state,
@@ -235,6 +244,7 @@ export const GENERATOR_SCENARIOS: Record<string, LatestPointValues> = {
       "Control Last Error",
       34 * 86_400,
     ),
+    "source.generator.control.error_since/time": errorSince(34 * 86_400),
     "source.generator.mode/state": genMode("Auto", 3 * 86_400),
     "source.generator/running": genRunning(0),
     "generator.battery/voltage": genBattery(3.6, 3 * 86_400),
@@ -299,6 +309,7 @@ export const GENERATOR_SCENARIOS: Record<string, LatestPointValues> = {
       "source.generator.control.error/state",
       "Control Last Error",
     ),
+    "source.generator.control.error_since/time": errorSince(2 * 60),
     "source.generator.mode/state": genMode("Auto"),
     "source.generator/running": genRunning(1),
     ...engine(1502, 50.0),

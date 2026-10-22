@@ -56,9 +56,30 @@ wg-quick up wg0
 wg show || true
 
 # ── Cloudflare Access tunnel (fronts the inspector at usher.liveone.energy) ──
+# 🛑 SUPERVISED, not a bare `&`. cloudflared is the ONLY way in to the control API, and nothing else
+# watches it: on 2026-10-22 it had exited at some point in a 124 h uptime, the hub carried on
+# collecting (WG + push need no tunnel), and every start, stop and engine check from LiveOne got
+# Cloudflare's 530 "tunnel has no connector" — 181 failed exercise starts, until a restart. So a
+# dead cloudflared is restarted here, with backoff, and every exit is logged so it can be found.
+# `|| rc=$?` because this script runs under `set -e`, which would otherwise end the loop on the
+# first non-zero exit — the exact case the loop exists for.
 if [ -n "${TUNNEL_TOKEN:-}" ]; then
-  log "starting cloudflared…"
-  cloudflared tunnel --no-autoupdate run --token "$TUNNEL_TOKEN" &
+  log "starting cloudflared (supervised)…"
+  (
+    backoff=5
+    while :; do
+      started=$(date +%s)
+      rc=0
+      cloudflared tunnel --no-autoupdate run --token "$TUNNEL_TOKEN" || rc=$?
+      # A run that lasted a while was healthy; start the backoff over rather than punishing it
+      # for a crash hours later.
+      if [ $(($(date +%s) - started)) -ge 300 ]; then backoff=5; fi
+      log "🛑 cloudflared exited (code ${rc}) — restarting in ${backoff}s"
+      sleep "$backoff"
+      backoff=$((backoff * 2))
+      if [ "$backoff" -gt 60 ]; then backoff=60; fi
+    done
+  ) &
 else
   log "TUNNEL_TOKEN not set — inspector NOT exposed (WG-only)."
 fi
