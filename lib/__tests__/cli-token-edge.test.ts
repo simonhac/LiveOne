@@ -266,6 +266,11 @@ describe("every route the bypass exposes authorizes for itself", () => {
     // auth.userId`. It reads WITHOUT a status filter on purpose — the lifecycle verbs operate on
     // archived devices — which widens WHICH rows it can resolve, never WHOSE.
     "loadDeviceForOwner",
+    // The automations collection's area gate (lib/automations/http.ts). Same terms as
+    // `loadAreaForOwner`, which it replaced there: every path begins with `requireAuth`; a
+    // non-error return is owner-or-admin, or a signed-in holder of a `control` grant, whom the
+    // routes then confine to the charge limits on cars they may command (`delegateMayManage`).
+    "loadAreaForAutomations",
     // The derivations surface (`/api/v4/derivations*`). Its route
     // modules are two-line delegations, so the string that appears in them is the IMPORT — and that
     // is the honest thing to match on here, because the property being asserted is about the

@@ -5,8 +5,9 @@
  * OWNER's credentials and no session user at all. So whoever CREATES (or re-points) one must clear
  * the same firewalls the synchronous action route does — otherwise owning (or administering) any
  * area would let a caller aim a `turn_off` at someone else's car and have us execute it on their
- * behalf. That firewall is OWNERSHIP of the action point's device (`requireOwner`), which is
- * strictly narrower than the area gate above it: `loadAreaForOwner` admits admins, and the control
+ * behalf. That firewall is the CONTROL gate on the action point's device — `requireControl` for a
+ * charge limit, strict ownership (`requireOwner`) for an `exercise` rule (see the action check) —
+ * which is strictly narrower than the area gate above it: that admits admins, and the control
  * plane does not.
  *
  * Lives here rather than in the route module because both `POST /api/v4/automations` and
@@ -80,8 +81,15 @@ export async function checkReferences(
   } else {
     const loaded = await loadPointByUuid(trigger.source.pointId);
     if (!loaded) return unprocessable("trigger source point not found");
+    // Readable, or — for a `control` grantee, whose read path is the dashboard grant rather than
+    // device access — a device they may command (the car's own counter, for a charge limit).
     const access = await requireDeviceAccess(request, loaded.deviceRid);
-    if (access instanceof NextResponse) return access;
+    if (access instanceof NextResponse) {
+      const controlled = await requireDeviceAccess(request, loaded.deviceRid, {
+        requireControl: true,
+      });
+      if (controlled instanceof NextResponse) return access;
+    }
     const stem = loaded.point.logicalPath;
     if (!stem) return unprocessable("trigger source point has no logical path");
     const sibling = await loadPointByStemMetric(
@@ -167,18 +175,28 @@ export async function checkReferences(
 
   const actionPoint = await loadPointByUuid(action.pointId);
   if (!actionPoint) return unprocessable("action point not found");
-  // 🛑 OWNERSHIP, not write access. See the header: this is a deferred command, so it must clear
-  // the CONTROL gate the synchronous action route clears, not the config-write gate. `requireWrite`
+  // 🛑 The CONTROL gate, not write access. See the header: this is a deferred command, so it must
+  // clear the gate the synchronous action route clears, not the config-write gate. `requireWrite`
   // (owner OR admin) would let a non-owner admin park a `turn_off` on someone else's car and have
   // the cron dispatch it on that owner's vendor credentials — the exact thing
-  // `lib/control/ownership.ts` exists to refuse. `requireOwner` is strictly narrower (an owner
-  // always has write), and it refuses the `null === null` match on an ownerless device too.
-  // Deliberately NOT `requireControl`: a `control` grant delegates pressing the button, not parking
-  // a rule that would keep firing on the owner's credentials after the grant is revoked.
-  const owned = await requireDeviceAccess(request, actionPoint.deviceRid, {
-    requireOwner: true,
-  });
-  if (owned instanceof NextResponse) return owned;
+  // `lib/control/ownership.ts` exists to refuse. Both forms below refuse a non-owner admin and the
+  // `null === null` match on an ownerless device.
+  //
+  // Which form is decided by what the rule can DO:
+  //  - a charge limit (`charge-session` → `turn_off`) can only stop charging, once, within one
+  //    session — so it takes `requireControl`, and a `control` grantee who may press the stop button
+  //    may also set it to press itself later. Outliving a revoked grant costs, at worst, one early
+  //    stop.
+  //  - an `exercise` rule STARTS an engine, unattended, on a schedule, indefinitely. That stays
+  //    `requireOwner`: a delegate must never be able to leave one behind.
+  const gated = await requireDeviceAccess(
+    request,
+    actionPoint.deviceRid,
+    trigger.kind === "charge-session"
+      ? { requireControl: true }
+      : { requireOwner: true },
+  );
+  if (gated instanceof NextResponse) return gated;
   // `points.control` is deliberately NOT checked here: it self-heals on the next poll after a
   // deploy, and blocking creation during that window would be a confusing dead end. Dispatch-time
   // validation owns it.

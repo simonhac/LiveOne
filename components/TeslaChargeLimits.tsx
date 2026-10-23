@@ -86,10 +86,10 @@ function stateWords(
  *
  * A limit is one `automations` row — trigger `{charge-session, source: ev.charge/added,
  * afterMinutes?, afterKwh?}`, action `turn_off` on `ev.charge/active` — evaluated by the minutely
- * cron. Everything this component renders is behind the dialog's existing owner-only gate; the
- * server re-gates every create and patch on device OWNERSHIP (`checkReferences →
- * requireDeviceAccess({requireOwner:true})`), so there is deliberately no second client-side
- * authorization answer here.
+ * cron. Everything this component renders is behind the dialog's existing control gate (the car's
+ * owner or a `control` grantee); the server re-gates every create and patch on the same rule
+ * (`checkReferences → requireDeviceAccess({requireControl:true})` for a charge limit), so there is
+ * deliberately no second client-side authorization answer here.
  *
  * Three evaluator behaviours the copy has to be honest about, rather than paper over:
  *  - **arming is asynchronous** — a new rule reads "Arming…" until the next cron tick sees the car
