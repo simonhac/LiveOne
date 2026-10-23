@@ -73,7 +73,7 @@ describe("assessGeneratorHealth — the October 2026 outage", () => {
 
   it("says how long the controller has been silent, and since when", () => {
     const offline = issues.find((i) => i.code === "controller_offline")!;
-    expect(offline.detail).toContain("3 d");
+    expect(offline.detail).toContain("3\u00A0d");
     expect(offline.detail).toContain("Mon 19 Oct, 05:28");
     expect(offline.sinceMs).toBe(DEAD_AT);
   });

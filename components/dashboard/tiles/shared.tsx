@@ -6,6 +6,9 @@
  */
 import React from "react";
 import Value from "@/components/ui/value";
+import MiniBars, { MiniBarsSkeleton } from "@/components/ui/mini-bars";
+import { TILE_LABEL } from "@/lib/tile-style";
+import type { TileBar } from "@/lib/charts/tile-bars";
 import { stemSplit, getMetricType } from "@/lib/identifiers/logical-path";
 import type { LatestPointValues, LatestPointValue } from "@/lib/types/api";
 import {
@@ -26,7 +29,7 @@ export function formatPowerValue(watts: number): string {
 }
 
 /** Format a power value with a smaller kW unit (JSX for secondary labels). */
-export function formatPowerSmallUnit(watts: number): React.ReactNode {
+function formatPowerSmallUnit(watts: number): React.ReactNode {
   return <Value value={formatPowerValue(watts)} unit="kW" />;
 }
 
@@ -318,4 +321,71 @@ export function calculateAllLoads(latest: LatestPointValues): LoadPoint[] {
   }
 
   return allLoads;
+}
+
+/** One row of a hero tile's breakdown: a label left, a power right in its series colour. */
+export interface BreakdownRow {
+  key: string;
+  label: React.ReactNode;
+  watts: number;
+  /** The row's series colour — the colour its band has in the stacked chart. */
+  color: string;
+}
+
+/**
+ * The rows under a hero tile's "Now" value — Load's two biggest sub-loads, Solar's local/remote
+ * split. One component so the two tiles lay out identically.
+ */
+export function TileBreakdown({ rows }: { rows: readonly BreakdownRow[] }) {
+  if (rows.length === 0) return null;
+  return (
+    <div className="space-y-0.5">
+      {rows.map((row) => (
+        <div
+          key={row.key}
+          className="flex items-baseline justify-between gap-2"
+        >
+          <span className={`truncate ${TILE_LABEL}`}>{row.label}</span>
+          <span
+            className="whitespace-nowrap text-[13px] font-bold tabular-nums"
+            style={{ color: row.color }}
+          >
+            {formatPowerSmallUnit(row.watts)}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * The period's bars at the foot of a hero tile (Solar, Load) — or their skeleton while the chart
+ * cache fills. Takes the free height, so tiles in a row put their bars at the same baseline.
+ */
+export function TileBars({
+  bars,
+  pending,
+  color,
+  ariaLabel,
+}: {
+  bars: readonly TileBar[];
+  pending: boolean;
+  color: string;
+  ariaLabel: string;
+}) {
+  if (bars.length === 0 && !pending) return null;
+  return (
+    <div className="mt-2 flex flex-1 flex-col">
+      {bars.length > 0 ? (
+        <MiniBars
+          bars={bars}
+          color={color}
+          className="h-8"
+          ariaLabel={ariaLabel}
+        />
+      ) : (
+        <MiniBarsSkeleton className="h-8" />
+      )}
+    </div>
+  );
 }

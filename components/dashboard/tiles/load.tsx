@@ -3,19 +3,18 @@
 import React from "react";
 import { Home } from "lucide-react";
 import Tile from "@/components/Tile";
-import MiniBars, { MiniBarsSkeleton } from "@/components/ui/mini-bars";
 import { CHART_COLORS, getColorForPath } from "@/lib/chart-colors";
 import { REST_OF_HOUSE_PATH } from "@/lib/areas/derived-display-paths";
 import { ROLE_CHROME } from "@/lib/role-chrome";
-import { TILE_LABEL } from "@/lib/tile-style";
 import { pickLoad, useSiteBars } from "./use-site-bars";
 import type { TilePlugin, TileRenderProps } from "./types";
 import {
   calculateAllLoads,
   enrichLatest,
   formatPowerValue,
-  formatPowerSmallUnit,
   getMeasurementTime,
+  TileBars,
+  TileBreakdown,
 } from "./shared";
 
 /**
@@ -97,40 +96,20 @@ function LoadTile({
           <>
             {/* The two biggest sub-loads, each value in ITS OWN series colour — the same colour
                 its band has in the stacked chart, so the tile names the band. */}
-            {top2Loads.length > 0 && (
-              <div className="space-y-0.5">
-                {top2Loads.map((load) => (
-                  <div
-                    key={load.path}
-                    className="flex items-baseline justify-between gap-2"
-                  >
-                    <span className={`truncate ${TILE_LABEL}`}>
-                      {load.label}
-                    </span>
-                    <span
-                      className="whitespace-nowrap text-[13px] font-bold tabular-nums"
-                      style={{ color: loadColour(load.path) }}
-                    >
-                      {formatPowerSmallUnit(load.value)}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            )}
-            {bars.length > 0 ? (
-              <div className="mt-2 flex flex-1 flex-col">
-                <MiniBars
-                  bars={bars}
-                  color={ROLE_CHROME.load.rgb}
-                  className="h-8"
-                  ariaLabel="Household load over the period"
-                />
-              </div>
-            ) : barsPending ? (
-              <div className="mt-2 flex flex-1 flex-col">
-                <MiniBarsSkeleton className="h-8" />
-              </div>
-            ) : null}
+            <TileBreakdown
+              rows={top2Loads.map((load) => ({
+                key: load.path,
+                label: load.label,
+                watts: load.value,
+                color: loadColour(load.path),
+              }))}
+            />
+            <TileBars
+              bars={bars}
+              pending={barsPending}
+              color={ROLE_CHROME.load.rgb}
+              ariaLabel="Household load over the period"
+            />
           </>
         ) : undefined
       }

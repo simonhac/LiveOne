@@ -107,13 +107,13 @@ export function formatInstant(ms: number, timezone: string): string {
   return `${get("weekday")} ${get("day")} ${get("month")}, ${get("hour")}:${get("minute")}`;
 }
 
-/** "45 min", "6 h", "3 d" — how long something has been true. */
+/** "45 min", "6 h", "3 d" — how long something has been true. No-break space: never "3" / "d". */
 function formatSpan(ms: number): string {
   const min = Math.max(0, Math.round(ms / 60_000));
-  if (min < 60) return `${min} min`;
+  if (min < 60) return `${min}\u00A0min`;
   const h = Math.floor(min / 60);
-  if (h < 48) return `${h} h`;
-  return `${Math.floor(h / 24)} d`;
+  if (h < 48) return `${h}\u00A0h`;
+  return `${Math.floor(h / 24)}\u00A0d`;
 }
 
 const SEVERITY_RANK = { critical: 0, warning: 1 } as const;

@@ -31,13 +31,16 @@ interface AmberSmallCardProps {
  * Drawn on the shared tile surface (docs/architecture/tile-style.md): the brand mark sits in the
  * title slot and the price disc keeps its brand gradient — it IS the data. From 180px it is a ring
  * tile like Battery and EV: the disc at the shared `TILE_RING` size, then one bottom row of feed-in
- * and renewables. Narrower, feed-in is a small chip bottom-right and renewables is not shown.
+ * and renewables. Narrower, the compact disc keeps that same bottom row from 150px — a phone's
+ * two-up tile is under 180px, and the row is what you read the tile for. Below 150px, feed-in is a
+ * small chip bottom-right and renewables is not shown.
  *
- * TWO forms, because the tile grid only ever makes two (see `tile-grid.ts`: never fewer than 2
- * columns at a 176px minimum, so a tile is ~150–280px, or the whole section when it is alone):
+ * The tile grid (`tile-grid.ts`: never fewer than 2 columns at a 176px minimum) makes tiles of
+ * ~150–280px, or the whole section when one is alone; the card gallery reaches narrower:
  * | Width  | Height | Disc D            | Logo      | Feed-in           | Renewables |
  * |--------|--------|-------------------|-----------|-------------------|------------|
- * | 150px+ | 110px  | 93                | LogoMark  | chip bottom-right | —          |
+ * | <150px | 110px  | 93                | LogoMark  | chip bottom-right | —          |
+ * | 150px+ | 110px  | 93                | LogoMark  | bottom row        | bottom row |
  * | 180px+ | 180px  | 108 (`TILE_RING`) | Full logo | bottom row        | bottom row |
  */
 export default function AmberSmallCard({ latest }: AmberSmallCardProps) {
@@ -67,6 +70,36 @@ export default function AmberSmallCard({ latest }: AmberSmallCardProps) {
       unit="¢"
     />
   ) : null;
+
+  // One bottom row, as on Battery: feed-in with its chip, renewables beside it. Shown from 150px —
+  // in both forms — so a phone's two-up tile (under 180px) still gets it.
+  const bottomRow =
+    showFeedIn || renewables !== null ? (
+      <div className="flex items-end justify-between gap-2 @[180px]:gap-3">
+        {showFeedIn ? (
+          <TrendRow
+            // The chip waits for 220px: at 180 it squeezes "Feed-in" to "Fe…" beside Renewables.
+            chip={
+              <span className={`${TILE_CHIP} !hidden @[220px]:!grid`}>
+                <SunIcon className="w-3.5 h-3.5" />
+              </span>
+            }
+            label="Feed-in"
+            value={feedInValue}
+          />
+        ) : (
+          <span />
+        )}
+        {renewables !== null && (
+          <div className="shrink-0">
+            <TrendRow
+              label="Renewables"
+              value={<Value value={Math.round(renewables)} unit="%" />}
+            />
+          </div>
+        )}
+      </div>
+    ) : null;
 
   return (
     <TileSurface
@@ -108,12 +141,13 @@ export default function AmberSmallCard({ latest }: AmberSmallCardProps) {
             </div>
           </div>
         </div>
+        <div className="mt-1 hidden @[150px]:block">{bottomRow}</div>
       </div>
 
-      {/* Compact feed-in, bottom-right: the sun in a grey disc, then the price. From 180px it is a
+      {/* Narrowest feed-in, bottom-right: the sun in a grey disc, then the price. From 150px it is a
           row instead. */}
       {showFeedIn && (
-        <div className="absolute bottom-2 right-2 flex @[180px]:hidden items-center gap-1">
+        <div className="absolute bottom-2 right-2 flex @[150px]:hidden items-center gap-1">
           <span className={`${TILE_CHIP} !size-5`}>
             <SunIcon className="w-3 h-3" />
           </span>
@@ -157,33 +191,7 @@ export default function AmberSmallCard({ latest }: AmberSmallCardProps) {
           </div>
         </div>
 
-        {/* One bottom row, as on Battery: feed-in with its chip, renewables beside it. */}
-        {(showFeedIn || renewables !== null) && (
-          <div className="flex items-end justify-between gap-3">
-            {showFeedIn ? (
-              <TrendRow
-                // The chip waits for 220px: at 180 it squeezes "Feed-in" to "Fe…" beside Renewables.
-                chip={
-                  <span className={`${TILE_CHIP} !hidden @[220px]:!grid`}>
-                    <SunIcon className="w-3.5 h-3.5" />
-                  </span>
-                }
-                label="Feed-in"
-                value={feedInValue}
-              />
-            ) : (
-              <span />
-            )}
-            {renewables !== null && (
-              <div className="shrink-0">
-                <TrendRow
-                  label="Renewables"
-                  value={<Value value={Math.round(renewables)} unit="%" />}
-                />
-              </div>
-            )}
-          </div>
-        )}
+        {bottomRow}
       </div>
     </TileSurface>
   );

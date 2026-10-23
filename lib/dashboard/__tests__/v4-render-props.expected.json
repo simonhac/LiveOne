@@ -736,55 +736,25 @@
             "$props": {
               "children": [
                 {
-                  "$element": "div",
+                  "$element": "TileBreakdown",
                   "$props": {
-                    "children": [
+                    "rows": [
                       {
-                        "$element": "div",
-                        "$key": "load.hws/power",
-                        "$props": {
-                          "children": [
-                            {
-                              "$element": "span",
-                              "$props": {
-                                "children": "HWS",
-                                "className": "truncate text-[13px] leading-tight text-ink"
-                              }
-                            },
-                            {
-                              "$element": "span",
-                              "$props": {
-                                "children": {
-                                  "$element": "Value",
-                                  "$props": {
-                                    "unit": "kW",
-                                    "value": "3.6"
-                                  }
-                                },
-                                "className": "whitespace-nowrap text-[13px] font-bold tabular-nums",
-                                "style": {
-                                  "color": "rgb(251, 146, 60)"
-                                }
-                              }
-                            }
-                          ],
-                          "className": "flex items-baseline justify-between gap-2"
-                        }
+                        "color": "rgb(251, 146, 60)",
+                        "key": "load.hws/power",
+                        "label": "HWS",
+                        "watts": 3600
                       }
-                    ],
-                    "className": "space-y-0.5"
+                    ]
                   }
                 },
                 {
-                  "$element": "div",
+                  "$element": "TileBars",
                   "$props": {
-                    "children": {
-                      "$element": "MiniBarsSkeleton",
-                      "$props": {
-                        "className": "h-8"
-                      }
-                    },
-                    "className": "mt-2 flex flex-1 flex-col"
+                    "ariaLabel": "Household load over the period",
+                    "bars": [],
+                    "color": "rgb(96, 165, 250)",
+                    "pending": true
                   }
                 }
               ]
@@ -880,44 +850,35 @@
         "component": "Tile",
         "props": {
           "extra": {
-            "$element": "MiniBarsSkeleton",
-            "$props": {
-              "className": "h-10"
-            }
-          },
-          "extraInfo": {
             "$element": "Fragment",
             "$props": {
               "children": [
                 {
-                  "$element": "Fragment",
+                  "$element": "TileBreakdown",
                   "$props": {
-                    "children": [
-                      "Local ",
+                    "rows": [
                       {
-                        "$element": "Value",
-                        "$props": {
-                          "unit": "kW",
-                          "value": "3.0"
-                        }
+                        "color": "rgb(254, 240, 138)",
+                        "key": "local",
+                        "label": "Local",
+                        "watts": 3000
+                      },
+                      {
+                        "color": "rgb(245, 158, 11)",
+                        "key": "remote",
+                        "label": "Remote",
+                        "watts": 1200
                       }
                     ]
                   }
                 },
-                " · ",
                 {
-                  "$element": "Fragment",
+                  "$element": "TileBars",
                   "$props": {
-                    "children": [
-                      "Remote ",
-                      {
-                        "$element": "Value",
-                        "$props": {
-                          "unit": "kW",
-                          "value": "1.2"
-                        }
-                      }
-                    ]
+                    "ariaLabel": "Solar generation over the period",
+                    "bars": [],
+                    "color": "rgb(254, 240, 138)",
+                    "pending": true
                   }
                 }
               ]
