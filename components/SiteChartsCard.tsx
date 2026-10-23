@@ -21,7 +21,11 @@ import {
   type RunBand,
 } from "@/lib/charts/run-bands";
 import { togglePin } from "@/lib/charts/pin";
-import { isTouchDevice, useIsTouchDevice } from "@/lib/charts/svg";
+import {
+  formatFocusLabel,
+  isTouchDevice,
+  useIsTouchDevice,
+} from "@/lib/charts/svg";
 import { runProvenancePanels } from "@/lib/charts/tooltip-metrics";
 import { formatRunWhenLines } from "@/lib/run-tracking/run-period-view";
 import { ROLES, TRACKABLE_ROLE_IDS, type RoleId } from "@/lib/roles/registry";
@@ -1014,6 +1018,12 @@ export default function SiteChartsCard({
       processedHistoryData.generation?.timestamps,
     focusedTime,
   );
+  // The table headers' "Load at …" / "Source at …": the same formatter and the same sample the
+  // chart's focus bubble uses, so the two always read alike.
+  const focusLabelFor = (timestamps: Date[] | undefined) => {
+    const at = hoveredIndex != null ? timestamps?.[hoveredIndex] : undefined;
+    return at ? formatFocusLabel(period, at) : null;
+  };
 
   // Global touch handler to clear hover when touching outside charts
   useEffect(() => {
@@ -1116,7 +1126,9 @@ export default function SiteChartsCard({
           {/* Loads Chart with Table */}
           {cardVisible("chart:load") && (
             <div
-              className={CHART_BODY_PAD}
+              // Stacked on a phone, the table now sits close under its chart — so the gap between
+              // the Load pair and the Source pair has to come from here, or the two run together.
+              className={`${CHART_BODY_PAD} mb-6 md:mb-0`}
               data-scroll-anchor={`${systemId}:chart:load`}
             >
               <div className="flex flex-col md:flex-row md:gap-4">
@@ -1139,13 +1151,16 @@ export default function SiteChartsCard({
                   />
                 </div>
                 <div
-                  className={`w-full md:w-64 mt-4 md:mt-0 flex-shrink-0 ${TABLE_GUTTER}`}
+                  className={`w-full md:w-64 mt-1 md:mt-0 flex-shrink-0 ${TABLE_GUTTER}`}
                 >
                   <EnergyTable
                     chartData={loadChartData}
                     isLoading={tablesLoading}
                     mode="load"
                     hoveredIndex={hoveredIndex}
+                    focusLabel={focusLabelFor(
+                      processedHistoryData.load?.timestamps,
+                    )}
                     className="h-full"
                     visibleSeries={
                       loadVisibleSeries.size > 0 ? loadVisibleSeries : undefined
@@ -1191,13 +1206,16 @@ export default function SiteChartsCard({
                   />
                 </div>
                 <div
-                  className={`w-full md:w-64 mt-4 md:mt-0 flex-shrink-0 ${TABLE_GUTTER}`}
+                  className={`w-full md:w-64 mt-1 md:mt-0 flex-shrink-0 ${TABLE_GUTTER}`}
                 >
                   <EnergyTable
                     chartData={generationChartData}
                     isLoading={tablesLoading}
                     mode="generation"
                     hoveredIndex={hoveredIndex}
+                    focusLabel={focusLabelFor(
+                      processedHistoryData.generation?.timestamps,
+                    )}
                     className="h-full"
                     visibleSeries={
                       generationVisibleSeries.size > 0

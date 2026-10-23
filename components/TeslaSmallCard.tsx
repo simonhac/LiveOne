@@ -15,8 +15,10 @@ import {
   TILE_CAPTION,
   TILE_CHIP,
   TILE_RING,
+  TILE_RING_TIP,
   TILE_RING_VALUE,
 } from "@/lib/tile-style";
+import RingWell from "@/components/ui/ring-well";
 import { IDLE_CHROME, ROLE_CHROME } from "@/lib/role-chrome";
 import { TeslaMark } from "@/lib/tesla-icons";
 import { getEvStatus, getEvStatusWords } from "@/lib/vendors/tesla/status";
@@ -265,7 +267,7 @@ export default function TeslaSmallCard({
 
       {/* The SoC ring — fat, round-capped, over a track of its own hue. Charging, the chevrons ride
           the arc's tip (the Activity Exercise ring); the charge limit is a notch across the ring. */}
-      <div className="flex flex-1 items-center justify-center py-2">
+      <RingWell>
         <ProgressRing
           fraction={batterySoc / 100}
           color={batteryColor}
@@ -280,12 +282,12 @@ export default function TeslaSmallCard({
             isCharging ? (
               isHighPower ? (
                 <ChevronsRight
-                  className="w-3 h-3 @[180px]:w-4 @[180px]:h-4 text-ink"
+                  className={`${TILE_RING_TIP} text-ink`}
                   strokeWidth={3}
                 />
               ) : (
                 <ChevronRight
-                  className="w-3 h-3 @[180px]:w-4 @[180px]:h-4 text-ink"
+                  className={`${TILE_RING_TIP} text-ink`}
                   strokeWidth={3}
                 />
               )
@@ -297,7 +299,7 @@ export default function TeslaSmallCard({
             <Value value={Math.round(batterySoc)} unit="%" />
           </div>
         </ProgressRing>
-      </div>
+      </RingWell>
 
       {/* Narrow (<150px): just the state, as a caption under the ring. */}
       <div

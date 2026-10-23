@@ -1,5 +1,6 @@
 "use client";
 
+import { useRef } from "react";
 import { Zap } from "lucide-react";
 import Value from "@/components/ui/value";
 import TrendRow from "@/components/ui/trend-row";
@@ -8,6 +9,8 @@ import TileSurface, { TileHeader } from "@/components/ui/tile-surface";
 import { useStaleness } from "@/components/ui/tile-stale";
 import { ROLE_CHROME } from "@/lib/role-chrome";
 import { TILE_RING, TILE_RING_VALUE, TILE_STALE } from "@/lib/tile-style";
+import RingWell from "@/components/ui/ring-well";
+import { useFitRow } from "@/components/ui/use-fit-text";
 import type { GridLiveValues } from "@/lib/grid/latest";
 
 /** The ring runs green-400 → green-300, the Home Energy renewable ring's hue. */
@@ -55,6 +58,10 @@ export default function GridSignalsCard({
     ? Math.max(...measurementTimes)
     : null;
   const staleness = useStaleness(newestMs, staleThresholdSeconds);
+  // Price and emissions share one bottom row on a ~178px phone tile; a long price ("-$1,234/MWh")
+  // would run into emissions, so the pair shrinks together to fit.
+  const bottomRowRef = useRef<HTMLDivElement>(null);
+  useFitRow(bottomRowRef, 11, [price, emissions]);
 
   // Defensive: nothing to show at all.
   if (!regionLabel && values === null) {
@@ -126,22 +133,28 @@ export default function GridSignalsCard({
           free height, then price and emissions as one bottom row. 165 rather than the usual 180
           because a phone's two-up tile lands at ~178px; narrower still, the ring would leave no
           room for the numbers, so the three become label-over-value rows. */}
-      <div className="hidden flex-1 items-center justify-center py-2 @[165px]:flex">
-        <ProgressRing
-          fraction={(renewables ?? 0) / 100}
-          color={ROLE_CHROME.battery.rgb}
-          gradientTo={RENEWABLES_LIGHT_RGB}
-          className={`${TILE_RING} ${staleness.isStale ? TILE_STALE : ""}`}
-        >
-          <span className={`${TILE_RING_VALUE} text-ink`}>
-            {renewablesValue}
-          </span>
-          <span className="mt-0.5 text-[9px] font-medium leading-none text-tile-ink-muted @[180px]:mt-1 @[180px]:text-[11px]">
-            renewable
-          </span>
-        </ProgressRing>
+      <div className="hidden flex-1 flex-col @[165px]:flex">
+        <RingWell>
+          <ProgressRing
+            fraction={(renewables ?? 0) / 100}
+            color={ROLE_CHROME.battery.rgb}
+            gradientTo={RENEWABLES_LIGHT_RGB}
+            className={`${TILE_RING} ${staleness.isStale ? TILE_STALE : ""}`}
+          >
+            <span className={`${TILE_RING_VALUE} text-ink`}>
+              {renewablesValue}
+            </span>
+            {/* 9px at a 76px ring, 11px at 108px — off the ring, as the well hides the tile's width. */}
+            <span className="mt-[calc(var(--ring)*0.01)] text-[length:calc(var(--ring)*0.1)] font-medium leading-none text-tile-ink-muted">
+              renewable
+            </span>
+          </ProgressRing>
+        </RingWell>
       </div>
-      <div className="hidden justify-between gap-1 @[165px]:flex @[180px]:gap-2">
+      <div
+        ref={bottomRowRef}
+        className="hidden justify-between gap-1 @[165px]:flex @[180px]:gap-2"
+      >
         {priceRow}
         {emissionsRow}
       </div>

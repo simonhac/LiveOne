@@ -6,6 +6,7 @@ import { Zap } from "lucide-react";
 import TileSurface from "@/components/ui/tile-surface";
 import TrendRow from "@/components/ui/trend-row";
 import { TILE_CHIP, TILE_RING } from "@/lib/tile-style";
+import RingWell from "@/components/ui/ring-well";
 import {
   type LatestValue,
   getNumericValue,
@@ -41,7 +42,7 @@ interface AmberSmallCardProps {
  * |--------|--------|-------------------|-----------|-------------------|------------|
  * | <150px | 110px  | 93                | LogoMark  | chip bottom-right | —          |
  * | 150px+ | 110px  | 93                | LogoMark  | bottom row        | bottom row |
- * | 180px+ | 180px  | 108 (`TILE_RING`) | Full logo | bottom row        | bottom row |
+ * | 180px+ | 180px  | 108+ (`RingWell`) | Full logo | bottom row        | bottom row |
  */
 export default function AmberSmallCard({ latest }: AmberSmallCardProps) {
   const { rootRef, badge } = useDebugSizeBadge();
@@ -162,34 +163,42 @@ export default function AmberSmallCard({ latest }: AmberSmallCardProps) {
           <AmberLogo className="h-5 w-auto" />
         </div>
 
-        {/* Price disc - centred in the free height, at the shared ring size. */}
-        <div className="flex-1 flex items-center justify-center py-2">
+        {/* Price disc - centred in the free height, filling it like every ring tile. Its contents
+            scale off `--ring` (the px in each comment is at the 108px floor). */}
+        <RingWell>
           <div
             className={`${TILE_RING} rounded-full flex flex-col items-center justify-center`}
             style={{ background: circleGradient }}
           >
+            {/* 12px */}
             <Zap
-              className="w-3 h-3 mb-0.5"
+              className="size-[calc(var(--ring)*0.111)] mb-0.5"
               style={{ color: "rgb(0, 11, 36)" }}
               fill="rgb(0, 11, 36)"
             />
+            {/* 9px */}
             <div
-              className="text-center text-[9px] font-bold mb-0.5"
+              className="text-center text-[length:calc(var(--ring)*0.083)] font-bold mb-0.5"
               style={{ color: "rgb(0, 0, 0)" }}
             >
               {getPriceLevelShortLabel(priceLevel)}
             </div>
+            {/* 28px */}
             <div
-              className="font-bold leading-none text-[28px]"
+              className="font-bold leading-none text-[length:calc(var(--ring)*0.26)]"
               style={{ color: "rgb(0, 11, 36)" }}
             >
               <Value value={Math.round(importPrice)} unit="¢" />
             </div>
-            <div className="text-[10px]" style={{ color: "rgb(0, 0, 0)" }}>
+            {/* 10px */}
+            <div
+              className="text-[length:calc(var(--ring)*0.093)]"
+              style={{ color: "rgb(0, 0, 0)" }}
+            >
               /kWh
             </div>
           </div>
-        </div>
+        </RingWell>
 
         {bottomRow}
       </div>

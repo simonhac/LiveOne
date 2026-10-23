@@ -18,7 +18,13 @@ import DirectionChip, {
 import TrendRow from "@/components/ui/trend-row";
 import Value from "@/components/ui/value";
 import { IDLE_CHROME, ROLE_CHROME } from "@/lib/role-chrome";
-import { TILE_RING, TILE_RING_VALUE, TILE_STALE } from "@/lib/tile-style";
+import {
+  TILE_RING,
+  TILE_RING_TIP,
+  TILE_RING_VALUE,
+  TILE_STALE,
+} from "@/lib/tile-style";
+import RingWell from "@/components/ui/ring-well";
 import type { TilePlugin, TileRenderProps } from "./types";
 import { formatPowerValue, getPointValue, getMeasurementTime } from "./shared";
 
@@ -56,7 +62,7 @@ function BatteryTile({ latest, staleThresholdSeconds }: TileRenderProps) {
   const staleClass = staleness.isStale ? TILE_STALE : "";
 
   const double = Math.abs(batteryPower) > FLOW_DOUBLE_W;
-  const tipClass = "w-3 h-3 @[180px]:w-4 @[180px]:h-4 text-ink";
+  const tipClass = `${TILE_RING_TIP} text-ink`;
   const TipGlyph =
     direction === "down"
       ? double
@@ -77,7 +83,7 @@ function BatteryTile({ latest, staleThresholdSeconds }: TileRenderProps) {
         staleness={staleness}
         measurementTime={measurementTime}
       />
-      <div className="flex flex-1 items-center justify-center py-2">
+      <RingWell>
         <ProgressRing
           fraction={batterySoc / 100}
           color={ringColor}
@@ -94,7 +100,7 @@ function BatteryTile({ latest, staleThresholdSeconds }: TileRenderProps) {
             <Value value={String(Math.round(batterySoc))} unit="%" />
           </span>
         </ProgressRing>
-      </div>
+      </RingWell>
       <div className={staleClass}>
         <TrendRow
           chip={

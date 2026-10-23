@@ -86,15 +86,25 @@ export const TILE_VALUE_2 = "text-[17px] leading-tight font-bold tabular-nums";
 
 /**
  * The one ring size. Every tile whose data is a circle — Battery and EV's SoC rings, Amber's price
- * disc, the NEM grid's renewables ring — sizes it with this, so a row of them reads as one set
- * rather than four near-miss diameters. 76px until the tile is 180px wide, then 108px.
+ * disc, the NEM grid's renewables ring — draws it inside a `RingWell` (components/ui/ring-well.tsx)
+ * and sizes it with this: square, as big as the well's free box allows. The well's floor is 76px
+ * until the tile is 180px wide, then 108px — the size a ring tile is when it sets its row's height.
+ *
+ * Why it fills rather than being fixed: the tile grid is `auto-rows-fr`, so a ring tile in a row with
+ * a taller neighbour (Grid's Imported/Exported) has height to spare, and a fixed ring left it as
+ * empty space above and below. Rings in one row still read as one set — same chrome, same box.
+ *
+ * `--ring` is set by the well. Everything drawn INSIDE the ring sizes off it too, because inside the
+ * well a bare `@[180px]:` variant would measure the well, not the tile.
  */
-export const TILE_RING =
-  "h-[76px] w-[76px] shrink-0 @[180px]:h-[108px] @[180px]:w-[108px]";
+export const TILE_RING = "size-(--ring) shrink-0";
 
-/** The number in the middle of a {@link TILE_RING}. Colour is the caller's. */
+/** The number in the middle of a {@link TILE_RING}: 17px at a 76px ring, 24px at 108px. */
 export const TILE_RING_VALUE =
-  "text-[17px] @[180px]:text-[24px] font-bold leading-none";
+  "text-[length:calc(var(--ring)*0.22)] font-bold leading-none";
+
+/** A glyph riding a {@link TILE_RING}'s tip — 12px at a 76px ring, 16px at 108px. */
+export const TILE_RING_TIP = "size-[calc(var(--ring)*0.148)]";
 
 /** The grey disc a direction chevron or a control glyph sits in. */
 export const TILE_CHIP =

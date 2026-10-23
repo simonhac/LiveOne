@@ -203,6 +203,8 @@ export async function recomputeIntervalsForWindow(
         )
       : undefined;
 
+    // The first sample this pass can see — a period can only have a real start strictly after it.
+    const leadInFromMs = samples.length > 0 ? samples[0].tMs : null;
     const periods = detectRunPeriods(samples, {
       lowerW: det.detect.lowerW,
       upperW: det.detect.upperW,
@@ -212,7 +214,34 @@ export async function recomputeIntervalsForWindow(
       nowMs,
       boundaryMode: det.detect.boundaryMode,
       boundaryEventsMs,
-    }).filter((p) => p.startMs >= anchorMs && p.startMs <= winEndMs);
+    }).filter(
+      (p) =>
+        p.startMs <= winEndMs &&
+        (p.startMs >= anchorMs ||
+          // 🛑 A RUN RE-DETECTED A HAIR EARLIER THAN IT WAS STORED. Its start is not a stable fact:
+          // under `boundaryMode: "midpoint"` it is `firstOn − min(gap/2, cadence/2)`, and `cadence`
+          // is the median gap over whatever THIS pass read — so the same run's start moves by
+          // milliseconds from one read to the next. Filtering strictly on `anchorMs` (the STORED
+          // start) threw the re-detected run away whenever it came back earlier, while the delete
+          // below still removed the stored row: the run vanished, and nothing re-wrote it.
+          //
+          // Two callers hit it. The minutely reconcile, once a long run becomes the straddler (a
+          // prod EV detector lost a 20 kWh charge on 2026-10-23, re-detected 2 ms early). And
+          // `rehealStaleRuns`, whose window is EXACTLY a stored run's span — so its anchor IS that
+          // run's stored start — which replayed against four weeks of raw EV readings dropped ~13%
+          // of runs over 20 minutes per sweep, oldest first.
+          //
+          // So a period starting in the read's lead-in counts, on two conditions. It must reach the
+          // anchor — no other run can, since anything that close would have been bridged into it.
+          // And its start must be REAL: a period opening on the read's very first sample began
+          // somewhere before the read, and storing it would invent a start at the read's edge.
+          (leadInFromMs !== null &&
+            p.startMs > leadInFromMs &&
+            (p.endMs === null || p.endMs > anchorMs))),
+    );
+    // Delete from the earliest start this pass will write, so a run re-detected before its stored
+    // start replaces that row rather than landing beside it.
+    const deleteFromMs = Math.min(anchorMs, ...periods.map((p) => p.startMs));
 
     // Batched energy (one read for the whole window) — replaces the legacy per-event N+1.
     let energies: (number | null)[] = periods.map(() => null);
@@ -314,14 +343,15 @@ export async function recomputeIntervalsForWindow(
         starts = periods.map((p) => classifyRunStart(p.startMs, evidence));
     }
 
-    // Delete exactly the span we rebuild: [anchor, winEnd]. Bounded so later periods (relative to
-    // a historical window) are never nuked.
+    // Delete exactly the span we rebuild: [anchor — or a run's re-detected start, if that came
+    // back earlier — , winEnd]. Bounded so later periods (relative to a historical window) are
+    // never nuked.
     const deletedRows = await tx
       .delete(derivedIntervals)
       .where(
         and(
           eq(derivedIntervals.derivationId, det.id),
-          gte(derivedIntervals.startTime, new Date(anchorMs)),
+          gte(derivedIntervals.startTime, new Date(deleteFromMs)),
           lte(derivedIntervals.startTime, new Date(winEndMs)),
         ),
       )

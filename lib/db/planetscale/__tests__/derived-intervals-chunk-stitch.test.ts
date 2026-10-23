@@ -15,6 +15,8 @@
 import { describe, expect, it, jest, beforeEach } from "@jest/globals";
 import type { ResolvedRunDetector } from "@/lib/derivations/resolve";
 import type { PointId } from "@/lib/ids";
+import { PgDialect } from "drizzle-orm/pg-core";
+import type { SQL } from "drizzle-orm";
 
 interface StoredRow {
   startTime: Date;
@@ -26,6 +28,8 @@ interface StoredRow {
 let straddler: { startTime: Date; endTime: Date | null }[] = [];
 let inserted: StoredRow[] = [];
 let deleted = 0;
+/** Every condition the fake `delete().where()` was handed, for asserting the delete's lower bound. */
+let deleteWheres: unknown[] = [];
 
 const readRaw =
   jest.fn<
@@ -121,8 +125,9 @@ function fakeDb() {
       }),
     }),
     delete: () => ({
-      where: () => ({
+      where: (cond: unknown) => ({
         returning: async () => {
+          deleteWheres.push(cond);
           const rows = Array.from({ length: deleted }, () => ({
             startTime: new Date(0),
           }));
@@ -146,6 +151,7 @@ beforeEach(() => {
   straddler = [];
   inserted = [];
   deleted = 0;
+  deleteWheres = [];
   readRaw.mockImplementation(async (ids, window) => {
     const id = ids[0];
     return new Map([
@@ -245,5 +251,51 @@ describe("recomputeIntervalsForWindow at a chunk boundary", () => {
 
     expect(res.inserted).toBe(0);
     expect(inserted).toHaveLength(0);
+  });
+
+  it("keeps a straddler that is re-detected a hair EARLIER than it was stored", async () => {
+    // The trailing reconcile's failure mode (2026-10-23, a 20 kWh EV charge): a midpoint start
+    // drifts by milliseconds as the read window slides, so the stored row can start 2 ms AFTER the
+    // run this pass re-detects. Filtering on the stored start dropped the run while the delete still
+    // removed the row — and once the window was past its start, nothing ever re-wrote it.
+    straddler = [
+      { startTime: new Date(RUN_START + 2), endTime: new Date(RUN_END) },
+    ];
+    deleted = 1;
+
+    const res = await recomputeIntervalsForWindow(
+      fakeDb(),
+      DETECTOR,
+      RUN_START + 1 * HOUR,
+      RUN_START + 7 * HOUR,
+      NOW,
+    );
+
+    expect(res.inserted).toBe(1);
+    expect(inserted[0].startTime.getTime()).toBe(RUN_START);
+    expect(inserted[0].endTime!.getTime()).toBe(RUN_END);
+    // ...and the delete reaches back to the re-detected start, so the stored row is the one replaced.
+    const { params } = new PgDialect().sqlToQuery(deleteWheres[0] as SQL);
+    expect(params).toContain(new Date(RUN_START).toISOString());
+  });
+
+  it("keeps a run the nightly re-price re-detects a hair earlier than it was stored", async () => {
+    // `rehealStaleRuns` recomputes over EXACTLY a stored run's span, so there is no straddler and
+    // the anchor is the window start — the run's own stored start. Replayed over four weeks of raw
+    // EV readings, the strict filter dropped ~13% of runs over 20 minutes per sweep.
+    deleted = 1;
+
+    const res = await recomputeIntervalsForWindow(
+      fakeDb(),
+      DETECTOR,
+      RUN_START + 2,
+      RUN_END,
+      NOW,
+    );
+
+    expect(res.inserted).toBe(1);
+    expect(inserted[0].startTime.getTime()).toBe(RUN_START);
+    const { params } = new PgDialect().sqlToQuery(deleteWheres[0] as SQL);
+    expect(params).toContain(new Date(RUN_START).toISOString());
   });
 });
