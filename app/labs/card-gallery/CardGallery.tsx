@@ -671,7 +671,7 @@ export default function CardGallery() {
         <CardSection
           slug="amber-small"
           title="Amber — small card"
-          note="Two forms, switching at 180px of TILE width. Returns null if no import rate."
+          note="Two forms, switching at 180px of TILE width; the feed-in / renewables bottom row appears from 150px. Returns null if no import rate."
           defaultScenario="low"
           presetWidths={TILE_WIDTHS}
           playground={{ w: 200, h: 180 }}
@@ -683,7 +683,7 @@ export default function CardGallery() {
         <CardSection
           slug="tesla-small"
           title="Tesla — small card"
-          note="One container-query layout, stepping up at 180px of TILE width. Fat SoC ring in the EV theme red, with the charge-limit notch and, while charging, chevrons on the arc's tip. Returns null if no SoC. Has NO staleness treatment — the stale box visibly does nothing here."
+          note="One container-query layout, stepping up at 180px of TILE width; the state/kW and ETA bottom row appears from 150px. Fat SoC ring in the EV theme red, with the charge-limit notch and, while charging, chevrons on the arc's tip. Returns null if no SoC. Has NO staleness treatment — the stale box visibly does nothing here."
           defaultScenario="charging (high power)"
           presetWidths={TILE_WIDTHS}
           playground={{ w: 200, h: 180 }}
@@ -697,7 +697,7 @@ export default function CardGallery() {
         <CardSection
           slug="grid-signals"
           title="Local Grid (NEM) signals"
-          note="GridSignalsCard (a small tile). From 180px: the renewable share as the shared 108px ring, Price and Emissions side by side underneath; narrower, the three as label-over-value rows. 'missing metric' shows an em-dash; stale dims the values."
+          note="GridSignalsCard (a small tile). From 165px: the renewable share as the shared ring (108px from 180px), Price and Emissions side by side underneath; narrower, the three as label-over-value rows. 'missing metric' shows an em-dash; stale dims the values."
           defaultScenario="high renewables"
           presetWidths={TILE_WIDTHS}
           playground={{ w: 200, h: 200 }}

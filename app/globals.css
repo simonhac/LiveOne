@@ -28,6 +28,10 @@
   --color-surface: #1c1c1e;
   /* One step up from the slab — the stale badge. */
   --color-surface-raised: #2c2c2e;
+  /* Tooltips and hover popovers: Apple's tertiary grey, translucent so a backdrop blur reads through
+     it (pair with `backdrop-blur-lg ring-1 ring-inset ring-wash`). A solid surface-raised was too
+     close to the slab beneath to see. */
+  --color-surface-glass: rgb(72 72 74 / 0.72);
   /* tw gray-900 */
   --color-surface-sunken: oklch(21% 0.034 264.665);
   /* tw gray-900/30 — the chart panel's fill, and a quiet row or empty state inside a panel */

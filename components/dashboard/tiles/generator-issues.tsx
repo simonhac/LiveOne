@@ -8,7 +8,7 @@
  * alone; the list itself says what, since when, and the evidence.
  *
  * Portal-rendered for the same reason as `StaleBadge`: the tile clips its overflow at the rounded
- * corner. Hover opens it on a pointer device, a tap toggles it everywhere, Escape or a tap outside
+ * corner, with a beak matching the shared Tooltip's. Hover opens it on a pointer device, a tap toggles it everywhere, Escape or a tap outside
  * closes it.
  */
 import { useEffect, useRef, useState } from "react";
@@ -23,7 +23,12 @@ export default function GeneratorIssuesChip({
 }: {
   issues: GeneratorIssue[];
 }) {
-  const [pos, setPos] = useState<{ x: number; y: number } | null>(null);
+  // `beakX`: the chip's centre, relative to the panel's left edge.
+  const [pos, setPos] = useState<{
+    x: number;
+    y: number;
+    beakX: number;
+  } | null>(null);
   const [pinned, setPinned] = useState(false);
   const ref = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
@@ -35,7 +40,7 @@ export default function GeneratorIssuesChip({
       8,
       Math.min(rect.right - PANEL_WIDTH, window.innerWidth - PANEL_WIDTH - 8),
     );
-    setPos({ x, y: rect.bottom + 8 });
+    setPos({ x, y: rect.bottom + 8, beakX: rect.left + rect.width / 2 - x });
   };
 
   useEffect(() => {
@@ -99,9 +104,21 @@ export default function GeneratorIssuesChip({
             ref={panelRef}
             role="dialog"
             aria-label="Generator issues"
-            className="fixed z-[9999] space-y-3 rounded-xl bg-surface-raised p-3 text-xs text-ink shadow-xl"
+            className="fixed z-[9999] space-y-3 rounded-xl p-3 text-xs text-ink bg-surface-glass shadow-xl ring-1 ring-wash ring-inset backdrop-blur-lg backdrop-saturate-150"
             style={{ left: pos.x, top: pos.y, width: PANEL_WIDTH }}
           >
+            {/* The beak — same shape and size as the shared Tooltip's (components/ui/tooltip.tsx). */}
+            <svg
+              aria-hidden
+              width={12}
+              height={6}
+              viewBox="0 0 30 10"
+              preserveAspectRatio="none"
+              className="absolute -top-1.5 rotate-180 fill-surface-glass"
+              style={{ left: pos.beakX - 6 }}
+            >
+              <polygon points="0,0 30,0 15,10" />
+            </svg>
             {issues.map((issue) => (
               <div key={issue.code + issue.title} className="flex gap-2">
                 {issue.severity === "critical" ? (

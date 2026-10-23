@@ -5,7 +5,10 @@ import { useDebugSizeBadge } from "@/components/ui/debug-size-badge";
 import { useQuery } from "@tanstack/react-query";
 import Value from "@/components/ui/value";
 import ProgressRing from "@/components/ui/progress-ring";
-import { FLOW_DEAD_BAND_W } from "@/components/ui/direction-chip";
+import DirectionChip, {
+  FLOW_DEAD_BAND_W,
+} from "@/components/ui/direction-chip";
+import TrendRow from "@/components/ui/trend-row";
 import { ChevronRight, ChevronsRight, Settings } from "lucide-react";
 import TileSurface from "@/components/ui/tile-surface";
 import {
@@ -14,7 +17,7 @@ import {
   TILE_RING,
   TILE_RING_VALUE,
 } from "@/lib/tile-style";
-import { ROLE_CHROME } from "@/lib/role-chrome";
+import { IDLE_CHROME, ROLE_CHROME } from "@/lib/role-chrome";
 import { TeslaMark } from "@/lib/tesla-icons";
 import { getEvStatus, getEvStatusWords } from "@/lib/vendors/tesla/status";
 import TeslaControlDialog from "@/components/TeslaControlDialog";
@@ -133,14 +136,18 @@ const EV_LIGHT_RGB = "rgb(248, 113, 113)"; // red-400
  *
  * One layout throughout; container queries (the tile's width, never the viewport) do the scaling.
  *
- * | Width    | Height | Ring D | Mark   | Cog    | Caption                          |
- * |----------|--------|--------|--------|--------|----------------------------------|
- * | 66px min | 110px  | 64     | Hidden | Hidden | state                            |
- * | 90px+    | 110px  | 64     | 16px   | Hidden | state                            |
- * | 120px+   | 110px  | 72     | 16px   | 28px   | state                            |
- * | 180px+   | 180px  | 108    | 20px   | 28px   | state · armed limit (compact)    |
- * | 220px+   | 180px  | 108    | 20px   | 28px   | state · kW, then the ETA         |
- * | 260px+   | 180px  | 108    | 20px   | 28px   | … and the armed limit in full    |
+ * | Width    | Height | Ring D | Mark   | Cog    | Bottom                                       |
+ * |----------|--------|--------|--------|--------|----------------------------------------------|
+ * | 66px min | 110px  | 64     | Hidden | Hidden | state caption                                |
+ * | 90px+    | 110px  | 64     | 16px   | Hidden | state caption                                |
+ * | 120px+   | 110px  | 72     | 16px   | 28px   | state caption                                |
+ * | 150px+   | 110px  | 72     | 16px   | 28px   | state/kW ↔ ETA (or limit), armed limit compact |
+ * | 180px+   | 180px  | 108    | 20px   | 28px   | as 150px                                     |
+ * | 220px+   | 180px  | 108    | 20px   | 28px   | … plus the direction chip                    |
+ * | 260px+   | 180px  | 108    | 20px   | 28px   | … and the armed limit in full                |
+ *
+ * The bottom row starts at 150px rather than the 180px of Amber/OE grid: a phone's two-up tile is
+ * under 180px, and the kW and ETA are what you look at the car tile for.
  */
 export default function TeslaSmallCard({
   latest,
@@ -182,13 +189,10 @@ export default function TeslaSmallCard({
   const batteryColor = ROLE_CHROME.ev.rgb;
   const batteryLight = EV_LIGHT_RGB;
 
-  // Charging detail: power fuses onto the state line, the ETA gets its own.
-  const powerText =
-    isCharging && chargePower !== null ? `${chargePower} kW` : null;
-  const etaText =
-    isCharging && timeToFull
-      ? `${formatTimeRemaining(timeToFull)} to ${chargeLimit ? `${Math.round(chargeLimit)}%` : "full"}`
-      : null;
+  // The right-hand complication: the ETA while charging, else the car's charge limit.
+  const etaLabel = `To ${chargeLimit ? `${Math.round(chargeLimit)}%` : "full"}`;
+  const etaValue =
+    isCharging && timeToFull ? formatTimeRemaining(timeToFull) : "";
 
   // Armed charge limit, if any: "Stopping at 20 kWh (12.4 so far)".
   //
@@ -295,29 +299,63 @@ export default function TeslaSmallCard({
         </ProgressRing>
       </div>
 
-      {/* Status in the caption slot under the ring. The charging detail (kW, ETA) waits for a card
-          wide enough to hold it on one line. The slot reserves the most lines it can show at each
-          width, so the ring above it stays put when charging starts and the ETA/limit lines appear. */}
+      {/* Narrow (<150px): just the state, as a caption under the ring. */}
       <div
-        className={`mt-1 text-center ${TILE_CAPTION} min-h-[1lh] @[180px]:min-h-[2lh] @[220px]:min-h-[3lh]`}
+        className={`mt-1 truncate text-center ${TILE_CAPTION} @[150px]:hidden`}
       >
-        <div className="truncate">
-          {statusWords.join(" ")}
-          {powerText && (
-            <span className="hidden @[220px]:inline"> · {powerText}</span>
-          )}
+        {statusWords.join(" ")}
+      </div>
+
+      {/* From 150px: the bottom complications, as on Battery/Amber — state and kW on the left, the
+          ETA (or the charge limit) on the right. Both values always render ("—" when idle) so the
+          ring above doesn't move when charging starts. */}
+      <div className="hidden @[150px]:block">
+        <div className="flex items-end justify-between gap-2 @[180px]:gap-3">
+          <TrendRow
+            // The chip waits for 220px: below that the two columns need its width.
+            chip={
+              <DirectionChip
+                direction={isCharging ? "down" : "idle"}
+                color={ROLE_CHROME.ev.rgb}
+                double={isHighPower}
+                className="!hidden @[220px]:!grid"
+              />
+            }
+            label={statusWords.join(" ")}
+            value={
+              isCharging && chargePower !== null ? (
+                <Value value={chargePower} unit="kW" />
+              ) : (
+                "—"
+              )
+            }
+            valueColor={isCharging ? ROLE_CHROME.ev.value : IDLE_CHROME.value}
+          />
+          {etaValue ? (
+            <div className="shrink-0">
+              <TrendRow label={etaLabel} value={etaValue} />
+            </div>
+          ) : chargeLimit != null ? (
+            <div className="shrink-0">
+              <TrendRow
+                label="Limit"
+                value={<Value value={Math.round(chargeLimit)} unit="%" />}
+              />
+            </div>
+          ) : null}
         </div>
-        {etaText && (
-          <div className="hidden @[220px]:block truncate">{etaText}</div>
-        )}
-        {/* The armed limit: compact from 180px, the full sentence from 260px like `etaText`. */}
+        {/* The armed limit: compact from 150px, the full sentence from 260px. */}
         {limitCompact && (
-          <div className="hidden @[180px]:block @[260px]:hidden truncate text-tile-ink-dim">
+          <div
+            className={`mt-1 truncate ${TILE_CAPTION} text-tile-ink-dim @[260px]:hidden`}
+          >
             {limitCompact}
           </div>
         )}
         {limitText && (
-          <div className="hidden @[260px]:block truncate text-tile-ink-dim">
+          <div
+            className={`mt-1 hidden truncate ${TILE_CAPTION} text-tile-ink-dim @[260px]:block`}
+          >
             {limitText}
           </div>
         )}

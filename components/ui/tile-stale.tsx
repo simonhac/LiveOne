@@ -17,15 +17,18 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 
-/** "just now" / "4 min ago" / "3 h ago" / "2 d ago" — compact, because it shares a row with a title. */
+/**
+ * "just now" / "4 min ago" / "3 h ago" / "2 d ago" — compact, because it shares a row with a title.
+ * The spaces are NO-BREAK (U+00A0): an age must never wrap mid-phrase ("20 min" / "ago").
+ */
 export function formatAge(ageSeconds: number): string {
-  if (!Number.isFinite(ageSeconds)) return "no data";
+  if (!Number.isFinite(ageSeconds)) return "no\u00A0data";
   const min = Math.floor(ageSeconds / 60);
-  if (min < 1) return "just now";
-  if (min < 60) return `${min} min ago`;
+  if (min < 1) return "just\u00A0now";
+  if (min < 60) return `${min}\u00A0min\u00A0ago`;
   const h = Math.floor(min / 60);
-  if (h < 48) return `${h} h ago`;
-  return `${Math.floor(h / 24)} d ago`;
+  if (h < 48) return `${h}\u00A0h\u00A0ago`;
+  return `${Math.floor(h / 24)}\u00A0d\u00A0ago`;
 }
 
 /** Time first, date appended only when the reading isn't from today. */

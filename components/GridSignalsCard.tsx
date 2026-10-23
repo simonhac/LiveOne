@@ -23,9 +23,9 @@ export interface GridSignalsCardProps {
  * Presentational "<region> Grid" card (e.g. "NSW Grid"). Shows three live grid signals for the
  * household's local NEM region — spot price ($/MWh), emissions intensity (g CO₂e/kWh) and
  * renewables (%). A small ring tile, the same skeleton as Battery and EV: the renewable share as
- * the ring, price and emissions side by side underneath; narrower than 180px it falls back to the
- * three as label-over-value rows. No data fetching happens here — the typed `values` prop is
- * supplied by the caller.
+ * the ring, price and emissions side by side underneath — from 165px, so a phone's two-up tile
+ * (under 180px) gets it too; narrower than 165px it falls back to the three as label-over-value
+ * rows. No data fetching happens here — the typed `values` prop is supplied by the caller.
  *
  * Staleness follows Tile: the newest measurementTime across the present metrics against
  * `staleThresholdSeconds`; stale values dim and the header shows the reading's age.
@@ -122,10 +122,11 @@ export default function GridSignalsCard({
         staleness={staleness}
         measurementTime={newestMs}
       />
-      {/* ≥180px: the ring-tile skeleton — the grid's renewable share as the ring, centred in the
-          free height, then price and emissions as one bottom row. Narrower, the ring would leave
-          no room for the numbers, so the three become label-over-value rows. */}
-      <div className="hidden flex-1 items-center justify-center py-2 @[180px]:flex">
+      {/* ≥165px: the ring-tile skeleton — the grid's renewable share as the ring, centred in the
+          free height, then price and emissions as one bottom row. 165 rather than the usual 180
+          because a phone's two-up tile lands at ~178px; narrower still, the ring would leave no
+          room for the numbers, so the three become label-over-value rows. */}
+      <div className="hidden flex-1 items-center justify-center py-2 @[165px]:flex">
         <ProgressRing
           fraction={(renewables ?? 0) / 100}
           color={ROLE_CHROME.battery.rgb}
@@ -135,16 +136,16 @@ export default function GridSignalsCard({
           <span className={`${TILE_RING_VALUE} text-ink`}>
             {renewablesValue}
           </span>
-          <span className="mt-1 text-[11px] font-medium leading-none text-tile-ink-muted">
+          <span className="mt-0.5 text-[9px] font-medium leading-none text-tile-ink-muted @[180px]:mt-1 @[180px]:text-[11px]">
             renewable
           </span>
         </ProgressRing>
       </div>
-      <div className="hidden justify-between gap-2 @[180px]:flex">
+      <div className="hidden justify-between gap-1 @[165px]:flex @[180px]:gap-2">
         {priceRow}
         {emissionsRow}
       </div>
-      <div className="mt-2 grid grid-cols-1 gap-y-2 @[180px]:hidden">
+      <div className="mt-2 grid grid-cols-1 gap-y-2 @[165px]:hidden">
         {priceRow}
         {emissionsRow}
         <TrendRow
