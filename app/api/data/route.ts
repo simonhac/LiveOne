@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireDashboardAccess } from "@/lib/api-auth";
-import { viewerControllableDevices } from "@/lib/control/ownership-server";
+import {
+  subjectCanControl,
+  viewerControllableDevices,
+} from "@/lib/control/ownership-server";
 import { jsonResponse, transformDates } from "@/lib/json";
 import { buildDevicePayload } from "@/lib/dashboard/serve-data";
 import {
@@ -70,11 +73,7 @@ export async function GET(request: NextRequest) {
               transformDates(
                 {
                   ...payload,
-                  canControl: viewerCanControl(authResult),
-                  canControlDevices: await viewerControllableDevices(
-                    authResult,
-                    payload,
-                  ),
+                  ...(await viewerControl(authResult, payload)),
                 },
                 subjectTimezoneOffsetMin(authResult.subject),
               ),
@@ -119,14 +118,14 @@ export async function GET(request: NextRequest) {
     // `canControl` is VIEWER-relative, so it attaches here and NOT inside `buildDevicePayload`, which
     // is shared with the viewer-less SSR seed (`getDeviceDataForCache` — "access is the CALLER's
     // responsibility"). It is the display-layer input for the EV charge-control cog; the action
-    // route re-authorizes with `requireOwner`, so this is courtesy, never authority.
+    // route re-authorizes with `requireControl`, so this is courtesy, never authority.
     return jsonResponse(
       {
         ...payload,
-        canControl: viewerCanControl(authResult),
-        // Per-DEVICE ownership, for a tile whose commanded device is not the subject it fetched
-        // under (an EV tile filed inside a multi-device area). See the helper's note.
-        canControlDevices: await viewerControllableDevices(authResult, payload),
+        // `canControl` (the subject) and `canControlDevices` (per-DEVICE, for a tile whose
+        // commanded device is not the subject it fetched under — an EV tile filed inside a
+        // multi-device area). See the helper's note.
+        ...(await viewerControl(authResult, payload)),
       },
       subjectTimezoneOffsetMin(subject),
       { headers: serverTimingHeaders(t) },
@@ -146,18 +145,24 @@ export async function GET(request: NextRequest) {
 /**
  * The single emission point for the viewer's CONTROL access, shared by both legs.
  *
- * 🛑 This is `isOwner`, NOT `canWrite`. The control plane is owner-only — a non-owner admin is
- * refused by `requireDeviceAccess({requireOwner:true})` — so emitting `canWrite` (owner OR admin)
- * would render a cog that 403s on press, which is worse than no cog. It is derived from the SAME
- * auth result the read was authorized with; there is no second authorization path here.
- *
- * `DashboardAuthContext.isOwner` is already strict (`ownsSubject`), so the old anonymous mask is
- * subsumed: an anonymous caller on an OWNERLESS subject compares `null === null` on the raw
- * `canWrite` quirk (still pinned in `lib/__tests__/api-auth.test.ts`) but owns nothing, and a
- * share-token viewer arrives `isOwner: false`.
+ * 🛑 This is the CONTROL rule (`canControlDevice`: owner, or a `control` grant), NOT `canWrite`. A
+ * non-owner admin is refused by `requireDeviceAccess({requireControl:true})`, so emitting `canWrite`
+ * (owner OR admin) would render a cog that 403s on press, which is worse than no cog. Ownership
+ * comes from the SAME auth result the read was authorized with (`isOwner` is strict `ownsSubject`,
+ * so an anonymous caller on an ownerless subject and a share-token viewer both arrive false).
  */
-function viewerCanControl(auth: { isOwner: boolean }): boolean {
-  return auth.isOwner === true;
+async function viewerControl(
+  auth: { isOwner: boolean; userId: string | null },
+  payload: Parameters<typeof viewerControllableDevices>[1] &
+    Parameters<typeof subjectCanControl>[0],
+): Promise<{ canControl: boolean; canControlDevices: number[] }> {
+  const canControlDevices = await viewerControllableDevices(auth, payload);
+  return {
+    canControl:
+      auth.isOwner === true ||
+      subjectCanControl(payload, auth.userId, canControlDevices),
+    canControlDevices,
+  };
 }
 
 /**

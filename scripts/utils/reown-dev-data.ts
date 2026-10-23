@@ -188,7 +188,7 @@ async function main() {
         // composite PK `dashboard_grants_pk` (dashboard_id, user_id) rather than a separate unique index.
         const dashGrant = await c.query(
           `INSERT INTO dashboard_grants (dashboard_id, user_id, role, created_at)
-             SELECT id, $1, 'viewer', now()
+             SELECT id, $1, 'view', now()
                FROM dashboards WHERE owner_user_id = $2
              ON CONFLICT (dashboard_id, user_id) DO NOTHING`,
           [from, to],

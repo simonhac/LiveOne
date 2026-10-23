@@ -313,7 +313,7 @@ describe("DELETE /api/v4/dashboards/{id}/shares", () => {
 describe("GET /api/v4/dashboards/{id}/grants", () => {
   it("carries the legacy twin's Clerk decoration key-for-key", async () => {
     mockListGrants.mockResolvedValue([
-      { userId: ALICE, role: "viewer", createdAt: new Date(1_700_000_000_000) },
+      { userId: ALICE, role: "view", createdAt: new Date(1_700_000_000_000) },
     ] as never);
     const res = await grantsGET(req(GRANTS_URL), { params });
     expect(res.status).toBe(200);
@@ -336,7 +336,7 @@ describe("GET /api/v4/dashboards/{id}/grants", () => {
       throw new Error("clerk 404");
     }) as never);
     mockListGrants.mockResolvedValue([
-      { userId: BOB, role: "viewer", createdAt: new Date(0) },
+      { userId: BOB, role: "view", createdAt: new Date(0) },
     ] as never);
     const body = await (await grantsGET(req(GRANTS_URL), { params })).json();
     expect(body.members).toHaveLength(1);
@@ -379,9 +379,9 @@ describe("PUT /api/v4/dashboards/{id}/grants — full replace", () => {
     );
     expect(res.status).toBe(200);
     expect(mockReplace).toHaveBeenCalledWith(DASHBOARD_ID, [
-      { clerkUserId: ALICE, role: "viewer" },
+      { clerkUserId: ALICE, role: "view" },
       { clerkUserId: BOB, role: "admin" },
-      { clerkUserId: "user_carla", role: "viewer" },
+      { clerkUserId: "user_carla", role: "view" },
     ]);
     const body = await res.json();
     expect(Object.keys(body).sort()).toEqual(["changed", "members"]);

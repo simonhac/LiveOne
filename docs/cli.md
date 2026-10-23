@@ -157,8 +157,8 @@ onboarding now suggests `Amber <distributor> NMI <nmi>`.
 
 - **`point` domain, and control `action`/`refresh`** — the blanket deferral of `/api/v4/points/*`
   has been PARTLY resolved: two reads were judged individually and admitted, on the grounds that
-  each is a read, each is owner-only in-handler (`requireOwner`, which refuses even a non-owning
-  admin — stricter than anything else behind the bypass), and each is enumerated as a named segment
+  each is a read, each is control-gated in-handler (`requireControl`: the owner or a `control`
+  grantee, which refuses even a non-owning admin — stricter than anything else behind the bypass), and each is enumerated as a named segment
   rather than a wildcard.
   - `GET  …/{pt}/commands`  → `liveone automation commands` (the dispatch audit trail)
   - `POST …/{pt}/preflight` → `liveone device preflight` (writes nothing, but DOES reach the site

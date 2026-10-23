@@ -38,8 +38,8 @@ export interface AreaDatum {
   };
   latest?: LatestPointValues;
   /**
-   * Does this viewer OWN this subject? Emitted by `/api/data` from `requireDashboardAccess.isOwner`
-   * — the same rule the control routes enforce (`requireDeviceAccess({requireOwner:true})`), so a
+   * May this viewer command this subject? Emitted by `/api/data`: ownership, or (device subject) a
+   * `control` grant — the same rule the control routes enforce (`requireControl`), so a
    * non-owner ADMIN gets `false` here and is never shown a control it would be refused. False for
    * anonymous callers, share-token viewers and ownerless subjects.
    *

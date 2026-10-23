@@ -785,7 +785,7 @@ export const dashboards = pgTable(
 // ============================================================================
 // Dashboard grants (P4) - per-dashboard membership (invite a person to a dashboard).
 // Access resolves Dashboard → its cards' bindings → points, so a grant is read-scoped to exactly
-// what the dashboard shows. role ∈ owner|admin|viewer. (Grant-management UI is a later phase.)
+// what the dashboard shows. role ∈ view|control|admin (control also delegates device commands). (Grant-management UI is a later phase.)
 // ============================================================================
 export const dashboardGrants = pgTable(
   "dashboard_grants",
@@ -798,7 +798,7 @@ export const dashboardGrants = pgTable(
       .notNull()
       .references(() => dashboards.id, { onDelete: "cascade" }),
     userId: text("user_id").notNull(),
-    role: text("role").notNull(), // 'admin' | 'viewer'
+    role: text("role").notNull(), // 'view' | 'control' | 'admin' — see lib/dashboard/grants.ts
     createdAt: tsMs("created_at").notNull(),
   },
   (table) => ({
@@ -809,7 +809,7 @@ export const dashboardGrants = pgTable(
     userIdx: index("dashboard_grants_user_idx").on(table.userId),
     roleCheck: check(
       "dashboard_grants_role_check",
-      sql`${table.role} IN ('admin','viewer')`,
+      sql`${table.role} IN ('view','control','admin')`,
     ),
   }),
 );

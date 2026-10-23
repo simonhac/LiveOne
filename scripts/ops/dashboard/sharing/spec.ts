@@ -48,9 +48,9 @@ export const SHARE_SPEC = {
         ...BASE_URL_FLAG,
         role: {
           type: "string",
-          placeholder: "viewer",
-          values: ["viewer", "admin"],
-          help: "Grant role (default: viewer)",
+          placeholder: "view",
+          values: ["view", "control", "admin"],
+          help: "Grant role (default: view; control also lets them use the controls on devices you own)",
         },
       },
       exitCodes: {
@@ -102,9 +102,9 @@ export const SHARE_SPEC = {
         ...BASE_URL_FLAG,
         role: {
           type: "string",
-          placeholder: "viewer",
-          values: ["viewer", "admin"],
-          help: "Grant role for everyone named (default: viewer)",
+          placeholder: "view",
+          values: ["view", "control", "admin"],
+          help: "Grant role for everyone named (default: view; control also lets them use the controls on devices you own)",
         },
       },
       exitCodes: {

@@ -14,7 +14,13 @@ jest.mock("@/lib/registry/device-config", () => ({
   DeviceConfigRegistry: { deviceByHandle: jest.fn() },
 }));
 
+// The `control`-grant leg of the control rule: a DB read, stubbed per case (empty by default).
+jest.mock("@/lib/dashboard/grants", () => ({
+  controllableDeviceScopeForUser: jest.fn(async () => new Set<number>()),
+}));
+
 import { viewerControlFields } from "@/lib/control/ownership-server";
+import { controllableDeviceScopeForUser } from "@/lib/dashboard/grants";
 import { DeviceConfigRegistry } from "@/lib/registry/device-config";
 
 /** Device 14 is the generator controller (owned by `user_owner`); 21 is somebody else's. */
@@ -40,6 +46,7 @@ const AREA_PAYLOAD = {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  jest.mocked(controllableDeviceScopeForUser).mockResolvedValue(new Set());
   mockByHandle.mockImplementation(async (handle: number) =>
     handle in OWNERS ? { ownerClerkUserId: OWNERS[handle] } : null,
   );
@@ -94,5 +101,38 @@ describe("viewerControlFields", () => {
       "user_owner",
     );
     expect(fields).toEqual({ canControl: true, canControlDevices: [] });
+  });
+
+  it("g. a `control` grantee gets the devices their grant delegates — but not the AREA subject", async () => {
+    jest
+      .mocked(controllableDeviceScopeForUser)
+      .mockResolvedValue(new Set([14]));
+    const fields = await viewerControlFields(AREA_PAYLOAD, "user_grantee");
+    // An area is never commanded itself, so the subject-level answer stays the area owner's.
+    expect(fields).toEqual({ canControl: false, canControlDevices: [14] });
+    // Resolved once per payload, not once per device.
+    expect(controllableDeviceScopeForUser).toHaveBeenCalledTimes(1);
+  });
+
+  it("h. …and on a DEVICE subject the grant makes the subject controllable too", async () => {
+    jest
+      .mocked(controllableDeviceScopeForUser)
+      .mockResolvedValue(new Set([14]));
+    const fields = await viewerControlFields(
+      {
+        device: { id: 14, ownerClerkUserId: "user_owner" },
+        latest: { "ev.battery/soc": { sourceSystemId: 14 } },
+      },
+      "user_grantee",
+    );
+    expect(fields).toEqual({ canControl: true, canControlDevices: [14] });
+  });
+
+  it("🛑 i. a grant scope naming an OWNERLESS device still commands nothing", async () => {
+    jest
+      .mocked(controllableDeviceScopeForUser)
+      .mockResolvedValue(new Set([99]));
+    const fields = await viewerControlFields(AREA_PAYLOAD, "user_grantee");
+    expect(fields.canControlDevices).toEqual([]);
   });
 });

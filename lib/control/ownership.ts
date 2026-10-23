@@ -1,13 +1,15 @@
 /**
  * Ownership — the one rule the control plane authorizes on.
  *
- * 🛑 **Only the device OWNER may command a device.** Commanding hardware is not a config write:
- * a non-owner admin driving someone else's car would do it using *that owner's* stored vendor
- * credentials (the Tesla capability deliberately loads tokens under the device owner, not the
- * caller). So the control plane asks "do you own this?", never "may you write?".
+ * 🛑 **Only the device OWNER — or someone they delegated to — may command a device.** Commanding
+ * hardware is not a config write: a non-owner admin driving someone else's car would do it using
+ * *that owner's* stored vendor credentials (the Tesla capability deliberately loads tokens under the
+ * device owner, not the caller). So the control plane asks "do you own this, or did its owner hand
+ * you control?" (a `control` dashboard grant — `canControlDevice` in ./ownership-server.ts), never
+ * "may you write?".
  *
  * This module is deliberately dependency-free so BOTH sides can use it: the server gate
- * (`requireDeviceAccess({requireOwner:true})`, `/api/data`'s emission) and the client gate
+ * (`requireDeviceAccess({requireControl:true})`, `/api/data`'s emission) and the client gate
  * (`components/dashboard/v4/node-view.tsx`). One rule, one expression, no second authorization path.
  */
 

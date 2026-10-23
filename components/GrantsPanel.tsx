@@ -20,6 +20,12 @@ type MemberInput =
   | { email: string; role: string }
   | { username: string; role: string };
 
+/** The grant roles offered here. `admin` exists in the schema but conveys nothing beyond `view` yet. */
+const ROLE_OPTIONS = [
+  { value: "view", label: "View" },
+  { value: "control", label: "Control" },
+] as const;
+
 /** `PUT`'s per-grantee diff (§9.2) — returned so an under- or over-applied replace is visible. */
 interface GrantsChanged {
   added: string[];
@@ -135,8 +141,8 @@ export default function GrantsPanel({
     if (!value) return;
     // An "@" means an email; otherwise treat it as a username. The server resolves either to a Clerk id.
     const invited: MemberInput = value.includes("@")
-      ? { email: value, role: "viewer" }
-      : { username: value, role: "viewer" };
+      ? { email: value, role: "view" }
+      : { username: value, role: "view" };
     setBusy(true);
     setError(null);
     try {
@@ -147,6 +153,24 @@ export default function GrantsPanel({
       if (!changed) return;
       setInvitee("");
       toast.success("Member added");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const setRole = async (clerkUserId: string, role: string) => {
+    setBusy(true);
+    setError(null);
+    try {
+      const changed = await replaceMembers(
+        members.map((m) => ({
+          clerkUserId: m.clerkUserId,
+          role: m.clerkUserId === clerkUserId ? role : m.role,
+        })),
+        "Could not change role",
+      );
+      if (!changed) return;
+      toast.success("Role changed");
     } finally {
       setBusy(false);
     }
@@ -172,7 +196,9 @@ export default function GrantsPanel({
     <div className="space-y-4">
       <p className="text-sm text-ink-muted">
         Invite people to view this dashboard. They sign in and see it read-only,
-        scoped to exactly what it shows.
+        scoped to exactly what it shows. <strong>Control</strong> also lets them
+        use the dashboard&rsquo;s controls (generator, EV charging) on devices
+        you own.
       </p>
       <div className="flex gap-2">
         <input
@@ -210,8 +236,23 @@ export default function GrantsPanel({
                 <div className="truncate text-sm text-ink-strong">
                   {m.email ?? m.name ?? m.clerkUserId}
                 </div>
-                <div className="text-xs text-ink-faint">{m.role}</div>
               </div>
+              <select
+                value={m.role}
+                onChange={(e) => void setRole(m.clerkUserId, e.target.value)}
+                disabled={busy}
+                aria-label="Role"
+                className="ml-auto rounded-md border border-line-strong bg-surface-sunken px-2 py-1 text-xs text-ink-strong disabled:opacity-50"
+              >
+                {ROLE_OPTIONS.map((r) => (
+                  <option key={r.value} value={r.value}>
+                    {r.label}
+                  </option>
+                ))}
+                {!ROLE_OPTIONS.some((r) => r.value === m.role) && (
+                  <option value={m.role}>{m.role}</option>
+                )}
+              </select>
               <Hint content="Remove member">
                 <button
                   onClick={() => remove(m.clerkUserId)}

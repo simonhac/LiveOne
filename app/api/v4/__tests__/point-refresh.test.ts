@@ -3,7 +3,7 @@
  * stale-data remedy.
  *
  * Same resolution/authorization skeleton as the action route (a point id names its device;
- * `requireOwner` alone is the gate), so this suite pins the same three seams plus the one
+ * `requireControl` alone is the gate), so this suite pins the same three seams plus the one
  * behaviour that is its own: a 202 that schedules the re-poll and promises nothing else.
  */
 import { describe, it, expect, beforeEach, jest } from "@jest/globals";
@@ -90,12 +90,12 @@ describe("POST /api/v4/points/[id]/refresh", () => {
     expect(mockRepoll).not.toHaveBeenCalled();
   });
 
-  it("🛑 authorizes the point's DEVICE on OWNERSHIP — `requireOwner` alone", async () => {
+  it("🛑 authorizes the point's DEVICE on the CONTROL rule — `requireControl` alone", async () => {
     // A refresh spends the owner's vendor read and can wake their hardware, so it is gated
     // exactly like commanding the device. Exact `toEqual` pins the lone flag (the action
     // route's rationale).
     await call();
     expect(mockAuth.mock.calls[0][1]).toBe(10);
-    expect(mockAuth.mock.calls[0][2]).toEqual({ requireOwner: true });
+    expect(mockAuth.mock.calls[0][2]).toEqual({ requireControl: true });
   });
 });

@@ -1708,7 +1708,7 @@ Arguments:
 
 Options:
   --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
-  --role <viewer>            Grant role (default: viewer)  (one of: viewer, admin)
+  --role <view>              Grant role (default: view; control also lets them use the controls on devices you own)  (one of: view, control, admin)
 
 Common options:
   --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
@@ -1820,7 +1820,7 @@ Arguments:
 
 Options:
   --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
-  --role <viewer>            Grant role for everyone named (default: viewer)  (one of: viewer, admin)
+  --role <view>              Grant role for everyone named (default: view; control also lets them use the controls on devices you own)  (one of: view, control, admin)
 
 Common options:
   --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
@@ -5947,7 +5947,7 @@ Options:
   --cascade                  Also move each named area's member devices
   --share-back <user>        Users to grant on the moved dashboards (comma-separated); defaults to you
   --no-share-back            Transfer with NO share-back — only the new owner and admins will see it
-  --role <viewer>            Grant role for the share-back (default: viewer)  (one of: viewer, admin)
+  --role <view>              Grant role for the share-back (default: view; control also lets them use the controls on devices you own)  (one of: view, control, admin)
   --force                    Proceed even if the share-back would not restore read access
 
 Common options:

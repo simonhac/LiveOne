@@ -79,9 +79,9 @@ export const OWNER_SUBCOMMANDS = {
       },
       role: {
         type: "string",
-        placeholder: "viewer",
-        values: ["viewer", "admin"],
-        help: "Grant role for the share-back (default: viewer)",
+        placeholder: "view",
+        values: ["view", "control", "admin"],
+        help: "Grant role for the share-back (default: view; control also lets them use the controls on devices you own)",
       },
       force: {
         type: "boolean",

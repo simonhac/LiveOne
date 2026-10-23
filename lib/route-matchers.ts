@@ -311,7 +311,7 @@ const cliTokenRoutes = [
   // dangerous entry in this file, because `…/action` actuates hardware.
   //
   // The dispatch audit trail. A GET, and the strictest handler gate in this list:
-  // `requireDeviceAccess(..., {requireOwner: true})` refuses even a non-owning ADMIN, so it is
+  // `requireDeviceAccess(..., {requireControl: true})` refuses even a non-owning ADMIN, so it is
   // narrower than every other entry here. Exposes nothing a browser session for the same user does
   // not already have.
   "/api/v4/points/:id/commands",

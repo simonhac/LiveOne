@@ -12,7 +12,7 @@ import { apiFetch } from "@/lib/cli-kit/http";
 import { dependentLines, str, usage } from "../../shared";
 import { resolveUserId } from "../../user/cli";
 
-type Role = "viewer" | "admin";
+type Role = "view" | "control" | "admin";
 
 interface WireMember {
   clerkUserId: string;
@@ -137,7 +137,7 @@ function membershipWriter(mode: "add" | "remove" | "set") {
       ctx,
       async (s) => {
         const d = await resolveDash(s, ctx.args[0]);
-        const role = (str(ctx, "role") ?? "viewer") as Role;
+        const role = (str(ctx, "role") ?? "view") as Role;
         const current = await getMembers(s, d.id);
 
         const named: string[] = [];

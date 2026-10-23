@@ -11,10 +11,10 @@ exports[`tree renderer shows the requested detail with cross-device references, 
 │   └── Owned device #2: EV → High Street [area owner: simon@example.com]
 ├── Simon — simon@example.com
 │   ├── Area: High Street (ar_home)
-│   │   ├── Shared via dashboard Home: craig@example.com (viewer), 1 active share link(s)
+│   │   ├── Shared via dashboard Home: craig@example.com (view), 1 active share link(s)
 │   │   ├── Calendar sharing: 1 active feed link(s) [schedule only]
 │   │   ├── Device #1: Battery inverter [sigenergy]
-│   │   │   ├── Shared via dashboard Home: craig@example.com (viewer), 1 active share link(s)
+│   │   │   ├── Shared via dashboard Home: craig@example.com (view), 1 active share link(s)
 │   │   │   ├── History
 │   │   │   │   ├── Daily aggregates: 720 point-day rows, 2026-05-17 → 2026-09-13
 │   │   │   │   └── Last successful collection: 2026-09-14T00:00:00.000Z
@@ -42,7 +42,7 @@ exports[`tree renderer shows the requested detail with cross-device references, 
 │   │       ├── Battery history: 120 day(s), latest 2026-09-13
 │   │       └── Flow attribution: 119 day(s), latest 2026-09-13
 │   └── Dashboard: Home (db_home)
-│       ├── Shared via dashboard Home: craig@example.com (viewer), 1 active share link(s)
+│       ├── Shared via dashboard Home: craig@example.com (view), 1 active share link(s)
 │       └── Area reference → High Street
 └── No owner / public
     └── Unassigned devices

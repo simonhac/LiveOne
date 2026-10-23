@@ -5,7 +5,7 @@
  * What only a route test can pin here:
  *
  *  1. 🛑 **It is owner-gated exactly like a command**, even though it writes nothing. It spends a
- *     round trip to someone's hardware, so it is `requireDeviceAccess(..., {requireOwner:true})` —
+ *     round trip to someone's hardware, so it is `requireDeviceAccess(..., {requireControl:true})` —
  *     the same rule as the sibling `../refresh` route — and combined with its deliberate absence
  *     from `shareableRoutes`/`publicRoutes` that is what stops a share-token viewer interrogating
  *     someone's generator.
@@ -116,7 +116,7 @@ describe("resolution and authorization", () => {
   it("🛑 demands OWNERSHIP — a probe spends a round trip to someone's hardware", async () => {
     await call({});
     expect(mockAuth).toHaveBeenCalledWith(expect.anything(), 14, {
-      requireOwner: true,
+      requireControl: true,
     });
   });
 

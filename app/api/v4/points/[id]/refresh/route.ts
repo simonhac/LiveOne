@@ -11,7 +11,7 @@ import { Point } from "@/lib/ids";
  *   POST /api/v4/points/{pt_…}/refresh  → 202 { scheduled: true }
  *
  * Same shape as its sibling action route: a point id names its device, so the resolver and the
- * owner-only gate are identical, and the refresh itself is the action route's confirmation
+ * control gate are identical, and the refresh itself is the action route's confirmation
  * re-poll (`scheduleRepoll` → the real ingest path; the web tier never writes KV). 202 because
  * the poll runs after the response — the caller watches `measurementTime` advance on its normal
  * data query rather than awaiting a body.
@@ -40,7 +40,7 @@ export async function POST(
     }
 
     const auth = await requireDeviceAccess(request, resolved.deviceRid, {
-      requireOwner: true,
+      requireControl: true,
     });
     if (auth instanceof NextResponse) return auth;
 

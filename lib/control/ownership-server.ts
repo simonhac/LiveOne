@@ -9,9 +9,28 @@
  */
 import { ownsSubject } from "./ownership";
 import { DeviceConfigRegistry } from "@/lib/registry/device-config";
+import { controllableDeviceScopeForUser } from "@/lib/dashboard/grants";
 
 /**
- * The DEVICES inside this payload that the viewer strictly owns — i.e. the ones they may command.
+ * May this identity COMMAND this device? The device's owner, or the holder of a `control` grant on
+ * a dashboard that shows it and whose owner owns it (`controllableDeviceScopeForUser`).
+ *
+ * This is THE control rule — `requireDeviceAccess({requireControl:true})` and both `/api/data`
+ * emissions below all ask it. The grant leg is only consulted for a signed-in non-owner, so an
+ * owner's request never touches the grants table.
+ */
+export async function canControlDevice(
+  userId: string | null | undefined,
+  device: { id: number; ownerClerkUserId?: string | null },
+): Promise<boolean> {
+  if (ownsSubject(userId, device.ownerClerkUserId)) return true;
+  if (userId == null || device.ownerClerkUserId == null) return false;
+  return (await controllableDeviceScopeForUser(userId)).has(device.id);
+}
+
+/**
+ * The DEVICES inside this payload that the viewer may command — owned, or delegated by a `control`
+ * grant (`canControlDevice`).
  *
  * 🛑 Why this exists next to `canControl`. `canControl` is about the SUBJECT the payload was
  * fetched under, and for an AREA that is the area, not the car: an area owner who does not own a
@@ -20,10 +39,10 @@ import { DeviceConfigRegistry } from "@/lib/registry/device-config";
  *
  * There is deliberately no second authorization path here. Every latest-map entry already carries
  * `sourceSystemId` (the producing `devices.rid` — see `lib/latest-values-store.ts`), so the set of
- * devices in play is read off the payload we just built; ownership is then the SAME predicate the
- * server gate itself uses, `ownsSubject`, against the same registry row `requireDeviceAccess`
+ * devices in play is read off the payload we just built; the rule is then the SAME predicate the
+ * server gate itself uses, `canControlDevice`, against the same registry row `requireDeviceAccess`
  * resolves. It is still courtesy, never authority — `POST /api/v4/points/{pt_}/action`
- * re-authorizes with `requireOwner` regardless of what this said.
+ * re-authorizes with `requireControl` regardless of what this said.
  *
  * A share-token viewer arrives `userId: null` and so owns nothing, exactly as `canControl` does.
  */
@@ -37,13 +56,20 @@ export async function viewerControllableDevices(
     if (typeof entry?.sourceSystemId === "number")
       handles.add(entry.sourceSystemId);
   }
-  const owned = await Promise.all(
+  const userId = auth.userId;
+  // The grant scope is resolved at most once per payload, and only if some device isn't owned.
+  let granted: Promise<Set<number>> | undefined;
+  const controllable = await Promise.all(
     [...handles].map(async (handle) => {
       const device = await DeviceConfigRegistry.deviceByHandle(handle);
-      return ownsSubject(auth.userId, device?.ownerClerkUserId) ? handle : null;
+      if (!device) return null;
+      if (ownsSubject(userId, device.ownerClerkUserId)) return handle;
+      if (device.ownerClerkUserId == null) return null;
+      granted ??= controllableDeviceScopeForUser(userId);
+      return (await granted).has(handle) ? handle : null;
     }),
   );
-  return owned.filter((h): h is number => h !== null);
+  return controllable.filter((h): h is number => h !== null);
 }
 
 /**
@@ -55,24 +81,46 @@ export async function viewerControllableDevices(
  * paint and appeared only when the first client refetch replaced the seed, up to `staleTime` (25 s)
  * later. This annotates the seed with the answer the route would have given.
  *
- * 🛑 `canControl` IS `ownsSubject` against the payload's own subject block. The route emits
- * `authResult.isOwner`, and `DashboardAuthContext.isOwner` is itself strict `ownsSubject` — so this
- * is the same predicate, not a second rule, and it is the same `ownerClerkUserId` the prefetch's
- * pin-safety guard already reads. It cannot widen access either way: the caller only annotates
- * payloads it had already fetched and authorized, both halves fail closed on `userId == null` (the
- * shared/anonymous view), and the action route re-authorizes with `requireOwner`.
+ * 🛑 `canControl` is the same rule `/api/data` emits (`subjectCanControl`): strict ownership of the
+ * subject, or — for a DEVICE subject — a `control` grant that delegates it. It cannot widen access
+ * either way: the caller only annotates payloads it had already fetched and authorized, both halves
+ * fail closed on `userId == null` (the shared/anonymous view), and the action route re-authorizes
+ * with `requireControl`.
  */
 export async function viewerControlFields(
   payload: {
     latest?: Record<string, { sourceSystemId?: number }>;
-    device?: { ownerClerkUserId?: string | null };
+    device?: { id?: number; ownerClerkUserId?: string | null };
     area?: { ownerClerkUserId?: string | null };
   },
   userId: string | null,
 ): Promise<{ canControl: boolean; canControlDevices: number[] }> {
-  const owner = (payload.device ?? payload.area)?.ownerClerkUserId;
+  const canControlDevices = await viewerControllableDevices(
+    { userId },
+    payload,
+  );
   return {
-    canControl: ownsSubject(userId, owner),
-    canControlDevices: await viewerControllableDevices({ userId }, payload),
+    canControl: subjectCanControl(payload, userId, canControlDevices),
+    canControlDevices,
   };
+}
+
+/**
+ * The subject-level `canControl`: the viewer owns the subject, or the subject is a DEVICE that
+ * `canControlDevices` (already computed with the grant rule) lists. An AREA is never commanded
+ * itself, so a `control` grant does not make an area subject controllable — tiles that command a
+ * device inside an area gate on `canControlDevices` instead (`datumCanControlPoint`).
+ */
+export function subjectCanControl(
+  payload: {
+    device?: { id?: number; ownerClerkUserId?: string | null };
+    area?: { ownerClerkUserId?: string | null };
+  },
+  userId: string | null,
+  canControlDevices: readonly number[],
+): boolean {
+  if (ownsSubject(userId, (payload.device ?? payload.area)?.ownerClerkUserId))
+    return true;
+  const id = payload.device?.id;
+  return typeof id === "number" && canControlDevices.includes(id);
 }

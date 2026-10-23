@@ -18,7 +18,7 @@ describe("tree renderer", () => {
     expect(output).toContain("[archived]");
     expect(output).toContain("[archived] [no devices in scope]");
     expect(output).toContain("No owner / public");
-    expect(output).toContain("craig@example.com (viewer)");
+    expect(output).toContain("craig@example.com (view)");
     expect(output).toContain(
       "Interval provenance via High Street: 40 record(s)",
     );

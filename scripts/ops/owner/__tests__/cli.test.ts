@@ -34,10 +34,10 @@ describe("the transfer contract", () => {
 
   it("refuses a role that is not a grant role", () => {
     // 'owner' is a plausible thing to type and is NOT a dashboard_grants role (the check constraint
-    // is admin|viewer); catching it here beats a 422 from the far end of a transfer.
+    // is view|control|admin); catching it here beats a 422 from the far end of a transfer.
     expect(bad(["transfer", "k", "--areas=a", "--role=owner"])).toMatch(/role/);
     expect(ok(["transfer", "k", "--areas=a", "--role=admin"])).toBeTruthy();
-    expect(ok(["transfer", "k", "--areas=a", "--role=viewer"])).toBeTruthy();
+    expect(ok(["transfer", "k", "--areas=a", "--role=control"])).toBeTruthy();
   });
 });
 
