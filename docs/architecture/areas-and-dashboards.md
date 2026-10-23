@@ -219,8 +219,9 @@ OpenElectricity region devices), and everything else shares through a dashboard 
 `dashboard_grants` (one role per user: `view`, `control`, or `admin` — reserved, acts as `view`) or a
 `share_tokens` row (one token → one dashboard). `control` is the one grant that conveys more than
 reading: its holder may command the devices the dashboard shows that the dashboard's OWNER owns
-(`controllableDeviceScopeForUser`; commands still run on the owner's vendor credentials). It does
-not extend to automations, which stay owner-only because a parked rule would outlive the grant. The legacy
+(`controllableDeviceScopeForUser`; commands still run on the owner's vendor credentials). Of the
+automations it covers only CHARGE LIMITS on those cars — a rule that can only stop charging, once —
+and never `exercise` rules, which start an engine unattended and stay the owner's. The legacy
 owner-scoped token system was folded into this one at the cutover; token strings survived verbatim,
 so no shared URL broke.
 

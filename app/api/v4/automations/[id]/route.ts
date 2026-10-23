@@ -15,6 +15,7 @@ import { refuseOnceExercise } from "@/lib/automations/types";
 // Shared with `./move/route.ts` — a Next.js route file cannot be imported from another route,
 // so the loader these two have in common lives in lib.
 import {
+  delegateMayManage,
   loadOwnedAutomation,
   notFound,
   unprocessable,
@@ -46,7 +47,9 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params;
-  const loaded = await loadOwnedAutomation(request, id);
+  const loaded = await loadOwnedAutomation(request, id, {
+    allowDelegate: true,
+  });
   if ("error" in loaded) return loaded.error;
   const row = loaded.row;
 
@@ -142,6 +145,19 @@ export async function PATCH(
   const modeRefusal = refuseOnceExercise(patch.mode ?? row.mode, nextTrigger);
   if (modeRefusal) return unprocessable(modeRefusal);
 
+  // A delegate may not re-aim a rule out of the shape they are allowed to manage.
+  if (
+    loaded.access.kind === "delegate" &&
+    !(await delegateMayManage(
+      { trigger: nextTrigger, action: nextAction },
+      loaded.access.controllable,
+    ))
+  )
+    return NextResponse.json(
+      { error: "Only the site owner can make this change" },
+      { status: 403 },
+    );
+
   // 🛑 EVERY patch clears the ownership firewall, not just one that replaces trigger/action.
   //
   // The narrow version of this check (run it only when `trigger`/`action` change) guarded the wrong
@@ -209,8 +225,8 @@ function sameSlotSeries(
  * and `point_commands.requested_by` is a plain string with no FK, so the audit trail of everything
  * this rule ever did survives the rule itself.
  *
- * 🛑 **DELETE is ADMINISTRATION, not a command — so it stays area-owner-OR-ADMIN and does NOT run
- * `checkReferences`.** The owner-only rule is "only the device owner may cause a command to be
+ * 🛑 **DELETE is ADMINISTRATION, not a command — so it stays area-owner-OR-ADMIN (plus a `control`
+ * grantee, for a charge limit on a car they command) and does NOT run `checkReferences`.** The owner-only rule is "only the device owner may cause a command to be
  * SENT". Deleting an automation can only ever cause FEWER commands: it removes a deferred action,
  * it cannot arm, re-aim or re-time one. The failure mode is a rule that stops firing (a charge that
  * runs past its limit) — an availability loss, not an action taken on someone else's car with that
@@ -231,7 +247,9 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params;
-  const loaded = await loadOwnedAutomation(request, id);
+  const loaded = await loadOwnedAutomation(request, id, {
+    allowDelegate: true,
+  });
   if ("error" in loaded) return loaded.error;
 
   const relied = await refuseIfReliedUpon(request, "automation", loaded.row.id);

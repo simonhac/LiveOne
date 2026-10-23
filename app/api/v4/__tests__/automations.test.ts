@@ -44,6 +44,22 @@ jest.mock("@/lib/areas/http", () => ({
   loadAreaForOwner: jest.fn(),
   loadAreaForAuth: jest.fn(),
 }));
+// The collection's area gate. Driven here off the `loadAreaForOwner` mock, as the owner/admin
+// (`manager`) path it always was — the `control`-grantee (`delegate`) path runs for real in
+// `app/api/__tests__/control-owner-only.test.ts`.
+jest.mock("@/lib/automations/http", () => {
+  const actual = jest.requireActual("@/lib/automations/http") as object;
+  return {
+    ...actual,
+    loadAreaForAutomations: jest.fn(async (req: unknown, id: unknown) => {
+      const { loadAreaForOwner } = jest.requireMock("@/lib/areas/http") as {
+        loadAreaForOwner: (r: unknown, i: unknown) => Promise<object>;
+      };
+      const r = await loadAreaForOwner(req, id);
+      return "error" in r ? r : { ...r, access: { kind: "manager" } };
+    }),
+  };
+});
 // The referential-integrity gate. NOTHING references an automation today, so this is wired mostly
 // to pin that the route asks — see the route's docstring on why an empty finder that is CALLED is
 // different from a question nobody asked.
@@ -57,6 +73,10 @@ jest.mock("@/lib/control/point-actions", () => ({
 // device set. Mocked here because it is the derivations surface's own loader — its behaviour is
 // pinned in `lib/derivations/__tests__/scope.test.ts`, not re-litigated per caller.
 jest.mock("@/lib/derivations/scope", () => ({ loadDerivation: jest.fn() }));
+// A non-owner here holds no `control` grant: the item routes' delegate leg finds nothing.
+jest.mock("@/lib/dashboard/grants", () => ({
+  controllableDeviceScopeForUser: jest.fn(async () => new Set<number>()),
+}));
 jest.mock("@/lib/automations/store", () => ({
   listForArea: jest.fn(),
   getById: jest.fn(),
@@ -90,7 +110,11 @@ const mockStore = jest.mocked(store);
 
 const OWNER = "user_owner";
 
-type AccessOpts = { requireWrite?: boolean; requireOwner?: boolean };
+type AccessOpts = {
+  requireWrite?: boolean;
+  requireOwner?: boolean;
+  requireControl?: boolean;
+};
 
 /** Stands in for `requireDeviceAccess` when the caller can read but owns nothing. */
 const refuseUnlessOwner = (async (
@@ -98,7 +122,7 @@ const refuseUnlessOwner = (async (
   _rid: number,
   opts?: AccessOpts,
 ) =>
-  opts?.requireOwner
+  opts?.requireOwner || opts?.requireControl
     ? NextResponse.json(
         { error: "Only the device owner can control this device" },
         { status: 403 },
@@ -117,7 +141,7 @@ const adminNotOwner = (async (
   _rid: number,
   opts?: AccessOpts,
 ) =>
-  opts?.requireOwner
+  opts?.requireOwner || opts?.requireControl
     ? NextResponse.json(
         { error: "Only the device owner can control this device" },
         { status: 403 },
@@ -780,8 +804,10 @@ describe("POST /api/v4/automations", () => {
     // to own it.
     const res = await post(good);
     expect(res.status).toBe(201);
+    // A charge limit only ever turns charging OFF, so its action point takes the CONTROL gate
+    // (owner or `control` grantee); an exercise rule's takes strict ownership (below).
     expect(mockDeviceAccess).toHaveBeenCalledWith(expect.anything(), 10, {
-      requireOwner: true,
+      requireControl: true,
     });
     expect(mockDeviceAccess).toHaveBeenCalledWith(expect.anything(), 10);
   });
@@ -1163,7 +1189,7 @@ describe("PATCH — every patch clears the control gate (the re-enable gap)", ()
     // The STORED action point is what gets checked when the body replaces neither.
     expect(mockLoadPoint).toHaveBeenCalledWith(ACT_PT_UUID);
     expect(mockDeviceAccess).toHaveBeenCalledWith(expect.anything(), 10, {
-      requireOwner: true,
+      requireControl: true,
     });
   });
 

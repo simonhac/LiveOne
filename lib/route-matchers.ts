@@ -273,15 +273,17 @@ const cliTokenRoutes = [
   "/api/v4/devices/:id/sync",
   "/api/v4/users(.*)", // the user directory — requireAdmin in-handler, so a non-admin token 403s there
   // The automations resource — `liveone automation`. Both handlers authorize: the collection
-  // through `loadAreaForOwner` (owner-or-admin) plus `checkReferences`, which additionally requires
-  // the caller to OWN the action point's device; the item through `loadOwnedAutomation`, which
+  // through `loadAreaForAutomations` (owner-or-admin, or a `control` grantee for charge limits on
+  // cars they command) plus `checkReferences`, which additionally runs the control gate on the
+  // action point's device (strict ownership for an exercise rule); the item through
+  // `loadOwnedAutomation`, which
   // collapses an unauthorized id to 404 so the route is not an oracle for which `au_` ids exist.
   //
   // 🛑 Second only to `ownership/transfer` in consequence, and for a different reason: an
   // automation is a DEFERRED command, so what is written here is dispatched LATER by the cron with
   // the device owner's vendor credentials and no session at all — and an `exercise` rule dispatches
   // `set_value` at a generator's run-request point, i.e. it starts an engine, unattended. That is
-  // exactly why the create path's ownership check is `requireOwner` rather than `requireWrite`.
+  // exactly why an exercise rule's action check is `requireOwner` rather than `requireWrite`.
   //
   // Enumerated, NOT `/api/v4/automations(.*)` — the `areas/:id` precedent. Any sub-resource this
   // grows later is judged on its own rather than inheriting the bypass by being a sibling.

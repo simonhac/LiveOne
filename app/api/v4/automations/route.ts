@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { loadAreaForOwner } from "@/lib/areas/http";
+import {
+  delegateMayManage,
+  loadAreaForAutomations,
+} from "@/lib/automations/http";
 import type { AutomationMode } from "@/lib/db/planetscale/schema";
 import { checkReferences } from "@/lib/automations/references";
 import * as store from "@/lib/automations/store";
@@ -17,17 +20,19 @@ import { refuseOnceExercise } from "@/lib/automations/types";
  *   GET  /api/v4/automations?area=ar_…  → 200 { automations: [...] }
  *   POST /api/v4/automations            → 201 { automation }
  *
- * TypeIDs on the wire, raw uuids inside. Area-scoped and owner-or-admin via `loadAreaForOwner`,
- * exactly like the derivations resource. Deliberately in NEITHER `publicRoutes` nor
+ * TypeIDs on the wire, raw uuids inside. Area-scoped via `loadAreaForAutomations`: the area's owner
+ * or an admin sees and manages every rule; a `control` grantee only the charge limits on cars they
+ * may command (`delegateMayManage`). Deliberately in NEITHER `publicRoutes` nor
  * `shareableRoutes` (`lib/route-matchers.ts`): a share token must never reach a mutation, and
  * every verb here is a mutation or an owner read.
  *
  * 🛑 An automation is a DEFERRED action call — at fire time the evaluator dispatches with the
  * DEVICE OWNER's credentials and no session user at all. So creation must clear the same firewalls
  * the synchronous action route does, or owning any area would let a caller aim a `turn_off` at
- * someone else's car. The area gate above is owner-OR-ADMIN and is therefore NOT enough on its own;
- * `checkReferences` additionally requires the caller to OWN the action point's device
- * (`requireDeviceAccess(..., {requireOwner:true})`), plus a read check on the source point.
+ * someone else's car. The area gate above admits admins and is therefore NOT enough on its own;
+ * `checkReferences` additionally runs the CONTROL gate on the action point's device (owner or
+ * `control` grantee for a charge limit, owner only for an exercise rule), plus a read check on the
+ * source point.
  */
 
 const MODES: AutomationMode[] = ["once", "standing"];
@@ -42,10 +47,17 @@ export async function GET(request: NextRequest) {
   // readable" would quietly widen the surface.
   if (!areaParam) return unprocessable("area (ar_…) is required");
 
-  const authed = await loadAreaForOwner(request, areaParam);
+  const authed = await loadAreaForAutomations(request, areaParam);
   if ("error" in authed) return authed.error;
 
-  const rows = await store.listForArea(authed.area.id);
+  let rows = await store.listForArea(authed.area.id);
+  const access = authed.access;
+  if (access.kind === "delegate") {
+    const visible = await Promise.all(
+      rows.map((row) => delegateMayManage(row, access.controllable)),
+    );
+    rows = rows.filter((_, i) => visible[i]);
+  }
   const at = { timezone: authed.area.displayTimezone, nowMs: Date.now() };
   // The zone is served alongside the rows because every schedule in them is a LOCAL WALL CLOCK in
   // it and is stored without it (`ExerciseSchedule`). A client that renders "09:00" or expands a
@@ -65,7 +77,7 @@ export async function POST(request: NextRequest) {
 
   const areaId = typeof body.areaId === "string" ? body.areaId : null;
   if (!areaId) return unprocessable("areaId (ar_…) is required");
-  const authed = await loadAreaForOwner(request, areaId);
+  const authed = await loadAreaForAutomations(request, areaId);
   if ("error" in authed) return authed.error;
   const areaUuid = authed.area.id;
 
@@ -79,6 +91,20 @@ export async function POST(request: NextRequest) {
   if (modeRefusal) return unprocessable(modeRefusal);
   const action = actionFromWire(body.action);
   if (!action.ok) return unprocessable(action.error);
+  // A delegate creates only what they could then see and manage. `checkReferences` would refuse
+  // an exercise rule on the generator anyway (it needs ownership); this also keeps them to the
+  // point-sourced shape `delegateMayManage` admits, so nothing they make vanishes from their list.
+  if (
+    authed.access.kind === "delegate" &&
+    !(await delegateMayManage(
+      { trigger: trigger.value, action: action.value },
+      authed.access.controllable,
+    ))
+  )
+    return NextResponse.json(
+      { error: "Only the site owner can create this automation" },
+      { status: 403 },
+    );
 
   if (body.enabled !== undefined && typeof body.enabled !== "boolean")
     return unprocessable("enabled must be a boolean");

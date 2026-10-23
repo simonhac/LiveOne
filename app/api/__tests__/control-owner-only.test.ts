@@ -313,32 +313,22 @@ describe("automations — the DEFERRED command path", () => {
     signIn("user_admin", true);
     const res = await createLimit();
     expect(res.status).toBe(403);
-    expect((await res.json()).error).toBe(
-      "Only the device owner can control this device",
-    );
+    expect((await res.json()).error).toBe("No control access to this device");
     expect(automationStore.create).not.toHaveBeenCalled();
   });
 
   it("🛑 nobody can aim one at an OWNERLESS device — not an admin, not an anonymous caller", async () => {
+    // The admin reaches the control gate (403); an anonymous caller is 401'd by `requireAuth` first.
     device(null);
-    for (const who of [
-      () => signIn("user_admin", true),
-      () => signIn(null),
+    for (const [who, status] of [
+      [() => signIn("user_admin", true), 403],
+      [() => signIn(null), 401],
     ] as const) {
       jest.mocked(automationStore.create).mockClear();
       who();
-      expect((await createLimit()).status).toBe(403);
+      expect((await createLimit()).status).toBe(status);
       expect(automationStore.create).not.toHaveBeenCalled();
     }
-  });
-
-  it("🛑 a `control` grantee is refused — a grant delegates the button, not a parked rule", async () => {
-    signIn("user_grantee");
-    jest
-      .mocked(controllableDeviceScopeForUser)
-      .mockResolvedValue(new Set([10]));
-    expect((await createLimit()).status).toBe(403);
-    expect(automationStore.create).not.toHaveBeenCalled();
   });
 
   it("a signed-in stranger is refused", async () => {
@@ -375,9 +365,7 @@ describe("automations — RE-ENABLING is causing a command too", () => {
     signIn("user_admin", true);
     const res = await callPatch({ enabled: true });
     expect(res.status).toBe(403);
-    expect((await res.json()).error).toBe(
-      "Only the device owner can control this device",
-    );
+    expect((await res.json()).error).toBe("No control access to this device");
     expect(automationStore.patch).not.toHaveBeenCalled();
   });
 
@@ -416,6 +404,153 @@ describe("automations — RE-ENABLING is causing a command too", () => {
     );
     expect(res.status).toBe(200);
     expect(automationStore.remove).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * 🛑 A `control` grantee and automations. A charge limit can only ever turn charging OFF and is spent
+ * with its session, so the grantee who may press the car's stop button may also set it to press
+ * itself — create, edit, delete. An `exercise` rule STARTS an engine on a schedule, indefinitely,
+ * and stays the owner's: no route may let a grantee create, re-aim or re-arm one.
+ */
+describe("automations — a `control` grantee", () => {
+  const SRC = Point.generate();
+
+  function pointLimitBody(extra: Record<string, unknown> = {}) {
+    return {
+      areaId: AREA,
+      mode: "once",
+      trigger: {
+        kind: "charge-session",
+        source: { kind: "point", pointId: SRC },
+        afterMinutes: 60,
+      },
+      action: { kind: "point-action", pointId: POINT, action: "turn_off" },
+      ...extra,
+    };
+  }
+  function post(body: unknown) {
+    return createAutomation(
+      new NextRequest("http://localhost/api/v4/automations", {
+        method: "POST",
+        body: JSON.stringify(body),
+      }),
+    );
+  }
+  function patch(body: unknown) {
+    return patchAutomation(
+      new NextRequest(`http://localhost/api/v4/automations/${AU}`, {
+        method: "PATCH",
+        body: JSON.stringify(body),
+      }),
+      { params: Promise.resolve({ id: AU }) },
+    );
+  }
+  function del() {
+    return deleteAutomation(
+      new NextRequest(`http://localhost/api/v4/automations/${AU}`, {
+        method: "DELETE",
+      }),
+      { params: Promise.resolve({ id: AU }) },
+    );
+  }
+  /** The stored rule as the car's own controls write it: point-sourced. */
+  function pointRow(enabled = true) {
+    const r = storedRow(enabled);
+    return {
+      ...r,
+      trigger: {
+        kind: "charge-session",
+        source: { kind: "point", pointId: Point.toUuid(SRC) },
+        afterMinutes: 60,
+      },
+    };
+  }
+
+  beforeEach(() => {
+    signIn("user_grantee");
+    jest
+      .mocked(controllableDeviceScopeForUser)
+      .mockResolvedValue(new Set([10]));
+    jest.mocked(automationStore.getById).mockResolvedValue(pointRow() as never);
+  });
+
+  it("can create a point-sourced charge limit on a car they control", async () => {
+    const res = await post(pointLimitBody());
+    expect(res.status).toBe(201);
+    expect(automationStore.create).toHaveBeenCalledTimes(1);
+  });
+
+  it("can edit and delete one", async () => {
+    expect((await patch({ trigger: pointLimitBody().trigger })).status).toBe(
+      200,
+    );
+    expect((await patch({ enabled: false })).status).toBe(200);
+    expect((await del()).status).toBe(200);
+    expect(automationStore.remove).toHaveBeenCalledTimes(1);
+  });
+
+  it("🛑 cannot create one on a car outside their grant", async () => {
+    jest
+      .mocked(controllableDeviceScopeForUser)
+      .mockResolvedValue(new Set([11]));
+    expect((await post(pointLimitBody())).status).toBe(403);
+    expect(automationStore.create).not.toHaveBeenCalled();
+  });
+
+  it("🛑 cannot create an EXERCISE rule — starting an engine on a schedule stays the owner's", async () => {
+    const res = await post({
+      areaId: AREA,
+      mode: "standing",
+      trigger: {
+        kind: "exercise",
+        source: { kind: "derivation", derivationId: DX },
+        schedule: { start: "2026-10-29T09:00", rrule: "FREQ=WEEKLY;BYDAY=TH" },
+      },
+      action: {
+        kind: "point-action",
+        pointId: POINT,
+        action: "set_value",
+        value: 30,
+      },
+    });
+    expect(res.status).toBe(403);
+    expect(automationStore.create).not.toHaveBeenCalled();
+  });
+
+  it("🛑 cannot touch the owner's derivation-sourced rule — it is not even found", async () => {
+    jest
+      .mocked(automationStore.getById)
+      .mockResolvedValue(storedRow(false) as never);
+    expect((await patch({ enabled: true })).status).toBe(404);
+    expect((await del()).status).toBe(404);
+    expect(automationStore.patch).not.toHaveBeenCalled();
+    expect(automationStore.remove).not.toHaveBeenCalled();
+  });
+
+  it("🛑 cannot re-aim their limit into an exercise rule", async () => {
+    const res = await patch({
+      trigger: {
+        kind: "exercise",
+        source: { kind: "derivation", derivationId: DX },
+        schedule: { start: "2026-10-29T09:00", rrule: "FREQ=WEEKLY;BYDAY=TH" },
+      },
+      action: {
+        kind: "point-action",
+        pointId: POINT,
+        action: "set_value",
+        value: 30,
+      },
+      mode: "standing",
+    });
+    expect(res.status).toBe(403);
+    expect(automationStore.patch).not.toHaveBeenCalled();
+  });
+
+  it("without any control grant, the area's automations are refused", async () => {
+    jest.mocked(controllableDeviceScopeForUser).mockResolvedValue(new Set());
+    expect((await post(pointLimitBody())).status).toBe(403);
+    expect((await del()).status).toBe(404);
   });
 });
 
