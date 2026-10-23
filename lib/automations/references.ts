@@ -173,6 +173,8 @@ export async function checkReferences(
   // the cron dispatch it on that owner's vendor credentials — the exact thing
   // `lib/control/ownership.ts` exists to refuse. `requireOwner` is strictly narrower (an owner
   // always has write), and it refuses the `null === null` match on an ownerless device too.
+  // Deliberately NOT `requireControl`: a `control` grant delegates pressing the button, not parking
+  // a rule that would keep firing on the owner's credentials after the grant is revoked.
   const owned = await requireDeviceAccess(request, actionPoint.deviceRid, {
     requireOwner: true,
   });

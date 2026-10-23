@@ -150,7 +150,7 @@ export function fixture(): TreeInventory {
       dashboards: [
         {
           id: "db_home",
-          recipients: [{ userId: "craig", role: "viewer" }],
+          recipients: [{ userId: "craig", role: "view" }],
           activeLinks: 1,
           areaIds: ["ar_home"],
           deviceIds: ["dv_battery"],

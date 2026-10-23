@@ -5,8 +5,11 @@ import {
   listGrantsForDashboard,
   replaceDashboardGrants,
   type DashboardGrantInput,
-  type DashboardGrantRole,
 } from "@/lib/dashboard/grants";
+import {
+  isDashboardGrantRole,
+  type DashboardGrantRole,
+} from "@/lib/dashboard/grant-roles";
 import { getUserIdByEmail, getUserIdByUsername } from "@/lib/user-cache";
 
 /**
@@ -131,15 +134,11 @@ export async function PUT(
       errors.push({ code: "member-must-be-an-object", index });
       continue;
     }
-    const role: DashboardGrantRole = raw.role === "admin" ? "admin" : "viewer";
-    if (
-      raw.role !== undefined &&
-      raw.role !== "admin" &&
-      raw.role !== "viewer"
-    ) {
+    if (raw.role !== undefined && !isDashboardGrantRole(raw.role)) {
       errors.push({ code: "unknown-role", index, detail: String(raw.role) });
       continue;
     }
+    const role: DashboardGrantRole = raw.role ?? "view";
     const clerkUserId =
       typeof raw.clerkUserId === "string" ? raw.clerkUserId.trim() : "";
     const email = typeof raw.email === "string" ? raw.email.trim() : "";

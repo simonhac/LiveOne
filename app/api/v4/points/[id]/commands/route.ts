@@ -22,7 +22,7 @@ import { Automation, Point } from "@/lib/ids";
  * worst, in a read-only log they opened to skim. A cursor would buy nothing for that.
  *
  * Point-addressed like its `action`/`refresh` siblings (a point id names its device, so the
- * resolver and the owner-only gate are shared machinery), but the response is DEVICE-scoped:
+ * resolver and the control gate are shared machinery), but the response is DEVICE-scoped:
  * every command on the point's device, newest first, so start/stop and the two setpoints all
  * appear in one timeline. Rides `point_commands`' `(device_id, requested_at)` index — the
  * "per-device command timeline" it was declared for.
@@ -35,8 +35,8 @@ import { Automation, Point } from "@/lib/ids";
  *    null otherwise;
  *  - row uuids are NOT exposed: the list is read-only, so there is nothing to address.
  *
- * Owner-only (`requireOwner` alone, the control-plane rule): the trail records who commanded a
- * device, which is the owner's business exactly as issuing commands is. Deliberately absent from
+ * Control-gated (`requireControl` alone): the trail records who commanded a device, which is the
+ * business of exactly those who may issue the commands. Deliberately absent from
  * `publicRoutes`/`shareableRoutes` like its siblings.
  */
 export async function GET(
@@ -59,7 +59,7 @@ export async function GET(
     }
 
     const auth = await requireDeviceAccess(request, resolved.deviceRid, {
-      requireOwner: true,
+      requireControl: true,
     });
     if (auth instanceof NextResponse) return auth;
 

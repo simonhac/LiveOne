@@ -266,7 +266,7 @@ Genuine wins, with the domain-difference discount applied honestly.
    - **Verdict:** we are ahead on attribution, determinism and multi-tenant serving; HA is ahead on
      consumer-side structure. Neither is a superset.
 4. **Multi-tenant sharing that is actually access control — WIN, and bigger than it looked.**
-   `share_tokens` (one token → one dashboard) and `dashboard_grants` (admin/viewer) resolve scope
+   `share_tokens` (one token → one dashboard) and `dashboard_grants` (view/control/admin) resolve scope
    **live from the dashboard document on every read** — Dashboard → its nodes' envelope refs →
    exactly those points — and v4 makes that safe by construction: scope-bearing references may live
    _only_ in fixed envelope fields, never inside a card's `config`, so the scope walk is type-agnostic

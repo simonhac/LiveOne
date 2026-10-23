@@ -3,9 +3,13 @@
  *
  * A grant is the "invite a specific person" counterpart to the public `?access=` share token. Like a
  * token, a grant is READ-scoped to exactly what the dashboard shows — Dashboard → its Area(s) →
- * `area_bindings` → points (lib/dashboard/access.ts) — never general device access. role ∈
- * admin|viewer (config-v4 narrowed away `owner`); today invites are viewer (read-only) and `role`
- * is plumbed for a future editable variant.
+ * `area_bindings` → points (lib/dashboard/access.ts) — never general device access.
+ *
+ * One role per (dashboard, user) — the pair is the primary key:
+ *  - `view`    read-only.
+ *  - `control` `view`, plus the right to COMMAND the devices the dashboard shows that its OWNER owns
+ *              (generator start/stop, EV charging). See {@link controllableDeviceScopeForUser}.
+ *  - `admin`   plumbed for a future editable variant; today it conveys exactly `view`.
  */
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
@@ -14,8 +18,9 @@ import type { DashboardGrant } from "@/lib/db/planetscale/schema";
 import { getDashboard } from "@/lib/dashboard/dashboards";
 import { allowedSystemIds } from "@/lib/dashboard/access";
 import { Dashboard } from "@/lib/ids";
-
-export type DashboardGrantRole = "admin" | "viewer";
+import type { DashboardGrantRole } from "./grant-roles";
+import { DeviceConfigRegistry } from "@/lib/registry/device-config";
+import { ownsSubject } from "@/lib/control/ownership";
 
 // config-v4: this module's public surface speaks the opaque `db_…` dashboard id; the raw uuid
 // (dashboard_grants.dashboard_id) is decoded on the way into SQL and encoded on the way out.
@@ -172,6 +177,42 @@ export async function grantedDeviceScopeForUser(
     if (!dash) continue;
     const allowed = await allowedSystemIds({ doc: dash.doc });
     for (const sid of allowed) scope.add(sid);
+  }
+  return scope;
+}
+
+/**
+ * The device handles this user may COMMAND via their `control` grants.
+ *
+ * 🛑 Two conditions, and the second is the one that matters: the device is in a `control`-granted
+ * dashboard's read scope, AND it is owned by THAT DASHBOARD'S OWNER. Commands run on the device
+ * owner's stored vendor credentials (`lib/control/ownership.ts`), so only the owner can delegate
+ * them — referencing someone else's (or an ownerless) device in your own dashboard grants nothing.
+ *
+ * Grant-scoped live, like the read scope: removing a device from the dashboard, or downgrading the
+ * grant to `view`, withdraws control on the next request.
+ */
+export async function controllableDeviceScopeForUser(
+  clerkUserId: string,
+): Promise<Set<number>> {
+  const rows = await requirePlanetscaleDb()
+    .select({ dashboardId: dashboardGrants.dashboardId })
+    .from(dashboardGrants)
+    .where(
+      and(
+        eq(dashboardGrants.userId, clerkUserId),
+        eq(dashboardGrants.role, "control"),
+      ),
+    );
+  const scope = new Set<number>();
+  for (const { dashboardId } of rows) {
+    const dash = await getDashboard(Dashboard.encode(dashboardId));
+    if (!dash) continue;
+    for (const handle of await allowedSystemIds({ doc: dash.doc })) {
+      const device = await DeviceConfigRegistry.deviceByHandle(handle);
+      if (device && ownsSubject(dash.ownerClerkUserId, device.ownerClerkUserId))
+        scope.add(handle);
+    }
   }
   return scope;
 }

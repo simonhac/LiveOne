@@ -132,11 +132,11 @@ beforeEach(() => {
 describe("replaceDashboardGrants — driven from a POPULATED membership", () => {
   it("two grantees, PUT keeps one and drops the other", async () => {
     existing = [
-      { userId: ALICE, role: "viewer" },
-      { userId: BOB, role: "viewer" },
+      { userId: ALICE, role: "view" },
+      { userId: BOB, role: "view" },
     ];
     const result = await replaceDashboardGrants(DASH, [
-      { clerkUserId: ALICE, role: "viewer" },
+      { clerkUserId: ALICE, role: "view" },
     ]);
 
     // The DELETE named EXACTLY Bob. Not "a delete ran"; not "Alice survived by luck".
@@ -153,11 +153,11 @@ describe("replaceDashboardGrants — driven from a POPULATED membership", () => 
 
   it("adds a third while removing another (the sideways move)", async () => {
     existing = [
-      { userId: ALICE, role: "viewer" },
-      { userId: BOB, role: "viewer" },
+      { userId: ALICE, role: "view" },
+      { userId: BOB, role: "view" },
     ];
     const result = await replaceDashboardGrants(DASH, [
-      { clerkUserId: ALICE, role: "viewer" },
+      { clerkUserId: ALICE, role: "view" },
       { clerkUserId: CARLA, role: "admin" },
     ]);
 
@@ -170,12 +170,12 @@ describe("replaceDashboardGrants — driven from a POPULATED membership", () => 
 
   it("a role change on a KEPT member is an update, never a delete", async () => {
     existing = [
-      { userId: ALICE, role: "viewer" },
-      { userId: BOB, role: "viewer" },
+      { userId: ALICE, role: "view" },
+      { userId: BOB, role: "view" },
     ];
     const result = await replaceDashboardGrants(DASH, [
       { clerkUserId: ALICE, role: "admin" },
-      { clerkUserId: BOB, role: "viewer" },
+      { clerkUserId: BOB, role: "view" },
     ]);
 
     expect(deletes).toEqual([]); // 🛑 nobody left, so nothing may be deleted
@@ -192,7 +192,7 @@ describe("replaceDashboardGrants — driven from a POPULATED membership", () => 
 
   it("an empty list removes everyone — the case a notInArray(keep) predicate gets wrong", async () => {
     existing = [
-      { userId: ALICE, role: "viewer" },
+      { userId: ALICE, role: "view" },
       { userId: BOB, role: "admin" },
     ];
     const result = await replaceDashboardGrants(DASH, []);
@@ -204,25 +204,25 @@ describe("replaceDashboardGrants — driven from a POPULATED membership", () => 
   });
 
   it("a no-op replace issues no delete and no state change", async () => {
-    existing = [{ userId: ALICE, role: "viewer" }];
+    existing = [{ userId: ALICE, role: "view" }];
     const result = await replaceDashboardGrants(DASH, [
-      { clerkUserId: ALICE, role: "viewer" },
+      { clerkUserId: ALICE, role: "view" },
     ]);
     expect(deletes).toEqual([]);
     expect(result.unchanged).toEqual([ALICE]);
-    expect(existing).toEqual([{ userId: ALICE, role: "viewer" }]);
+    expect(existing).toEqual([{ userId: ALICE, role: "view" }]);
   });
 
   it("refuses a duplicate grantee rather than silently collapsing it", async () => {
-    existing = [{ userId: ALICE, role: "viewer" }];
+    existing = [{ userId: ALICE, role: "view" }];
     await expect(
       replaceDashboardGrants(DASH, [
-        { clerkUserId: BOB, role: "viewer" },
+        { clerkUserId: BOB, role: "view" },
         { clerkUserId: BOB, role: "admin" },
       ]),
     ).rejects.toThrow("duplicate grantee");
     expect(txCount).toBe(0); // rejected BEFORE the transaction — nothing applied
-    expect(existing).toEqual([{ userId: ALICE, role: "viewer" }]);
+    expect(existing).toEqual([{ userId: ALICE, role: "view" }]);
   });
 
   it("refuses a malformed dashboard id", async () => {

@@ -62,7 +62,7 @@ beforeEach(() => {
       },
     ],
     dashboards: [{ id: dash, name: "Shared view", ownerId: "owner", doc: {} }],
-    dashboard_grants: [{ dashboardId: dash, userId: "reader", role: "viewer" }],
+    dashboard_grants: [{ dashboardId: dash, userId: "reader", role: "view" }],
     share_tokens: [{ dashboardId: dash, count: 1 }],
     area_calendar_tokens: [{ areaId: area, count: 1 }],
   };
@@ -142,7 +142,7 @@ describe("inventory read scope", () => {
     expect(allowedSystemIds).toHaveBeenCalledWith({ doc: {} });
     expect(result.sharing?.dashboards[0]).toMatchObject({
       deviceIds: [Device.encode(device)],
-      recipients: [{ userId: "reader", role: "viewer" }],
+      recipients: [{ userId: "reader", role: "view" }],
       activeLinks: 1,
     });
     for (const table of ["share_tokens", "area_calendar_tokens"]) {

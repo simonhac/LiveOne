@@ -40,8 +40,12 @@ import {
 import { Area, Dashboard, Device } from "@/lib/ids";
 import { allowedSystemIds } from "@/lib/dashboard/access";
 import { listGrantsForUser } from "@/lib/dashboard/grants";
+import {
+  isDashboardGrantRole,
+  type DashboardGrantRole,
+} from "@/lib/dashboard/grant-roles";
 
-export type GrantRole = "admin" | "viewer";
+export type GrantRole = DashboardGrantRole;
 
 export interface ShareBack {
   userId: string;
@@ -142,7 +146,7 @@ async function readableDeviceHandles(
   return scope;
 }
 
-/** `["user_x", {userId,role}]` → one shape. A bare id means viewer, the least it can mean. */
+/** `["user_x", {userId,role}]` → one shape. A bare id means `fallback`. */
 export function parseShareBack(
   raw: unknown,
   fallback: GrantRole,
@@ -159,7 +163,7 @@ export function parseShareBack(
       const e = entry as Record<string, unknown>;
       if (typeof e.userId !== "string") return null;
       const role = e.role === undefined ? fallback : e.role;
-      if (role !== "viewer" && role !== "admin") return null;
+      if (!isDashboardGrantRole(role)) return null;
       out.push({ userId: e.userId, role });
       continue;
     }

@@ -34,13 +34,11 @@ import { Point } from "@/lib/ids";
  * 🛑 A BENIGN vendor decline is a **200 with `ok:false`** plus a `reason` (Tesla answers
  * `not_charging` when you stop an idle charge). It is not an error and must never 500.
  *
- * 🛑 Auth is `requireDeviceAccess(..., {requireOwner: true})` — `requireOwner` ALONE. It is the
- * CONTROL rule and is strictly narrower than write access, which is why no `requireWrite` rides
- * with it: ownership implies write (`ownsSubject` ⇒ `isOwner` ⇒ `canWrite`), so the write branch
- * could never fire on a request the owner branch admits, and the read/unauthenticated checks above
- * both run unconditionally. `lib/automations/references.ts` passes the same lone flag. It means: **only the device's owner may
- * command it** — a non-owner ADMIN is refused 403, and an ownerless device is commandable by
- * nobody (`ownsSubject` refuses two nulls). Admins keep their config write access everywhere
+ * 🛑 Auth is `requireDeviceAccess(..., {requireControl: true})` — `requireControl` ALONE. It is the
+ * CONTROL rule, and it is not write access: **only the device's owner, or someone the owner
+ * delegated to with a `control` grant on a dashboard showing the device, may command it**
+ * (`canControlDevice`). A non-owner ADMIN is refused 403, and an ownerless device is commandable
+ * by nobody (`ownsSubject` refuses two nulls). Admins keep their config write access everywhere
  * else; this is about actuating hardware, and the vendor command runs on the OWNER's stored
  * credentials. See `lib/control/ownership.ts`.
  *
@@ -70,7 +68,7 @@ export async function POST(
     }
 
     const auth = await requireDeviceAccess(request, resolved.deviceRid, {
-      requireOwner: true,
+      requireControl: true,
     });
     if (auth instanceof NextResponse) return auth;
 

@@ -1,12 +1,13 @@
 /**
- * 🛑 **Only the device OWNER may command a device** — proved at the WIRE, on EVERY route that can
- * reach `dispatchPointAction`: the v4 action route and automation creation (a command with a
- * delay).
+ * 🛑 **Only the device OWNER — or a `control` grantee the owner delegated to — may command a
+ * device**, proved at the WIRE, on EVERY route that can reach `dispatchPointAction`: the v4 action
+ * route (owner or grantee) and automation creation (a command with a delay — OWNER only, since a
+ * parked rule would outlive a revoked grant).
  *
  * Unlike the per-route suite (`app/api/v4/__tests__/point-action.test.ts`), `@/lib/api-auth` is NOT
  * mocked here: Clerk, the admin check and the device registry are, and the real
  * `requireDeviceAccess` runs. That is what makes these cases discriminate — a route that forgot
- * `requireOwner`, or a helper that stopped enforcing it, goes red here and nowhere else.
+ * `requireControl`/`requireOwner`, or a helper that stopped enforcing it, goes red here and nowhere else.
  */
 import { describe, it, expect, beforeEach, jest } from "@jest/globals";
 import { NextRequest } from "next/server";
@@ -35,6 +36,11 @@ jest.mock("@/lib/control/point-actions", () => ({
   dispatchPointAction: jest.fn(),
 }));
 jest.mock("@/lib/control/repoll", () => ({ scheduleRepoll: jest.fn() }));
+// The `control`-grant leg of the control rule: a DB read, stubbed per case (empty by default).
+jest.mock("@/lib/dashboard/grants", () => ({
+  ...(jest.requireActual("@/lib/dashboard/grants") as object),
+  controllableDeviceScopeForUser: jest.fn(async () => new Set<number>()),
+}));
 // The AUTOMATIONS path: a deferred command. Everything except the ownership gate is stubbed, so
 // what these cases exercise is the real `requireDeviceAccess` inside `checkReferences`.
 jest.mock("@/lib/areas/http", () => ({
@@ -66,6 +72,7 @@ import {
 } from "@/lib/control/point-actions";
 import { loadAreaForAuth, loadAreaForOwner } from "@/lib/areas/http";
 import * as automationStore from "@/lib/automations/store";
+import { controllableDeviceScopeForUser } from "@/lib/dashboard/grants";
 import { POST as pointAction } from "@/app/api/v4/points/[id]/action/route";
 import { POST as createAutomation } from "@/app/api/v4/automations/route";
 import {
@@ -145,6 +152,7 @@ const ROUTES = [["v4 point action", callV4]] as const;
 
 beforeEach(() => {
   jest.clearAllMocks();
+  jest.mocked(controllableDeviceScopeForUser).mockResolvedValue(new Set());
   device("user_owner");
   signIn(null);
   jest.mocked(loadPointByUuid).mockResolvedValue({
@@ -208,9 +216,7 @@ describe.each(ROUTES)("%s — owner-only", (_name, call) => {
     signIn("user_admin", true);
     const res = await call();
     expect(res.status).toBe(403);
-    expect((await res.json()).error).toBe(
-      "Only the device owner can control this device",
-    );
+    expect((await res.json()).error).toBe("No control access to this device");
     // The real proof: no vehicle command was attempted on the owner's credentials.
     expect(mockDispatch).not.toHaveBeenCalled();
   });
@@ -234,6 +240,42 @@ describe.each(ROUTES)("%s — owner-only", (_name, call) => {
     signIn("user_stranger");
     expect((await call()).status).toBe(403);
     expect(mockDispatch).not.toHaveBeenCalled();
+  });
+
+  it("a `control` grantee whose grant covers the device CAN command it", async () => {
+    signIn("user_grantee");
+    jest
+      .mocked(controllableDeviceScopeForUser)
+      .mockResolvedValue(new Set([10]));
+    const res = await call();
+    expect(res.status).toBe(200);
+    expect(mockDispatch).toHaveBeenCalledTimes(1);
+    expect(controllableDeviceScopeForUser).toHaveBeenCalledWith("user_grantee");
+  });
+
+  it("🛑 a grant covering OTHER devices does not reach this one", async () => {
+    signIn("user_grantee");
+    jest
+      .mocked(controllableDeviceScopeForUser)
+      .mockResolvedValue(new Set([11]));
+    expect((await call()).status).toBe(403);
+    expect(mockDispatch).not.toHaveBeenCalled();
+  });
+
+  it("🛑 an OWNERLESS device is refused even if a grant scope names it", async () => {
+    device(null);
+    signIn("user_grantee");
+    jest
+      .mocked(controllableDeviceScopeForUser)
+      .mockResolvedValue(new Set([10]));
+    expect((await call()).status).toBe(403);
+    expect(mockDispatch).not.toHaveBeenCalled();
+  });
+
+  it("the owner's own request never consults the grants table", async () => {
+    signIn("user_owner");
+    await call();
+    expect(controllableDeviceScopeForUser).not.toHaveBeenCalled();
   });
 });
 
@@ -288,6 +330,15 @@ describe("automations — the DEFERRED command path", () => {
       expect((await createLimit()).status).toBe(403);
       expect(automationStore.create).not.toHaveBeenCalled();
     }
+  });
+
+  it("🛑 a `control` grantee is refused — a grant delegates the button, not a parked rule", async () => {
+    signIn("user_grantee");
+    jest
+      .mocked(controllableDeviceScopeForUser)
+      .mockResolvedValue(new Set([10]));
+    expect((await createLimit()).status).toBe(403);
+    expect(automationStore.create).not.toHaveBeenCalled();
   });
 
   it("a signed-in stranger is refused", async () => {
@@ -400,9 +451,7 @@ describe("share-token viewers (pinned — must not regress)", () => {
       params: Promise.resolve({ id: POINT }),
     });
     expect(res.status).toBe(403);
-    expect((await res.json()).error).toBe(
-      "Only the device owner can control this device",
-    );
+    expect((await res.json()).error).toBe("No control access to this device");
     expect(mockDispatch).not.toHaveBeenCalled();
   });
 });

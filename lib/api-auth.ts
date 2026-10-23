@@ -8,6 +8,7 @@ import {
   type DeviceConfigView,
 } from "@/lib/registry/device-config";
 import { ownsSubject } from "@/lib/control/ownership";
+import { canControlDevice } from "@/lib/control/ownership-server";
 import { validateDashboardShareToken } from "@/lib/dashboard/sharing";
 import { getDashboard } from "@/lib/dashboard/dashboards";
 import { allowedSystemIds } from "@/lib/dashboard/access";
@@ -217,15 +218,23 @@ export async function requireCronOrAdmin(
  * `options.requireWrite` is the CONFIG write gate: owner **or** admin. Admins administer other
  * people's devices — settings, credentials, metadata — and that is unchanged.
  *
- * 🛑 `options.requireOwner` is the CONTROL gate and is strictly narrower: the caller must BE the
- * device's owner. An admin who does not own the device is refused, and an ownerless device is
+ * 🛑 `options.requireControl` is the CONTROL gate and is NOT a widening of `requireWrite`: the
+ * caller must own the device, or hold a `control` grant on a dashboard that shows it and whose owner
+ * owns it (`canControlDevice`). An admin who does neither is refused, and an ownerless device is
  * commandable by nobody. See `lib/control/ownership.ts` for why (commands run on the owner's
  * vendor credentials). Every route that actuates hardware must set it; nothing else should.
+ *
+ * `options.requireOwner` is the strict form — the device's owner and nobody else — for a path that
+ * must not be delegated (a DEFERRED command, which would outlive a revoked grant).
  */
 export async function requireDeviceAccess(
   request: NextRequest,
   systemId: number,
-  options: { requireWrite?: boolean; requireOwner?: boolean } = {},
+  options: {
+    requireWrite?: boolean;
+    requireControl?: boolean;
+    requireOwner?: boolean;
+  } = {},
   timer?: ServerTimer,
 ): Promise<DeviceAuthContext | NextResponse> {
   const ctx = await getAuthContext(request, timer);
@@ -245,7 +254,13 @@ export async function requireDeviceAccess(
   // That table was dropped in migration 0045 (slice F); it held 0 rows on prod and never conveyed
   // write access, so `canWrite` is unchanged and `canRead` only narrowed. A dashboard grantee still
   // gets in via requireDashboardAccess's grantedDeviceScopeForUser fallback below.
-  const canRead = ctx.isAdmin || ctx.isClaudeDev || isOwner || isPublic;
+  // A `control` grantee is not otherwise a reader here (their read path is requireDashboardAccess's
+  // grant fallback), so the control answer — computed only when asked for — also admits the read.
+  const canControl =
+    options.requireControl === true &&
+    (await canControlDevice(ctx.userId, device));
+  const canRead =
+    ctx.isAdmin || ctx.isClaudeDev || isOwner || isPublic || canControl;
   const canWrite = ctx.isAdmin || isOwner;
 
   if (!canRead && !ctx.userId) {
@@ -257,14 +272,17 @@ export async function requireDeviceAccess(
   if (options.requireWrite && !canWrite) {
     return forbidden("Write access required");
   }
-  // 🛑 The control gate. Strictly narrower than `canWrite`: `ownsSubject` refuses a non-owner
-  // admin AND refuses the `null === null` match an anonymous caller would otherwise get on an
-  // ownerless device.
+  // 🛑 The control gates. Neither is a widening of `canWrite`: both refuse a non-owner admin, and
+  // `ownsSubject` (which `canControlDevice` starts from) refuses the `null === null` match an
+  // anonymous caller would otherwise get on an ownerless device.
   if (
     options.requireOwner &&
     !ownsSubject(ctx.userId, device.ownerClerkUserId)
   ) {
     return forbidden("Only the device owner can control this device");
+  }
+  if (options.requireControl && !canControl) {
+    return forbidden("No control access to this device");
   }
 
   return {

@@ -20,7 +20,7 @@ import { VendorRegistry } from "@/lib/vendors/registry";
  *  - it writes nothing, so it takes NO `point_commands` audit row — that trail records dispatched
  *    attempts, and filling it with probes would bury the presses in noise;
  *  - it validates no action against `points.control`, because there is no action to validate.
- * What it DOES share with a command is the authorization: owner-only, exactly like the sibling
+ * What it DOES share with a command is the authorization: the control gate, exactly like the sibling
  * `../refresh` route, because it spends a round trip to someone's hardware. It stays out of
  * `publicRoutes`/`shareableRoutes` for the same reason.
  *
@@ -48,7 +48,7 @@ export async function POST(
     }
 
     const auth = await requireDeviceAccess(request, resolved.deviceRid, {
-      requireOwner: true,
+      requireControl: true,
     });
     if (auth instanceof NextResponse) return auth;
 

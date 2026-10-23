@@ -3478,9 +3478,10 @@
           },
           "role": {
             "type": "string",
-            "description": "Grant role (default: viewer) (viewer)",
+            "description": "Grant role (default: view; control also lets them use the controls on devices you own) (view)",
             "enum": [
-              "viewer",
+              "view",
+              "control",
               "admin"
             ]
           },
@@ -3506,7 +3507,7 @@
           "user"
         ]
       },
-      "signature": "liveone dashboard share add <dash> <user...> { --base-url?: string; --role?: \"viewer\"|\"admin\" }",
+      "signature": "liveone dashboard share add <dash> <user...> { --base-url?: string; --role?: \"view\"|\"control\"|\"admin\" }",
       "invocation": "npm run liveone -- dashboard share add",
       "file": "scripts/ops/liveone.ts",
       "writes": true,
@@ -3650,9 +3651,10 @@
           },
           "role": {
             "type": "string",
-            "description": "Grant role for everyone named (default: viewer) (viewer)",
+            "description": "Grant role for everyone named (default: view; control also lets them use the controls on devices you own) (view)",
             "enum": [
-              "viewer",
+              "view",
+              "control",
               "admin"
             ]
           },
@@ -3677,7 +3679,7 @@
           "dash"
         ]
       },
-      "signature": "liveone dashboard share set <dash> [user...] { --base-url?: string; --role?: \"viewer\"|\"admin\" }",
+      "signature": "liveone dashboard share set <dash> [user...] { --base-url?: string; --role?: \"view\"|\"control\"|\"admin\" }",
       "invocation": "npm run liveone -- dashboard share set",
       "file": "scripts/ops/liveone.ts",
       "writes": true,
@@ -6085,9 +6087,10 @@
           },
           "role": {
             "type": "string",
-            "description": "Grant role for the share-back (default: viewer) (viewer)",
+            "description": "Grant role for the share-back (default: view; control also lets them use the controls on devices you own) (view)",
             "enum": [
-              "viewer",
+              "view",
+              "control",
               "admin"
             ]
           },

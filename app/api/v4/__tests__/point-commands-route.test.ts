@@ -83,7 +83,7 @@ it("gates on OWNERSHIP of the point's device", async () => {
     );
   expect((await call()).status).toBe(403);
   expect(requireDeviceAccess).toHaveBeenCalledWith(expect.anything(), 14, {
-    requireOwner: true,
+    requireControl: true,
   });
 });
 

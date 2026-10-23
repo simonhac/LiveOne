@@ -29,16 +29,16 @@ describe("parsing the share-back", () => {
   it("reads a bare user id as the LEAST role it could mean", () => {
     // 🛑 `["user_x"]` is ambiguous between viewer and admin. Defaulting to admin would silently
     // hand edit rights to someone the caller only meant to keep informed.
-    expect(parseShareBack(["user_x"], "viewer")).toEqual([
-      { userId: "user_x", role: "viewer" },
+    expect(parseShareBack(["user_x"], "view")).toEqual([
+      { userId: "user_x", role: "view" },
     ]);
   });
 
   it("lets an explicit role override the fallback, per entry", () => {
     expect(
-      parseShareBack(["user_a", { userId: "user_b", role: "admin" }], "viewer"),
+      parseShareBack(["user_a", { userId: "user_b", role: "admin" }], "view"),
     ).toEqual([
-      { userId: "user_a", role: "viewer" },
+      { userId: "user_a", role: "view" },
       { userId: "user_b", role: "admin" },
     ]);
   });
@@ -47,21 +47,19 @@ describe("parsing the share-back", () => {
     // Falling back would turn a typo'd "owner" into a viewer grant — a quiet demotion that reads as
     // success, on the one field that says what someone may do.
     expect(
-      parseShareBack([{ userId: "user_b", role: "owner" }], "viewer"),
+      parseShareBack([{ userId: "user_b", role: "owner" }], "view"),
     ).toBeNull();
-    expect(
-      parseShareBack([{ userId: "user_b", role: "" }], "viewer"),
-    ).toBeNull();
+    expect(parseShareBack([{ userId: "user_b", role: "" }], "view")).toBeNull();
   });
 
   it("refuses an entry with no userId", () => {
-    expect(parseShareBack([{ role: "admin" }], "viewer")).toBeNull();
-    expect(parseShareBack([42], "viewer")).toBeNull();
+    expect(parseShareBack([{ role: "admin" }], "view")).toBeNull();
+    expect(parseShareBack([42], "view")).toBeNull();
   });
 
   it("treats absent as 'no share-back', which the writer then warns about", () => {
     // Not an error here: `--no-share-back` is a real, if dangerous, intent. The writer warns,
     // because only it knows whether devices are moving.
-    expect(parseShareBack(undefined, "viewer")).toEqual([]);
+    expect(parseShareBack(undefined, "view")).toEqual([]);
   });
 });

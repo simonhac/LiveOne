@@ -217,7 +217,7 @@ async function runTransfer(ctx: Ctx): Promise<number> {
     ctx,
     async (s) => {
       const toUserId = await resolveUserId(s, ctx.args[0]);
-      const role = (str(ctx, "role") ?? "viewer") as "viewer" | "admin";
+      const role = (str(ctx, "role") ?? "view") as "view" | "control" | "admin";
 
       if (bool(ctx, "noShareBack") && str(ctx, "shareBack") !== undefined)
         throw usage(

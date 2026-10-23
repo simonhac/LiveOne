@@ -5,15 +5,15 @@ import {
   TransferError,
   parseIdList,
   parseShareBack,
-  type GrantRole,
 } from "@/lib/ownership/transfer";
+import { isDashboardGrantRole } from "@/lib/dashboard/grant-roles";
 
 /**
  * `POST /api/v4/ownership/transfer` — move devices/areas/dashboards to a new owner, and grant the
  * outgoing owner (or anyone else) back onto the dashboards, in ONE transaction.
  *
  *   POST { toUserId, devices?: [dv_…], areas?: [ar_…], dashboards?: [db_…],
- *          shareBackTo?: [user_… | {userId, role}], role?: "viewer"|"admin", dryRun?, force? }
+ *          shareBackTo?: [user_… | {userId, role}], role?: "view"|"control"|"admin", dryRun?, force? }
  *     → 200 { transferred: [...], grantsWritten: [...], warnings: [...] }
  *     · 422 { error, detail? } — NOTHING applied
  *
@@ -56,10 +56,10 @@ export async function POST(request: NextRequest) {
       { status: 422 },
     );
 
-  const role = body.role === undefined ? "viewer" : body.role;
-  if (role !== "viewer" && role !== "admin")
+  const role = body.role === undefined ? "view" : body.role;
+  if (!isDashboardGrantRole(role))
     return NextResponse.json(
-      { error: 'role must be "viewer" or "admin"' },
+      { error: 'role must be "view", "control" or "admin"' },
       { status: 422 },
     );
 

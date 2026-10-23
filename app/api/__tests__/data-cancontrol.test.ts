@@ -29,17 +29,19 @@ jest.mock("@/lib/dashboard/subject", () => ({
 jest.mock("@/lib/registry/device-config", () => ({
   DeviceConfigRegistry: { deviceByHandle: jest.fn() },
 }));
+// The `control`-grant leg of the control rule: a DB read, stubbed per case (empty by default).
+jest.mock("@/lib/dashboard/grants", () => ({
+  controllableDeviceScopeForUser: jest.fn(async () => new Set<number>()),
+}));
 
 import { GET } from "@/app/api/data/route";
 import { requireDashboardAccess } from "@/lib/api-auth";
 import { buildDevicePayload } from "@/lib/dashboard/serve-data";
 import { resolveWireAddress } from "@/lib/dashboard/subject";
-import {
-  datumCanControl,
-  datumCanControlPoint,
-} from "@/lib/control/ownership";
+import { datumCanControl, datumCanControlPoint } from "@/lib/control/ownership";
 import { TESLA_CHARGE_CONTROL_PATHS } from "@/lib/control/point-ref";
 import { DeviceConfigRegistry } from "@/lib/registry/device-config";
+import { controllableDeviceScopeForUser } from "@/lib/dashboard/grants";
 
 const mockAuth = requireDashboardAccess as jest.MockedFunction<
   typeof requireDashboardAccess
@@ -137,6 +139,7 @@ function req(query: string): NextRequest {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  jest.mocked(controllableDeviceScopeForUser).mockResolvedValue(new Set());
   mockAddress.mockResolvedValue({ ok: true, handle: 10, prefer: "device" });
   mockBuild.mockResolvedValue(
     PAYLOAD as unknown as Awaited<ReturnType<typeof buildDevicePayload>>,
@@ -215,6 +218,17 @@ describe("GET /api/data — canControl on the wire", () => {
 
     const res = await GET(req("systemId=10"));
     expect((await res.json()).canControl).toBe(false);
+  });
+
+  it("d2. a `control` grantee whose grant delegates this device gets canControl:true", async () => {
+    mockAuth.mockResolvedValue(ctx({ userId: "user_x", canWrite: false }));
+    jest
+      .mocked(controllableDeviceScopeForUser)
+      .mockResolvedValue(new Set([10]));
+
+    const body = await (await GET(req("systemId=10"))).json();
+    expect(body.canControl).toBe(true);
+    expect(body.canControlDevices).toEqual([10]);
   });
 
   it("e. an auth refusal is returned verbatim and no payload is built", async () => {
