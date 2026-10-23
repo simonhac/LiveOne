@@ -59,6 +59,8 @@ export default function DashboardsMenu({
 
   const dashboards = data?.dashboards ?? [];
   const defaultId = prefs?.preferences.defaultDashboardId ?? null;
+  const ownerActions =
+    dashboards.length === 0 || dashboards.some((d) => d.access === "owner");
 
   return (
     <div className={className}>
@@ -97,47 +99,55 @@ export default function DashboardsMenu({
         );
       })}
 
-      {dashboards.length > 0 && <div className="my-1 border-t border-line" />}
+      {/* The owner's actions. A viewer who owns no dashboard — only GRANTED ones — has nothing to
+          manage and no devices to go to, so they get the list alone. */}
+      {ownerActions && (
+        <>
+          {dashboards.length > 0 && (
+            <div className="my-1 border-t border-line" />
+          )}
 
-      <button
-        onClick={() => {
-          onNew();
-          onNavigate?.();
-        }}
-        className={`${itemClassName} flex w-full items-center gap-2 text-left text-ink-secondary hover:text-ink ${
-          isMobile ? "first:rounded-t-lg last:rounded-b-lg" : ""
-        }`}
-      >
-        <Plus className="h-4 w-4" />
-        New dashboard…
-      </button>
+          <button
+            onClick={() => {
+              onNew();
+              onNavigate?.();
+            }}
+            className={`${itemClassName} flex w-full items-center gap-2 text-left text-ink-secondary hover:text-ink ${
+              isMobile ? "first:rounded-t-lg last:rounded-b-lg" : ""
+            }`}
+          >
+            <Plus className="h-4 w-4" />
+            New dashboard…
+          </button>
 
-      {/* Manage the owner's Areas/sites (the /areas list — browse, edit, create). */}
-      <div className="my-1 border-t border-line" />
-      <Link
-        href="/areas"
-        onClick={onNavigate}
-        className={`${itemClassName} flex items-center gap-2 text-ink-secondary hover:text-ink ${
-          isMobile ? "first:rounded-t-lg last:rounded-b-lg" : ""
-        }`}
-      >
-        <Layers className="h-4 w-4" />
-        Manage sites
-      </Link>
+          {/* Manage the owner's Areas/sites (the /areas list — browse, edit, create). */}
+          <div className="my-1 border-t border-line" />
+          <Link
+            href="/areas"
+            onClick={onNavigate}
+            className={`${itemClassName} flex items-center gap-2 text-ink-secondary hover:text-ink ${
+              isMobile ? "first:rounded-t-lg last:rounded-b-lg" : ""
+            }`}
+          >
+            <Layers className="h-4 w-4" />
+            Manage sites
+          </Link>
 
-      {/* Cross-nav to the systems/devices world — `/device` redirects to the first visible device,
-          whose header dropdown is the symmetric DevicesMenu (with "Go to Dashboards"). */}
-      <div className="my-1 border-t border-line" />
-      <Link
-        href="/device"
-        onClick={onNavigate}
-        className={`${itemClassName} flex items-center gap-2 text-ink-secondary hover:text-ink ${
-          isMobile ? "first:rounded-t-lg last:rounded-b-lg" : ""
-        }`}
-      >
-        <HardDrive className="h-4 w-4" />
-        Go to Devices
-      </Link>
+          {/* Cross-nav to the systems/devices world — `/device` redirects to the first visible device,
+            whose header dropdown is the symmetric DevicesMenu (with "Go to Dashboards"). */}
+          <div className="my-1 border-t border-line" />
+          <Link
+            href="/device"
+            onClick={onNavigate}
+            className={`${itemClassName} flex items-center gap-2 text-ink-secondary hover:text-ink ${
+              isMobile ? "first:rounded-t-lg last:rounded-b-lg" : ""
+            }`}
+          >
+            <HardDrive className="h-4 w-4" />
+            Go to Devices
+          </Link>
+        </>
+      )}
     </div>
   );
 }

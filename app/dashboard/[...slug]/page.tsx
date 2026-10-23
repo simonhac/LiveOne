@@ -100,8 +100,8 @@ async function renderCompositionDashboard(
   // Sydney perf harness can decompose the document TTFB. A Next page can't set response headers, so
   // the mirror rides in the DOM. See docs/performance/dashboard-fetch-waterfall.md.
   timer?: ServerTimer,
-  // The signed-in viewer (owner/admin authed path). When present with no `sharedAreas`, the header
-  // switcher's two queries are SSR-seeded (SP1.4). Omitted on the read-only shared (`?access=`) path.
+  // The signed-in viewer (owner, admin or grantee). When present, the header switcher is shown and
+  // its two queries are SSR-seeded (SP1.4). Omitted on the anonymous shared (`?access=`) path.
   userId?: string | null,
   // The canonical URL path for this dashboard (`/dashboard/{user}/{slug}` when slugged, else
   // `/dashboard/{db_…}`). The client replaceStates the address bar to it after hydration, so a
@@ -217,11 +217,11 @@ async function renderCompositionDashboard(
   // mounted — so it only ever doubled the dehydrated hydration JSON on a multi-area dashboard. The
   // query went with it; the per-id seeds below/above are what the cards actually read.
 
-  // SP1.4: on the authed owner/admin path (the read-only shared view disables the switcher via
-  // `enabled = !sharedAreas`), SSR-seed the header switcher's two queries — the user's dashboards
+  // SP1.4: for any signed-in viewer (the anonymous `?access=` view has no switcher), SSR-seed the
+  // header switcher's two queries — the user's dashboards
   // list + preferences — so DashboardsMenu paints without a client /api/v4/dashboards +
   // /api/user/preferences round-trip on load. Date fields → ISO strings to match the wire shape.
-  if (!sharedAreas && userId) {
+  if (userId) {
     const seedSwitcher = async () => {
       const [dashboardList, prefs] = await Promise.all([
         listAccessibleDashboards(userId),
@@ -277,6 +277,7 @@ async function renderCompositionDashboard(
           }}
           canonicalPath={canonicalPath}
           canEdit={canEdit}
+          showSwitcher={!!userId}
           // Encode ar_ at the wire boundary — sharedAreas/initialReadableAreas are raw-uuid
           // (below the seam) up to this point; the client's areaById must match the read-normalized
           // (ar_) document refs and the `ar_`-returning /api/v4/areas fetch fallback.

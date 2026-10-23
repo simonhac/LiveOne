@@ -60,6 +60,12 @@ interface DashboardClientProps {
   /** Read-only shared view: referenced Areas resolved server-side (no authed areas fetch). */
   sharedAreas?: ReadableArea[];
   /**
+   * A signed-in viewer — owner, admin, or a dashboard GRANTEE — gets the dashboards switcher. Only
+   * the anonymous `?access=` token view goes without: it has no "my dashboards" to list. Distinct
+   * from `sharedAreas`, which a grantee ALSO carries (their areas are resolved server-side).
+   */
+  showSwitcher?: boolean;
+  /**
    * Owner/admin authed view: the caller's full readable Areas resolved server-side (SSR seed), so the
    * client skips the `/api/v4/areas` round-trip on load (SP1.1) while keeping the switcher +
    * editor. Distinct from `sharedAreas`, which also flags the read-only shared view.
@@ -80,6 +86,7 @@ export default function DashboardClient({
   dashboard,
   canEdit,
   sharedAreas,
+  showSwitcher = false,
   initialReadableAreas,
   resolvedDevices = [],
   canonicalPath,
@@ -112,8 +119,8 @@ export default function DashboardClient({
   useHideOnScroll(headerRef, freeHostRef, switcherOpen || actionsOpen);
 
   // Warm the switcher's dashboards + default so the dropdown paints fully on first open (no jump).
-  // The switcher is only shown to a real authed owner (not the read-only shared view).
-  usePrefetchDashboardsMenu(!sharedAreas);
+  // Not on the anonymous `?access=` view, which has no switcher.
+  usePrefetchDashboardsMenu(showSwitcher);
 
   // areaId → Area: the shared view gets them inline (sharedAreas); an authed owner is seeded from SSR
   // (initialReadableAreas) so the query resolves without a client fetch; otherwise it fetches.
@@ -195,7 +202,7 @@ export default function DashboardClient({
             />
             <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-3">
               <div className="relative min-w-0">
-                {sharedAreas ? (
+                {!showSwitcher ? (
                   <h1 className="truncate text-lg font-semibold text-ink">
                     {dashboard.displayName ?? "Dashboard"}
                   </h1>
@@ -221,7 +228,7 @@ export default function DashboardClient({
                     <div className="absolute left-0 top-full z-50 mt-2 w-64 rounded-lg border border-line bg-surface-overlay shadow-lg">
                       <DashboardsMenu
                         currentDashboardId={dashboard.id}
-                        enabled={!sharedAreas}
+                        enabled={showSwitcher}
                         onNew={() => setNewOpen(true)}
                         onNavigate={() => setSwitcherOpen(false)}
                       />
