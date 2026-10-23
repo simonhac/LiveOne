@@ -33,7 +33,7 @@ jobs:
       # other legs are all tsx/pg. (Was: install postgresql-client-17 to match the 17.10 server.)
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
 
       - run: npm ci
 
