@@ -64,9 +64,10 @@ duplicated the same class string (`Tile`, `StatCardShell`, `AmberSmallCard`/`Tes
 8. **Rings are fat.** `ProgressRing` defaults to a 0.14 stroke ratio, round caps, a track of the
    same hue at 25%, an optional gradient, a glyph riding the arc's tip (turned to its tangent) and an
    optional notch for a target. `ConcentricRings` is the Activity Rings set. **One size**: every
-   ring tile (Battery, EV, Amber's price disc, the NEM grid) takes `TILE_RING` — 108px, 76px under
-   180px of tile width — with its centre number in `TILE_RING_VALUE`, and the same skeleton: header,
-   ring centred in the free height, one bottom row.
+   ring tile (Battery, EV, Amber's price disc, the NEM grid) draws it in a `RingWell` and sizes it
+   with `TILE_RING` — at least 108px (76px under 180px of tile width), and larger when the row hands
+   the tile spare height — with its centre number in `TILE_RING_VALUE`, and the same skeleton:
+   header, ring centred in the free height, one bottom row.
 9. **Mini charts are bars on hairlines** (`MiniBars`): thin round-capped bars in the series colour,
    a faint hairline per slot, a stronger one under each time label. No axes, gridlines or tooltip.
    Bars follow the dashboard's navigator period (`bucketBars`: D hourly, W/M daily, Y monthly) and

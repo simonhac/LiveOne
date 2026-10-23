@@ -111,6 +111,11 @@ interface EnergyTableProps {
   isLoading?: boolean;
   mode: "load" | "generation";
   hoveredIndex?: number | null; // Index of the hovered data point
+  /**
+   * The chart's focus bubble text for the hovered point ("9:45am", "Tue 9:45am", "13 Oct", "Oct"),
+   * so the header reads "Load at 9:45am" — the rows below are that instant's, not the window's.
+   */
+  focusLabel?: string | null;
   className?: string;
   visibleSeries?: Set<string>; // Which series are visible
   onSeriesToggle?: (seriesId: string, shiftKey: boolean) => void; // Handle series visibility toggle
@@ -198,7 +203,7 @@ function EnergyTableSkeleton({
 }) {
   return (
     <div className={className} data-skeleton="" aria-hidden>
-      <div className="space-y-4" style={{ paddingTop: "44px" }}>
+      <div className="space-y-4 md:pt-[44px]">
         {/* Column headers */}
         <div className={`${LEGEND_ROW} border-b border-line pb-1`}>
           <div className="flex h-4 flex-1 items-center">
@@ -242,6 +247,7 @@ export default function EnergyTable({
   isLoading,
   mode,
   hoveredIndex,
+  focusLabel,
   className = "",
   visibleSeries,
   onSeriesToggle,
@@ -573,12 +579,14 @@ export default function EnergyTable({
 
   return (
     <div className={`${className}`}>
-      {/* Match exact chart title height (text-sm = ~20px) + margin (mb-3 = 12px) + chart padding (~12px) */}
-      <div className="space-y-4" style={{ paddingTop: "44px" }}>
+      {/* Side by side (md+), match the chart title height (text-sm = ~20px) + margin (mb-3 = 12px) +
+          chart padding (~12px). Stacked under the chart on a phone, that offset is just a gap. */}
+      <div className="space-y-4 md:pt-[44px]">
         {/* Column Headers - aligned to top */}
         <div className={`${LEGEND_ROW} border-b border-line pb-1`}>
-          <div className={`flex-1 ${LEGEND_HEADER}`}>
+          <div className={`min-w-0 flex-1 truncate ${LEGEND_HEADER}`}>
             {mode === "load" ? "Load" : "Source"}
+            {isHovering && focusLabel ? ` at ${focusLabel}` : ""}
           </div>
           <div className={`w-20 text-right ${LEGEND_HEADER}`}>
             {columnHeader}

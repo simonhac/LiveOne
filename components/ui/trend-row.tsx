@@ -32,7 +32,11 @@ export default function TrendRow({
       <div className="min-w-0 flex-1">
         <p className={`truncate ${TILE_LABEL}`}>{label}</p>
         <p className="flex min-w-0 items-baseline gap-1.5">
-          <span className={`${TILE_VALUE_2} ${valueColor} whitespace-nowrap`}>
+          {/* `data-fit-value`: what `useFitRow` shrinks when a row of these would collide. */}
+          <span
+            data-fit-value=""
+            className={`${TILE_VALUE_2} ${valueColor} whitespace-nowrap`}
+          >
             {value}
           </span>
           {caption != null && (

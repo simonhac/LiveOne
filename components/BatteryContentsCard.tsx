@@ -121,7 +121,7 @@ export default function BatteryContentsCard({
           {carbonTotalText != null && <span>{carbonTotalText} CO₂</span>}
           {hasExport && <span>{dollars(exportValueC!)} export value</span>}
           {showForgone && (
-            <span className="ml-auto text-warn-ink">
+            <span className="ml-auto">
               {dollars(totalCostOpportunityC!)} forgone FiT
               {priceOpportunity != null && ` · ${cents(priceOpportunity)}¢/kWh`}
             </span>
