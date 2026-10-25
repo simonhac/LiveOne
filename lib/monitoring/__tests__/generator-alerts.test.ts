@@ -1,5 +1,5 @@
 /**
- * Generator alerts: one page per episode, then a repeat at most every 6 h — never one every 15 min
+ * Generator alerts: one page per episode, then a repeat at most once a day — never one every 15 min
  * for the days a flat battery takes to reach.
  */
 import { describe, it, expect, jest, beforeEach } from "@jest/globals";
@@ -77,7 +77,7 @@ describe("checkGeneratorAlerts", () => {
     expect(kvSet.mock.calls[0][0]).toBe(
       "test:alert:generator:area-1:battery_flat:ongoing",
     );
-    expect(kvSet.mock.calls[0][2]).toEqual({ nx: true, ex: 6 * 3600 });
+    expect(kvSet.mock.calls[0][2]).toEqual({ nx: true, ex: 24 * 3600 });
   });
 
   it("stays quiet while the episode's throttle key still exists", async () => {

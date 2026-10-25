@@ -15,7 +15,8 @@
  *      despite successful CRON sessions existing (sessions but ~no raw ⇒ the queue is dropping readings).
  *   2b. PER-DEVICE poll staleness — each active polled device against its OWN slot. Signal 2 is a
  *      fleet-wide max(), so a single healthy device masks every other one going dark; this is the
- *      check that notices one vendor failing silently.
+ *      check that notices one vendor failing silently. Its Slack message is throttled per outage
+ *      (six at onset, then daily — lib/monitoring/device-alerts.ts) and has its own headline.
  *   3. Ingest-path health — per-lane backlog / in-flight / paused, the `stuck` head-of-line
  *      predicate, and DLQ depth. `stuck` is the check that would have caught 2026-09-09.
  *   4. Outbox relay — unpublished backlog + oldest-unpublished age.
@@ -33,6 +34,8 @@
  *
  * Alerting: if any ALERT-severity issue fires, POST a Slack-compatible payload to
  * OBSERVATIONS_ALERT_WEBHOOK_URL (graceful no-op if unset) and always emit a structured console.error.
+ * A throttled device outage (`quiet`) still makes `status` "alert" and is still logged; it is only
+ * left out of the Slack message.
  * Returns a JSON status (configured:false when PG isn't wired) for manual checks + dashboards.
  *
  * Tuning via env (all optional): MONITOR_RESPONSE_PRESENCE_MIN, MONITOR_MIN_SESSIONS,
@@ -57,6 +60,7 @@ import {
   unhealthy,
 } from "@/lib/monitoring/device-staleness";
 import { checkGeneratorAlerts } from "@/lib/monitoring/generator-alerts";
+import { claimDeviceAlert } from "@/lib/monitoring/device-alerts";
 
 export const maxDuration = 30;
 
@@ -66,7 +70,12 @@ interface Issue {
   severity: Exclude<Severity, "ok">;
   code: string;
   message: string;
+  /** A device's outage that is still an alert but not due a Slack message — see device-alerts.ts. */
+  quiet?: boolean;
 }
+
+/** The codes that are ONE device not reporting, rather than the pipeline failing. */
+const DEVICE_ALERT_CODES = new Set(["device_poll_stale", "device_failing"]);
 
 const num = (env: string | undefined, fallback: number): number => {
   const n = Number(env);
@@ -272,6 +281,10 @@ export async function GET(request: NextRequest) {
       codes: devices.map((d) => `${d.vendor}/${d.rid}:${d.code}`),
     };
     for (const d of devices) {
+      const severity =
+        d.code === "device_never_polled" || d.code === "device_in_maintenance"
+          ? "warn"
+          : "alert";
       issues.push({
         // `device_failing` is the leading indicator — a device inside its budget but failing every
         // poll. It alerts rather than warns because a warn goes to console.warn and nowhere else,
@@ -281,12 +294,11 @@ export async function GET(request: NextRequest) {
         // in advance it would be down now. It stays a warn ON PURPOSE rather than being dropped —
         // the nightly line is the standing record that the suppression fired, and its ABSENCE is
         // what would tell us a vendor has moved or abandoned its window.
-        severity:
-          d.code === "device_never_polled" || d.code === "device_in_maintenance"
-            ? "warn"
-            : "alert",
+        severity,
         code: d.code,
         message: d.message,
+        // Six messages at onset, then one a day — the outage is still an alert, just not news.
+        quiet: severity === "alert" && !(await claimDeviceAlert(d)),
       });
     }
   } catch (err) {
@@ -657,18 +669,34 @@ export async function GET(request: NextRequest) {
     );
   }
 
+  // Two headlines, because they are two different problems: one device not reporting is not the
+  // observations mirror failing, and saying so sent a reader looking at the pipeline for a
+  // generator with a flat battery. Every alert is logged; only the un-throttled ones reach Slack.
   let sentAlert = false;
   if (status === "alert") {
-    const lines = issues
-      .filter((i) => i.severity === "alert")
-      .map((i) => `• ${i.message}`)
-      .join("\n");
+    const alerts = issues.filter((i) => i.severity === "alert");
+    const bullets = (list: Issue[]) => list.map((i) => `• ${i.message}`);
     console.error(
-      `[MonitorObservations] ALERT — observations mirror unhealthy:\n${lines}`,
+      `[MonitorObservations] ALERT:\n${bullets(alerts).join("\n")}`,
     );
-    sentAlert = await sendAlert(
-      `🚨 LiveOne observations mirror unhealthy:\n${lines}`,
-    );
+    const due = alerts.filter((i) => !i.quiet);
+    const devices = due.filter((i) => DEVICE_ALERT_CODES.has(i.code));
+    const pipeline = due.filter((i) => !DEVICE_ALERT_CODES.has(i.code));
+    const sections = [
+      pipeline.length > 0 && [
+        "🚨 LiveOne observations mirror unhealthy:",
+        ...bullets(pipeline),
+      ],
+      devices.length > 0 && [
+        `🚨 LiveOne ${devices.length === 1 ? "device" : "devices"} not reporting:`,
+        ...bullets(devices),
+      ],
+    ].filter((x): x is string[] => x !== false);
+    if (sections.length > 0) {
+      sentAlert = await sendAlert(
+        sections.map((lines) => lines.join("\n")).join("\n\n"),
+      );
+    }
   }
 
   return NextResponse.json({

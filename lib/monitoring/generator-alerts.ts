@@ -21,7 +21,7 @@ import type {
   GeneratorIssueCode,
 } from "@/lib/control/generator-health";
 
-const REPEAT_HOURS = 6;
+const REPEAT_HOURS = 24;
 
 /**
  * Which issues page. Every `critical`, plus `battery_low` — a battery off its charger was the one

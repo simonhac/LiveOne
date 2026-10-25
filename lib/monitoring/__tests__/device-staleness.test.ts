@@ -111,6 +111,20 @@ describe("evaluateDeviceHealth", () => {
     expect(bad[0].message).toMatch(/declared 45 min staleness budget/);
   });
 
+  // The throttle's episode key: the last success, which does not move while the device stays down.
+  it("reports the last success as an instant, and the age in units a reader can use", async () => {
+    const at = new Date("2026-10-25T03:45:00Z");
+    const [d] = await evaluateDeviceHealth(
+      dbWith([row({ staleMin: 4542, at })]),
+    );
+    expect(d.lastSuccessMs).toBe(at.getTime() - 4542 * 60_000);
+    expect(d.message).toMatch(/has not reported for 3 d/);
+    const [never] = await evaluateDeviceHealth(
+      dbWith([row({ staleMin: null })]),
+    );
+    expect(never.lastSuccessMs).toBeNull();
+  });
+
   // The whole point of the leading indicator: a generous budget lets a device fail every poll for
   // a long time while still looking perfectly healthy to a staleness check.
   it("flags a device that is failing but not yet stale", async () => {
