@@ -59,6 +59,11 @@ export interface DeviceHealth {
   code: DeviceHealthCode;
   /** minutes since the last successful poll; null = never succeeded */
   staleMin: number | null;
+  /**
+   * The last successful poll, epoch ms; null = never succeeded. Unlike `staleMin` it does not move
+   * while the device stays down, so it identifies ONE outage — the alert throttle's episode key.
+   */
+  lastSuccessMs: number | null;
   /** the budget it was judged against (minutes) */
   budgetMin: number;
   consecutiveErrors: number;
@@ -120,7 +125,11 @@ export async function evaluateDeviceHealth(
     (
       (await db.execute(sql`
         SELECT d.rid, d.name, d.vendor,
-               (extract(epoch FROM (now() - ds.last_success_time)) * 1000)::bigint AS stale_ms,
+               -- The difference of the two epochs, not the epoch of the difference: db_now_ms -
+               -- stale_ms must be EXACTLY the last success, because that identifies the outage
+               -- for the alert throttle (lib/monitoring/device-alerts.ts).
+               (extract(epoch FROM now()) * 1000)::bigint
+                 - (extract(epoch FROM ds.last_success_time) * 1000)::bigint AS stale_ms,
                (extract(epoch FROM now()) * 1000)::bigint AS db_now_ms,
                ds.consecutive_errors
         FROM devices d
@@ -206,6 +215,7 @@ export function classifyDeviceHealth(
     name: input.name,
     vendor: input.vendor,
     staleMin,
+    lastSuccessMs: staleMs === null ? null : input.nowMs - staleMs,
     budgetMin,
     consecutiveErrors,
   };
@@ -239,7 +249,7 @@ export function classifyDeviceHealth(
         ...base,
         code: "device_poll_stale",
         message:
-          `${input.vendor} device ${input.rid} (${input.name}) last succeeded ${staleMin} min ago — over ` +
+          `${input.name} (${input.vendor} device ${input.rid}) has not reported for ${formatAge(staleMin)} — over ` +
           (declared !== undefined
             ? `its declared ${declared} min staleness budget.`
             : `${DEVICE_STALE_SLOTS}× its ${slot} min slot (${budgetMin} min).`),
@@ -257,6 +267,13 @@ export function classifyDeviceHealth(
   } else {
     return { ...base, code: "ok", message: "" };
   }
+}
+
+/** "45 min", "75 h", "6 d" — an outage's length at the resolution a reader cares about. */
+function formatAge(min: number): string {
+  if (min < 120) return `${min} min`;
+  const h = Math.floor(min / 60);
+  return h < 72 ? `${h} h` : `${Math.floor(h / 24)} d`;
 }
 
 /** The subset worth telling someone about. */

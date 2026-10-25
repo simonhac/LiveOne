@@ -27,8 +27,15 @@ that runs **every 15 minutes** (`vercel.json`, `*/15 * * * *`; `maxDuration = 30
 - **Doubles as a manual endpoint**: it returns JSON (`status` = `ok`/`warn`/`alert`,
   plus `issues` and `checks`) — hit it (admin / `x-claude`) for a live readout
   without waiting for the next scheduled run.
-- It **only posts to Slack on `alert`** (a `warn` is logged, not paged). The message
-  is `🚨 LiveOne observations mirror unhealthy:` followed by one bullet per alert.
+- It **only posts to Slack on `alert`** (a `warn` is logged, not paged). Pipeline
+  alerts go under `🚨 LiveOne observations mirror unhealthy:`, one bullet each; a
+  device outage (`device_poll_stale` / `device_failing`) goes under
+  `🚨 LiveOne device not reporting:` instead.
+- **Device outages are throttled per outage** (`lib/monitoring/device-alerts.ts`):
+  a message on each of the first six ticks, then one a day, keyed on the device's
+  last success so the next outage alerts at once. The JSON `status`, the log line
+  and `/api/health/devices` are not throttled. Generator alerts
+  (`lib/monitoring/generator-alerts.ts`) repeat at most daily.
 
 ### Signals
 
